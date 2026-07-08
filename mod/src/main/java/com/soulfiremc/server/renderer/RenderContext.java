@@ -29,9 +29,6 @@ import net.minecraft.world.attribute.EnvironmentAttributes;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.phys.Vec3;
 
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-
 public record RenderContext(
   ClientLevel level,
   LocalPlayer localPlayer,
@@ -43,7 +40,6 @@ public record RenderContext(
   int minY,
   int maxY,
   long animationTick,
-  Set<Long> vanillaRenderedBlockEntities,
   LightmapRenderState lightmapRenderState,
   SectionMeshCache sectionMeshCache
 ) {
@@ -62,7 +58,6 @@ public record RenderContext(
       level.getMinY(),
       level.getMaxY(),
       level.getOverworldClockTime(),
-      ConcurrentHashMap.newKeySet(),
       lightmapRenderState,
       SectionMeshCache.forLevel(level)
     );

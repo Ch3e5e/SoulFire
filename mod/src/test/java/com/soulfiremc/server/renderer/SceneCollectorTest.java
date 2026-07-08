@@ -18,8 +18,6 @@
 package com.soulfiremc.server.renderer;
 
 import net.minecraft.client.renderer.WeatherEffectRenderer;
-import net.minecraft.client.renderer.entity.state.EntityRenderState;
-import net.minecraft.client.renderer.entity.state.ItemFrameRenderState;
 import net.minecraft.client.renderer.state.level.BlockBreakingRenderState;
 import net.minecraft.client.renderer.state.level.WeatherRenderState;
 import net.minecraft.core.BlockPos;
@@ -28,28 +26,11 @@ import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SceneCollectorTest {
-  @Test
-  void invisibleItemFrameStatesStayRenderableForMapContents() {
-    var invisibleEntity = new EntityRenderState();
-    invisibleEntity.isInvisible = true;
-    var glowingInvisibleEntity = new EntityRenderState();
-    glowingInvisibleEntity.isInvisible = true;
-    glowingInvisibleEntity.outlineColor = 0xFFFFFFFF;
-    var invisibleItemFrame = new ItemFrameRenderState();
-    invisibleItemFrame.isInvisible = true;
-
-    assertTrue(SceneCollector.shouldSkipInvisibleEntityState(invisibleEntity));
-    assertFalse(SceneCollector.shouldSkipInvisibleEntityState(glowingInvisibleEntity));
-    assertFalse(SceneCollector.shouldSkipInvisibleEntityState(invisibleItemFrame));
-  }
-
   @Test
   void blockDestroyProgressUsesMatchingRenderState() throws Exception {
     var method = SceneCollector.class.getDeclaredMethod("blockDestroyProgress", List.class, BlockPos.class);
@@ -108,7 +89,6 @@ class SceneCollectorTest {
       0,
       256,
       0L,
-      ConcurrentHashMap.newKeySet(),
       null,
       null
     );

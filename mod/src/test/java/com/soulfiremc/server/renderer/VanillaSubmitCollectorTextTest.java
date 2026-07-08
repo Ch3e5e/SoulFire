@@ -53,7 +53,6 @@ import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -1044,7 +1043,6 @@ class VanillaSubmitCollectorTextTest {
       0,
       256,
       0L,
-      ConcurrentHashMap.newKeySet(),
       null,
       null
     ));

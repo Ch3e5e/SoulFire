@@ -23,8 +23,6 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.renderer.WeatherEffectRenderer;
-import net.minecraft.client.renderer.entity.state.EntityRenderState;
-import net.minecraft.client.renderer.entity.state.ItemFrameRenderState;
 import net.minecraft.client.renderer.state.level.BlockBreakingRenderState;
 import net.minecraft.client.renderer.state.level.WeatherRenderState;
 import net.minecraft.core.BlockPos;
@@ -100,18 +98,10 @@ public class SceneCollector {
 
   private static void collectGenericEntity(RenderContext ctx, Entity entity, SceneData.Builder builder) {
     var renderState = VanillaSubmitCollector.extractEntityState(entity);
-    if (renderState != null && shouldSkipInvisibleEntityState(renderState)) {
-      return;
-    }
-
-    var vanillaScene = VanillaSubmitCollector.collectEntity(ctx, entity, renderState);
+    var vanillaScene = VanillaSubmitCollector.collectEntity(ctx, renderState);
     if (vanillaScene.totalQuadCount() > 0) {
       builder.addAll(vanillaScene);
     }
-  }
-
-  static boolean shouldSkipInvisibleEntityState(EntityRenderState renderState) {
-    return renderState.isInvisible && !renderState.appearsGlowing() && !(renderState instanceof ItemFrameRenderState);
   }
 
   public static SceneData collectBlockEntities(RenderContext ctx) {
@@ -120,8 +110,14 @@ public class SceneCollector {
     var camera = ctx.camera();
     var seen = new HashSet<BlockPos>();
 
-    for (var blockEntity : level.getGloballyRenderedBlockEntities()) {
-      collectBlockEntity(ctx, builder, seen, blockEntity);
+    var globalBlockEntities = level.getGloballyRenderedBlockEntities().iterator();
+    while (globalBlockEntities.hasNext()) {
+      var blockEntity = globalBlockEntities.next();
+      if (blockEntity.isRemoved()) {
+        globalBlockEntities.remove();
+      } else {
+        collectBlockEntity(ctx, builder, seen, blockEntity, true);
+      }
     }
 
     var chunkRadius = Mth.ceil(ctx.maxDistance() / 16.0) + 1;
@@ -144,24 +140,26 @@ public class SceneCollector {
 
         LevelChunk chunk = level.getChunk(chunkX, chunkZ);
         for (var blockEntity : chunk.getBlockEntities().values()) {
-          collectBlockEntity(ctx, builder, seen, blockEntity);
+          collectBlockEntity(ctx, builder, seen, blockEntity, false);
         }
       }
     }
     return builder.build();
   }
 
-  private static void collectBlockEntity(RenderContext ctx, SceneData.Builder builder, HashSet<BlockPos> seen, BlockEntity blockEntity) {
+  private static void collectBlockEntity(
+    RenderContext ctx,
+    SceneData.Builder builder,
+    HashSet<BlockPos> seen,
+    BlockEntity blockEntity,
+    boolean globallyRendered
+  ) {
     var pos = blockEntity.getBlockPos();
     if (!seen.add(pos.immutable())) {
       return;
     }
 
-    if (!shouldConsiderBlockEntity(blockEntity)) {
-      return;
-    }
-
-    if (!isGlobalBlockEntity(ctx.level(), blockEntity)) {
+    if (!globallyRendered) {
       var sectionX = SectionPos.blockToSectionCoord(pos.getX());
       var sectionY = SectionPos.blockToSectionCoord(pos.getY());
       var sectionZ = SectionPos.blockToSectionCoord(pos.getZ());
@@ -173,20 +171,11 @@ public class SceneCollector {
       }
     }
 
-    var progress = blockDestroyProgress(pos);
-    var scene = VanillaSubmitCollector.collectBlockEntity(ctx, blockEntity, progress >= 0 ? progress : null);
+    var progress = globallyRendered ? -1 : blockDestroyProgress(pos);
+    var scene = VanillaSubmitCollector.collectBlockEntity(ctx, blockEntity, progress >= 0 ? progress : null, globallyRendered);
     if (scene.totalQuadCount() > 0) {
-      ctx.vanillaRenderedBlockEntities().add(pos.asLong());
       builder.addAll(scene);
     }
-  }
-
-  private static boolean shouldConsiderBlockEntity(BlockEntity blockEntity) {
-    return Minecraft.getInstance().getBlockEntityRenderDispatcher().getRenderer(blockEntity) != null;
-  }
-
-  private static boolean isGlobalBlockEntity(ClientLevel level, BlockEntity blockEntity) {
-    return level.getGloballyRenderedBlockEntities().contains(blockEntity);
   }
 
   private static void collectBlockDestroyAnimations(RenderContext ctx, SceneData.Builder builder) {

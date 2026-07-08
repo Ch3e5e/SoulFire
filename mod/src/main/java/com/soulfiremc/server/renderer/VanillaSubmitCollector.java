@@ -43,8 +43,6 @@ import net.minecraft.client.renderer.block.dispatch.BlockStateModel;
 import net.minecraft.client.renderer.block.dispatch.BlockStateModelPart;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
 import net.minecraft.client.renderer.culling.Frustum;
-import net.minecraft.client.renderer.entity.EntityRenderer;
-import net.minecraft.client.renderer.entity.state.AvatarRenderState;
 import net.minecraft.client.renderer.entity.state.EntityRenderState;
 import net.minecraft.client.renderer.feature.ModelFeatureRenderer;
 import net.minecraft.client.renderer.gizmos.DrawableGizmoPrimitives;
@@ -156,68 +154,32 @@ final class VanillaSubmitCollector implements SubmitNodeCollector, OrderedSubmit
   }
 
   static boolean shouldRenderEntity(RenderContext ctx, Entity entity) {
-    try {
-      var dispatcher = Minecraft.getInstance().getEntityRenderDispatcher();
-      return dispatcher.shouldRender(entity, createFrustum(ctx), ctx.camera().eyeX(), ctx.camera().eyeY(), ctx.camera().eyeZ());
-    } catch (Throwable _) {
-      var bounds = entity.getBoundingBox();
-      return ctx.camera().isVisibleAabb(bounds.minX, bounds.minY, bounds.minZ, bounds.maxX, bounds.maxY, bounds.maxZ);
-    }
-  }
-
-  @Nullable
-  static EntityRenderState extractEntityState(Entity entity) {
-    try {
-      var dispatcher = Minecraft.getInstance().getEntityRenderDispatcher();
-      @SuppressWarnings({"rawtypes"})
-      EntityRenderer rawRenderer = dispatcher.getRenderer(entity);
-      return rawRenderer != null ? rawRenderer.createRenderState(entity, 1.0F) : null;
-    } catch (Throwable t) {
-      return null;
-    }
-  }
-
-  static SceneData collectEntity(RenderContext ctx, Entity entity, @Nullable EntityRenderState renderState) {
     var dispatcher = Minecraft.getInstance().getEntityRenderDispatcher();
-    @SuppressWarnings({"rawtypes"})
-    EntityRenderer rawRenderer = dispatcher.getRenderer(entity);
-    if (rawRenderer == null) {
-      return SceneData.EMPTY;
-    }
+    return dispatcher.shouldRender(entity, createFrustum(ctx), ctx.camera().eyeX(), ctx.camera().eyeY(), ctx.camera().eyeZ());
+  }
 
-    var state = renderState != null ? renderState : extractEntityState(entity);
-    if (state == null) {
-      return SceneData.EMPTY;
-    }
+  static EntityRenderState extractEntityState(Entity entity) {
+    return Minecraft.getInstance().getEntityRenderDispatcher().extractEntity(entity, 1.0F);
+  }
 
+  static SceneData collectEntity(RenderContext ctx, EntityRenderState renderState) {
+    var dispatcher = Minecraft.getInstance().getEntityRenderDispatcher();
     var collector = new VanillaSubmitCollector(ctx);
-    var cameraState = collector.cameraRenderState();
     var poseStack = new PoseStack();
-    var renderOffset = rawRenderer.getRenderOffset(state);
-    poseStack.pushPose();
-    poseStack.translate(state.x + renderOffset.x(), state.y + renderOffset.y(), state.z + renderOffset.z());
-    rawRenderer.submit(state, poseStack, collector, cameraState);
-    if (state.displayFireAnimation) {
-      collector.submitFlame(poseStack, state, Mth.rotationAroundAxis(Mth.Y_AXIS, cameraState.orientation, new Quaternionf()));
-    }
-    if (state instanceof AvatarRenderState) {
-      poseStack.translate(-renderOffset.x(), -renderOffset.y(), -renderOffset.z());
-    }
-    if (!state.shadowPieces.isEmpty()) {
-      collector.submitShadow(poseStack, state.shadowRadius, state.shadowPieces);
-    }
-    if (!(state instanceof AvatarRenderState)) {
-      poseStack.translate(-renderOffset.x(), -renderOffset.y(), -renderOffset.z());
-    }
-    poseStack.popPose();
+    dispatcher.submit(renderState, collector.cameraRenderState(), renderState.x, renderState.y, renderState.z, poseStack, collector);
     return collector.buildScene();
   }
 
   static SceneData collectBlockEntity(RenderContext ctx, BlockEntity blockEntity) {
-    return collectBlockEntity(ctx, blockEntity, null);
+    return collectBlockEntity(ctx, blockEntity, null, false);
   }
 
-  static SceneData collectBlockEntity(RenderContext ctx, BlockEntity blockEntity, @Nullable Integer crumblingProgress) {
+  static SceneData collectBlockEntity(
+    RenderContext ctx,
+    BlockEntity blockEntity,
+    @Nullable Integer crumblingProgress,
+    boolean globallyRendered
+  ) {
     var collector = new VanillaSubmitCollector(ctx);
     var dispatcher = Minecraft.getInstance().getBlockEntityRenderDispatcher();
     dispatcher.prepare(new Vec3(ctx.camera().eyeX(), ctx.camera().eyeY(), ctx.camera().eyeZ()));
@@ -225,7 +187,7 @@ final class VanillaSubmitCollector implements SubmitNodeCollector, OrderedSubmit
     var blockPos = blockEntity.getBlockPos();
     poseStack.translate(blockPos.getX(), blockPos.getY(), blockPos.getZ());
     var crumblingOverlay = crumblingProgress != null ? new ModelFeatureRenderer.CrumblingOverlay(crumblingProgress, poseStack.last()) : null;
-    var renderState = dispatcher.tryExtractRenderState(blockEntity, 1.0F, crumblingOverlay, false);
+    var renderState = dispatcher.tryExtractRenderState(blockEntity, 1.0F, crumblingOverlay, globallyRendered);
     if (renderState == null) {
       return SceneData.EMPTY;
     }
@@ -758,14 +720,15 @@ final class VanillaSubmitCollector implements SubmitNodeCollector, OrderedSubmit
   }
 
   public void submitBreakingBlockModel(PoseStack poseStack, BlockStateModel blockStateModel, long seed, int progress) {
-    withStage(FeatureStage.TRANSLUCENT_BLOCK, () -> {
-      if (progress < 0 || progress >= ModelBakery.DESTROY_TYPES.size()) {
-        return;
-      }
+    var parts = new ArrayList<BlockStateModelPart>();
+    blockStateModel.collectParts(RandomSource.create(seed), parts);
+    submitBreakingBlockModel(poseStack, parts, progress);
+  }
 
-      var parts = new ArrayList<BlockStateModelPart>();
-      blockStateModel.collectParts(RandomSource.create(seed), parts);
-      if (parts.isEmpty()) {
+  @Override
+  public void submitBreakingBlockModel(PoseStack poseStack, List<BlockStateModelPart> parts, int progress) {
+    withStage(FeatureStage.TRANSLUCENT_BLOCK, () -> {
+      if (progress < 0 || progress >= ModelBakery.DESTROY_TYPES.size() || parts.isEmpty()) {
         return;
       }
 
@@ -791,11 +754,6 @@ final class VanillaSubmitCollector implements SubmitNodeCollector, OrderedSubmit
       }
       consumer.flush();
     });
-  }
-
-  @Override
-  public void submitBreakingBlockModel(PoseStack poseStack, List<BlockStateModelPart> parts, int color) {
-    submitBlockModel(poseStack, Sheets.translucentBlockItemSheet(), parts, new int[0], LightCoordsUtil.FULL_BRIGHT, OverlayTexture.NO_OVERLAY, color);
   }
 
   @Override

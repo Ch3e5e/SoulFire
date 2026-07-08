@@ -24,8 +24,6 @@ import net.minecraft.util.LightCoordsUtil;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 
-import java.util.Set;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -82,7 +80,6 @@ class VanillaLightmapTest {
       0,
       0,
       0L,
-      Set.of(),
       lightmapRenderState,
       null
     );

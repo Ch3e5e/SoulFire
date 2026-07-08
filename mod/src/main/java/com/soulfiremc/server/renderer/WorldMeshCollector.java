@@ -31,7 +31,6 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
 import net.minecraft.util.ARGB;
 import net.minecraft.util.Mth;
-import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.RenderShape;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
@@ -122,7 +121,7 @@ public class WorldMeshCollector {
           for (var localX = 0; localX < 16; localX++) {
             blockPos.set(originX + localX, originY + localY, originZ + localZ);
             var blockState = section.getBlockState(localX, localY, localZ);
-            if (blockState.isAir() || blockState.getBlock() == Blocks.VOID_AIR) {
+            if (blockState.isAir()) {
               continue;
             }
 
@@ -131,7 +130,7 @@ public class WorldMeshCollector {
               builder.addTerrainAll(VanillaSubmitCollector.collectFluid(ctx, fluidRenderer, blockPos.immutable(), blockState, fluidState));
             }
 
-            if (blockState.getRenderShape() == RenderShape.MODEL && !shouldSkipStaticBlockGeometry(ctx, blockPos)) {
+            if (blockState.getRenderShape() == RenderShape.MODEL) {
               emitBlockModel(
                 ctx,
                 builder,
@@ -154,10 +153,6 @@ public class WorldMeshCollector {
     }
 
     return builder.build();
-  }
-
-  private static boolean shouldSkipStaticBlockGeometry(RenderContext ctx, BlockPos blockPos) {
-    return ctx.vanillaRenderedBlockEntities().contains(blockPos.asLong());
   }
 
   private static void emitBlockModel(
