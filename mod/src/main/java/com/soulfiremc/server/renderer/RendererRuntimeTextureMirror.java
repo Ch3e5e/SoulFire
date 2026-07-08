@@ -25,6 +25,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -105,6 +106,48 @@ public final class RendererRuntimeTextureMirror {
       }
 
       mirrored.write(source, format, destX, destY, width, height);
+    }
+  }
+
+  public static void mirrorCopy(
+    GpuTexture source,
+    GpuTexture destination,
+    int destX,
+    int destY,
+    int sourceX,
+    int sourceY,
+    int width,
+    int height) {
+    synchronized (LOCK) {
+      var sourceMirrored = mirroredTexture(source);
+      var destinationMirrored = mirroredTexture(destination);
+      if (sourceMirrored == null || destinationMirrored == null) {
+        return;
+      }
+
+      destinationMirrored.copyFrom(sourceMirrored, destX, destY, sourceX, sourceY, width, height);
+    }
+  }
+
+  public static void mirrorClear(GpuTexture destination, int color) {
+    synchronized (LOCK) {
+      var mirrored = mirroredTexture(destination);
+      if (mirrored == null) {
+        return;
+      }
+
+      mirrored.clear(color, 0, 0, mirrored.width, mirrored.height);
+    }
+  }
+
+  public static void mirrorClear(GpuTexture destination, int color, int destX, int destY, int width, int height) {
+    synchronized (LOCK) {
+      var mirrored = mirroredTexture(destination);
+      if (mirrored == null) {
+        return;
+      }
+
+      mirrored.clear(color, destX, destY, width, height);
     }
   }
 
@@ -227,6 +270,51 @@ public final class RendererRuntimeTextureMirror {
           var sourceOffset = baseOffset + (region.sourceX() + x + (region.sourceY() + y) * width) * components;
           pixels[region.destX() + x + (region.destY() + y) * this.width] = bufferPixel(data, format, sourceOffset);
         }
+      }
+      hasUploadData = true;
+    }
+
+    private void copyFrom(MirroredTexture source, int destX, int destY, int sourceX, int sourceY, int width, int height) {
+      if (!source.hasUploadData || format != source.format) {
+        return;
+      }
+
+      var region = clippedRegion(destX, destY, width, height, sourceX, sourceY, source.width, source.height);
+      if (region == null) {
+        return;
+      }
+
+      var copied = new int[region.width() * region.height()];
+      for (var y = 0; y < region.height(); y++) {
+        System.arraycopy(
+          source.pixels,
+          region.sourceX() + (region.sourceY() + y) * source.width,
+          copied,
+          y * region.width(),
+          region.width()
+        );
+      }
+      for (var y = 0; y < region.height(); y++) {
+        System.arraycopy(
+          copied,
+          y * region.width(),
+          pixels,
+          region.destX() + (region.destY() + y) * this.width,
+          region.width()
+        );
+      }
+      hasUploadData = true;
+    }
+
+    private void clear(int color, int destX, int destY, int width, int height) {
+      var region = clippedRegion(destX, destY, width, height, 0, 0, width, height);
+      if (region == null) {
+        return;
+      }
+
+      for (var y = 0; y < region.height(); y++) {
+        var rowStart = region.destX() + (region.destY() + y) * this.width;
+        Arrays.fill(pixels, rowStart, rowStart + region.width(), color);
       }
       hasUploadData = true;
     }

@@ -17,7 +17,10 @@
  */
 package com.soulfiremc.test.renderer;
 
+import com.mojang.blaze3d.pipeline.RenderPipeline;
+import com.mojang.blaze3d.textures.GpuTextureView;
 import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.soulfiremc.server.renderer.InventoryItemIconRenderer;
 import com.soulfiremc.server.renderer.RenderMaterial;
 import com.soulfiremc.server.renderer.RenderQuad;
@@ -25,7 +28,11 @@ import com.soulfiremc.server.renderer.RenderVertex;
 import com.soulfiremc.server.renderer.RendererAssets;
 import com.soulfiremc.test.utils.TestBootstrap;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.font.TextRenderable;
+import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.renderer.SubmitNodeCollector;
+import net.minecraft.client.renderer.entity.state.EntityRenderState;
 import net.minecraft.client.renderer.gizmos.DrawableGizmoPrimitives;
 import net.minecraft.client.renderer.item.ItemStackRenderState;
 import net.minecraft.client.renderer.rendertype.RenderType;
@@ -34,6 +41,12 @@ import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.client.resources.model.geometry.BakedQuad;
 import net.minecraft.core.Holder;
 import net.minecraft.core.component.DataComponentMap;
+import net.minecraft.gizmos.TextGizmo;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.Style;
+import net.minecraft.resources.Identifier;
+import net.minecraft.util.FormattedCharSequence;
+import net.minecraft.util.LightCoordsUtil;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
@@ -41,6 +54,9 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.Shapes;
 import net.minecraft.world.phys.shapes.VoxelShape;
+import org.joml.Matrix4f;
+import org.joml.Matrix4fc;
+import org.joml.Quaternionf;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -307,6 +323,174 @@ class InventoryItemIconRendererTest {
     assertTrue(quads(collector).size() >= 4);
   }
 
+  @Test
+  void itemSubmitCollectorCapturesSubmittedText() throws Exception {
+    var collector = newItemSubmitCollector();
+    var collectorClass = collector.getClass();
+    var submitText = collectorClass.getDeclaredMethod(
+      "submitText",
+      PoseStack.class,
+      float.class,
+      float.class,
+      FormattedCharSequence.class,
+      boolean.class,
+      Font.DisplayMode.class,
+      int.class,
+      int.class,
+      int.class,
+      int.class
+    );
+    submitText.setAccessible(true);
+
+    submitText.invoke(
+      collector,
+      new PoseStack(),
+      -4.0F,
+      -4.0F,
+      FormattedCharSequence.forward("A", Style.EMPTY),
+      false,
+      Font.DisplayMode.NORMAL,
+      LightCoordsUtil.FULL_BRIGHT,
+      0xFFFFFFFF,
+      0,
+      0
+    );
+
+    assertTextSubmissionHandled(collector);
+  }
+
+  @Test
+  void itemSubmitCollectorCapturesNameTagText() throws Exception {
+    var collector = newItemSubmitCollector();
+    var collectorClass = collector.getClass();
+    var submitNameTag = collectorClass.getDeclaredMethod(
+      "submitNameTag",
+      PoseStack.class,
+      Vec3.class,
+      int.class,
+      Component.class,
+      boolean.class,
+      int.class,
+      CameraRenderState.class
+    );
+    submitNameTag.setAccessible(true);
+
+    submitNameTag.invoke(
+      collector,
+      new PoseStack(),
+      Vec3.ZERO,
+      0xFFFFFFFF,
+      Component.literal("A"),
+      false,
+      0,
+      null
+    );
+
+    assertTextSubmissionHandled(collector);
+  }
+
+  @Test
+  void itemSubmitCollectorCapturesGizmoText() throws Exception {
+    var collector = newItemSubmitCollector();
+    var collectorClass = collector.getClass();
+    var submitGizmoPrimitives = collectorClass.getDeclaredMethod(
+      "submitGizmoPrimitives",
+      DrawableGizmoPrimitives.Group.class,
+      CameraRenderState.class,
+      boolean.class
+    );
+    submitGizmoPrimitives.setAccessible(true);
+    var group = new DrawableGizmoPrimitives.Group(
+      true,
+      List.of(),
+      List.of(),
+      List.of(),
+      List.of(new DrawableGizmoPrimitives.Text(Vec3.ZERO, "A", TextGizmo.Style.whiteAndCentered())),
+      List.of()
+    );
+
+    submitGizmoPrimitives.invoke(collector, group, null, false);
+
+    assertTextSubmissionHandled(collector);
+  }
+
+  @Test
+  void itemSubmitCollectorCapturesPreparedTextRenderable() throws Exception {
+    var collector = newItemSubmitCollector();
+    var collectorClass = collector.getClass();
+    var captureTextRenderable = collectorClass.getDeclaredMethod(
+      "captureTextRenderable",
+      Matrix4fc.class,
+      TextRenderable.class,
+      Font.DisplayMode.class,
+      int.class
+    );
+    captureTextRenderable.setAccessible(true);
+
+    captureTextRenderable.invoke(
+      collector,
+      new Matrix4f(),
+      new TextRenderable() {
+        @Override
+        public void render(Matrix4fc pose, VertexConsumer buffer, int packedLightCoords, boolean flat) {
+          buffer.addVertex(-0.5F, -0.5F, 0.0F).setColor(0xFFFFFFFF).setUv(0.0F, 0.0F);
+          buffer.addVertex(-0.5F, 0.5F, 0.0F).setColor(0xFFFFFFFF).setUv(0.0F, 1.0F);
+          buffer.addVertex(0.5F, 0.5F, 0.0F).setColor(0xFFFFFFFF).setUv(1.0F, 1.0F);
+          buffer.addVertex(0.5F, -0.5F, 0.0F).setColor(0xFFFFFFFF).setUv(1.0F, 0.0F);
+        }
+
+        @Override
+        public RenderType renderType(Font.DisplayMode displayMode) {
+          return RenderTypes.text(Identifier.withDefaultNamespace("font/test"));
+        }
+
+        @Override
+        public GpuTextureView textureView() {
+          return null;
+        }
+
+        @Override
+        public RenderPipeline guiPipeline() {
+          return RenderPipelines.TEXT;
+        }
+
+        @Override public float left() { return -0.5F; }
+        @Override public float top() { return -0.5F; }
+        @Override public float right() { return 0.5F; }
+        @Override public float bottom() { return 0.5F; }
+      },
+      Font.DisplayMode.NORMAL,
+      LightCoordsUtil.FULL_BRIGHT
+    );
+
+    assertFalse(unsupported(collector));
+    assertEquals(1, quads(collector).size());
+  }
+
+  @Test
+  void itemSubmitCollectorIgnoresFlameAndLeashWithoutFailingIcon() throws Exception {
+    var collector = newItemSubmitCollector();
+    var collectorClass = collector.getClass();
+    var submitFlame = collectorClass.getDeclaredMethod(
+      "submitFlame",
+      PoseStack.class,
+      EntityRenderState.class,
+      Quaternionf.class
+    );
+    var submitLeash = collectorClass.getDeclaredMethod(
+      "submitLeash",
+      PoseStack.class,
+      EntityRenderState.LeashState.class
+    );
+    submitFlame.setAccessible(true);
+    submitLeash.setAccessible(true);
+
+    submitFlame.invoke(collector, new PoseStack(), null, new Quaternionf());
+    submitLeash.invoke(collector, new PoseStack(), null);
+
+    assertFalse(unsupported(collector));
+  }
+
   private static Object newItemSubmitCollector() throws Exception {
     var collectorClass = Class.forName("com.soulfiremc.server.renderer.InventoryItemIconRenderer$ItemSubmitCollector");
     var constructor = collectorClass.getDeclaredConstructor();
@@ -318,6 +502,13 @@ class InventoryItemIconRendererTest {
     var unsupported = collector.getClass().getDeclaredMethod("unsupported");
     unsupported.setAccessible(true);
     return (boolean) unsupported.invoke(collector);
+  }
+
+  private static void assertTextSubmissionHandled(Object collector) throws Exception {
+    assertFalse(unsupported(collector));
+    if (Minecraft.getInstance() != null) {
+      assertFalse(quads(collector).isEmpty());
+    }
   }
 
   @SuppressWarnings("unchecked")

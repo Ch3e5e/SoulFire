@@ -207,6 +207,12 @@ public final class RenderDebugTrace {
     noteFailure("missing-texture", textureId, throwable);
   }
 
+  public void inventoryIconIgnored(String feature) {
+    if (enabled) {
+      note("inventory-icon-ignored:" + feature);
+    }
+  }
+
   public void opaqueTriangles(long count) {
     if (enabled) {
       opaqueTriangles.add(count);

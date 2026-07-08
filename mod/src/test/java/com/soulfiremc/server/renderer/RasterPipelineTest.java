@@ -982,6 +982,19 @@ class RasterPipelineTest {
   }
 
   @Test
+  void pipelineStateDerivesTextBackgroundFogByPipelinePath() {
+    var textBackground = RenderMaterial
+      .create(solidTexture(0x80FFFFFF), RendererAssets.AlphaMode.TRANSLUCENT, 0xFFFFFFFF, true, 0.0F)
+      .withPipelineState(RenderPipelines.TEXT_BACKGROUND);
+    var seeThroughTextBackground = RenderMaterial
+      .create(solidTexture(0x80FFFFFF), RendererAssets.AlphaMode.TRANSLUCENT, 0xFFFFFFFF, true, 0.0F)
+      .withPipelineState(RenderPipelines.TEXT_BACKGROUND_SEE_THROUGH);
+
+    assertEquals(RenderMaterial.FogMode.COLOR_MIX, textBackground.fogMode());
+    assertEquals(RenderMaterial.FogMode.NONE, seeThroughTextBackground.fogMode());
+  }
+
+  @Test
   void pipelineStateDerivesEndPortalShaderLayerCount() {
     var portal = RenderMaterial
       .create(solidTexture(0xFFFFFFFF), RendererAssets.AlphaMode.OPAQUE, 0xFFFFFFFF, true, 0.0F)

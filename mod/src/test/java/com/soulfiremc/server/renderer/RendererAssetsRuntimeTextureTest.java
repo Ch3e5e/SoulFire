@@ -372,6 +372,87 @@ class RendererAssetsRuntimeTextureTest {
     }
   }
 
+  @Test
+  void mirrorsTextureCopiesBetweenTrackedRuntimeTextures() {
+    var sourceLocation = Identifier.withDefaultNamespace("test/runtime-mirror-copy-source");
+    var destinationLocation = Identifier.withDefaultNamespace("test/runtime-mirror-copy-destination");
+    var sourceTexture = new FakeGpuTexture(GpuFormat.RGBA8_UNORM, 3, 1);
+    var destinationTexture = new FakeGpuTexture(GpuFormat.RGBA8_UNORM, 2, 1);
+    RendererRuntimeTextureMirror.register(sourceLocation, sourceTexture);
+    RendererRuntimeTextureMirror.register(destinationLocation, destinationTexture);
+
+    try {
+      try (var source = new NativeImage(3, 1, true)) {
+        source.setPixel(0, 0, 0xFF102030);
+        source.setPixel(1, 0, 0xFF405060);
+        source.setPixel(2, 0, 0xFF708090);
+        RendererRuntimeTextureMirror.mirrorWrite(sourceTexture, source, 0, 0, 3, 1, 0, 0);
+      }
+
+      RendererRuntimeTextureMirror.mirrorCopy(sourceTexture, destinationTexture, 0, 0, 1, 0, 2, 1);
+
+      var mirrored = RendererRuntimeTextureMirror.texture(destinationLocation);
+      assertNotNull(mirrored);
+      var image = mirrored.toBufferedImage();
+      assertEquals(0xFF405060, image.getRGB(0, 0));
+      assertEquals(0xFF708090, image.getRGB(1, 0));
+    } finally {
+      RendererRuntimeTextureMirror.unregister(sourceLocation);
+      RendererRuntimeTextureMirror.unregister(destinationLocation);
+    }
+  }
+
+  @Test
+  void mirrorsOverlappingRuntimeTextureSelfCopiesFromOriginalPixels() {
+    var location = Identifier.withDefaultNamespace("test/runtime-mirror-copy-overlap");
+    var gpuTexture = new FakeGpuTexture(GpuFormat.RGBA8_UNORM, 4, 1);
+    RendererRuntimeTextureMirror.register(location, gpuTexture);
+
+    try {
+      try (var source = new NativeImage(4, 1, true)) {
+        source.setPixel(0, 0, 0xFF102030);
+        source.setPixel(1, 0, 0xFF405060);
+        source.setPixel(2, 0, 0xFF708090);
+        source.setPixel(3, 0, 0xFFA0B0C0);
+        RendererRuntimeTextureMirror.mirrorWrite(gpuTexture, source, 0, 0, 4, 1, 0, 0);
+      }
+
+      RendererRuntimeTextureMirror.mirrorCopy(gpuTexture, gpuTexture, 1, 0, 0, 0, 3, 1);
+
+      var mirrored = RendererRuntimeTextureMirror.texture(location);
+      assertNotNull(mirrored);
+      var image = mirrored.toBufferedImage();
+      assertEquals(0xFF102030, image.getRGB(0, 0));
+      assertEquals(0xFF102030, image.getRGB(1, 0));
+      assertEquals(0xFF405060, image.getRGB(2, 0));
+      assertEquals(0xFF708090, image.getRGB(3, 0));
+    } finally {
+      RendererRuntimeTextureMirror.unregister(location);
+    }
+  }
+
+  @Test
+  void mirrorsRuntimeTextureClears() {
+    var location = Identifier.withDefaultNamespace("test/runtime-mirror-clear");
+    var gpuTexture = new FakeGpuTexture(GpuFormat.RGBA8_UNORM, 2, 2);
+    RendererRuntimeTextureMirror.register(location, gpuTexture);
+
+    try {
+      RendererRuntimeTextureMirror.mirrorClear(gpuTexture, 0xFF102030);
+      RendererRuntimeTextureMirror.mirrorClear(gpuTexture, 0x80405060, 1, 0, 1, 2);
+
+      var mirrored = RendererRuntimeTextureMirror.texture(location);
+      assertNotNull(mirrored);
+      var image = mirrored.toBufferedImage();
+      assertEquals(0xFF102030, image.getRGB(0, 0));
+      assertEquals(0x80405060, image.getRGB(1, 0));
+      assertEquals(0xFF102030, image.getRGB(0, 1));
+      assertEquals(0x80405060, image.getRGB(1, 1));
+    } finally {
+      RendererRuntimeTextureMirror.unregister(location);
+    }
+  }
+
   private RendererAssets.TextureImage textureWithAlpha(int alpha) {
     var image = new BufferedImage(2, 1, BufferedImage.TYPE_INT_ARGB);
     image.setRGB(0, 0, 0xFFFFFFFF);
@@ -383,7 +464,15 @@ class RendererAssetsRuntimeTextureTest {
     private boolean closed;
 
     private FakeGpuTexture(GpuFormat format, int width, int height) {
-      super(GpuTexture.USAGE_COPY_DST | GpuTexture.USAGE_TEXTURE_BINDING, "test runtime texture", format, width, height, 1, 1);
+      super(
+        GpuTexture.USAGE_COPY_DST | GpuTexture.USAGE_COPY_SRC | GpuTexture.USAGE_TEXTURE_BINDING | GpuTexture.USAGE_RENDER_ATTACHMENT,
+        "test runtime texture",
+        format,
+        width,
+        height,
+        1,
+        1
+      );
     }
 
     @Override

@@ -211,6 +211,7 @@ public record RenderMaterial(
 
   public RenderMaterial withRenderType(RenderType renderType, int sortGroup) {
     var pipeline = renderType.pipeline();
+    var pipelinePath = pipeline.getLocation().getPath();
     var fragmentShader = pipeline.getFragmentShader().getPath();
     var colorTargetState = pipeline.getColorTargetState();
     var pipelineAlphaMode = alphaMode(colorTargetState, alphaMode);
@@ -230,7 +231,7 @@ public record RenderMaterial(
       colorTargetState.writeMask(),
       UvTransform.fromMatrix(renderType.state.textureTransform.createMatrix()),
       textureSampleMode(pipeline),
-      fogMode(fragmentShader),
+      fogMode(pipelinePath, fragmentShader),
       renderType.sortOnUpload() && renderType.primitiveTopology() == PrimitiveTopology.QUADS,
       sortGroup,
       viewScale(renderType),
@@ -241,6 +242,7 @@ public record RenderMaterial(
   }
 
   public RenderMaterial withPipelineState(RenderPipeline pipeline) {
+    var pipelinePath = pipeline.getLocation().getPath();
     var fragmentShader = pipeline.getFragmentShader().getPath();
     var colorTargetState = pipeline.getColorTargetState();
     var pipelineAlphaMode = alphaMode(colorTargetState, alphaMode);
@@ -260,7 +262,7 @@ public record RenderMaterial(
       colorTargetState.writeMask(),
       uvTransform,
       textureSampleMode(pipeline),
-      fogMode(fragmentShader),
+      fogMode(pipelinePath, fragmentShader),
       sortOnUpload,
       sortGroup,
       viewScale,
@@ -388,6 +390,7 @@ public record RenderMaterial(
     if (pipelinePath.endsWith("text_grayscale")
       || pipelinePath.endsWith("gui_text_grayscale")
       || pipelinePath.endsWith("text_grayscale_polygon_offset")
+      || pipelinePath.endsWith("gui_text_grayscale_see_through")
       || pipelinePath.endsWith("text_grayscale_see_through")) {
       return TextureSampleMode.INTENSITY;
     }
@@ -432,7 +435,14 @@ public record RenderMaterial(
     return binding.sampler();
   }
 
-  private static FogMode fogMode(String fragmentShader) {
+  private static FogMode fogMode(String pipelinePath, String fragmentShader) {
+    if (pipelinePath.endsWith("text_background")) {
+      return FogMode.COLOR_MIX;
+    }
+    if (pipelinePath.endsWith("text_background_see_through")) {
+      return FogMode.NONE;
+    }
+
     return switch (fragmentShader) {
       case "core/glint" -> FogMode.RGB_FADE;
       case "core/rendertype_lightning" -> FogMode.ALPHA_FADE;

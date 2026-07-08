@@ -26,6 +26,7 @@ import it.unimi.dsi.fastutil.ints.IntList;
 import lombok.extern.slf4j.Slf4j;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.font.TextRenderable;
 import net.minecraft.client.model.Model;
 import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -53,6 +54,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.FormattedCharSequence;
+import net.minecraft.util.LightCoordsUtil;
 import net.minecraft.world.entity.ItemOwner;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
@@ -1128,7 +1130,13 @@ public final class InventoryItemIconRenderer {
       int backgroundColor,
       CameraRenderState cameraRenderState
     ) {
-      unsupported = true;
+      if (text.getString().isEmpty()) {
+        return;
+      }
+
+      var pose = new Matrix4f(poseStack.last().pose());
+      pose.translate((float) position.x(), (float) position.y(), (float) position.z());
+      submitComponentText(pose, text, 0.0F, 0.0F, color, backgroundColor, Font.DisplayMode.NORMAL, LightCoordsUtil.FULL_BRIGHT);
     }
 
     @Override
@@ -1144,17 +1152,40 @@ public final class InventoryItemIconRenderer {
       int backgroundColor,
       int outlineColor
     ) {
-      unsupported = true;
+      RenderDebugTrace.current().textSubmission(
+        "inventory-formatted",
+        formattedText(text),
+        shadow,
+        displayMode.name(),
+        light,
+        color,
+        backgroundColor,
+        outlineColor
+      );
+      var font = fontOrNull();
+      if (font == null) {
+        RenderDebugTrace.current().inventoryIconIgnored("text");
+        return;
+      }
+      if (outlineColor != 0) {
+        capturePreparedText(poseStack.last().pose(), font.prepare8xTextOutline(text, x, y, outlineColor), Font.DisplayMode.NORMAL, light);
+      }
+      capturePreparedText(
+        poseStack.last().pose(),
+        font.prepareText(text, x, y, color, shadow, displayMode == Font.DisplayMode.SEE_THROUGH, backgroundColor),
+        displayMode,
+        light
+      );
     }
 
     @Override
     public void submitFlame(PoseStack poseStack, EntityRenderState entityRenderState, Quaternionf rotation) {
-      unsupported = true;
+      RenderDebugTrace.current().inventoryIconIgnored("flame");
     }
 
     @Override
     public void submitLeash(PoseStack poseStack, EntityRenderState.LeashState leashState) {
-      unsupported = true;
+      RenderDebugTrace.current().inventoryIconIgnored("leash");
     }
 
     @Override
@@ -1301,10 +1332,8 @@ public final class InventoryItemIconRenderer {
       submitGizmoQuads(group);
       submitGizmoTriangleFans(group);
       submitGizmoLines(group);
+      submitGizmoTexts(group, cameraRenderState);
       submitGizmoPoints(group);
-      if (!group.texts().isEmpty()) {
-        unsupported = true;
-      }
     }
 
     private void submitGizmoQuads(DrawableGizmoPrimitives.Group group) {
@@ -1377,10 +1406,120 @@ public final class InventoryItemIconRenderer {
       consumer.flush(quads, textures);
     }
 
+    private void submitGizmoTexts(DrawableGizmoPrimitives.Group group, @Nullable CameraRenderState cameraRenderState) {
+      if (group.texts().isEmpty()) {
+        return;
+      }
+
+      var poseStack = new PoseStack();
+      var font = fontOrNull();
+      if (font == null) {
+        RenderDebugTrace.current().inventoryIconIgnored("gizmo-text");
+        return;
+      }
+      for (var text : group.texts()) {
+        var style = text.style();
+        if (!Float.isFinite(style.scale()) || style.scale() <= 0.0F || text.text().isEmpty()) {
+          continue;
+        }
+
+        poseStack.pushPose();
+        try {
+          poseStack.translate(text.pos().x(), text.pos().y(), text.pos().z());
+          if (cameraRenderState != null && cameraRenderState.initialized) {
+            poseStack.mulPose(cameraRenderState.orientation);
+          }
+          poseStack.scale(style.scale() / 16.0F, -style.scale() / 16.0F, style.scale() / 16.0F);
+          var x = style.adjustLeft().isEmpty()
+            ? -font.width(text.text()) / 2.0F
+            : (float) -style.adjustLeft().getAsDouble() / style.scale();
+          capturePreparedText(
+            poseStack.last().pose(),
+            font.prepareText(text.text(), x, 0.0F, style.color(), false, 0),
+            Font.DisplayMode.NORMAL,
+            LightCoordsUtil.FULL_BRIGHT
+          );
+        } finally {
+          poseStack.popPose();
+        }
+      }
+    }
+
+    private void submitComponentText(
+      Matrix4f pose,
+      Component text,
+      float x,
+      float y,
+      int color,
+      int backgroundColor,
+      Font.DisplayMode displayMode,
+      int light
+    ) {
+      RenderDebugTrace.current().textSubmission(
+        "inventory-component",
+        text.getString(),
+        false,
+        displayMode.name(),
+        light,
+        color,
+        backgroundColor,
+        0
+      );
+      var font = fontOrNull();
+      if (font == null) {
+        RenderDebugTrace.current().inventoryIconIgnored("name-tag");
+        return;
+      }
+      capturePreparedText(
+        pose,
+        font.prepareText(text.getVisualOrderText(), x, y, color, false, displayMode == Font.DisplayMode.SEE_THROUGH, backgroundColor),
+        displayMode,
+        light
+      );
+    }
+
+    private void capturePreparedText(Matrix4fc pose, Font.PreparedText preparedText, Font.DisplayMode displayMode, int light) {
+      preparedText.visit(new Font.GlyphVisitor() {
+        @Override
+        public void acceptRenderable(TextRenderable renderable) {
+          captureTextRenderable(pose, renderable, displayMode, light);
+        }
+      });
+    }
+
+    private void captureTextRenderable(Matrix4fc pose, TextRenderable renderable, Font.DisplayMode displayMode, int light) {
+      var renderType = renderable.renderType(displayMode);
+      var textureView = renderable.textureView();
+      var texture = textureView != null ? RendererRuntimeTextureMirror.texture(textureView.texture()) : null;
+      if (texture == null) {
+        texture = textureImageFromRenderType(renderType);
+      }
+
+      var alphaMode = VanillaSubmitCollector.alphaMode(renderType, texture, 0xFFFFFFFF);
+      var consumer = new ItemCapturingVertexConsumer(new Matrix4f(), renderType.primitiveTopology(), renderType, texture, alphaMode);
+      renderable.render(pose, consumer, light, displayMode == Font.DisplayMode.SEE_THROUGH);
+      consumer.flush(quads, textures);
+    }
+
     private ItemCapturingVertexConsumer newItemConsumer(Matrix4fc pose, RenderType renderType, int color) {
       var texture = textureImageFromRenderType(renderType);
       var alphaMode = VanillaSubmitCollector.alphaMode(renderType, texture, color);
       return new ItemCapturingVertexConsumer(pose, renderType.primitiveTopology(), renderType, texture, alphaMode);
+    }
+
+    @Nullable
+    private static Font fontOrNull() {
+      var minecraft = Minecraft.getInstance();
+      return minecraft != null ? minecraft.font : null;
+    }
+
+    private static String formattedText(FormattedCharSequence text) {
+      var builder = new StringBuilder();
+      text.accept((_, _, codePoint) -> {
+        builder.appendCodePoint(codePoint);
+        return true;
+      });
+      return builder.toString();
     }
 
     private static VertexConsumer addGizmoVertex(VertexConsumer consumer, Vec3 position, int color) {
