@@ -453,6 +453,51 @@ class RendererAssetsRuntimeTextureTest {
     }
   }
 
+  @Test
+  void nonBaseRuntimeTextureWritesAreReportedAndIgnored() {
+    var location = Identifier.withDefaultNamespace("test/runtime-mirror-non-base-write");
+    var gpuTexture = new FakeGpuTexture(GpuFormat.RGBA8_UNORM, 4, 4, 2, 2);
+    var trace = RenderDebugTrace.createForced(1, 1, 1, 0.0F, 0.0F);
+    RendererRuntimeTextureMirror.register(location, gpuTexture);
+    RenderDebugTrace.bind(trace);
+
+    try (var source = new NativeImage(2, 2, true)) {
+      source.setPixel(0, 0, 0xFF102030);
+      RendererRuntimeTextureMirror.mirrorWrite(gpuTexture, source, 1, 1, 0, 0, 2, 2, 0, 0);
+
+      assertNull(RendererRuntimeTextureMirror.texture(location));
+      assertTrue(trace.snapshot().notableEvents().stream().anyMatch(event ->
+        event.contains("runtime-texture-skip:write:")
+          && event.contains("non-base-level:mip=1,layer=1")));
+    } finally {
+      RenderDebugTrace.unbind();
+      RendererRuntimeTextureMirror.unregister(location);
+    }
+  }
+
+  @Test
+  void runtimeTextureDebugSnapshotsExposeTextureShape() {
+    var location = Identifier.withDefaultNamespace("test/runtime-mirror-debug-shape");
+    var gpuTexture = new FakeGpuTexture(GpuFormat.RGBA8_UNORM, 4, 4, 3, 2);
+    RendererRuntimeTextureMirror.register(location, gpuTexture);
+
+    try {
+      var snapshot = RendererRuntimeTextureMirror.debugSnapshots()
+        .stream()
+        .filter(candidate -> candidate.location().equals(location))
+        .findFirst()
+        .orElseThrow();
+
+      assertEquals(4, snapshot.width());
+      assertEquals(4, snapshot.height());
+      assertEquals(3, snapshot.mipLevels());
+      assertEquals(2, snapshot.depthOrLayers());
+      assertFalse(snapshot.hasUploadData());
+    } finally {
+      RendererRuntimeTextureMirror.unregister(location);
+    }
+  }
+
   private RendererAssets.TextureImage textureWithAlpha(int alpha) {
     var image = new BufferedImage(2, 1, BufferedImage.TYPE_INT_ARGB);
     image.setRGB(0, 0, 0xFFFFFFFF);
@@ -464,14 +509,18 @@ class RendererAssetsRuntimeTextureTest {
     private boolean closed;
 
     private FakeGpuTexture(GpuFormat format, int width, int height) {
+      this(format, width, height, 1, 1);
+    }
+
+    private FakeGpuTexture(GpuFormat format, int width, int height, int mipLevels, int depthOrLayers) {
       super(
         GpuTexture.USAGE_COPY_DST | GpuTexture.USAGE_COPY_SRC | GpuTexture.USAGE_TEXTURE_BINDING | GpuTexture.USAGE_RENDER_ATTACHMENT,
         "test runtime texture",
         format,
         width,
         height,
-        1,
-        1
+        depthOrLayers,
+        mipLevels
       );
     }
 

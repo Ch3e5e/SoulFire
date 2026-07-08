@@ -476,6 +476,8 @@ public final class RendererDebugDump {
         json.addProperty("location", snapshot.location().toString());
         json.addProperty("width", snapshot.width());
         json.addProperty("height", snapshot.height());
+        json.addProperty("mipLevels", snapshot.mipLevels());
+        json.addProperty("depthOrLayers", snapshot.depthOrLayers());
         json.addProperty("format", snapshot.format());
         json.addProperty("hasUploadData", snapshot.hasUploadData());
         var texture = snapshot.texture();

@@ -43,7 +43,12 @@ public final class RendererRuntimeTextureMirror {
   }
 
   public static void register(Identifier location, @Nullable GpuTexture texture, @Nullable NativeImage initialPixels) {
-    if (texture == null || !texture.getFormat().hasColorAspect()) {
+    if (texture == null) {
+      RenderDebugTrace.current().runtimeTextureMirrorSkipped("register", location + ":null-texture");
+      return;
+    }
+    if (!texture.getFormat().hasColorAspect()) {
+      RenderDebugTrace.current().runtimeTextureMirrorSkipped("register", location + ":non-color-format:" + texture.getFormat());
       return;
     }
 
@@ -81,13 +86,35 @@ public final class RendererRuntimeTextureMirror {
     int height,
     int sourceX,
     int sourceY) {
+    mirrorWrite(destination, source, 0, 0, destX, destY, width, height, sourceX, sourceY);
+  }
+
+  public static void mirrorWrite(
+    GpuTexture destination,
+    NativeImage source,
+    int mipLevel,
+    int depthOrLayer,
+    int destX,
+    int destY,
+    int width,
+    int height,
+    int sourceX,
+    int sourceY) {
     synchronized (LOCK) {
-      var mirrored = mirroredTexture(destination);
-      if (mirrored == null) {
+      if (!isBaseLayer(mipLevel, depthOrLayer)) {
+        skipped("write", destination, "non-base-level:mip=" + mipLevel + ",layer=" + depthOrLayer);
         return;
       }
 
-      mirrored.write(source, destX, destY, width, height, sourceX, sourceY);
+      var mirrored = mirroredTexture(destination);
+      if (mirrored == null) {
+        skipped("write", destination, "untracked-destination");
+        return;
+      }
+
+      if (!mirrored.write(source, destX, destY, width, height, sourceX, sourceY)) {
+        skipped("write", destination, "empty-region");
+      }
     }
   }
 
@@ -99,13 +126,34 @@ public final class RendererRuntimeTextureMirror {
     int destY,
     int width,
     int height) {
+    mirrorWrite(destination, source, format, 0, 0, destX, destY, width, height);
+  }
+
+  public static void mirrorWrite(
+    GpuTexture destination,
+    ByteBuffer source,
+    NativeImage.Format format,
+    int mipLevel,
+    int depthOrLayer,
+    int destX,
+    int destY,
+    int width,
+    int height) {
     synchronized (LOCK) {
-      var mirrored = mirroredTexture(destination);
-      if (mirrored == null) {
+      if (!isBaseLayer(mipLevel, depthOrLayer)) {
+        skipped("write-buffer", destination, "non-base-level:mip=" + mipLevel + ",layer=" + depthOrLayer);
         return;
       }
 
-      mirrored.write(source, format, destX, destY, width, height);
+      var mirrored = mirroredTexture(destination);
+      if (mirrored == null) {
+        skipped("write-buffer", destination, "untracked-destination");
+        return;
+      }
+
+      if (!mirrored.write(source, format, destX, destY, width, height)) {
+        skipped("write-buffer", destination, "empty-region");
+      }
     }
   }
 
@@ -118,14 +166,47 @@ public final class RendererRuntimeTextureMirror {
     int sourceY,
     int width,
     int height) {
+    mirrorCopy(source, destination, 0, destX, destY, sourceX, sourceY, width, height);
+  }
+
+  public static void mirrorCopy(
+    GpuTexture source,
+    GpuTexture destination,
+    int mipLevel,
+    int destX,
+    int destY,
+    int sourceX,
+    int sourceY,
+    int width,
+    int height) {
     synchronized (LOCK) {
-      var sourceMirrored = mirroredTexture(source);
-      var destinationMirrored = mirroredTexture(destination);
-      if (sourceMirrored == null || destinationMirrored == null) {
+      if (mipLevel != 0) {
+        skipped("copy", destination, "non-base-level:mip=" + mipLevel);
         return;
       }
 
-      destinationMirrored.copyFrom(sourceMirrored, destX, destY, sourceX, sourceY, width, height);
+      var sourceMirrored = mirroredTexture(source);
+      var destinationMirrored = mirroredTexture(destination);
+      if (sourceMirrored == null) {
+        skipped("copy", source, "untracked-source");
+        return;
+      }
+      if (destinationMirrored == null) {
+        skipped("copy", destination, "untracked-destination");
+        return;
+      }
+      if (!sourceMirrored.hasUploadData()) {
+        skipped("copy", source, "source-empty");
+        return;
+      }
+      if (sourceMirrored.format != destinationMirrored.format) {
+        skipped("copy", destination, "format-mismatch:" + sourceMirrored.format + "->" + destinationMirrored.format);
+        return;
+      }
+
+      if (!destinationMirrored.copyFrom(sourceMirrored, destX, destY, sourceX, sourceY, width, height)) {
+        skipped("copy", destination, "empty-region");
+      }
     }
   }
 
@@ -133,10 +214,13 @@ public final class RendererRuntimeTextureMirror {
     synchronized (LOCK) {
       var mirrored = mirroredTexture(destination);
       if (mirrored == null) {
+        skipped("clear", destination, "untracked-destination");
         return;
       }
 
-      mirrored.clear(color, 0, 0, mirrored.width, mirrored.height);
+      if (!mirrored.clear(color, 0, 0, mirrored.width, mirrored.height)) {
+        skipped("clear", destination, "empty-region");
+      }
     }
   }
 
@@ -144,10 +228,13 @@ public final class RendererRuntimeTextureMirror {
     synchronized (LOCK) {
       var mirrored = mirroredTexture(destination);
       if (mirrored == null) {
+        skipped("clear", destination, "untracked-destination");
         return;
       }
 
-      mirrored.clear(color, destX, destY, width, height);
+      if (!mirrored.clear(color, destX, destY, width, height)) {
+        skipped("clear", destination, "empty-region");
+      }
     }
   }
 
@@ -168,6 +255,8 @@ public final class RendererRuntimeTextureMirror {
           entry.getKey(),
           mirrored.width,
           mirrored.height,
+          mirrored.mipLevels,
+          mirrored.depthOrLayers,
           mirrored.format.toString(),
           mirrored.hasUploadData(),
           textureImage(mirrored)
@@ -181,7 +270,11 @@ public final class RendererRuntimeTextureMirror {
   public static RendererAssets.TextureImage texture(GpuTexture texture) {
     synchronized (LOCK) {
       var location = TEXTURE_IDS.get(texture);
-      return location != null ? texture(location) : null;
+      if (location == null) {
+        RenderDebugTrace.current().runtimeTextureMirrorSkipped("lookup", "untracked-texture");
+        return null;
+      }
+      return texture(location);
     }
   }
 
@@ -189,6 +282,8 @@ public final class RendererRuntimeTextureMirror {
     Identifier location,
     int width,
     int height,
+    int mipLevels,
+    int depthOrLayers,
     String format,
     boolean hasUploadData,
     @Nullable RendererAssets.TextureImage texture
@@ -218,9 +313,21 @@ public final class RendererRuntimeTextureMirror {
     return mirrored;
   }
 
+  private static boolean isBaseLayer(int mipLevel, int depthOrLayer) {
+    return mipLevel == 0 && depthOrLayer == 0;
+  }
+
+  private static void skipped(String operation, GpuTexture texture, String reason) {
+    var location = TEXTURE_IDS.get(texture);
+    var subject = location != null ? location.toString() : "untracked";
+    RenderDebugTrace.current().runtimeTextureMirrorSkipped(operation, subject + ":" + reason);
+  }
+
   private static final class MirroredTexture {
     private final int width;
     private final int height;
+    private final int mipLevels;
+    private final int depthOrLayers;
     private final GpuFormat format;
     private final int[] pixels;
     private boolean hasUploadData;
@@ -228,15 +335,21 @@ public final class RendererRuntimeTextureMirror {
     private MirroredTexture(GpuTexture texture) {
       this.width = texture.getWidth(0);
       this.height = texture.getHeight(0);
+      this.mipLevels = texture.getMipLevels();
+      this.depthOrLayers = texture.getDepthOrLayers();
       this.format = texture.getFormat();
       this.pixels = new int[Math.max(0, width * height)];
     }
 
     private boolean matches(GpuTexture texture) {
-      return width == texture.getWidth(0) && height == texture.getHeight(0) && format == texture.getFormat();
+      return width == texture.getWidth(0)
+        && height == texture.getHeight(0)
+        && mipLevels == texture.getMipLevels()
+        && depthOrLayers == texture.getDepthOrLayers()
+        && format == texture.getFormat();
     }
 
-    private void write(
+    private boolean write(
       NativeImage source,
       int destX,
       int destY,
@@ -246,7 +359,7 @@ public final class RendererRuntimeTextureMirror {
       int sourceY) {
       var region = clippedRegion(destX, destY, width, height, sourceX, sourceY, source.getWidth(), source.getHeight());
       if (region == null) {
-        return;
+        return false;
       }
       for (var y = 0; y < region.height(); y++) {
         for (var x = 0; x < region.width(); x++) {
@@ -255,12 +368,13 @@ public final class RendererRuntimeTextureMirror {
         }
       }
       hasUploadData = true;
+      return true;
     }
 
-    private void write(ByteBuffer source, NativeImage.Format format, int destX, int destY, int width, int height) {
+    private boolean write(ByteBuffer source, NativeImage.Format format, int destX, int destY, int width, int height) {
       var region = clippedRegion(destX, destY, width, height, 0, 0, width, height);
       if (region == null) {
-        return;
+        return false;
       }
       var data = source.duplicate();
       var baseOffset = data.position();
@@ -272,16 +386,13 @@ public final class RendererRuntimeTextureMirror {
         }
       }
       hasUploadData = true;
+      return true;
     }
 
-    private void copyFrom(MirroredTexture source, int destX, int destY, int sourceX, int sourceY, int width, int height) {
-      if (!source.hasUploadData || format != source.format) {
-        return;
-      }
-
+    private boolean copyFrom(MirroredTexture source, int destX, int destY, int sourceX, int sourceY, int width, int height) {
       var region = clippedRegion(destX, destY, width, height, sourceX, sourceY, source.width, source.height);
       if (region == null) {
-        return;
+        return false;
       }
 
       var copied = new int[region.width() * region.height()];
@@ -304,12 +415,13 @@ public final class RendererRuntimeTextureMirror {
         );
       }
       hasUploadData = true;
+      return true;
     }
 
-    private void clear(int color, int destX, int destY, int width, int height) {
+    private boolean clear(int color, int destX, int destY, int width, int height) {
       var region = clippedRegion(destX, destY, width, height, 0, 0, width, height);
       if (region == null) {
-        return;
+        return false;
       }
 
       for (var y = 0; y < region.height(); y++) {
@@ -317,6 +429,7 @@ public final class RendererRuntimeTextureMirror {
         Arrays.fill(pixels, rowStart, rowStart + region.width(), color);
       }
       hasUploadData = true;
+      return true;
     }
 
     @Nullable

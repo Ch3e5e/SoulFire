@@ -491,6 +491,29 @@ class InventoryItemIconRendererTest {
     assertFalse(unsupported(collector));
   }
 
+  @Test
+  void itemSubmitCollectorCapturesFlameGeometry() throws Exception {
+    var collector = newItemSubmitCollector();
+    var collectorClass = collector.getClass();
+    var submitFlame = collectorClass.getDeclaredMethod(
+      "submitFlame",
+      PoseStack.class,
+      EntityRenderState.class,
+      Quaternionf.class
+    );
+    submitFlame.setAccessible(true);
+    var renderState = new EntityRenderState();
+    renderState.boundingBoxWidth = 1.0F;
+    renderState.boundingBoxHeight = 1.4F;
+    renderState.lightCoords = LightCoordsUtil.FULL_BRIGHT;
+
+    submitFlame.invoke(collector, new PoseStack(), renderState, new Quaternionf());
+
+    assertFalse(unsupported(collector));
+    assertFalse(quads(collector).isEmpty());
+    assertTrue(quads(collector).size() <= 4);
+  }
+
   private static Object newItemSubmitCollector() throws Exception {
     var collectorClass = Class.forName("com.soulfiremc.server.renderer.InventoryItemIconRenderer$ItemSubmitCollector");
     var constructor = collectorClass.getDeclaredConstructor();

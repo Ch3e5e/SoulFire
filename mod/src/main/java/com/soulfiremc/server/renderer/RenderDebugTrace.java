@@ -191,7 +191,7 @@ public final class RenderDebugTrace {
 
   public void vanillaBlockGeometryFallback(String blockId, Throwable throwable) {
     vanillaBlockGeometryFallback(blockId);
-    note("block-fallback-reason:" + blockId + ":" + throwable.getClass().getSimpleName());
+    note("block-fallback-reason:" + blockId + ":" + conciseThrowable(throwable));
     noteFailure("block-fallback", blockId, throwable);
   }
 
@@ -203,13 +203,25 @@ public final class RenderDebugTrace {
 
   public void missingTexture(String textureId, Throwable throwable) {
     missingTexture(textureId);
-    note("missing-texture-reason:" + textureId + ":" + throwable.getClass().getSimpleName());
+    note("missing-texture-reason:" + textureId + ":" + conciseThrowable(throwable));
     noteFailure("missing-texture", textureId, throwable);
   }
 
   public void inventoryIconIgnored(String feature) {
     if (enabled) {
       note("inventory-icon-ignored:" + feature);
+    }
+  }
+
+  public void unknownRenderPipeline(String pipelinePath, String fragmentShader) {
+    if (enabled) {
+      note("unknown-pipeline:" + pipelinePath + ":" + fragmentShader);
+    }
+  }
+
+  public void runtimeTextureMirrorSkipped(String operation, String reason) {
+    if (enabled) {
+      note("runtime-texture-skip:" + operation + ":" + reason);
     }
   }
 
@@ -402,6 +414,20 @@ public final class RenderDebugTrace {
 
   private static String hexArgb(int color) {
     return "0x%08X".formatted(color);
+  }
+
+  private static String conciseThrowable(Throwable throwable) {
+    var message = throwable.getMessage();
+    if (message == null || message.isBlank()) {
+      return throwable.getClass().getSimpleName();
+    }
+
+    return throwable.getClass().getSimpleName() + ":" + conciseMessage(message);
+  }
+
+  private static String conciseMessage(String message) {
+    var sanitized = message.replace('\n', ' ').replace('\r', ' ').trim();
+    return sanitized.length() <= 120 ? sanitized : sanitized.substring(0, 117) + "...";
   }
 
   public record TextSubmission(

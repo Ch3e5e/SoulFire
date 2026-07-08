@@ -215,6 +215,7 @@ public record RenderMaterial(
     var fragmentShader = pipeline.getFragmentShader().getPath();
     var colorTargetState = pipeline.getColorTargetState();
     var pipelineAlphaMode = alphaMode(colorTargetState, alphaMode);
+    traceUnknownPipelineDefaults(pipelinePath, fragmentShader);
     return new RenderMaterial(
       textureWithRenderTypeAddressMode(texture, renderType, fragmentShader),
       pipelineAlphaMode,
@@ -246,6 +247,7 @@ public record RenderMaterial(
     var fragmentShader = pipeline.getFragmentShader().getPath();
     var colorTargetState = pipeline.getColorTargetState();
     var pipelineAlphaMode = alphaMode(colorTargetState, alphaMode);
+    traceUnknownPipelineDefaults(pipelinePath, fragmentShader);
     return new RenderMaterial(
       textureWithShaderAddressMode(texture, fragmentShader),
       pipelineAlphaMode,
@@ -436,6 +438,18 @@ public record RenderMaterial(
   }
 
   private static FogMode fogMode(String pipelinePath, String fragmentShader) {
+    if (pipelinePath.endsWith("gui_text")
+      || pipelinePath.endsWith("gui_text_grayscale")
+      || pipelinePath.endsWith("text_see_through")
+      || pipelinePath.endsWith("text_grayscale_see_through")) {
+      return FogMode.NONE;
+    }
+    if (pipelinePath.endsWith("text")
+      || pipelinePath.endsWith("text_grayscale")
+      || pipelinePath.endsWith("text_polygon_offset")
+      || pipelinePath.endsWith("text_grayscale_polygon_offset")) {
+      return FogMode.COLOR_MIX;
+    }
     if (pipelinePath.endsWith("text_background")) {
       return FogMode.COLOR_MIX;
     }
@@ -452,6 +466,7 @@ public record RenderMaterial(
            "core/item",
            "core/particle",
            "core/position",
+           "core/rendertype_clouds",
            "core/rendertype_crumbling",
            "core/rendertype_end_portal",
            "core/rendertype_entity_shadow",
@@ -464,6 +479,58 @@ public record RenderMaterial(
            "core/sky",
            "core/terrain" -> FogMode.COLOR_MIX;
       default -> FogMode.NONE;
+    };
+  }
+
+  private static void traceUnknownPipelineDefaults(String pipelinePath, String fragmentShader) {
+    if (!isKnownPipelineShader(fragmentShader)) {
+      RenderDebugTrace.current().unknownRenderPipeline(pipelinePath, fragmentShader);
+    }
+  }
+
+  private static boolean isKnownPipelineShader(String fragmentShader) {
+    return switch (fragmentShader) {
+      case "core/animate_sprite_blit",
+           "core/animate_sprite_interpolate",
+           "core/blit_screen",
+           "core/block",
+           "core/debug_point",
+           "core/entity",
+           "core/glint",
+           "core/gui",
+           "core/item",
+           "core/lightmap",
+           "core/panorama",
+           "core/particle",
+           "core/position_color",
+           "core/position_tex",
+           "core/position_tex_color",
+           "core/rendertype_beacon_beam",
+           "core/rendertype_clouds",
+           "core/rendertype_crumbling",
+           "core/rendertype_end_portal",
+           "core/rendertype_entity_shadow",
+           "core/rendertype_leash",
+           "core/rendertype_lightning",
+           "core/rendertype_lines",
+           "core/rendertype_outline",
+           "core/rendertype_text",
+           "core/rendertype_text_background",
+           "core/rendertype_text_background_see_through",
+           "core/rendertype_text_grayscale",
+           "core/rendertype_text_grayscale_see_through",
+           "core/rendertype_text_intensity",
+           "core/rendertype_text_intensity_see_through",
+           "core/rendertype_text_see_through",
+           "core/rendertype_water_mask",
+           "core/rendertype_world_border",
+           "core/screenquad",
+           "core/sky",
+           "core/stars",
+           "core/terrain",
+           "core/text",
+           "core/text_background" -> true;
+      default -> false;
     };
   }
 

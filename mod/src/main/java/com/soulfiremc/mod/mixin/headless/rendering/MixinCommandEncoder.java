@@ -44,10 +44,8 @@ public class MixinCommandEncoder {
     int destX,
     int destY,
     CallbackInfo ci) {
-    if (mipLevel == 0 && depthOrLayer == 0) {
-      RendererRuntimeTextureMirror.mirrorWrite(
-        destination, source, destX, destY, source.getWidth(), source.getHeight(), 0, 0);
-    }
+    RendererRuntimeTextureMirror.mirrorWrite(
+      destination, source, mipLevel, depthOrLayer, destX, destY, source.getWidth(), source.getHeight(), 0, 0);
   }
 
   @Inject(
@@ -65,9 +63,7 @@ public class MixinCommandEncoder {
     int width,
     int height,
     CallbackInfo ci) {
-    if (mipLevel == 0) {
-      RendererRuntimeTextureMirror.mirrorCopy(source, destination, destX, destY, sourceX, sourceY, width, height);
-    }
+    RendererRuntimeTextureMirror.mirrorCopy(source, destination, mipLevel, destX, destY, sourceX, sourceY, width, height);
   }
 
   @Inject(

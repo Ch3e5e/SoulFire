@@ -31,6 +31,7 @@ import net.minecraft.client.model.Model;
 import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.OrderedSubmitNodeCollector;
+import net.minecraft.client.renderer.Sheets;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.block.MovingBlockRenderState;
 import net.minecraft.client.renderer.block.dispatch.BlockStateModel;
@@ -47,8 +48,11 @@ import net.minecraft.client.renderer.state.gui.GuiItemRenderState;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.client.renderer.state.level.QuadParticleRenderState;
 import net.minecraft.client.renderer.texture.OverlayTexture;
+import net.minecraft.client.renderer.texture.TextureAtlas;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
+import net.minecraft.client.resources.model.ModelBakery;
 import net.minecraft.client.resources.model.geometry.BakedQuad;
+import net.minecraft.client.resources.model.sprite.SpriteId;
 import net.minecraft.core.component.DataComponentMap;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
@@ -100,6 +104,7 @@ public final class InventoryItemIconRenderer {
   private static final int ICON_PADDING = 2;
   private static final float GUI_PIXELS_PER_UNIT = 16.0F;
   private static final int MAX_GIF_FRAMES = 16;
+  private static final int MAX_INVENTORY_FLAME_LAYERS = 4;
   private static final Identifier ENCHANTED_GLINT_ITEM = Identifier.withDefaultNamespace("misc/enchanted_glint_item");
   private static final RendererAssets.TextureImage WHITE_TEXTURE = RendererAssets.TextureImage.fromArgb(1, 1, new int[]{0xFFFFFFFF}, null);
 
@@ -1180,12 +1185,99 @@ public final class InventoryItemIconRenderer {
 
     @Override
     public void submitFlame(PoseStack poseStack, EntityRenderState entityRenderState, Quaternionf rotation) {
-      RenderDebugTrace.current().inventoryIconIgnored("flame");
+      if (entityRenderState == null) {
+        RenderDebugTrace.current().inventoryIconIgnored("flame-state");
+        return;
+      }
+
+      var scale = entityRenderState.boundingBoxWidth * 1.4F;
+      if (!Float.isFinite(scale) || scale <= 1.0E-6F) {
+        return;
+      }
+
+      var fire0 = fireSprite(ModelBakery.FIRE_0);
+      var fire1 = fireSprite(ModelBakery.FIRE_1);
+      var texture = fire0 != null || fire1 != null
+        ? RendererAssets.instance().textureAtlas(TextureAtlas.LOCATION_BLOCKS)
+        : WHITE_TEXTURE;
+      var renderType = Sheets.cutoutBlockItemSheet();
+      var pose = poseStack.last().copy();
+      pose.scale(scale, scale, scale);
+      if (rotation != null) {
+        pose.rotate(rotation);
+      }
+      var height = flameHeight(entityRenderState, scale);
+      pose.translate(0.0F, 0.0F, 0.3F - (int) height * 0.02F);
+      var consumer = new ItemCapturingVertexConsumer(
+        pose.pose(),
+        renderType.primitiveTopology(),
+        renderType,
+        texture,
+        RendererAssets.AlphaMode.CUTOUT
+      );
+
+      var halfWidth = 0.5F;
+      var yOffset = 0.0F;
+      var zOffset = 0.0F;
+      var layers = Math.min(MAX_INVENTORY_FLAME_LAYERS, Math.max(1, (int) Math.ceil(height / 0.45F)));
+      for (var layer = 0; layer < layers && height > 0.0F; layer++) {
+        var sprite = (layer & 1) == 0 ? fire0 : fire1;
+        if (sprite == null) {
+          sprite = fire0 != null ? fire0 : fire1;
+        }
+        var u0 = sprite != null ? sprite.getU0() : 0.0F;
+        var v0 = sprite != null ? sprite.getV0() : 0.0F;
+        var u1 = sprite != null ? sprite.getU1() : 1.0F;
+        var v1 = sprite != null ? sprite.getV1() : 1.0F;
+        if (layer / 2 % 2 == 0) {
+          var tmp = u1;
+          u1 = u0;
+          u0 = tmp;
+        }
+
+        fireVertex(consumer, -halfWidth, -yOffset, zOffset, u1, v1);
+        fireVertex(consumer, halfWidth, -yOffset, zOffset, u0, v1);
+        fireVertex(consumer, halfWidth, 1.4F - yOffset, zOffset, u0, v0);
+        fireVertex(consumer, -halfWidth, 1.4F - yOffset, zOffset, u1, v0);
+        height -= 0.45F;
+        yOffset -= 0.45F;
+        halfWidth *= 0.9F;
+        zOffset -= 0.03F;
+      }
+      consumer.flush(quads, textures);
     }
 
     @Override
     public void submitLeash(PoseStack poseStack, EntityRenderState.LeashState leashState) {
       RenderDebugTrace.current().inventoryIconIgnored("leash");
+    }
+
+    private static float flameHeight(EntityRenderState entityRenderState, float scale) {
+      var height = entityRenderState.boundingBoxHeight;
+      if (!Float.isFinite(height) || height <= 0.0F) {
+        return 1.4F;
+      }
+      return Math.max(0.45F, height / scale);
+    }
+
+    @Nullable
+    private static TextureAtlasSprite fireSprite(SpriteId spriteId) {
+      var minecraft = Minecraft.getInstance();
+      if (minecraft == null) {
+        return null;
+      }
+
+      try {
+        return minecraft.getAtlasManager().get(spriteId);
+      } catch (Throwable _) {
+        return null;
+      }
+    }
+
+    private static void fireVertex(VertexConsumer consumer, float x, float y, float z, float u, float v) {
+      consumer.addVertex(x, y, z)
+        .setColor(0xFFFFFFFF)
+        .setUv(u, v);
     }
 
     @Override

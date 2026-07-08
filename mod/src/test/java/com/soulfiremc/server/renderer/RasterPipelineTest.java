@@ -17,9 +17,11 @@
  */
 package com.soulfiremc.server.renderer;
 
+import com.mojang.blaze3d.PrimitiveTopology;
 import com.mojang.blaze3d.pipeline.BlendFunction;
 import com.mojang.blaze3d.pipeline.ColorTargetState;
 import com.mojang.blaze3d.pipeline.DepthStencilState;
+import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.platform.BlendFactor;
 import com.mojang.blaze3d.platform.CompareOp;
 import com.mojang.blaze3d.vertex.PoseStack;
@@ -992,6 +994,50 @@ class RasterPipelineTest {
 
     assertEquals(RenderMaterial.FogMode.COLOR_MIX, textBackground.fogMode());
     assertEquals(RenderMaterial.FogMode.NONE, seeThroughTextBackground.fogMode());
+  }
+
+  @Test
+  void pipelineStateDerivesCurrentPipelineFogModes() {
+    var worldText = RenderMaterial
+      .create(solidTexture(0x80FFFFFF), RendererAssets.AlphaMode.TRANSLUCENT, 0xFFFFFFFF, true, 0.0F)
+      .withPipelineState(RenderPipelines.TEXT);
+    var guiText = RenderMaterial
+      .create(solidTexture(0x80FFFFFF), RendererAssets.AlphaMode.TRANSLUCENT, 0xFFFFFFFF, true, 0.0F)
+      .withPipelineState(RenderPipelines.GUI_TEXT);
+    var clouds = RenderMaterial
+      .create(solidTexture(0x80FFFFFF), RendererAssets.AlphaMode.TRANSLUCENT, 0xFFFFFFFF, true, 0.0F)
+      .withPipelineState(RenderPipelines.CLOUDS);
+    var worldBorder = RenderMaterial
+      .create(solidTexture(0x80FFFFFF), RendererAssets.AlphaMode.TRANSLUCENT, 0xFFFFFFFF, true, 0.0F)
+      .withPipelineState(RenderPipelines.WORLD_BORDER);
+
+    assertEquals(RenderMaterial.FogMode.COLOR_MIX, worldText.fogMode());
+    assertEquals(RenderMaterial.FogMode.NONE, guiText.fogMode());
+    assertEquals(RenderMaterial.FogMode.COLOR_MIX, clouds.fogMode());
+    assertEquals(RenderMaterial.FogMode.NONE, worldBorder.fogMode());
+  }
+
+  @Test
+  void unknownPipelineShadersAreReportedInDebugTrace() {
+    var trace = RenderDebugTrace.createForced(WIDTH, HEIGHT, 64, 0.0F, 0.0F);
+    var pipeline = RenderPipeline.builder()
+      .withLocation("pipeline/test_unknown")
+      .withVertexShader("core/test_unknown")
+      .withFragmentShader("core/test_unknown")
+      .withPrimitiveTopology(PrimitiveTopology.QUADS)
+      .build();
+    RenderDebugTrace.bind(trace);
+
+    try {
+      RenderMaterial
+        .create(solidTexture(0xFFFFFFFF), RendererAssets.AlphaMode.OPAQUE, 0xFFFFFFFF, true, 0.0F)
+        .withPipelineState(pipeline);
+
+      assertTrue(trace.snapshot().notableEvents().stream().anyMatch(event ->
+        event.equals("unknown-pipeline:pipeline/test_unknown:core/test_unknown")));
+    } finally {
+      RenderDebugTrace.unbind();
+    }
   }
 
   @Test
