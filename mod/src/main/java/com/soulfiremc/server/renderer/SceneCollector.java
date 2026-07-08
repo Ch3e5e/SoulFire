@@ -29,7 +29,6 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.ARGB;
-import net.minecraft.util.LightCoordsUtil;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.block.RenderShape;
@@ -285,7 +284,7 @@ public class SceneCollector {
       var u1 = column.uOffset() + 1.0F;
       var v0 = column.bottomY() * 0.25F + column.vOffset();
       var v1 = column.topY() * 0.25F + column.vOffset();
-      var color = modulateColor(ARGB.white(alpha), lightColor(ctx, column.lightCoords()));
+      var color = ARGB.white(alpha);
       var material = RenderMaterial
         .create(texture, RendererAssets.AlphaMode.TRANSLUCENT, color, true, 0.0F, RenderMaterial.ONE_TENTH_ALPHA_CUTOUT_THRESHOLD)
         .withPipelineState(pipeline);
@@ -311,18 +310,6 @@ public class SceneCollector {
       }
     }
     return sizes;
-  }
-
-  private static int lightColor(RenderContext ctx, int lightCoords) {
-    return VanillaLightmap.color(ctx, lightCoords, 0);
-  }
-
-  private static int modulateColor(int left, int right) {
-    var a = ((left >>> 24) & 0xFF) * ((right >>> 24) & 0xFF) / 255;
-    var r = ((left >>> 16) & 0xFF) * ((right >>> 16) & 0xFF) / 255;
-    var g = ((left >>> 8) & 0xFF) * ((right >>> 8) & 0xFF) / 255;
-    var b = (left & 0xFF) * (right & 0xFF) / 255;
-    return (a << 24) | (r << 16) | (g << 8) | b;
   }
 
 }

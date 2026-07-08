@@ -109,6 +109,52 @@ class SceneCollectorTest {
     assertFinite(weather[0]);
   }
 
+  @Test
+  void weatherMaterialColorDoesNotBakeColumnLight() throws Exception {
+    var method = SceneCollector.class.getDeclaredMethod(
+      "collectWeatherColumns",
+      RenderContext.class,
+      SceneData.Builder.class,
+      WeatherRenderState.class,
+      List.class,
+      RendererAssets.TextureImage.class,
+      float.class
+    );
+    method.setAccessible(true);
+
+    var camera = new Camera(new Vec3(0.5, 2.0, 0.5), 0.0F, 0.0F, 64, 64, 70.0, 64.0F);
+    var ctx = new RenderContext(
+      null,
+      null,
+      false,
+      camera,
+      null,
+      64,
+      64.0 * 64.0,
+      0,
+      256,
+      0L,
+      null,
+      null
+    );
+    var renderState = new WeatherRenderState();
+    renderState.intensity = 1.0F;
+    renderState.radius = 4;
+    var columns = List.of(
+      new WeatherEffectRenderer.ColumnInstance(1, 0, 0, 4, 0.0F, 0.0F, 0)
+    );
+    var builder = SceneData.builder();
+    var texture = RendererAssets.TextureImage.fromArgb(1, 1, new int[]{0xFFFFFFFF}, null);
+
+    method.invoke(null, ctx, builder, renderState, columns, texture, 1.0F);
+
+    var weather = builder.build().weather();
+    assertEquals(1, weather.length);
+    var color = weather[0].material().color();
+    assertEquals(0x00FFFFFF, color & 0x00FFFFFF);
+    assertTrue(((color >>> 24) & 0xFF) > 0);
+  }
+
   private static void assertFinite(RenderQuad quad) {
     assertFinite(quad.v0());
     assertFinite(quad.v1());
