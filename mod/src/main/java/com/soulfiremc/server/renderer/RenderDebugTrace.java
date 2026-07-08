@@ -53,6 +53,10 @@ public final class RenderDebugTrace {
   private final LongAdder weatherBillboards = new LongAdder();
   private final LongAdder vanillaBlockGeometryHits = new LongAdder();
   private final LongAdder vanillaBlockGeometryFallbacks = new LongAdder();
+  private final LongAdder resourceBlockGeometryFallbacks = new LongAdder();
+  private final LongAdder inventoryIconIgnored = new LongAdder();
+  private final LongAdder unknownRenderPipelines = new LongAdder();
+  private final LongAdder runtimeTextureMirrorSkips = new LongAdder();
   private final LongAdder opaqueTriangles = new LongAdder();
   private final LongAdder cutoutTriangles = new LongAdder();
   private final LongAdder translucentTriangles = new LongAdder();
@@ -195,6 +199,14 @@ public final class RenderDebugTrace {
     noteFailure("block-fallback", blockId, throwable);
   }
 
+  public void resourceBlockGeometryFallback(String blockId, int faces) {
+    if (!enabled) {
+      return;
+    }
+    resourceBlockGeometryFallbacks.increment();
+    note("block-resource-fallback:" + blockId + ":faces=" + faces);
+  }
+
   public void missingTexture(String textureId) {
     if (enabled) {
       note("missing-texture:" + textureId);
@@ -208,21 +220,27 @@ public final class RenderDebugTrace {
   }
 
   public void inventoryIconIgnored(String feature) {
-    if (enabled) {
-      note("inventory-icon-ignored:" + feature);
+    if (!enabled) {
+      return;
     }
+    inventoryIconIgnored.increment();
+    note("inventory-icon-ignored:" + feature);
   }
 
   public void unknownRenderPipeline(String pipelinePath, String fragmentShader) {
-    if (enabled) {
-      note("unknown-pipeline:" + pipelinePath + ":" + fragmentShader);
+    if (!enabled) {
+      return;
     }
+    unknownRenderPipelines.increment();
+    note("unknown-pipeline:" + pipelinePath + ":" + fragmentShader);
   }
 
   public void runtimeTextureMirrorSkipped(String operation, String reason) {
-    if (enabled) {
-      note("runtime-texture-skip:" + operation + ":" + reason);
+    if (!enabled) {
+      return;
     }
+    runtimeTextureMirrorSkips.increment();
+    note("runtime-texture-skip:" + operation + ":" + reason);
   }
 
   public void opaqueTriangles(long count) {
@@ -301,7 +319,7 @@ public final class RenderDebugTrace {
       return;
     }
     log.info(
-      "renderer-debug#{} size={}x{} dist={} yaw={} pitch={} scene[opaque={},cutout={},translucent={},terrainTranslucent={},translucentParticles={},clouds={},weather={}] world[chunks={},loaded={},sections={},meshed={},cacheHit={},cacheMiss={}] quads[block={},billboard={},weather={}] entities[seen={},visible={}] vanilla[blockHit={},blockFallback={}] raster[opaqueTris={},cutoutTris={},translucentTris={}] timeMs[world={},dynamic={},raster={},total={}]",
+      "renderer-debug#{} size={}x{} dist={} yaw={} pitch={} scene[opaque={},cutout={},translucent={},terrainTranslucent={},translucentParticles={},clouds={},weather={}] world[chunks={},loaded={},sections={},meshed={},cacheHit={},cacheMiss={}] quads[block={},billboard={},weather={}] entities[seen={},visible={}] vanilla[blockHit={},blockFallback={},resourceFallback={}] debug[inventoryIgnored={},unknownPipelines={},runtimeTextureSkips={}] raster[opaqueTris={},cutoutTris={},translucentTris={}] timeMs[world={},dynamic={},raster={},total={}]",
       renderId,
       width,
       height,
@@ -328,6 +346,10 @@ public final class RenderDebugTrace {
       entitiesVisible.sum(),
       vanillaBlockGeometryHits.sum(),
       vanillaBlockGeometryFallbacks.sum(),
+      resourceBlockGeometryFallbacks.sum(),
+      inventoryIconIgnored.sum(),
+      unknownRenderPipelines.sum(),
+      runtimeTextureMirrorSkips.sum(),
       opaqueTriangles.sum(),
       cutoutTriangles.sum(),
       translucentTriangles.sum(),
@@ -365,6 +387,10 @@ public final class RenderDebugTrace {
       weatherBillboards.sum(),
       vanillaBlockGeometryHits.sum(),
       vanillaBlockGeometryFallbacks.sum(),
+      resourceBlockGeometryFallbacks.sum(),
+      inventoryIconIgnored.sum(),
+      unknownRenderPipelines.sum(),
+      runtimeTextureMirrorSkips.sum(),
       opaqueTriangles.sum(),
       cutoutTriangles.sum(),
       translucentTriangles.sum(),
@@ -456,6 +482,10 @@ public final class RenderDebugTrace {
     long weatherBillboards,
     long vanillaBlockGeometryHits,
     long vanillaBlockGeometryFallbacks,
+    long resourceBlockGeometryFallbacks,
+    long inventoryIconIgnored,
+    long unknownRenderPipelines,
+    long runtimeTextureMirrorSkips,
     long opaqueTriangles,
     long cutoutTriangles,
     long translucentTriangles,

@@ -22,6 +22,7 @@ import com.soulfiremc.server.renderer.RendererAssets;
 import com.soulfiremc.test.utils.TestBootstrap;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -81,6 +82,16 @@ class RendererAssetsTest {
     );
 
     assertTrue(geometry.faces().stream().anyMatch(face -> uvRange(face.uv(), 0) > 0.9F && uvRange(face.uv(), 1) > 0.9F));
+  }
+
+  @Test
+  void resourceBlockGeometryFallbackResolvesBlockstateModels() throws Exception {
+    var method = RendererAssets.class.getDeclaredMethod("buildResourceBlockGeometry", BlockState.class);
+    method.setAccessible(true);
+
+    var geometry = (RendererAssets.BlockGeometry) method.invoke(RendererAssets.instance(), Blocks.OAK_STAIRS.defaultBlockState());
+
+    assertFalse(geometry.faces().isEmpty());
   }
 
   @Test

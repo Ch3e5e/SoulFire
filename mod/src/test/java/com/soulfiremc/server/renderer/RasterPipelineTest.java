@@ -1010,11 +1010,23 @@ class RasterPipelineTest {
     var worldBorder = RenderMaterial
       .create(solidTexture(0x80FFFFFF), RendererAssets.AlphaMode.TRANSLUCENT, 0xFFFFFFFF, true, 0.0F)
       .withPipelineState(RenderPipelines.WORLD_BORDER);
+    var guiTextured = RenderMaterial
+      .create(solidTexture(0xFFFFFFFF), RendererAssets.AlphaMode.OPAQUE, 0xFFFFFFFF, true, 0.0F)
+      .withPipelineState(RenderPipelines.GUI_TEXTURED);
+    var fireScreenEffect = RenderMaterial
+      .create(solidTexture(0x80FFFFFF), RendererAssets.AlphaMode.TRANSLUCENT, 0xFFFFFFFF, true, 0.0F)
+      .withPipelineState(RenderPipelines.FIRE_SCREEN_EFFECT);
+    var panorama = RenderMaterial
+      .create(solidTexture(0xFFFFFFFF), RendererAssets.AlphaMode.OPAQUE, 0xFFFFFFFF, true, 0.0F)
+      .withPipelineState(RenderPipelines.PANORAMA);
 
     assertEquals(RenderMaterial.FogMode.COLOR_MIX, worldText.fogMode());
     assertEquals(RenderMaterial.FogMode.NONE, guiText.fogMode());
     assertEquals(RenderMaterial.FogMode.COLOR_MIX, clouds.fogMode());
     assertEquals(RenderMaterial.FogMode.NONE, worldBorder.fogMode());
+    assertEquals(RenderMaterial.FogMode.NONE, guiTextured.fogMode());
+    assertEquals(RenderMaterial.FogMode.NONE, fireScreenEffect.fogMode());
+    assertEquals(RenderMaterial.FogMode.NONE, panorama.fogMode());
   }
 
   @Test
@@ -1033,6 +1045,7 @@ class RasterPipelineTest {
         .create(solidTexture(0xFFFFFFFF), RendererAssets.AlphaMode.OPAQUE, 0xFFFFFFFF, true, 0.0F)
         .withPipelineState(pipeline);
 
+      assertEquals(1, trace.snapshot().unknownRenderPipelines());
       assertTrue(trace.snapshot().notableEvents().stream().anyMatch(event ->
         event.equals("unknown-pipeline:pipeline/test_unknown:core/test_unknown")));
     } finally {

@@ -105,6 +105,9 @@ public final class InventoryItemIconRenderer {
   private static final float GUI_PIXELS_PER_UNIT = 16.0F;
   private static final int MAX_GIF_FRAMES = 16;
   private static final int MAX_INVENTORY_FLAME_LAYERS = 4;
+  private static final int MAX_INVENTORY_SHADOW_PIECES = 8;
+  private static final int INVENTORY_LEASH_COLOR = 0xFF6B4B2A;
+  private static final float INVENTORY_LEASH_WIDTH = 2.0F;
   private static final Identifier ENCHANTED_GLINT_ITEM = Identifier.withDefaultNamespace("misc/enchanted_glint_item");
   private static final RendererAssets.TextureImage WHITE_TEXTURE = RendererAssets.TextureImage.fromArgb(1, 1, new int[]{0xFFFFFFFF}, null);
 
@@ -1123,6 +1126,46 @@ public final class InventoryItemIconRenderer {
 
     @Override
     public void submitShadow(PoseStack poseStack, float radius, List<EntityRenderState.ShadowPiece> pieces) {
+      if (!Float.isFinite(radius) || radius <= 0.0F || pieces.isEmpty()) {
+        return;
+      }
+
+      var pose = poseStack.last().pose();
+      var captured = 0;
+      for (var piece : pieces) {
+        if (captured >= MAX_INVENTORY_SHADOW_PIECES) {
+          RenderDebugTrace.current().inventoryIconIgnored("shadow-overflow");
+          break;
+        }
+        if (piece.alpha() <= 0.0F || piece.shapeBelow().isEmpty()) {
+          continue;
+        }
+
+        var bounds = piece.shapeBelow().bounds();
+        if (bounds.maxX <= bounds.minX || bounds.maxZ <= bounds.minZ) {
+          continue;
+        }
+
+        var x0 = piece.relativeX() + (float) bounds.minX;
+        var x1 = piece.relativeX() + (float) bounds.maxX;
+        var y = piece.relativeY() + (float) bounds.minY;
+        var z0 = piece.relativeZ() + (float) bounds.minZ;
+        var z1 = piece.relativeZ() + (float) bounds.maxZ;
+        var u0 = -x0 / (2.0F * radius) + 0.5F;
+        var u1 = -x1 / (2.0F * radius) + 0.5F;
+        var v0 = -z0 / (2.0F * radius) + 0.5F;
+        var v1 = -z1 / (2.0F * radius) + 0.5F;
+        addShadowQuad(
+          pose,
+          new Vector3f(x0, y, z0),
+          new Vector3f(x0, y, z1),
+          new Vector3f(x1, y, z1),
+          new Vector3f(x1, y, z0),
+          new float[]{u0, v0, u0, v1, u1, v1, u1, v0},
+          shadowColor(piece.alpha())
+        );
+        captured++;
+      }
     }
 
     @Override
@@ -1249,7 +1292,82 @@ public final class InventoryItemIconRenderer {
 
     @Override
     public void submitLeash(PoseStack poseStack, EntityRenderState.LeashState leashState) {
-      RenderDebugTrace.current().inventoryIconIgnored("leash");
+      if (leashState == null || leashState.start == null || leashState.end == null) {
+        RenderDebugTrace.current().inventoryIconIgnored("leash-state");
+        return;
+      }
+
+      var start = leashState.start;
+      var end = leashState.end;
+      var dx = end.x - start.x;
+      var dy = end.y - start.y;
+      var dz = end.z - start.z;
+      if (dx * dx + dy * dy + dz * dz <= 1.0E-8D) {
+        return;
+      }
+
+      var pose = new Matrix4f(poseStack.last().pose());
+      pose.translate((float) leashState.offset.x, (float) leashState.offset.y, (float) leashState.offset.z);
+      var consumer = newItemConsumer(pose, RenderTypes.lines(), INVENTORY_LEASH_COLOR);
+      if (leashState.slack) {
+        var midpoint = start.lerp(end, 0.5D).add(0.0D, -Math.min(0.25D, Math.sqrt(dx * dx + dy * dy + dz * dz) * 0.08D), 0.0D);
+        addLeashSegment(consumer, start, midpoint);
+        addLeashSegment(consumer, midpoint, end);
+      } else {
+        addLeashSegment(consumer, start, end);
+      }
+      consumer.flush(quads, textures);
+    }
+
+    private void addShadowQuad(
+      Matrix4fc pose,
+      Vector3f a,
+      Vector3f b,
+      Vector3f c,
+      Vector3f d,
+      float[] uv,
+      int color
+    ) {
+      quads.add(new RenderQuad(
+        shadowVertex(pose, a, uv[0], uv[1]),
+        shadowVertex(pose, b, uv[2], uv[3]),
+        shadowVertex(pose, c, uv[4], uv[5]),
+        shadowVertex(pose, d, uv[6], uv[7]),
+        RenderMaterial.create(WHITE_TEXTURE, RendererAssets.AlphaMode.TRANSLUCENT, color, true, 0.0F)
+      ));
+      textures.add(WHITE_TEXTURE);
+    }
+
+    private static RenderVertex shadowVertex(Matrix4fc pose, Vector3f position, float u, float v) {
+      var transformed = pose.transformPosition(position);
+      return new RenderVertex(transformed.x(), transformed.y(), transformed.z(), u, v, 0xFFFFFFFF);
+    }
+
+    private static int shadowColor(float alpha) {
+      return Math.clamp(Math.round(alpha * 255.0F), 0, 255) << 24;
+    }
+
+    private static void addLeashSegment(VertexConsumer consumer, Vec3 start, Vec3 end) {
+      var direction = new Vector3f(
+        (float) (end.x - start.x),
+        (float) (end.y - start.y),
+        (float) (end.z - start.z)
+      );
+      if (direction.lengthSquared() <= 1.0E-8F) {
+        return;
+      }
+
+      direction.normalize();
+      addLeashVertex(consumer, start, direction);
+      addLeashVertex(consumer, end, direction);
+    }
+
+    private static void addLeashVertex(VertexConsumer consumer, Vec3 position, Vector3f direction) {
+      consumer
+        .addVertex((float) position.x(), (float) position.y(), (float) position.z())
+        .setColor(INVENTORY_LEASH_COLOR)
+        .setNormal(direction.x(), direction.y(), direction.z())
+        .setLineWidth(INVENTORY_LEASH_WIDTH);
     }
 
     private static float flameHeight(EntityRenderState entityRenderState, float scale) {

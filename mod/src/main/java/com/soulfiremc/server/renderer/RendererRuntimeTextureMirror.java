@@ -121,6 +121,47 @@ public final class RendererRuntimeTextureMirror {
   public static void mirrorWrite(
     GpuTexture destination,
     ByteBuffer source,
+    int destX,
+    int destY,
+    int width,
+    int height) {
+    mirrorWrite(destination, source, 0, 0, destX, destY, width, height);
+  }
+
+  public static void mirrorWrite(
+    GpuTexture destination,
+    ByteBuffer source,
+    int mipLevel,
+    int depthOrLayer,
+    int destX,
+    int destY,
+    int width,
+    int height) {
+    synchronized (LOCK) {
+      if (!isBaseLayer(mipLevel, depthOrLayer)) {
+        skipped("write-buffer", destination, "non-base-level:mip=" + mipLevel + ",layer=" + depthOrLayer);
+        return;
+      }
+
+      var mirrored = mirroredTexture(destination);
+      if (mirrored == null) {
+        skipped("write-buffer", destination, "untracked-destination");
+        return;
+      }
+      if (!mirrored.supportsRawBufferWrites()) {
+        skipped("write-buffer", destination, "unsupported-format:" + mirrored.format);
+        return;
+      }
+
+      if (!mirrored.write(source, destX, destY, width, height)) {
+        skipped("write-buffer", destination, "empty-region");
+      }
+    }
+  }
+
+  public static void mirrorWrite(
+    GpuTexture destination,
+    ByteBuffer source,
     NativeImage.Format format,
     int destX,
     int destY,
@@ -389,6 +430,24 @@ public final class RendererRuntimeTextureMirror {
       return true;
     }
 
+    private boolean write(ByteBuffer source, int destX, int destY, int width, int height) {
+      var region = clippedRegion(destX, destY, width, height, 0, 0, width, height);
+      if (region == null) {
+        return false;
+      }
+      var data = source.duplicate();
+      var baseOffset = data.position();
+      var blockSize = format.blockSize();
+      for (var y = 0; y < region.height(); y++) {
+        for (var x = 0; x < region.width(); x++) {
+          var sourceOffset = baseOffset + (region.sourceX() + x + (region.sourceY() + y) * width) * blockSize;
+          pixels[region.destX() + x + (region.destY() + y) * this.width] = bufferPixel(data, format, sourceOffset);
+        }
+      }
+      hasUploadData = true;
+      return true;
+    }
+
     private boolean copyFrom(MirroredTexture source, int destX, int destY, int sourceX, int sourceY, int width, int height) {
       var region = clippedRegion(destX, destY, width, height, sourceX, sourceY, source.width, source.height);
       if (region == null) {
@@ -496,6 +555,25 @@ public final class RendererRuntimeTextureMirror {
       return (alpha << 24) | (red << 16) | (green << 8) | blue;
     }
 
+    private int bufferPixel(ByteBuffer source, GpuFormat format, int offset) {
+      var red = rawBufferChannel(source, offset, 0);
+      if (format.componentCount() == 1) {
+        return (red << 24) | 0x00FFFFFF;
+      }
+
+      var green = rawBufferChannel(source, offset, 1);
+      var blue = format.componentCount() >= 3 ? rawBufferChannel(source, offset, 2) : 0;
+      var alpha = format.componentCount() >= 4 ? rawBufferChannel(source, offset, 3) : 0xFF;
+      return (alpha << 24) | (red << 16) | (green << 8) | blue;
+    }
+
+    private boolean supportsRawBufferWrites() {
+      return format.hasColorAspect()
+        && format.componentType().byteSize() == 1
+        && format.componentCount() >= 1
+        && format.componentCount() <= 4;
+    }
+
     private static boolean isRedFormat(GpuFormat format) {
       return format == GpuFormat.R8_UNORM
         || format == GpuFormat.R8_SNORM
@@ -513,6 +591,11 @@ public final class RendererRuntimeTextureMirror {
         return 0;
       }
       return Byte.toUnsignedInt(source.get(offset + byteOffset));
+    }
+
+    private int rawBufferChannel(ByteBuffer source, int offset, int component) {
+      var byteOffset = offset + component;
+      return byteOffset >= 0 && byteOffset < source.limit() ? Byte.toUnsignedInt(source.get(byteOffset)) : 0;
     }
 
     private boolean hasUploadData() {

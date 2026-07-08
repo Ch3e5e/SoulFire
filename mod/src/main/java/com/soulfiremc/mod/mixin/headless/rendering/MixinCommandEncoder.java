@@ -27,14 +27,15 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
+import java.nio.ByteBuffer;
+
 @Mixin(CommandEncoder.class)
 public class MixinCommandEncoder {
-  /// Mirrors NativeImage texture writes. In modern Minecraft every NativeImage upload, including the
-  /// full-texture overload, funnels through this method, and the raw ByteBuffer overload no longer
-  /// carries a NativeImage format we could interpret, so this is the single place to capture writes.
+  /// Mirrors NativeImage texture writes after vanilla validation and backend submission succeeds.
+  /// Raw ByteBuffer writes are mirrored separately from the destination GPU format below.
   @Inject(
     method = "writeToTexture(Lcom/mojang/blaze3d/textures/GpuTexture;Lcom/mojang/blaze3d/platform/NativeImage;IIII)V",
-    at = @At("HEAD")
+    at = @At("TAIL")
   )
   private void writeNativeImageToTextureHook(
     GpuTexture destination,
@@ -46,6 +47,23 @@ public class MixinCommandEncoder {
     CallbackInfo ci) {
     RendererRuntimeTextureMirror.mirrorWrite(
       destination, source, mipLevel, depthOrLayer, destX, destY, source.getWidth(), source.getHeight(), 0, 0);
+  }
+
+  @Inject(
+    method = "writeToTexture(Lcom/mojang/blaze3d/textures/GpuTexture;Ljava/nio/ByteBuffer;IIIIII)V",
+    at = @At("TAIL")
+  )
+  private void writeByteBufferToTextureHook(
+    GpuTexture destination,
+    ByteBuffer source,
+    int mipLevel,
+    int depthOrLayer,
+    int destX,
+    int destY,
+    int width,
+    int height,
+    CallbackInfo ci) {
+    RendererRuntimeTextureMirror.mirrorWrite(destination, source, mipLevel, depthOrLayer, destX, destY, width, height);
   }
 
   @Inject(

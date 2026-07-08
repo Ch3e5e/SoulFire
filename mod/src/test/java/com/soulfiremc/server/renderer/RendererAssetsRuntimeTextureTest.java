@@ -314,6 +314,33 @@ class RendererAssetsRuntimeTextureTest {
   }
 
   @Test
+  void mirrorsRawByteBufferRuntimeTextureUploadsFromGpuFormat() {
+    var location = Identifier.withDefaultNamespace("test/runtime-mirror-raw-byte-buffer");
+    var gpuTexture = new FakeGpuTexture(GpuFormat.RGB8_UNORM, 2, 1);
+    RendererRuntimeTextureMirror.register(location, gpuTexture);
+
+    try {
+      var source = ByteBuffer.allocateDirect(6);
+      source.put((byte) 0x10);
+      source.put((byte) 0x20);
+      source.put((byte) 0x30);
+      source.put((byte) 0x40);
+      source.put((byte) 0x50);
+      source.put((byte) 0x60);
+      source.flip();
+      RendererRuntimeTextureMirror.mirrorWrite(gpuTexture, source, 0, 0, 2, 1);
+
+      var mirrored = RendererRuntimeTextureMirror.texture(location);
+      assertNotNull(mirrored);
+      var image = mirrored.toBufferedImage();
+      assertEquals(0xFF102030, image.getRGB(0, 0));
+      assertEquals(0xFF405060, image.getRGB(1, 0));
+    } finally {
+      RendererRuntimeTextureMirror.unregister(location);
+    }
+  }
+
+  @Test
   void clipsPartiallyOutOfBoundsNativeImageUploads() {
     var location = Identifier.withDefaultNamespace("test/runtime-mirror-native-clip");
     var gpuTexture = new FakeGpuTexture(GpuFormat.RGBA8_UNORM, 2, 2);
@@ -466,6 +493,7 @@ class RendererAssetsRuntimeTextureTest {
       RendererRuntimeTextureMirror.mirrorWrite(gpuTexture, source, 1, 1, 0, 0, 2, 2, 0, 0);
 
       assertNull(RendererRuntimeTextureMirror.texture(location));
+      assertEquals(1, trace.snapshot().runtimeTextureMirrorSkips());
       assertTrue(trace.snapshot().notableEvents().stream().anyMatch(event ->
         event.contains("runtime-texture-skip:write:")
           && event.contains("non-base-level:mip=1,layer=1")));

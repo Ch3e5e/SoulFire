@@ -461,6 +461,21 @@ public record RenderMaterial(
       case "core/glint" -> FogMode.RGB_FADE;
       case "core/rendertype_lightning" -> FogMode.ALPHA_FADE;
       case "core/rendertype_beacon_beam" -> FogMode.DEPTH_COLOR_MIX;
+      case "core/animate_sprite_blit",
+           "core/animate_sprite_interpolate",
+           "core/blit_screen",
+           "core/debug_point",
+           "core/gui",
+           "core/lightmap",
+           "core/panorama",
+           "core/position_color",
+           "core/position_tex",
+           "core/position_tex_color",
+           "core/rendertype_outline",
+           "core/rendertype_water_mask",
+           "core/rendertype_world_border",
+           "core/screenquad",
+           "core/stars" -> FogMode.NONE;
       case "core/block",
            "core/entity",
            "core/item",

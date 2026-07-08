@@ -22,6 +22,7 @@ import com.mojang.blaze3d.textures.GpuTextureView;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.soulfiremc.server.renderer.InventoryItemIconRenderer;
+import com.soulfiremc.server.renderer.RenderDebugTrace;
 import com.soulfiremc.server.renderer.RenderMaterial;
 import com.soulfiremc.server.renderer.RenderQuad;
 import com.soulfiremc.server.renderer.RenderVertex;
@@ -484,11 +485,18 @@ class InventoryItemIconRendererTest {
     );
     submitFlame.setAccessible(true);
     submitLeash.setAccessible(true);
+    var trace = RenderDebugTrace.createForced(1, 1, 1, 0.0F, 0.0F);
+    RenderDebugTrace.bind(trace);
 
-    submitFlame.invoke(collector, new PoseStack(), null, new Quaternionf());
-    submitLeash.invoke(collector, new PoseStack(), null);
+    try {
+      submitFlame.invoke(collector, new PoseStack(), null, new Quaternionf());
+      submitLeash.invoke(collector, new PoseStack(), null);
 
-    assertFalse(unsupported(collector));
+      assertFalse(unsupported(collector));
+      assertEquals(2, trace.snapshot().inventoryIconIgnored());
+    } finally {
+      RenderDebugTrace.unbind();
+    }
   }
 
   @Test
@@ -512,6 +520,51 @@ class InventoryItemIconRendererTest {
     assertFalse(unsupported(collector));
     assertFalse(quads(collector).isEmpty());
     assertTrue(quads(collector).size() <= 4);
+  }
+
+  @Test
+  void itemSubmitCollectorCapturesShadowGeometry() throws Exception {
+    var collector = newItemSubmitCollector();
+    var collectorClass = collector.getClass();
+    var submitShadow = collectorClass.getDeclaredMethod(
+      "submitShadow",
+      PoseStack.class,
+      float.class,
+      List.class
+    );
+    submitShadow.setAccessible(true);
+
+    submitShadow.invoke(
+      collector,
+      new PoseStack(),
+      1.0F,
+      List.of(new EntityRenderState.ShadowPiece(0.0F, 0.0F, 0.0F, Shapes.block(), 0.5F))
+    );
+
+    assertFalse(unsupported(collector));
+    assertFalse(quads(collector).isEmpty());
+    assertEquals(RendererAssets.AlphaMode.TRANSLUCENT, quads(collector).getFirst().material().alphaMode());
+  }
+
+  @Test
+  void itemSubmitCollectorCapturesLeashGeometry() throws Exception {
+    var collector = newItemSubmitCollector();
+    var collectorClass = collector.getClass();
+    var submitLeash = collectorClass.getDeclaredMethod(
+      "submitLeash",
+      PoseStack.class,
+      EntityRenderState.LeashState.class
+    );
+    submitLeash.setAccessible(true);
+    var leashState = new EntityRenderState.LeashState();
+    leashState.start = new Vec3(-0.4D, 0.1D, 0.0D);
+    leashState.end = new Vec3(0.4D, 0.2D, 0.0D);
+    leashState.slack = true;
+
+    submitLeash.invoke(collector, new PoseStack(), leashState);
+
+    assertFalse(unsupported(collector));
+    assertEquals(2, quads(collector).size());
   }
 
   private static Object newItemSubmitCollector() throws Exception {

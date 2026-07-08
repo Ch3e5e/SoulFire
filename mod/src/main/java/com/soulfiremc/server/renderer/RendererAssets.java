@@ -276,7 +276,20 @@ public final class RendererAssets {
   }
 
   private BlockGeometry buildBlockGeometry(BlockState state) {
-    return buildVanillaBlockGeometry(state);
+    var geometry = buildVanillaBlockGeometry(state);
+    if (!geometry.faces().isEmpty() || state.isAir()) {
+      return geometry;
+    }
+
+    var fallback = buildResourceBlockGeometry(state);
+    if (!fallback.faces().isEmpty()) {
+      RenderDebugTrace.current().resourceBlockGeometryFallback(
+        BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString(),
+        fallback.faces().size()
+      );
+      return fallback;
+    }
+    return geometry;
   }
 
   private BlockGeometry buildVanillaBlockGeometry(BlockState state) {
@@ -375,6 +388,186 @@ public final class RendererAssets {
       case CUTOUT -> AlphaMode.CUTOUT;
       case TRANSLUCENT -> AlphaMode.TRANSLUCENT;
     };
+  }
+
+  private BlockGeometry buildResourceBlockGeometry(BlockState state) {
+    var modelReferences = resolveBlockStateModels(state);
+    if (modelReferences.isEmpty()) {
+      modelReferences = List.of(new BlockModelReference(BuiltInRegistries.BLOCK.getKey(state.getBlock()).withPrefix("block/"), 0, 0));
+    }
+
+    var faces = new ArrayList<GeometryFace>();
+    for (var reference : modelReferences) {
+      var resolvedModel = resolveModel(reference.model());
+      if (resolvedModel == null || resolvedModel.elements().isEmpty()) {
+        continue;
+      }
+
+      faces.addAll(bakeResolvedModel(
+        resolvedModel,
+        state,
+        normalizeModelRotation(reference.xRotation()),
+        normalizeModelRotation(reference.yRotation())
+      ).faces());
+    }
+    return faces.isEmpty() ? BlockGeometry.EMPTY : new BlockGeometry(faces);
+  }
+
+  private List<BlockModelReference> resolveBlockStateModels(BlockState state) {
+    var blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock());
+    var json = loadJson(blockId.withPrefix("blockstates/"));
+    if (json == null) {
+      return List.of();
+    }
+
+    var references = new ArrayList<BlockModelReference>();
+    if (json.has("variants") && json.get("variants").isJsonObject()) {
+      references.addAll(resolveVariantBlockStateModels(state, json.getAsJsonObject("variants")));
+    }
+    if (references.isEmpty() && json.has("multipart") && json.get("multipart").isJsonArray()) {
+      references.addAll(resolveMultipartBlockStateModels(state, json.getAsJsonArray("multipart")));
+    }
+    return references;
+  }
+
+  private List<BlockModelReference> resolveVariantBlockStateModels(BlockState state, JsonObject variants) {
+    BlockModelReference bestReference = null;
+    var bestScore = -1;
+    for (var entry : variants.entrySet()) {
+      if (!variantMatchesState(state, entry.getKey())) {
+        continue;
+      }
+
+      var reference = parseBlockModelReference(entry.getValue());
+      var score = variantScore(entry.getKey());
+      if (reference != null && score > bestScore) {
+        bestReference = reference;
+        bestScore = score;
+      }
+    }
+    return bestReference != null ? List.of(bestReference) : List.of();
+  }
+
+  private List<BlockModelReference> resolveMultipartBlockStateModels(BlockState state, JsonArray multipart) {
+    var references = new ArrayList<BlockModelReference>();
+    for (var partElement : multipart) {
+      if (!partElement.isJsonObject()) {
+        continue;
+      }
+
+      var part = partElement.getAsJsonObject();
+      if (part.has("when") && !blockStateConditionMatches(state, part.get("when"))) {
+        continue;
+      }
+      if (!part.has("apply")) {
+        continue;
+      }
+
+      var reference = parseBlockModelReference(part.get("apply"));
+      if (reference != null) {
+        references.add(reference);
+      }
+    }
+    return references;
+  }
+
+  @Nullable
+  private BlockModelReference parseBlockModelReference(JsonElement element) {
+    if (element == null || element.isJsonNull()) {
+      return null;
+    }
+    if (element.isJsonArray()) {
+      var array = element.getAsJsonArray();
+      return array.isEmpty() ? null : parseBlockModelReference(array.get(0));
+    }
+    if (!element.isJsonObject()) {
+      return null;
+    }
+
+    var object = element.getAsJsonObject();
+    if (!object.has("model") || !object.get("model").isJsonPrimitive()) {
+      return null;
+    }
+    return new BlockModelReference(
+      Identifier.parse(object.get("model").getAsString()),
+      object.has("x") ? object.get("x").getAsInt() : 0,
+      object.has("y") ? object.get("y").getAsInt() : 0
+    );
+  }
+
+  private boolean variantMatchesState(BlockState state, String variantKey) {
+    if (variantKey.isBlank()) {
+      return true;
+    }
+
+    for (var entry : variantKey.split(",")) {
+      var separator = entry.indexOf('=');
+      if (separator <= 0 || separator == entry.length() - 1) {
+        return false;
+      }
+      if (!statePropertyMatches(state, entry.substring(0, separator), entry.substring(separator + 1))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private int variantScore(String variantKey) {
+    return variantKey.isBlank() ? 0 : variantKey.split(",").length;
+  }
+
+  private boolean blockStateConditionMatches(BlockState state, JsonElement condition) {
+    if (condition == null || condition.isJsonNull()) {
+      return true;
+    }
+    if (!condition.isJsonObject()) {
+      return false;
+    }
+
+    var object = condition.getAsJsonObject();
+    if (object.has("OR") && object.get("OR").isJsonArray()) {
+      for (var child : object.getAsJsonArray("OR")) {
+        if (blockStateConditionMatches(state, child)) {
+          return true;
+        }
+      }
+      return false;
+    }
+    if (object.has("AND") && object.get("AND").isJsonArray()) {
+      for (var child : object.getAsJsonArray("AND")) {
+        if (!blockStateConditionMatches(state, child)) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    for (var entry : object.entrySet()) {
+      if (!entry.getValue().isJsonPrimitive()) {
+        return false;
+      }
+      var expectedValues = entry.getValue().getAsString().split("\\|");
+      var matched = false;
+      for (var expected : expectedValues) {
+        if (statePropertyMatches(state, entry.getKey(), expected)) {
+          matched = true;
+          break;
+        }
+      }
+      if (!matched) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private boolean statePropertyMatches(BlockState state, String propertyName, String expectedValue) {
+    return state.getValues().anyMatch(value ->
+      value.property().getName().equals(propertyName) && value.valueName().equals(expectedValue));
+  }
+
+  private static int normalizeModelRotation(int rotation) {
+    return Math.floorMod(rotation, 360);
   }
 
   @Nullable
@@ -1255,6 +1448,8 @@ public final class RendererAssets {
   private record TextureBinding(String target, boolean forceTranslucent) {}
 
   private record ResolvedTexture(Identifier sprite, boolean forceTranslucent) {}
+
+  private record BlockModelReference(Identifier model, int xRotation, int yRotation) {}
 
   private record ResolvedModel(Map<String, TextureBinding> textures, List<ModelElement> elements) {}
 
