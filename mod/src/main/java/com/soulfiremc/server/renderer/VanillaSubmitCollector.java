@@ -800,6 +800,32 @@ final class VanillaSubmitCollector implements SubmitNodeCollector, OrderedSubmit
 
   @Override
   public void submitShapeOutline(PoseStack poseStack, VoxelShape shape, RenderType renderType, int color, float lineWidth, boolean expanded) {
+    if (shape.isEmpty()) {
+      return;
+    }
+
+    withStage(stageForRenderType(renderType, FeatureStage.SOLID_CUSTOM, FeatureStage.TRANSLUCENT_CUSTOM), () -> {
+      var pose = poseStack.last().copy();
+      var consumer = captureConsumer(pose, renderType, color);
+      var normal = new Vector3f();
+      shape.forAllEdges((x1, y1, z1, x2, y2, z2) -> {
+        normal.set((float) (x2 - x1), (float) (y2 - y1), (float) (z2 - z1));
+        if (normal.lengthSquared() <= 1.0E-8F) {
+          return;
+        }
+
+        normal.normalize();
+        consumer.addVertex((float) x1, (float) y1, (float) z1)
+          .setColor(color)
+          .setNormal(normal.x(), normal.y(), normal.z())
+          .setLineWidth(lineWidth);
+        consumer.addVertex((float) x2, (float) y2, (float) z2)
+          .setColor(color)
+          .setNormal(normal.x(), normal.y(), normal.z())
+          .setLineWidth(lineWidth);
+      });
+      consumer.flush();
+    });
   }
 
   @Override
@@ -894,7 +920,165 @@ final class VanillaSubmitCollector implements SubmitNodeCollector, OrderedSubmit
   }
 
   @Override
-  public void submitGizmoPrimitives(DrawableGizmoPrimitives.Group group, CameraRenderState cameraRenderState, boolean translucent) {
+  public void submitGizmoPrimitives(DrawableGizmoPrimitives.Group group, CameraRenderState cameraRenderState, boolean onTop) {
+    submitGizmoQuads(group);
+    submitGizmoTriangleFans(group);
+    submitGizmoLines(group);
+    submitGizmoTexts(group, cameraRenderState);
+    submitGizmoPoints(group);
+  }
+
+  private void submitGizmoQuads(DrawableGizmoPrimitives.Group group) {
+    if (group.quads().isEmpty()) {
+      return;
+    }
+
+    withStage(FeatureStage.TRANSLUCENT_CUSTOM, () -> {
+      var consumer = captureConsumer(new Matrix4f(), RenderTypes.debugFilledBox(), 0xFFFFFFFF);
+      for (var quad : group.quads()) {
+        addGizmoVertex(consumer, quad.a(), quad.color());
+        addGizmoVertex(consumer, quad.b(), quad.color());
+        addGizmoVertex(consumer, quad.c(), quad.color());
+        addGizmoVertex(consumer, quad.d(), quad.color());
+      }
+      consumer.flush();
+    });
+  }
+
+  private void submitGizmoTriangleFans(DrawableGizmoPrimitives.Group group) {
+    if (group.triangleFans().isEmpty()) {
+      return;
+    }
+
+    withStage(FeatureStage.TRANSLUCENT_CUSTOM, () -> {
+      for (var triangleFan : group.triangleFans()) {
+        var points = triangleFan.points();
+        if (points.length < 3) {
+          continue;
+        }
+
+        var consumer = captureConsumer(new Matrix4f(), RenderTypes.debugTriangleFan(), triangleFan.color());
+        for (var point : points) {
+          addGizmoVertex(consumer, point, triangleFan.color());
+        }
+        consumer.flush();
+      }
+    });
+  }
+
+  private void submitGizmoLines(DrawableGizmoPrimitives.Group group) {
+    if (group.lines().isEmpty()) {
+      return;
+    }
+
+    var renderType = group.opaque() ? RenderTypes.lines() : RenderTypes.linesTranslucent();
+    withStage(stageForRenderType(renderType, FeatureStage.SOLID_CUSTOM, FeatureStage.TRANSLUCENT_CUSTOM), () -> {
+      var consumer = captureConsumer(new Matrix4f(), renderType, 0xFFFFFFFF);
+      var direction = new Vector3f();
+      for (var line : group.lines()) {
+        direction.set(
+          (float) (line.end().x() - line.start().x()),
+          (float) (line.end().y() - line.start().y()),
+          (float) (line.end().z() - line.start().z())
+        );
+        if (direction.lengthSquared() <= 1.0E-8F) {
+          continue;
+        }
+
+        addGizmoLineVertex(consumer, line.start(), line.color(), direction, line.width());
+        addGizmoLineVertex(consumer, line.end(), line.color(), direction, line.width());
+      }
+      consumer.flush();
+    });
+  }
+
+  private void submitGizmoTexts(DrawableGizmoPrimitives.Group group, @Nullable CameraRenderState cameraRenderState) {
+    if (group.texts().isEmpty() || cameraRenderState == null || !cameraRenderState.initialized) {
+      return;
+    }
+
+    withStage(FeatureStage.TRANSLUCENT_TEXT, () -> {
+      var poseStack = new PoseStack();
+      var font = font();
+      for (var text : group.texts()) {
+        var style = text.style();
+        poseStack.pushPose();
+        try {
+          poseStack.translate(text.pos().x(), text.pos().y(), text.pos().z());
+          poseStack.mulPose(cameraRenderState.orientation);
+          poseStack.scale(style.scale() / 16.0F, -style.scale() / 16.0F, style.scale() / 16.0F);
+          var x = style.adjustLeft().isEmpty()
+            ? -font.width(text.text()) / 2.0F
+            : (float) -style.adjustLeft().getAsDouble() / style.scale();
+          capturePreparedText(
+            poseStack.last().pose(),
+            font.prepareText(text.text(), x, 0.0F, style.color(), false, 0),
+            Font.DisplayMode.NORMAL,
+            LightCoordsUtil.FULL_BRIGHT
+          );
+        } finally {
+          poseStack.popPose();
+        }
+      }
+    });
+  }
+
+  private void submitGizmoPoints(DrawableGizmoPrimitives.Group group) {
+    if (group.points().isEmpty()) {
+      return;
+    }
+
+    withStage(FeatureStage.SOLID_CUSTOM, () -> {
+      var consumer = captureConsumer(new Matrix4f(), RenderTypes.debugPoint(), 0xFFFFFFFF);
+      for (var point : group.points()) {
+        addGizmoVertex(consumer, point.pos(), point.color()).setLineWidth(point.size());
+      }
+      consumer.flush();
+    });
+  }
+
+  private CapturingVertexConsumer captureConsumer(PoseStack.Pose pose, RenderType renderType, int color) {
+    var texture = textureFromRenderType(renderType);
+    var alphaMode = alphaMode(renderType, texture, color);
+    return new CapturingVertexConsumer(
+      pose,
+      renderType.primitiveTopology(),
+      texture,
+      alphaMode,
+      alphaCutoutThreshold(renderType, alphaMode),
+      renderType,
+      null,
+      null,
+      false
+    );
+  }
+
+  private CapturingVertexConsumer captureConsumer(Matrix4fc pose, RenderType renderType, int color) {
+    var texture = textureFromRenderType(renderType);
+    var alphaMode = alphaMode(renderType, texture, color);
+    return new CapturingVertexConsumer(
+      pose,
+      renderType.primitiveTopology(),
+      texture,
+      alphaMode,
+      alphaCutoutThreshold(renderType, alphaMode),
+      renderType,
+      null
+    );
+  }
+
+  private VertexConsumer addGizmoVertex(VertexConsumer consumer, Vec3 position, int color) {
+    return consumer
+      .addVertex((float) position.x(), (float) position.y(), (float) position.z())
+      .setColor(color);
+  }
+
+  private void addGizmoLineVertex(VertexConsumer consumer, Vec3 position, int color, Vector3f direction, float width) {
+    consumer
+      .addVertex((float) position.x(), (float) position.y(), (float) position.z())
+      .setColor(color)
+      .setNormal(direction.x(), direction.y(), direction.z())
+      .setLineWidth(width);
   }
 
   private static void shadowVertex(VertexConsumer consumer, int color, float x, float y, float z, float u, float v) {

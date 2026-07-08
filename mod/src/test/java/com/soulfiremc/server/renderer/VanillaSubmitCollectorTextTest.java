@@ -27,6 +27,7 @@ import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.client.model.geom.builders.UVPair;
 import net.minecraft.client.particle.SingleQuadParticle;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
+import net.minecraft.client.renderer.gizmos.DrawableGizmoPrimitives;
 import net.minecraft.client.renderer.item.ItemStackRenderState;
 import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.client.renderer.rendertype.RenderTypes;
@@ -42,6 +43,7 @@ import net.minecraft.util.LightCoordsUtil;
 import net.minecraft.util.Unit;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.Shapes;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
 import org.joml.Vector3f;
@@ -753,6 +755,67 @@ class VanillaSubmitCollectorTextTest {
     renderSynthetic(new RasterPipeline(), camera, sceneData(collector), buffers, 0L, 0xFF000000);
 
     assertEquals(0, countChangedPixels(buffers, 0xFF000000));
+  }
+
+  @Test
+  void shapeOutlinesSubmitVoxelEdgesAsLineQuads() throws Exception {
+    var camera = new Camera(new Vec3(0.0, 0.0, 0.0), 0.0F, 0.0F, WIDTH, HEIGHT, 70.0, 64.0F);
+    var collector = newCollector(camera);
+    var poseStack = new PoseStack();
+
+    collector.submitShapeOutline(
+      poseStack,
+      Shapes.box(-0.5, -0.5, 4.0, 0.5, 0.5, 5.0),
+      RenderTypes.lines(),
+      0xFFFFFFFF,
+      4.0F,
+      false
+    );
+
+    var scene = sceneData(collector);
+    assertEquals(12, scene.translucent().length);
+
+    var buffers = new RasterBuffers(WIDTH, HEIGHT);
+    renderSynthetic(new RasterPipeline(), camera, scene, buffers, 0L, 0xFF000000);
+
+    assertTrue(countChangedPixels(buffers, 0xFF000000) > 0);
+  }
+
+  @Test
+  void gizmoPrimitivesSubmitLowVolumeGeometry() throws Exception {
+    var camera = new Camera(new Vec3(0.0, 0.0, 0.0), 0.0F, 0.0F, WIDTH, HEIGHT, 70.0, 64.0F);
+    var collector = newCollector(camera);
+    var group = new DrawableGizmoPrimitives.Group(
+      true,
+      List.of(new DrawableGizmoPrimitives.Line(new Vec3(-0.6, -0.6, 4.0), new Vec3(0.6, -0.6, 4.0), 0xFFFFFFFF, 5.0F)),
+      List.of(new DrawableGizmoPrimitives.Quad(
+        new Vec3(-0.35, -0.2, 5.0),
+        new Vec3(-0.35, 0.2, 5.0),
+        new Vec3(0.35, 0.2, 5.0),
+        new Vec3(0.35, -0.2, 5.0),
+        0x80FF0000
+      )),
+      List.of(new DrawableGizmoPrimitives.TriangleFan(
+        new Vec3[]{
+          new Vec3(0.0, 0.6, 6.0),
+          new Vec3(-0.35, 0.25, 6.0),
+          new Vec3(0.35, 0.25, 6.0)
+        },
+        0x8000FF00
+      )),
+      List.of(),
+      List.of(new DrawableGizmoPrimitives.Point(new Vec3(0.0, 0.0, 3.5), 0xFFFFFFFF, 8.0F))
+    );
+
+    collector.submitGizmoPrimitives(group, null, false);
+
+    var scene = sceneData(collector);
+    assertTrue(scene.totalQuadCount() >= 4, () -> "expected line, quad, fan, and point geometry but got " + scene.totalQuadCount());
+
+    var buffers = new RasterBuffers(WIDTH, HEIGHT);
+    renderSynthetic(new RasterPipeline(), camera, scene, buffers, 0L, 0xFF000000);
+
+    assertTrue(countChangedPixels(buffers, 0xFF000000) > 0);
   }
 
   private static VertexConsumer newTextConsumer(VanillaSubmitCollector collector, RendererAssets.TextureImage texture) throws Exception {
