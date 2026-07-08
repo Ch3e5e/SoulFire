@@ -23,6 +23,8 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.renderer.WeatherEffectRenderer;
+import net.minecraft.client.renderer.entity.state.EntityRenderState;
+import net.minecraft.client.renderer.entity.state.ItemFrameRenderState;
 import net.minecraft.client.renderer.state.level.BlockBreakingRenderState;
 import net.minecraft.client.renderer.state.level.WeatherRenderState;
 import net.minecraft.core.BlockPos;
@@ -98,7 +100,7 @@ public class SceneCollector {
 
   private static void collectGenericEntity(RenderContext ctx, Entity entity, SceneData.Builder builder) {
     var renderState = VanillaSubmitCollector.extractEntityState(entity);
-    if (renderState != null && renderState.isInvisible && !renderState.appearsGlowing()) {
+    if (renderState != null && shouldSkipInvisibleEntityState(renderState)) {
       return;
     }
 
@@ -106,6 +108,10 @@ public class SceneCollector {
     if (vanillaScene.totalQuadCount() > 0) {
       builder.addAll(vanillaScene);
     }
+  }
+
+  static boolean shouldSkipInvisibleEntityState(EntityRenderState renderState) {
+    return renderState.isInvisible && !renderState.appearsGlowing() && !(renderState instanceof ItemFrameRenderState);
   }
 
   public static SceneData collectBlockEntities(RenderContext ctx) {
