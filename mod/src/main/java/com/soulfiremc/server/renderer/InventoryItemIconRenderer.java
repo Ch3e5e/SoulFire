@@ -21,6 +21,7 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.mojang.blaze3d.PrimitiveTopology;
 import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexConsumer;
 import it.unimi.dsi.fastutil.ints.IntList;
 import lombok.extern.slf4j.Slf4j;
 import net.minecraft.client.Minecraft;
@@ -40,6 +41,7 @@ import net.minecraft.client.renderer.item.ItemStackRenderState;
 import net.minecraft.client.renderer.item.TrackingItemStackRenderState;
 import net.minecraft.client.renderer.rendertype.RenderSetup;
 import net.minecraft.client.renderer.rendertype.RenderType;
+import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.client.renderer.state.gui.GuiItemRenderState;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.client.renderer.state.level.QuadParticleRenderState;
@@ -97,6 +99,7 @@ public final class InventoryItemIconRenderer {
   private static final float GUI_PIXELS_PER_UNIT = 16.0F;
   private static final int MAX_GIF_FRAMES = 16;
   private static final Identifier ENCHANTED_GLINT_ITEM = Identifier.withDefaultNamespace("misc/enchanted_glint_item");
+  private static final RendererAssets.TextureImage WHITE_TEXTURE = RendererAssets.TextureImage.fromArgb(1, 1, new int[]{0xFFFFFFFF}, null);
 
   private InventoryItemIconRenderer() {
   }
@@ -374,6 +377,10 @@ public final class InventoryItemIconRenderer {
       return null;
     }
     return RendererAssets.instance().texture(sprite.contents().name());
+  }
+
+  private static Vector3f rotateParticleVertex(Quaternionf rotation, float x, float y, float z, float size, float px, float py) {
+    return new Vector3f(px, py, 0.0F).rotate(rotation).mul(size).add(x, y, z);
   }
 
   private static @Nullable RenderedInventoryItemImage encodeScene(IconScene scene) {
@@ -1193,7 +1200,31 @@ public final class InventoryItemIconRenderer {
 
     @Override
     public void submitShapeOutline(PoseStack poseStack, VoxelShape shape, RenderType renderType, int color, float lineWidth, boolean expanded) {
-      unsupported = true;
+      if (shape.isEmpty()) {
+        return;
+      }
+
+      var texture = textureImageFromRenderType(renderType);
+      var alphaMode = VanillaSubmitCollector.alphaMode(renderType, texture, color);
+      var consumer = new ItemCapturingVertexConsumer(poseStack.last().pose(), renderType.primitiveTopology(), renderType, texture, alphaMode);
+      var normal = new Vector3f();
+      shape.forAllEdges((x1, y1, z1, x2, y2, z2) -> {
+        normal.set((float) (x2 - x1), (float) (y2 - y1), (float) (z2 - z1));
+        if (normal.lengthSquared() <= 1.0E-8F) {
+          return;
+        }
+
+        normal.normalize();
+        consumer.addVertex((float) x1, (float) y1, (float) z1)
+          .setColor(color)
+          .setNormal(normal.x(), normal.y(), normal.z())
+          .setLineWidth(lineWidth);
+        consumer.addVertex((float) x2, (float) y2, (float) z2)
+          .setColor(color)
+          .setNormal(normal.x(), normal.y(), normal.z())
+          .setLineWidth(lineWidth);
+      });
+      consumer.flush(quads, textures);
     }
 
     @Override
@@ -1218,11 +1249,6 @@ public final class InventoryItemIconRenderer {
     @Override
     public void submitCustomGeometry(PoseStack poseStack, RenderType renderType, SubmitNodeCollector.CustomGeometryRenderer renderer) {
       var texture = textureImageFromRenderType(renderType);
-      if (texture == null) {
-        unsupported = true;
-        return;
-      }
-
       var alphaMode = VanillaSubmitCollector.alphaMode(renderType, texture, 0xFFFFFFFF);
       var consumer = new ItemCapturingVertexConsumer(new Matrix4f(), renderType.primitiveTopology(), renderType, texture, alphaMode);
       renderer.render(poseStack.last(), consumer);
@@ -1231,12 +1257,144 @@ public final class InventoryItemIconRenderer {
 
     @Override
     public void submitQuadParticleGroup(QuadParticleRenderState quadParticles) {
-      unsupported = true;
+      if (quadParticles.isEmpty()) {
+        return;
+      }
+
+      for (var entry : quadParticles.particles.entrySet()) {
+        var layer = entry.getKey();
+        var storage = entry.getValue();
+        var texture = RendererAssets.instance().textureAtlas(layer.textureAtlasLocation());
+        var alphaMode = layer.translucent() ? RendererAssets.AlphaMode.TRANSLUCENT : RendererAssets.AlphaMode.CUTOUT;
+        storage.forEachParticle((x, y, z, qx, qy, qz, qw, size, u0, u1, v0, v1, color, lightCoords) -> {
+          var rotation = new Quaternionf(qx, qy, qz, qw);
+          var vertices = new Vector3f[]{
+            rotateParticleVertex(rotation, x, y, z, size, 1.0F, -1.0F),
+            rotateParticleVertex(rotation, x, y, z, size, 1.0F, 1.0F),
+            rotateParticleVertex(rotation, x, y, z, size, -1.0F, 1.0F),
+            rotateParticleVertex(rotation, x, y, z, size, -1.0F, -1.0F)
+          };
+          var material = RenderMaterial
+            .create(
+              texture,
+              alphaMode,
+              color,
+              true,
+              0.0F,
+              RenderMaterial.ONE_TENTH_ALPHA_CUTOUT_THRESHOLD
+            )
+            .withPipelineState(layer.pipeline());
+          quads.add(new RenderQuad(
+            new RenderVertex(vertices[0].x(), vertices[0].y(), vertices[0].z(), u1, v1, 0xFFFFFFFF),
+            new RenderVertex(vertices[1].x(), vertices[1].y(), vertices[1].z(), u1, v0, 0xFFFFFFFF),
+            new RenderVertex(vertices[2].x(), vertices[2].y(), vertices[2].z(), u0, v0, 0xFFFFFFFF),
+            new RenderVertex(vertices[3].x(), vertices[3].y(), vertices[3].z(), u0, v1, 0xFFFFFFFF),
+            material
+          ));
+          textures.add(texture);
+        });
+      }
     }
 
     @Override
-    public void submitGizmoPrimitives(DrawableGizmoPrimitives.Group group, CameraRenderState cameraRenderState, boolean translucent) {
-      unsupported = true;
+    public void submitGizmoPrimitives(DrawableGizmoPrimitives.Group group, CameraRenderState cameraRenderState, boolean onTop) {
+      submitGizmoQuads(group);
+      submitGizmoTriangleFans(group);
+      submitGizmoLines(group);
+      submitGizmoPoints(group);
+      if (!group.texts().isEmpty()) {
+        unsupported = true;
+      }
+    }
+
+    private void submitGizmoQuads(DrawableGizmoPrimitives.Group group) {
+      if (group.quads().isEmpty()) {
+        return;
+      }
+
+      var consumer = newItemConsumer(new Matrix4f(), RenderTypes.debugFilledBox(), 0xFFFFFFFF);
+      for (var quad : group.quads()) {
+        addGizmoVertex(consumer, quad.a(), quad.color());
+        addGizmoVertex(consumer, quad.b(), quad.color());
+        addGizmoVertex(consumer, quad.c(), quad.color());
+        addGizmoVertex(consumer, quad.d(), quad.color());
+      }
+      consumer.flush(quads, textures);
+    }
+
+    private void submitGizmoTriangleFans(DrawableGizmoPrimitives.Group group) {
+      if (group.triangleFans().isEmpty()) {
+        return;
+      }
+
+      for (var triangleFan : group.triangleFans()) {
+        if (triangleFan.points().length < 3) {
+          continue;
+        }
+
+        var consumer = newItemConsumer(new Matrix4f(), RenderTypes.debugTriangleFan(), triangleFan.color());
+        for (var point : triangleFan.points()) {
+          addGizmoVertex(consumer, point, triangleFan.color());
+        }
+        consumer.flush(quads, textures);
+      }
+    }
+
+    private void submitGizmoLines(DrawableGizmoPrimitives.Group group) {
+      if (group.lines().isEmpty()) {
+        return;
+      }
+
+      var renderType = group.opaque() ? RenderTypes.lines() : RenderTypes.linesTranslucent();
+      var consumer = newItemConsumer(new Matrix4f(), renderType, 0xFFFFFFFF);
+      var direction = new Vector3f();
+      for (var line : group.lines()) {
+        direction.set(
+          (float) (line.end().x() - line.start().x()),
+          (float) (line.end().y() - line.start().y()),
+          (float) (line.end().z() - line.start().z())
+        );
+        if (direction.lengthSquared() <= 1.0E-8F) {
+          continue;
+        }
+
+        direction.normalize();
+        addGizmoLineVertex(consumer, line.start(), line.color(), direction, line.width());
+        addGizmoLineVertex(consumer, line.end(), line.color(), direction, line.width());
+      }
+      consumer.flush(quads, textures);
+    }
+
+    private void submitGizmoPoints(DrawableGizmoPrimitives.Group group) {
+      if (group.points().isEmpty()) {
+        return;
+      }
+
+      var consumer = newItemConsumer(new Matrix4f(), RenderTypes.debugPoint(), 0xFFFFFFFF);
+      for (var point : group.points()) {
+        addGizmoVertex(consumer, point.pos(), point.color()).setLineWidth(point.size());
+      }
+      consumer.flush(quads, textures);
+    }
+
+    private ItemCapturingVertexConsumer newItemConsumer(Matrix4fc pose, RenderType renderType, int color) {
+      var texture = textureImageFromRenderType(renderType);
+      var alphaMode = VanillaSubmitCollector.alphaMode(renderType, texture, color);
+      return new ItemCapturingVertexConsumer(pose, renderType.primitiveTopology(), renderType, texture, alphaMode);
+    }
+
+    private static VertexConsumer addGizmoVertex(VertexConsumer consumer, Vec3 position, int color) {
+      return consumer
+        .addVertex((float) position.x(), (float) position.y(), (float) position.z())
+        .setColor(color);
+    }
+
+    private static void addGizmoLineVertex(VertexConsumer consumer, Vec3 position, int color, Vector3f direction, float width) {
+      consumer
+        .addVertex((float) position.x(), (float) position.y(), (float) position.z())
+        .setColor(color)
+        .setNormal(direction.x(), direction.y(), direction.z())
+        .setLineWidth(width);
     }
   }
 
@@ -1247,6 +1405,7 @@ public final class InventoryItemIconRenderer {
     private final RendererAssets.TextureImage texture;
     private final RendererAssets.AlphaMode alphaMode;
     private final ArrayList<CapturedVertex> vertices = new ArrayList<>();
+    private float lineWidth = 1.0F;
     private CapturedVertex current;
 
     private ItemCapturingVertexConsumer(
@@ -1289,6 +1448,17 @@ public final class InventoryItemIconRenderer {
             emitTriangle(quads, textures, vertices.getFirst(), vertices.get(i), vertices.get(i + 1));
           }
         }
+        case LINES, DEBUG_LINES, DEBUG_LINE_STRIP -> {
+          var stride = mode == PrimitiveTopology.DEBUG_LINE_STRIP ? 1 : 2;
+          for (var i = 0; i + 1 < vertices.size(); i += stride) {
+            emitLine(quads, textures, vertices.get(i), vertices.get(i + 1));
+          }
+        }
+        case POINTS -> {
+          for (var vertex : vertices) {
+            emitPoint(quads, textures, vertex);
+          }
+        }
         default -> {
         }
       }
@@ -1310,6 +1480,45 @@ public final class InventoryItemIconRenderer {
       emitQuad(quads, textures, a, b, c, c);
     }
 
+    private void emitLine(List<RenderQuad> quads, Set<RendererAssets.TextureImage> textures, CapturedVertex a, CapturedVertex b) {
+      var start = a.position();
+      var end = b.position();
+      var dx = end.x() - start.x();
+      var dy = end.y() - start.y();
+      var length = (float) Math.sqrt(dx * dx + dy * dy);
+      if (!Float.isFinite(length) || length <= 1.0E-6F) {
+        emitPoint(quads, textures, a);
+        emitPoint(quads, textures, b);
+        return;
+      }
+
+      var halfWidthA = Math.max(0.0F, a.lineWidth()) / (GUI_PIXELS_PER_UNIT * 2.0F);
+      var halfWidthB = Math.max(0.0F, b.lineWidth()) / (GUI_PIXELS_PER_UNIT * 2.0F);
+      var perpX = -dy / length;
+      var perpY = dx / length;
+      emitQuad(
+        quads,
+        textures,
+        new CapturedVertex(new Vector3f(start.x() + perpX * halfWidthA, start.y() + perpY * halfWidthA, start.z()), a.color(), a.u(), a.v(), a.lineWidth()),
+        new CapturedVertex(new Vector3f(start.x() - perpX * halfWidthA, start.y() - perpY * halfWidthA, start.z()), a.color(), a.u(), a.v(), a.lineWidth()),
+        new CapturedVertex(new Vector3f(end.x() - perpX * halfWidthB, end.y() - perpY * halfWidthB, end.z()), b.color(), b.u(), b.v(), b.lineWidth()),
+        new CapturedVertex(new Vector3f(end.x() + perpX * halfWidthB, end.y() + perpY * halfWidthB, end.z()), b.color(), b.u(), b.v(), b.lineWidth())
+      );
+    }
+
+    private void emitPoint(List<RenderQuad> quads, Set<RendererAssets.TextureImage> textures, CapturedVertex vertex) {
+      var position = vertex.position();
+      var halfSize = Math.max(0.0F, vertex.lineWidth()) / (GUI_PIXELS_PER_UNIT * 2.0F);
+      emitQuad(
+        quads,
+        textures,
+        new CapturedVertex(new Vector3f(position.x() - halfSize, position.y() - halfSize, position.z()), vertex.color(), vertex.u(), vertex.v(), vertex.lineWidth()),
+        new CapturedVertex(new Vector3f(position.x() - halfSize, position.y() + halfSize, position.z()), vertex.color(), vertex.u(), vertex.v(), vertex.lineWidth()),
+        new CapturedVertex(new Vector3f(position.x() + halfSize, position.y() + halfSize, position.z()), vertex.color(), vertex.u(), vertex.v(), vertex.lineWidth()),
+        new CapturedVertex(new Vector3f(position.x() + halfSize, position.y() - halfSize, position.z()), vertex.color(), vertex.u(), vertex.v(), vertex.lineWidth())
+      );
+    }
+
     private RenderVertex renderVertex(CapturedVertex vertex) {
       var position = vertex.position();
       return new RenderVertex(position.x(), position.y(), position.z(), vertex.u(), vertex.v(), vertex.color());
@@ -1317,7 +1526,7 @@ public final class InventoryItemIconRenderer {
 
     @Override
     public com.mojang.blaze3d.vertex.VertexConsumer addVertex(float x, float y, float z) {
-      current = new CapturedVertex(pose.transformPosition(new Vector3f(x, y, z)), 0xFFFFFFFF, 0.0F, 0.0F);
+      current = new CapturedVertex(pose.transformPosition(new Vector3f(x, y, z)), 0xFFFFFFFF, 0.0F, 0.0F, lineWidth);
       vertices.add(current);
       return this;
     }
@@ -1348,13 +1557,21 @@ public final class InventoryItemIconRenderer {
     @Override public com.mojang.blaze3d.vertex.VertexConsumer setUv1(int u, int v) { return this; }
     @Override public com.mojang.blaze3d.vertex.VertexConsumer setUv2(int u, int v) { return this; }
     @Override public com.mojang.blaze3d.vertex.VertexConsumer setNormal(float x, float y, float z) { return this; }
-    @Override public com.mojang.blaze3d.vertex.VertexConsumer setLineWidth(float width) { return this; }
+    @Override
+    public com.mojang.blaze3d.vertex.VertexConsumer setLineWidth(float width) {
+      lineWidth = Float.isFinite(width) ? Math.max(0.0F, width) : 1.0F;
+      if (current != null) {
+        current = current.withLineWidth(lineWidth);
+        vertices.set(vertices.size() - 1, current);
+      }
+      return this;
+    }
   }
 
   private static RendererAssets.TextureImage textureImageFromRenderType(RenderType renderType) {
     RenderSetup state = renderType.state;
     if (state == null || state.textures == null || state.textures.isEmpty()) {
-      return null;
+      return WHITE_TEXTURE;
     }
 
     for (var binding : state.textures.values()) {
@@ -1364,20 +1581,24 @@ public final class InventoryItemIconRenderer {
       return textureImage(binding);
     }
 
-    return null;
+    return WHITE_TEXTURE;
   }
 
   private static RendererAssets.TextureImage textureImage(RenderSetup.TextureBinding binding) {
     return RendererAssets.withSamplerAddressMode(RendererAssets.instance().renderTexture(binding.location()), binding.sampler());
   }
 
-  private record CapturedVertex(Vector3f position, int color, float u, float v) {
+  private record CapturedVertex(Vector3f position, int color, float u, float v, float lineWidth) {
     private CapturedVertex withColor(int color) {
-      return new CapturedVertex(position, color, u, v);
+      return new CapturedVertex(position, color, u, v, lineWidth);
     }
 
     private CapturedVertex withUv(float u, float v) {
-      return new CapturedVertex(position, color, u, v);
+      return new CapturedVertex(position, color, u, v, lineWidth);
+    }
+
+    private CapturedVertex withLineWidth(float lineWidth) {
+      return new CapturedVertex(position, color, u, v, lineWidth);
     }
   }
 }

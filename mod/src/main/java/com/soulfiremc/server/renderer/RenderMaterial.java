@@ -350,6 +350,7 @@ public record RenderMaterial(
       case "core/glint",
            "core/particle",
            "core/text",
+           "core/text_background",
            "core/rendertype_crumbling",
            "core/rendertype_text",
            "core/rendertype_text_background",

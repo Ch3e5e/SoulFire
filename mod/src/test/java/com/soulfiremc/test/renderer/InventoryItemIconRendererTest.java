@@ -25,7 +25,12 @@ import com.soulfiremc.server.renderer.RenderVertex;
 import com.soulfiremc.server.renderer.RendererAssets;
 import com.soulfiremc.test.utils.TestBootstrap;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.SubmitNodeCollector;
+import net.minecraft.client.renderer.gizmos.DrawableGizmoPrimitives;
 import net.minecraft.client.renderer.item.ItemStackRenderState;
+import net.minecraft.client.renderer.rendertype.RenderType;
+import net.minecraft.client.renderer.rendertype.RenderTypes;
+import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.client.resources.model.geometry.BakedQuad;
 import net.minecraft.core.Holder;
 import net.minecraft.core.component.DataComponentMap;
@@ -33,6 +38,9 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.Shapes;
+import net.minecraft.world.phys.shapes.VoxelShape;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -175,10 +183,8 @@ class InventoryItemIconRendererTest {
 
   @Test
   void itemSubmitMarksFoilForFoilItemParts() throws Exception {
-    var collectorClass = Class.forName("com.soulfiremc.server.renderer.InventoryItemIconRenderer$ItemSubmitCollector");
-    var constructor = collectorClass.getDeclaredConstructor();
-    constructor.setAccessible(true);
-    var collector = constructor.newInstance();
+    var collector = newItemSubmitCollector();
+    var collectorClass = collector.getClass();
     var submitItem = collectorClass.getDeclaredMethod(
       "submitItem",
       PoseStack.class,
@@ -207,6 +213,118 @@ class InventoryItemIconRendererTest {
     Method hasFoil = collectorClass.getDeclaredMethod("hasFoil");
     hasFoil.setAccessible(true);
     assertTrue((boolean) hasFoil.invoke(collector));
+  }
+
+  @Test
+  void itemSubmitCollectorCapturesShapeOutlines() throws Exception {
+    var collector = newItemSubmitCollector();
+    var collectorClass = collector.getClass();
+    var submitShapeOutline = collectorClass.getDeclaredMethod(
+      "submitShapeOutline",
+      PoseStack.class,
+      VoxelShape.class,
+      RenderType.class,
+      int.class,
+      float.class,
+      boolean.class
+    );
+    submitShapeOutline.setAccessible(true);
+
+    submitShapeOutline.invoke(
+      collector,
+      new PoseStack(),
+      Shapes.box(-0.5, -0.5, 0.0, 0.5, 0.5, 1.0),
+      RenderTypes.lines(),
+      0xFFFFFFFF,
+      2.0F,
+      false
+    );
+
+    assertFalse(unsupported(collector));
+    assertTrue(quads(collector).size() >= 12);
+  }
+
+  @Test
+  void itemSubmitCollectorCapturesNoTextureCustomGeometry() throws Exception {
+    var collector = newItemSubmitCollector();
+    var collectorClass = collector.getClass();
+    var submitCustomGeometry = collectorClass.getDeclaredMethod(
+      "submitCustomGeometry",
+      PoseStack.class,
+      RenderType.class,
+      SubmitNodeCollector.CustomGeometryRenderer.class
+    );
+    submitCustomGeometry.setAccessible(true);
+    SubmitNodeCollector.CustomGeometryRenderer renderer = (_, consumer) -> {
+      consumer.addVertex(-0.5F, -0.5F, 0.0F).setColor(0xFFFFFFFF);
+      consumer.addVertex(-0.5F, 0.5F, 0.0F).setColor(0xFFFFFFFF);
+      consumer.addVertex(0.5F, 0.5F, 0.0F).setColor(0xFFFFFFFF);
+      consumer.addVertex(0.5F, -0.5F, 0.0F).setColor(0xFFFFFFFF);
+    };
+
+    submitCustomGeometry.invoke(collector, new PoseStack(), RenderTypes.debugQuads(), renderer);
+
+    assertFalse(unsupported(collector));
+    assertEquals(1, quads(collector).size());
+  }
+
+  @Test
+  void itemSubmitCollectorCapturesGizmoGeometry() throws Exception {
+    var collector = newItemSubmitCollector();
+    var collectorClass = collector.getClass();
+    var submitGizmoPrimitives = collectorClass.getDeclaredMethod(
+      "submitGizmoPrimitives",
+      DrawableGizmoPrimitives.Group.class,
+      CameraRenderState.class,
+      boolean.class
+    );
+    submitGizmoPrimitives.setAccessible(true);
+    var group = new DrawableGizmoPrimitives.Group(
+      true,
+      List.of(new DrawableGizmoPrimitives.Line(new Vec3(-0.5, -0.5, 0.0), new Vec3(0.5, -0.5, 0.0), 0xFFFFFFFF, 2.0F)),
+      List.of(new DrawableGizmoPrimitives.Quad(
+        new Vec3(-0.25, -0.25, 0.0),
+        new Vec3(-0.25, 0.25, 0.0),
+        new Vec3(0.25, 0.25, 0.0),
+        new Vec3(0.25, -0.25, 0.0),
+        0xFFFFFFFF
+      )),
+      List.of(new DrawableGizmoPrimitives.TriangleFan(
+        new Vec3[]{
+          new Vec3(0.0, 0.5, 0.0),
+          new Vec3(-0.25, 0.25, 0.0),
+          new Vec3(0.25, 0.25, 0.0)
+        },
+        0xFFFFFFFF
+      )),
+      List.of(),
+      List.of(new DrawableGizmoPrimitives.Point(new Vec3(0.0, 0.0, 0.0), 0xFFFFFFFF, 2.0F))
+    );
+
+    submitGizmoPrimitives.invoke(collector, group, null, false);
+
+    assertFalse(unsupported(collector));
+    assertTrue(quads(collector).size() >= 4);
+  }
+
+  private static Object newItemSubmitCollector() throws Exception {
+    var collectorClass = Class.forName("com.soulfiremc.server.renderer.InventoryItemIconRenderer$ItemSubmitCollector");
+    var constructor = collectorClass.getDeclaredConstructor();
+    constructor.setAccessible(true);
+    return constructor.newInstance();
+  }
+
+  private static boolean unsupported(Object collector) throws Exception {
+    var unsupported = collector.getClass().getDeclaredMethod("unsupported");
+    unsupported.setAccessible(true);
+    return (boolean) unsupported.invoke(collector);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static List<RenderQuad> quads(Object collector) throws Exception {
+    var quads = collector.getClass().getDeclaredMethod("quads");
+    quads.setAccessible(true);
+    return (List<RenderQuad>) quads.invoke(collector);
   }
 
   private static Rectangle visibleBounds(BufferedImage image) {

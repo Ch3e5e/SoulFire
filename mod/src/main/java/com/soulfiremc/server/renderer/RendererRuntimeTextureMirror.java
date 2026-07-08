@@ -201,40 +201,76 @@ public final class RendererRuntimeTextureMirror {
       int height,
       int sourceX,
       int sourceY) {
-      if (!hasWritableRegion(destX, destY, width, height)) {
+      var region = clippedRegion(destX, destY, width, height, sourceX, sourceY, source.getWidth(), source.getHeight());
+      if (region == null) {
         return;
       }
-      for (var y = 0; y < height; y++) {
-        for (var x = 0; x < width; x++) {
-          pixels[destX + x + (destY + y) * this.width] = nativeImagePixel(source, sourceX + x, sourceY + y);
+      for (var y = 0; y < region.height(); y++) {
+        for (var x = 0; x < region.width(); x++) {
+          pixels[region.destX() + x + (region.destY() + y) * this.width] =
+            nativeImagePixel(source, region.sourceX() + x, region.sourceY() + y);
         }
       }
       hasUploadData = true;
     }
 
     private void write(ByteBuffer source, NativeImage.Format format, int destX, int destY, int width, int height) {
-      if (!hasWritableRegion(destX, destY, width, height)) {
+      var region = clippedRegion(destX, destY, width, height, 0, 0, width, height);
+      if (region == null) {
         return;
       }
       var data = source.duplicate();
       var baseOffset = data.position();
       var components = format.components();
-      for (var y = 0; y < height; y++) {
-        for (var x = 0; x < width; x++) {
-          var sourceOffset = baseOffset + (x + y * width) * components;
-          pixels[destX + x + (destY + y) * this.width] = bufferPixel(data, format, sourceOffset);
+      for (var y = 0; y < region.height(); y++) {
+        for (var x = 0; x < region.width(); x++) {
+          var sourceOffset = baseOffset + (region.sourceX() + x + (region.sourceY() + y) * width) * components;
+          pixels[region.destX() + x + (region.destY() + y) * this.width] = bufferPixel(data, format, sourceOffset);
         }
       }
       hasUploadData = true;
     }
 
-    private boolean hasWritableRegion(int destX, int destY, int width, int height) {
-      return width > 0
-        && height > 0
-        && destX >= 0
-        && destY >= 0
-        && destX + width <= this.width
-        && destY + height <= this.height;
+    @Nullable
+    private WriteRegion clippedRegion(int destX, int destY, int width, int height, int sourceX, int sourceY, int sourceWidth, int sourceHeight) {
+      if (width <= 0 || height <= 0 || sourceWidth <= 0 || sourceHeight <= 0) {
+        return null;
+      }
+
+      if (destX < 0) {
+        var delta = -destX;
+        destX = 0;
+        sourceX += delta;
+        width -= delta;
+      }
+      if (destY < 0) {
+        var delta = -destY;
+        destY = 0;
+        sourceY += delta;
+        height -= delta;
+      }
+      if (sourceX < 0) {
+        var delta = -sourceX;
+        sourceX = 0;
+        destX += delta;
+        width -= delta;
+      }
+      if (sourceY < 0) {
+        var delta = -sourceY;
+        sourceY = 0;
+        destY += delta;
+        height -= delta;
+      }
+
+      width = Math.min(width, this.width - destX);
+      height = Math.min(height, this.height - destY);
+      width = Math.min(width, sourceWidth - sourceX);
+      height = Math.min(height, sourceHeight - sourceY);
+      if (width <= 0 || height <= 0) {
+        return null;
+      }
+
+      return new WriteRegion(destX, destY, width, height, sourceX, sourceY);
     }
 
     private int nativeImagePixel(NativeImage source, int x, int y) {
@@ -287,4 +323,6 @@ public final class RendererRuntimeTextureMirror {
       return RendererAssets.TextureImage.fromArgb(width, height, pixels, null);
     }
   }
+
+  private record WriteRegion(int destX, int destY, int width, int height, int sourceX, int sourceY) {}
 }

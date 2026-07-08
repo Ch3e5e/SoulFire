@@ -313,6 +313,65 @@ class RendererAssetsRuntimeTextureTest {
     assertEquals(0x00000000, image.getRGB(0, 0));
   }
 
+  @Test
+  void clipsPartiallyOutOfBoundsNativeImageUploads() {
+    var location = Identifier.withDefaultNamespace("test/runtime-mirror-native-clip");
+    var gpuTexture = new FakeGpuTexture(GpuFormat.RGBA8_UNORM, 2, 2);
+    RendererRuntimeTextureMirror.register(location, gpuTexture);
+
+    try {
+      try (var source = new NativeImage(3, 1, true)) {
+        source.setPixel(0, 0, 0xFF102030);
+        source.setPixel(1, 0, 0xFF405060);
+        source.setPixel(2, 0, 0xFF708090);
+        RendererRuntimeTextureMirror.mirrorWrite(gpuTexture, source, -1, 1, 3, 1, 0, 0);
+      }
+
+      var mirrored = RendererRuntimeTextureMirror.texture(location);
+      assertNotNull(mirrored);
+      var image = mirrored.toBufferedImage();
+      assertEquals(0xFF405060, image.getRGB(0, 1));
+      assertEquals(0xFF708090, image.getRGB(1, 1));
+      assertEquals(0x00000000, image.getRGB(0, 0));
+    } finally {
+      RendererRuntimeTextureMirror.unregister(location);
+    }
+  }
+
+  @Test
+  void clipsPartiallyOutOfBoundsByteBufferUploads() {
+    var location = Identifier.withDefaultNamespace("test/runtime-mirror-byte-buffer-clip");
+    var gpuTexture = new FakeGpuTexture(GpuFormat.RGBA8_UNORM, 2, 2);
+    RendererRuntimeTextureMirror.register(location, gpuTexture);
+
+    try {
+      var source = ByteBuffer.allocateDirect(12);
+      source.put((byte) 0x10);
+      source.put((byte) 0x20);
+      source.put((byte) 0x30);
+      source.put((byte) 0x40);
+      source.put((byte) 0x50);
+      source.put((byte) 0x60);
+      source.put((byte) 0x70);
+      source.put((byte) 0x80);
+      source.put((byte) 0x90);
+      source.put((byte) 0xA0);
+      source.put((byte) 0xB0);
+      source.put((byte) 0xC0);
+      source.flip();
+      RendererRuntimeTextureMirror.mirrorWrite(gpuTexture, source, NativeImage.Format.RGBA, -1, 0, 3, 1);
+
+      var mirrored = RendererRuntimeTextureMirror.texture(location);
+      assertNotNull(mirrored);
+      var image = mirrored.toBufferedImage();
+      assertEquals(0x80506070, image.getRGB(0, 0));
+      assertEquals(0xC090A0B0, image.getRGB(1, 0));
+      assertEquals(0x00000000, image.getRGB(0, 1));
+    } finally {
+      RendererRuntimeTextureMirror.unregister(location);
+    }
+  }
+
   private RendererAssets.TextureImage textureWithAlpha(int alpha) {
     var image = new BufferedImage(2, 1, BufferedImage.TYPE_INT_ARGB);
     image.setRGB(0, 0, 0xFFFFFFFF);
