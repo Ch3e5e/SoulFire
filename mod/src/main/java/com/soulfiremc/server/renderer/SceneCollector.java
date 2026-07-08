@@ -97,8 +97,7 @@ public class SceneCollector {
   }
 
   private static void collectGenericEntity(RenderContext ctx, Entity entity, SceneData.Builder builder) {
-    var renderState = VanillaSubmitCollector.extractEntityState(entity);
-    var vanillaScene = VanillaSubmitCollector.collectEntity(ctx, renderState);
+    var vanillaScene = VanillaSubmitCollector.collectEntity(ctx, entity);
     if (vanillaScene.totalQuadCount() > 0) {
       builder.addAll(vanillaScene);
     }

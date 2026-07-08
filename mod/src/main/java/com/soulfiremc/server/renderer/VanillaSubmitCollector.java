@@ -43,6 +43,8 @@ import net.minecraft.client.renderer.block.dispatch.BlockStateModel;
 import net.minecraft.client.renderer.block.dispatch.BlockStateModelPart;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
 import net.minecraft.client.renderer.culling.Frustum;
+import net.minecraft.client.renderer.entity.EntityRenderer;
+import net.minecraft.client.renderer.entity.state.AvatarRenderState;
 import net.minecraft.client.renderer.entity.state.EntityRenderState;
 import net.minecraft.client.renderer.feature.ModelFeatureRenderer;
 import net.minecraft.client.renderer.gizmos.DrawableGizmoPrimitives;
@@ -158,15 +160,35 @@ final class VanillaSubmitCollector implements SubmitNodeCollector, OrderedSubmit
     return dispatcher.shouldRender(entity, createFrustum(ctx), ctx.camera().eyeX(), ctx.camera().eyeY(), ctx.camera().eyeZ());
   }
 
-  static EntityRenderState extractEntityState(Entity entity) {
-    return Minecraft.getInstance().getEntityRenderDispatcher().extractEntity(entity, 1.0F);
-  }
-
-  static SceneData collectEntity(RenderContext ctx, EntityRenderState renderState) {
+  @SuppressWarnings({"rawtypes", "unchecked"})
+  static SceneData collectEntity(RenderContext ctx, Entity entity) {
     var dispatcher = Minecraft.getInstance().getEntityRenderDispatcher();
+    EntityRenderer rawRenderer = dispatcher.getRenderer(entity);
+    if (rawRenderer == null) {
+      return SceneData.EMPTY;
+    }
+
+    var renderState = dispatcher.extractEntity(entity, 1.0F);
     var collector = new VanillaSubmitCollector(ctx);
+    var cameraState = collector.cameraRenderState();
     var poseStack = new PoseStack();
-    dispatcher.submit(renderState, collector.cameraRenderState(), renderState.x, renderState.y, renderState.z, poseStack, collector);
+    var renderOffset = rawRenderer.getRenderOffset(renderState);
+    poseStack.pushPose();
+    poseStack.translate(renderState.x + renderOffset.x(), renderState.y + renderOffset.y(), renderState.z + renderOffset.z());
+    rawRenderer.submit(renderState, poseStack, collector, cameraState);
+    if (renderState.displayFireAnimation) {
+      collector.submitFlame(poseStack, renderState, Mth.rotationAroundAxis(Mth.Y_AXIS, cameraState.orientation, new Quaternionf()));
+    }
+    if (renderState instanceof AvatarRenderState) {
+      poseStack.translate(-renderOffset.x(), -renderOffset.y(), -renderOffset.z());
+    }
+    if (!renderState.shadowPieces.isEmpty()) {
+      collector.submitShadow(poseStack, renderState.shadowRadius, renderState.shadowPieces);
+    }
+    if (!(renderState instanceof AvatarRenderState)) {
+      poseStack.translate(-renderOffset.x(), -renderOffset.y(), -renderOffset.z());
+    }
+    poseStack.popPose();
     return collector.buildScene();
   }
 
