@@ -17,6 +17,7 @@
  */
 package com.soulfiremc.mod.mixin.soulfire.lifecycle;
 
+import com.soulfiremc.mod.util.HeadlessLwjglMemory;
 import com.soulfiremc.mod.util.SFConstants;
 import com.soulfiremc.server.util.log4j.GenericTerminalConsole;
 import com.soulfiremc.shared.Base64Helpers;
@@ -48,6 +49,7 @@ public final class MixinMain {
     SoulFireEarlyBootstrap.earlyBootstrap();
     SoulFirePreMainBootstrap.preMainBootstrap();
     Agents.getInstrumentation().addTransformer(new LwjglAgent());
+    HeadlessLwjglMemory.register();
     GenericTerminalConsole.setupStreams();
     SharedConstants.CHECK_DATA_FIXER_SCHEMA = false;
     SFConstants.NOT_REGISTRY_INIT_PHASE = false;

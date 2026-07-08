@@ -17,24 +17,40 @@
  */
 package com.soulfiremc.mod.mixin.headless.rendering;
 
-import com.mojang.blaze3d.platform.NativeImage;
 import com.soulfiremc.server.renderer.RendererDownloadedTextureStore;
+import net.minecraft.client.renderer.texture.SkinTextureDownloader;
 import net.minecraft.core.ClientAsset;
+import net.minecraft.resources.Identifier;
+import net.minecraft.util.Util;
+import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
+import java.net.Proxy;
+import java.nio.file.Path;
 import java.util.concurrent.CompletableFuture;
 
-@Mixin(net.minecraft.client.renderer.texture.SkinTextureDownloader.class)
+@Mixin(SkinTextureDownloader.class)
 public class MixinSkinTextureDownloader {
-  @Inject(method = "registerTextureInManager", at = @At("HEAD"))
-  private void registerDownloadedTextureHook(
-    ClientAsset.Texture textureId,
-    NativeImage contents,
+  @Shadow
+  @Final
+  private Proxy proxy;
+
+  @Inject(method = "downloadAndRegisterSkin", at = @At("RETURN"), cancellable = true)
+  private void mirrorDownloadedTextureHook(
+    Identifier textureId,
+    Path localCopy,
+    String url,
+    boolean processLegacySkin,
     CallbackInfoReturnable<CompletableFuture<ClientAsset.Texture>> cir
   ) {
-    RendererDownloadedTextureStore.register(textureId.texturePath(), contents);
+    var original = cir.getReturnValue();
+    cir.setReturnValue(original.thenCompose(texture -> CompletableFuture.supplyAsync(() -> {
+      RendererDownloadedTextureStore.registerDownloadedTexture(texture.texturePath(), localCopy, url, proxy, processLegacySkin);
+      return texture;
+    }, Util.nonCriticalIoPool().forName("mirrorDownloadedTexture"))));
   }
 }

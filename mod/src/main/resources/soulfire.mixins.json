@@ -42,6 +42,7 @@
     "headless.rendering.MixinGameRenderer",
     "headless.rendering.MixinLevelExtractor",
     "headless.rendering.MixinLevelRenderer",
+    "headless.rendering.MixinMapTextureManagerMapInstance",
     "headless.rendering.MixinMouseHandler",
     "headless.rendering.MixinNativeLibrariesBootstrap",
     "headless.rendering.MixinParticleEngine",

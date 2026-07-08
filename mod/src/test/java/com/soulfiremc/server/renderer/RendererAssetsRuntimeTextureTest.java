@@ -154,6 +154,27 @@ class RendererAssetsRuntimeTextureTest {
   }
 
   @Test
+  void normalizesTrustedArgbPlayerSkinWithoutNativeImage() {
+    var location = Identifier.withDefaultNamespace("skins/test-trusted-alpha-normalization");
+    var gpuTexture = new FakeGpuTexture(GpuFormat.RGBA8_UNORM, 64, 64);
+    var pixels = new int[64 * 64];
+    pixels[8 + 8 * 64] = 0x40112233;
+    pixels[40 + 8 * 64] = 0x40223344;
+
+    try {
+      RendererRuntimeTextureMirror.registerArgb(location, gpuTexture, 64, 64, pixels);
+
+      var mirrored = RendererRuntimeTextureMirror.texture(location);
+      assertNotNull(mirrored);
+      var image = mirrored.toBufferedImage();
+      assertEquals(0xFF112233, image.getRGB(8, 8));
+      assertEquals(0x40223344, image.getRGB(40, 8));
+    } finally {
+      RendererRuntimeTextureMirror.unregister(location);
+    }
+  }
+
+  @Test
   void ignoresBlankMirroredPlayerSkinUploads() {
     var location = Identifier.withDefaultNamespace("skins/test-blank-upload");
     var gpuTexture = new FakeGpuTexture(GpuFormat.RGBA8_UNORM, 64, 64);
@@ -264,6 +285,41 @@ class RendererAssetsRuntimeTextureTest {
       var mirrored = RendererRuntimeTextureMirror.texture(location);
       assertNotNull(mirrored);
       assertTrue(mirrored.isFullyTransparent());
+    } finally {
+      RendererRuntimeTextureMirror.unregister(location);
+    }
+  }
+
+  @Test
+  void trustedArgbWriteCanInitializeTransparentMapTexture() {
+    var location = Identifier.withDefaultNamespace("map/test-trusted-transparent");
+    var gpuTexture = new FakeGpuTexture(GpuFormat.RGBA8_UNORM, 2, 2);
+    RendererRuntimeTextureMirror.register(location, gpuTexture);
+
+    try {
+      RendererRuntimeTextureMirror.mirrorArgbWrite(gpuTexture, 0, 0, 2, 2, new int[4]);
+
+      var mirrored = RendererRuntimeTextureMirror.texture(location);
+      assertNotNull(mirrored);
+      assertTrue(mirrored.isFullyTransparent());
+    } finally {
+      RendererRuntimeTextureMirror.unregister(location);
+    }
+  }
+
+  @Test
+  void registersInitialArgbRuntimeTexturePixelsWithoutNativeImage() {
+    var location = Identifier.withDefaultNamespace("map/test-trusted-initial");
+    var gpuTexture = new FakeGpuTexture(GpuFormat.RGBA8_UNORM, 2, 1);
+
+    try {
+      RendererRuntimeTextureMirror.registerArgb(location, gpuTexture, 2, 1, new int[]{0xFF112233, 0x80445566});
+
+      var mirrored = RendererRuntimeTextureMirror.texture(location);
+      assertNotNull(mirrored);
+      var image = mirrored.toBufferedImage();
+      assertEquals(0xFF112233, image.getRGB(0, 0));
+      assertEquals(0x80445566, image.getRGB(1, 0));
     } finally {
       RendererRuntimeTextureMirror.unregister(location);
     }
