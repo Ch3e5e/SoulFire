@@ -735,11 +735,6 @@ public final class RendererAssets {
 
   @Nullable
   private TextureImage runtimeTexture(Identifier textureLocation) {
-    var downloadedTexture = RendererDownloadedTextureStore.texture(textureLocation);
-    if (downloadedTexture != null) {
-      return downloadedTexture;
-    }
-
     var mirroredTexture = RendererRuntimeTextureMirror.texture(textureLocation);
     if (mirroredTexture != null) {
       return mirroredTexture;
@@ -758,9 +753,6 @@ public final class RendererAssets {
         }
 
         var textureImage = TextureImage.from(nativeImageToBufferedImage(pixels), null);
-        if (isPlayerTexture(textureLocation) && textureImage.isFullyTransparent()) {
-          return null;
-        }
         return textureImage;
       }
       if (texture instanceof TextureAtlas atlas) {
@@ -777,29 +769,6 @@ public final class RendererAssets {
     return textureLocation.getPath().startsWith(SKIN_TEXTURE_PREFIX)
       ? texture(DefaultPlayerSkin.getDefaultTexture())
       : MISSING_TEXTURE;
-  }
-
-  private static boolean isPlayerTexture(Identifier textureLocation) {
-    return playerTexturePrefix(textureLocation) != null;
-  }
-
-  @Nullable
-  private static String playerTexturePrefix(Identifier textureLocation) {
-    if (!textureLocation.getNamespace().equals("minecraft")) {
-      return null;
-    }
-
-    var path = textureLocation.getPath();
-    if (path.startsWith(SKIN_TEXTURE_PREFIX)) {
-      return SKIN_TEXTURE_PREFIX;
-    }
-    if (path.startsWith(CAPE_TEXTURE_PREFIX)) {
-      return CAPE_TEXTURE_PREFIX;
-    }
-    if (path.startsWith(ELYTRA_TEXTURE_PREFIX)) {
-      return ELYTRA_TEXTURE_PREFIX;
-    }
-    return null;
   }
 
   private static boolean isAtlasTextureLocation(Identifier textureLocation) {
@@ -897,9 +866,9 @@ public final class RendererAssets {
 
   static boolean isRuntimeClientTexturePath(Identifier textureLocation) {
     var path = textureLocation.getPath();
-    return path.startsWith("skins/")
-      || path.startsWith("capes/")
-      || path.startsWith("elytra/");
+    return path.startsWith(SKIN_TEXTURE_PREFIX)
+      || path.startsWith(CAPE_TEXTURE_PREFIX)
+      || path.startsWith(ELYTRA_TEXTURE_PREFIX);
   }
 
   public enum AlphaMode {

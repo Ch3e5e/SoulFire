@@ -49,7 +49,7 @@ public final class RendererRuntimeTextureMirror {
     synchronized (LOCK) {
       TEXTURE_IDS.values().removeIf(location::equals);
       TEXTURE_IDS.put(texture, location);
-      var mirrored = TEXTURES.compute(location, (_, existing) -> existing != null && existing.matches(texture) ? existing : new MirroredTexture(location, texture));
+      var mirrored = TEXTURES.compute(location, (_, existing) -> existing != null && existing.matches(texture) ? existing : new MirroredTexture(texture));
       if (initialPixels != null) {
         mirrored.write(
           initialPixels,
@@ -61,28 +61,6 @@ public final class RendererRuntimeTextureMirror {
           0
         );
       }
-    }
-  }
-
-  public static void registerArgb(Identifier location, @Nullable GpuTexture texture, int width, int height, int[] argbPixels) {
-    if (texture == null || !texture.getFormat().hasColorAspect()) {
-      return;
-    }
-
-    synchronized (LOCK) {
-      TEXTURE_IDS.values().removeIf(location::equals);
-      TEXTURE_IDS.put(texture, location);
-      var mirrored = TEXTURES.compute(location, (_, existing) -> existing != null && existing.matches(texture) ? existing : new MirroredTexture(location, texture));
-      mirrored.writeTrustedArgb(
-        argbPixels,
-        0,
-        0,
-        Math.min(Math.min(texture.getWidth(0), width), mirrored.width),
-        Math.min(Math.min(texture.getHeight(0), height), mirrored.height),
-        width,
-        0,
-        0
-      );
     }
   }
 
@@ -130,22 +108,11 @@ public final class RendererRuntimeTextureMirror {
     }
   }
 
-  public static void mirrorArgbWrite(GpuTexture destination, int destX, int destY, int width, int height, int[] argbPixels) {
-    synchronized (LOCK) {
-      var mirrored = mirroredTexture(destination);
-      if (mirrored == null) {
-        return;
-      }
-
-      mirrored.writeTrustedArgb(argbPixels, destX, destY, width, height, width, 0, 0);
-    }
-  }
-
   @Nullable
   public static RendererAssets.TextureImage texture(Identifier location) {
     synchronized (LOCK) {
       var mirrored = TEXTURES.get(location);
-      return mirrored != null ? textureImage(location, mirrored) : null;
+      return mirrored != null ? textureImage(mirrored) : null;
     }
   }
 
@@ -160,7 +127,7 @@ public final class RendererRuntimeTextureMirror {
           mirrored.height,
           mirrored.format.toString(),
           mirrored.hasUploadData(),
-          textureImage(entry.getKey(), mirrored)
+          textureImage(mirrored)
         ));
       }
       return snapshots;
@@ -184,31 +151,13 @@ public final class RendererRuntimeTextureMirror {
     @Nullable RendererAssets.TextureImage texture
   ) {}
 
-  private static boolean isPlayerSkin(Identifier location) {
-    return location.getPath().startsWith("skins/");
-  }
-
-  private static boolean isMapTexture(Identifier location) {
-    return location.getNamespace().equals("minecraft") && location.getPath().startsWith("map/");
-  }
-
-  private static boolean isPlayerTexture(Identifier location) {
-    var path = location.getPath();
-    return path.startsWith("skins/")
-      || path.startsWith("capes/")
-      || path.startsWith("elytra/");
-  }
-
   @Nullable
-  private static RendererAssets.TextureImage textureImage(Identifier location, MirroredTexture mirrored) {
+  private static RendererAssets.TextureImage textureImage(MirroredTexture mirrored) {
     if (!mirrored.hasUploadData()) {
       return null;
     }
-    if (isPlayerTexture(location) && mirrored.isFullyTransparent()) {
-      return null;
-    }
 
-    return mirrored.toTextureImage(location);
+    return mirrored.toTextureImage();
   }
 
   @Nullable
@@ -220,22 +169,20 @@ public final class RendererRuntimeTextureMirror {
 
     var mirrored = TEXTURES.get(location);
     if (mirrored == null || !mirrored.matches(texture)) {
-      mirrored = new MirroredTexture(location, texture);
+      mirrored = new MirroredTexture(texture);
       TEXTURES.put(location, mirrored);
     }
     return mirrored;
   }
 
   private static final class MirroredTexture {
-    private final Identifier location;
     private final int width;
     private final int height;
     private final GpuFormat format;
     private final int[] pixels;
     private boolean hasUploadData;
 
-    private MirroredTexture(Identifier location, GpuTexture texture) {
-      this.location = location;
+    private MirroredTexture(GpuTexture texture) {
       this.width = texture.getWidth(0);
       this.height = texture.getHeight(0);
       this.format = texture.getFormat();
@@ -257,10 +204,6 @@ public final class RendererRuntimeTextureMirror {
       if (!hasWritableRegion(destX, destY, width, height)) {
         return;
       }
-      if (isIgnorableTransparentUpload(destX, destY, width, height) && isFullyTransparent(source, width, height, sourceX, sourceY)) {
-        return;
-      }
-
       for (var y = 0; y < height; y++) {
         for (var x = 0; x < width; x++) {
           pixels[destX + x + (destY + y) * this.width] = nativeImagePixel(source, sourceX + x, sourceY + y);
@@ -273,10 +216,6 @@ public final class RendererRuntimeTextureMirror {
       if (!hasWritableRegion(destX, destY, width, height)) {
         return;
       }
-      if (isIgnorableTransparentUpload(destX, destY, width, height) && isFullyTransparent(source, format, width, height)) {
-        return;
-      }
-
       var data = source.duplicate();
       var baseOffset = data.position();
       var components = format.components();
@@ -289,32 +228,6 @@ public final class RendererRuntimeTextureMirror {
       hasUploadData = true;
     }
 
-    private void writeTrustedArgb(
-      int[] source,
-      int destX,
-      int destY,
-      int width,
-      int height,
-      int sourceWidth,
-      int sourceX,
-      int sourceY) {
-      if (!hasWritableRegion(destX, destY, width, height)
-        || sourceWidth <= 0
-        || sourceX < 0
-        || sourceY < 0
-        || sourceX + width > sourceWidth
-        || source.length < sourceX + width + (sourceY + height - 1) * sourceWidth) {
-        return;
-      }
-
-      for (var y = 0; y < height; y++) {
-        var sourceOffset = sourceX + (sourceY + y) * sourceWidth;
-        var destinationOffset = destX + (destY + y) * this.width;
-        System.arraycopy(source, sourceOffset, pixels, destinationOffset, width);
-      }
-      hasUploadData = true;
-    }
-
     private boolean hasWritableRegion(int destX, int destY, int width, int height) {
       return width > 0
         && height > 0
@@ -322,40 +235,6 @@ public final class RendererRuntimeTextureMirror {
         && destY >= 0
         && destX + width <= this.width
         && destY + height <= this.height;
-    }
-
-    private boolean isIgnorableTransparentUpload(int destX, int destY, int width, int height) {
-      if (destX != 0 || destY != 0 || width != this.width || height != this.height) {
-        return false;
-      }
-
-      return isPlayerTexture(location) || !hasUploadData && isMapTexture(location);
-    }
-
-    private boolean isFullyTransparent(NativeImage source, int width, int height, int sourceX, int sourceY) {
-      for (var y = 0; y < height; y++) {
-        for (var x = 0; x < width; x++) {
-          if (((nativeImagePixel(source, sourceX + x, sourceY + y) >>> 24) & 0xFF) != 0) {
-            return false;
-          }
-        }
-      }
-      return true;
-    }
-
-    private boolean isFullyTransparent(ByteBuffer source, NativeImage.Format format, int width, int height) {
-      var data = source.duplicate();
-      var baseOffset = data.position();
-      var components = format.components();
-      for (var y = 0; y < height; y++) {
-        for (var x = 0; x < width; x++) {
-          var sourceOffset = baseOffset + (x + y * width) * components;
-          if (((bufferPixel(data, format, sourceOffset) >>> 24) & 0xFF) != 0) {
-            return false;
-          }
-        }
-      }
-      return true;
     }
 
     private int nativeImagePixel(NativeImage source, int x, int y) {
@@ -403,21 +282,8 @@ public final class RendererRuntimeTextureMirror {
       return hasUploadData;
     }
 
-    private boolean isFullyTransparent() {
-      for (var pixel : pixels) {
-        if (((pixel >>> 24) & 0xFF) != 0) {
-          return false;
-        }
-      }
-      return true;
-    }
-
     @Nullable
-    private RendererAssets.TextureImage toTextureImage(Identifier location) {
-      if (isPlayerSkin(location)) {
-        return RendererDownloadedTextureStore.normalizedSkinTexture(width, height, pixels, location.toString());
-      }
-
+    private RendererAssets.TextureImage toTextureImage() {
       return RendererAssets.TextureImage.fromArgb(width, height, pixels, null);
     }
   }
