@@ -38,7 +38,6 @@
     "headless.rendering.MixinClientLevel",
     "headless.rendering.MixinDeviceLimits",
     "headless.rendering.MixinCommandEncoder",
-    "headless.rendering.MixinEntityRenderDispatcher",
     "headless.rendering.MixinGameRenderer",
     "headless.rendering.MixinLevelExtractor",
     "headless.rendering.MixinLevelRenderer",
