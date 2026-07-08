@@ -44,6 +44,7 @@
     "headless.rendering.MixinLevelRenderer",
     "headless.rendering.MixinMouseHandler",
     "headless.rendering.MixinNativeLibrariesBootstrap",
+    "headless.rendering.MixinNativeImage",
     "headless.rendering.MixinParticleEngine",
     "headless.rendering.MixinRenderSystem",
     "headless.rendering.MixinRenderTarget",

@@ -22,12 +22,15 @@ import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.blaze3d.textures.GpuTexture;
 import com.soulfiremc.test.utils.TestBootstrap;
 import net.minecraft.client.renderer.rendertype.RenderTypes;
+import net.minecraft.client.renderer.texture.SkinTextureDownloader;
 import net.minecraft.resources.Identifier;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.lwjgl.system.MemoryUtil;
 
+import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -150,6 +153,27 @@ class RendererAssetsRuntimeTextureTest {
       assertEquals(0x40223344, image.getRGB(40, 8));
     } finally {
       RendererRuntimeTextureMirror.unregister(location);
+    }
+  }
+
+  @Test
+  void nativeImageReadPreservesPixelsForVanillaSkinNormalization() throws Exception {
+    var encoded = new ByteArrayOutputStream();
+    var image = new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB);
+    image.setRGB(8, 8, 0x40112233);
+    ImageIO.write(image, "png", encoded);
+
+    var decoded = NativeImage.read(encoded.toByteArray());
+    try {
+      var normalized = SkinTextureDownloader.processLegacySkin(decoded, "memory:test-skin");
+      decoded = null;
+      try (normalized) {
+        assertEquals(0xFF112233, normalized.getPixel(8, 8));
+      }
+    } finally {
+      if (decoded != null) {
+        decoded.close();
+      }
     }
   }
 
