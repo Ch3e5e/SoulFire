@@ -242,7 +242,7 @@ public final class HeadlessLwjglMemory {
 
   private static BufferView registerExternalBuffer(Buffer buffer) {
     var elementSize = elementSize(buffer);
-    var bytes = Math.max(0, buffer.capacity()) * elementSize;
+    var bytes = Math.max(elementSize, Math.max(0, buffer.capacity()) * elementSize);
     var address = allocate(bytes, true);
     var view = new BufferView(address, address, elementSize);
     BUFFER_VIEWS.put(buffer, view);
@@ -250,7 +250,9 @@ public final class HeadlessLwjglMemory {
       var copy = byteBuffer.duplicate();
       copy.clear();
       var block = BLOCKS.get(address);
-      copy.get(block.data, 0, Math.min(copy.remaining(), block.data.length));
+      if (block != null) {
+        copy.get(block.data, 0, Math.min(copy.remaining(), block.data.length));
+      }
     }
     return view;
   }
