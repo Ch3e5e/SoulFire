@@ -49,7 +49,7 @@ public final class GsonInstance {
     var builder = new GsonBuilder()
       .registerTypeAdapter(Key.class, RESOURCE_KEY_ADAPTER);
 
-    for (var factory : ServiceLoader.load(TypeAdapterFactory.class)) {
+    for (var factory : ServiceLoader.load(TypeAdapterFactory.class, TypeAdapterFactory.class.getClassLoader())) {
       builder.registerTypeAdapterFactory(factory);
     }
 

@@ -54,14 +54,8 @@ final class OpenApiSpecGenerator {
   private static final String OPEN_API_VERSION = "3.1.0";
   private static final String JSON_SCHEMA_DIALECT = "https://spec.openapis.org/oas/3.1/dialect/base";
   private static final String ERROR_SCHEMA_NAME = "SoulFireGrpcError";
-  private static final List<DocServicePlugin> DOC_SERVICE_PLUGINS = immutableServiceLoader(
-    DocServicePlugin.class,
-    OpenApiSpecGenerator.class.getClassLoader()
-  );
-  private static final List<DescriptiveTypeInfoProvider> DESCRIPTIVE_TYPE_INFO_PROVIDERS = immutableServiceLoader(
-    DescriptiveTypeInfoProvider.class,
-    OpenApiSpecGenerator.class.getClassLoader()
-  );
+  private static final List<DocServicePlugin> DOC_SERVICE_PLUGINS = immutableServiceLoader(DocServicePlugin.class);
+  private static final List<DescriptiveTypeInfoProvider> DESCRIPTIVE_TYPE_INFO_PROVIDERS = immutableServiceLoader(DescriptiveTypeInfoProvider.class);
 
   private final ServiceSpecification specification;
   private final String publicAddress;
@@ -1366,8 +1360,8 @@ final class OpenApiSpecGenerator {
     };
   }
 
-  private static <T> List<T> immutableServiceLoader(Class<T> type, ClassLoader classLoader) {
-    return List.copyOf(StreamSupport.stream(ServiceLoader.load(type, classLoader).spliterator(), false).toList());
+  private static <T> List<T> immutableServiceLoader(Class<T> type) {
+    return List.copyOf(StreamSupport.stream(ServiceLoader.load(type, type.getClassLoader()).spliterator(), false).toList());
   }
 
   private record ProtoDescriptorMetadata(

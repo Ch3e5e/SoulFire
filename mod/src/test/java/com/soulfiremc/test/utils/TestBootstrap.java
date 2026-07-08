@@ -17,6 +17,8 @@
  */
 package com.soulfiremc.test.utils;
 
+import com.soulfiremc.mod.util.SFConstants;
+import net.fabricmc.loader.impl.launch.FabricLauncherBase;
 import net.minecraft.SharedConstants;
 import net.minecraft.client.ClientBootstrap;
 import net.minecraft.core.Holder;
@@ -27,6 +29,7 @@ import net.minecraft.server.Bootstrap;
 import net.minecraft.tags.TagKey;
 import net.minecraft.tags.TagLoader;
 
+import java.lang.reflect.InvocationTargetException;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -39,7 +42,15 @@ public final class TestBootstrap {
   }
 
   public static void bootstrapForTest() {
-    Thread.currentThread().setContextClassLoader(TestBootstrap.class.getClassLoader());
+    SFConstants.NOT_REGISTRY_INIT_PHASE = false;
+
+    var targetClassLoader = fabricTargetClassLoader();
+    if (targetClassLoader != null && targetClassLoader != TestBootstrap.class.getClassLoader()) {
+      invokeTargetBootstrap(targetClassLoader);
+      return;
+    }
+
+    Thread.currentThread().setContextClassLoader(testClassLoader());
 
     if (bootstrapped) {
       return;
@@ -60,6 +71,43 @@ public final class TestBootstrap {
     }
   }
 
+  public static ClassLoader testClassLoader() {
+    var targetClassLoader = fabricTargetClassLoader();
+    return targetClassLoader != null ? targetClassLoader : TestBootstrap.class.getClassLoader();
+  }
+
+  private static ClassLoader fabricTargetClassLoader() {
+    try {
+      var launcher = FabricLauncherBase.getLauncher();
+      return launcher != null ? launcher.getTargetClassLoader() : null;
+    } catch (LinkageError _) {
+      return null;
+    }
+  }
+
+  private static void invokeTargetBootstrap(ClassLoader targetClassLoader) {
+    try {
+      var targetBootstrap = Class.forName(TestBootstrap.class.getName(), true, targetClassLoader);
+      if (targetBootstrap == TestBootstrap.class) {
+        Thread.currentThread().setContextClassLoader(testClassLoader());
+        return;
+      }
+
+      targetBootstrap.getMethod("bootstrapForTest").invoke(null);
+    } catch (ClassNotFoundException | IllegalAccessException | NoSuchMethodException e) {
+      throw new IllegalStateException("Failed to bootstrap Minecraft in the Fabric test class loader", e);
+    } catch (InvocationTargetException e) {
+      var cause = e.getCause();
+      if (cause instanceof RuntimeException runtimeException) {
+        throw runtimeException;
+      } else if (cause instanceof Error error) {
+        throw error;
+      }
+
+      throw new IllegalStateException("Failed to bootstrap Minecraft in the Fabric test class loader", cause);
+    }
+  }
+
   private static void bindTagsToEmpty() {
     for (var registry : BuiltInRegistries.REGISTRY) {
       bindTagsToEmpty(registry);
@@ -73,6 +121,7 @@ public final class TestBootstrap {
     } catch (IllegalStateException e) {
       if (registry instanceof MappedRegistry<?> mappedRegistry && Objects.equals(e.getMessage(), "Invalid method used for tag loading")) {
         mappedRegistry.bindAllTagsToEmpty();
+        mappedRegistry.freeze();
         return;
       }
 

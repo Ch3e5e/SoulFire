@@ -35,6 +35,6 @@ public final class MinecraftBootstrapExtension implements BeforeAllCallback, Bef
   }
 
   private static void prepareThreadContext() {
-    Thread.currentThread().setContextClassLoader(MinecraftBootstrapExtension.class.getClassLoader());
+    Thread.currentThread().setContextClassLoader(TestBootstrap.testClassLoader());
   }
 }
