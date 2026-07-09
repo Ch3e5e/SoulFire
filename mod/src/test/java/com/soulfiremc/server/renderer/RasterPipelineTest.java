@@ -278,7 +278,7 @@ class RasterPipelineTest {
       buffers,
       0L,
       0xFF000000,
-      new RasterPipeline.FogState(true, 0xFF204060, 0.0F, 4.0F, 64.0F, 64.0F)
+      new RasterFogState(true, 0xFF204060, 0.0F, 4.0F, 64.0F, 64.0F)
     );
 
     assertColorNear(buffers.image().getRGB(WIDTH / 2, HEIGHT / 2), 0xFF204060, 3);
@@ -308,7 +308,7 @@ class RasterPipelineTest {
       buffers,
       0L,
       0x00000000,
-      new RasterPipeline.FogState(true, 0xFF204060, 0.0F, 4.0F, 64.0F, 64.0F)
+      new RasterFogState(true, 0xFF204060, 0.0F, 4.0F, 64.0F, 64.0F)
     );
 
     var color = buffers.image().getRGB(WIDTH / 2, HEIGHT / 2);
@@ -340,7 +340,7 @@ class RasterPipelineTest {
       buffers,
       0L,
       0xFF000000,
-      new RasterPipeline.FogState(true, 0xFF204060, 0.0F, 4.0F, 64.0F, 64.0F)
+      new RasterFogState(true, 0xFF204060, 0.0F, 4.0F, 64.0F, 64.0F)
     );
 
     assertEquals(RenderMaterial.FogMode.NONE, material.fogMode());
@@ -371,7 +371,7 @@ class RasterPipelineTest {
       buffers,
       0L,
       0xFF000000,
-      new RasterPipeline.FogState(true, 0xFF00FF00, 4.05F, 4.1F, 64.0F, 64.0F)
+      new RasterFogState(true, 0xFF00FF00, 4.05F, 4.1F, 64.0F, 64.0F)
     );
 
     var sample = camera.viewProjectionMatrix().transformProject(new Vector3f(1.5F, 0.0F, 4.0F));
@@ -408,7 +408,7 @@ class RasterPipelineTest {
       buffers,
       0L,
       0xFF000040,
-      new RasterPipeline.FogState(true, 0xFFFFC000, 0.0F, 4.0F, 64.0F, 64.0F)
+      new RasterFogState(true, 0xFFFFC000, 0.0F, 4.0F, 64.0F, 64.0F)
     );
 
     assertEquals(RenderMaterial.FogMode.ALPHA_FADE, lightningMaterial.fogMode());
@@ -457,7 +457,7 @@ class RasterPipelineTest {
       buffers,
       0L,
       0x00000000,
-      new RasterPipeline.FogState(true, 0xFFFFFFFF, 0.0F, 4.0F, 64.0F, 64.0F)
+      new RasterFogState(true, 0xFFFFFFFF, 0.0F, 4.0F, 64.0F, 64.0F)
     );
 
     var color = buffers.image().getRGB(WIDTH / 2, HEIGHT / 2);
@@ -1438,7 +1438,7 @@ class RasterPipelineTest {
   }
 
   private static void renderSynthetic(RasterPipeline pipeline, Camera camera, SceneData sceneData, RasterBuffers buffers, long animationTick, int clearColor) {
-    renderSynthetic(pipeline, camera, sceneData, buffers, animationTick, clearColor, RasterPipeline.FogState.DISABLED);
+    renderSynthetic(pipeline, camera, sceneData, buffers, animationTick, clearColor, RasterFogState.DISABLED);
   }
 
   private static void renderSynthetic(
@@ -1448,7 +1448,7 @@ class RasterPipelineTest {
     RasterBuffers buffers,
     long animationTick,
     int clearColor,
-    RasterPipeline.FogState fogState
+    RasterFogState fogState
   ) {
     buffers.clearColor(clearColor);
     buffers.clearDepth();

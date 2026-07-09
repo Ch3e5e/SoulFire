@@ -580,7 +580,7 @@ public final class InventoryItemIconRenderer {
     }
 
     for (var triangle : projectedTriangles) {
-      rasterizeTriangle(animationTick, triangle, buffers, writeDepth);
+      SoftwareRasterizer.rasterizeGuiItemTriangle(animationTick, triangle, buffers, writeDepth);
     }
   }
 
@@ -629,119 +629,6 @@ public final class InventoryItemIconRenderer {
     );
   }
 
-  private static void rasterizeTriangle(
-    long animationTick,
-    ProjectedTriangle triangle,
-    RasterBuffers buffers,
-    boolean writeDepth
-  ) {
-    var v0 = triangle.v0();
-    var v1 = triangle.v1();
-    var v2 = triangle.v2();
-    var material = triangle.material();
-    var area = edge(v0.x(), v0.y(), v1.x(), v1.y(), v2.x(), v2.y());
-    if (Math.abs(area) < 1.0E-5F) {
-      return;
-    }
-    if (!material.doubleSided() && area <= 0.0F) {
-      return;
-    }
-
-    var positiveArea = area > 0.0F;
-    var topLeft0 = positiveArea ? isTopLeft(v1.x(), v1.y(), v2.x(), v2.y()) : isTopLeft(v2.x(), v2.y(), v1.x(), v1.y());
-    var topLeft1 = positiveArea ? isTopLeft(v2.x(), v2.y(), v0.x(), v0.y()) : isTopLeft(v0.x(), v0.y(), v2.x(), v2.y());
-    var topLeft2 = positiveArea ? isTopLeft(v0.x(), v0.y(), v1.x(), v1.y()) : isTopLeft(v1.x(), v1.y(), v0.x(), v0.y());
-    var width = buffers.image().getWidth();
-    var height = buffers.image().getHeight();
-    var colorBuffer = buffers.colorBuffer();
-    var depthBuffer = buffers.depthBuffer();
-
-    var minX = Math.max(0, (int) Math.floor(Math.min(v0.x(), Math.min(v1.x(), v2.x()))));
-    var minY = Math.max(0, (int) Math.floor(Math.min(v0.y(), Math.min(v1.y(), v2.y()))));
-    var maxX = Math.min(width - 1, (int) Math.ceil(Math.max(v0.x(), Math.max(v1.x(), v2.x()))));
-    var maxY = Math.min(height - 1, (int) Math.ceil(Math.max(v0.y(), Math.max(v1.y(), v2.y()))));
-    if (minX > maxX || minY > maxY) {
-      return;
-    }
-
-    for (var y = minY; y <= maxY; y++) {
-      for (var x = minX; x <= maxX; x++) {
-        var sampleX = x + 0.5F;
-        var sampleY = y + 0.5F;
-        var w0 = edge(v1.x(), v1.y(), v2.x(), v2.y(), sampleX, sampleY);
-        var w1 = edge(v2.x(), v2.y(), v0.x(), v0.y(), sampleX, sampleY);
-        var w2 = edge(v0.x(), v0.y(), v1.x(), v1.y(), sampleX, sampleY);
-        if (!isInside(positiveArea, w0, w1, w2, topLeft0, topLeft1, topLeft2)) {
-          continue;
-        }
-
-        var normalizedW0 = w0 / area;
-        var normalizedW1 = w1 / area;
-        var normalizedW2 = w2 / area;
-        var depth = normalizedW0 * v0.depth() + normalizedW1 * v1.depth() + normalizedW2 * v2.depth();
-        var rasterIndex = y * width + x;
-        if (!(depth <= depthBuffer[rasterIndex])) {
-          continue;
-        }
-
-        var inverseW = normalizedW0 * v0.inverseW() + normalizedW1 * v1.inverseW() + normalizedW2 * v2.inverseW();
-        var u = (normalizedW0 * v0.uOverW() + normalizedW1 * v1.uOverW() + normalizedW2 * v2.uOverW()) / inverseW;
-        var v = (normalizedW0 * v0.vOverW() + normalizedW1 * v1.vOverW() + normalizedW2 * v2.vOverW()) / inverseW;
-        var sampled = material.texture().sample(u, v, animationTick);
-        var vertexColor = interpolatedColor(normalizedW0, normalizedW1, normalizedW2, inverseW, v0, v1, v2);
-        var color = modulate(modulate(sampled, vertexColor), material.color());
-        var alpha = (color >>> 24) & 0xFF;
-        if (alpha == 0) {
-          continue;
-        }
-        if (material.alphaCutoutThreshold() > 0 && alpha < material.alphaCutoutThreshold()) {
-          continue;
-        }
-
-        if (material.alphaMode() == RendererAssets.AlphaMode.OPAQUE) {
-          if (writeDepth) {
-            depthBuffer[rasterIndex] = depth;
-          }
-          colorBuffer[rasterIndex] = forceOpaque(color);
-          continue;
-        }
-
-        if (material.alphaMode() == RendererAssets.AlphaMode.CUTOUT) {
-          if (writeDepth) {
-            depthBuffer[rasterIndex] = depth;
-          }
-          colorBuffer[rasterIndex] = forceOpaque(color);
-          continue;
-        }
-
-        colorBuffer[rasterIndex] = blend(colorBuffer[rasterIndex], color);
-        if (writeDepth) {
-          depthBuffer[rasterIndex] = depth;
-        }
-      }
-    }
-  }
-
-  private static int interpolatedColor(
-    float weight0,
-    float weight1,
-    float weight2,
-    float inverseW,
-    ProjectedVertex v0,
-    ProjectedVertex v1,
-    ProjectedVertex v2
-  ) {
-    var a = colorChannel((weight0 * v0.aOverW() + weight1 * v1.aOverW() + weight2 * v2.aOverW()) / inverseW);
-    var r = colorChannel((weight0 * v0.rOverW() + weight1 * v1.rOverW() + weight2 * v2.rOverW()) / inverseW);
-    var g = colorChannel((weight0 * v0.gOverW() + weight1 * v1.gOverW() + weight2 * v2.gOverW()) / inverseW);
-    var b = colorChannel((weight0 * v0.bOverW() + weight1 * v1.bOverW() + weight2 * v2.bOverW()) / inverseW);
-    return (a << 24) | (r << 16) | (g << 8) | b;
-  }
-
-  private static int colorChannel(float value) {
-    return Math.clamp(Math.round(value), 0, 255);
-  }
-
   private static void applyFoil(RasterBuffers buffers, long animationTick) {
     var glint = RendererAssets.instance().texture(ENCHANTED_GLINT_ITEM);
     var colors = buffers.colorBuffer();
@@ -763,7 +650,7 @@ public final class InventoryItemIconRenderer {
           continue;
         }
 
-        colors[index] = blend(base, (sampleAlpha << 24) | (sample & 0x00FFFFFF));
+        colors[index] = SoftwareRasterizer.blendStraightAlpha(base, (sampleAlpha << 24) | (sample & 0x00FFFFFF));
       }
     }
   }
@@ -942,62 +829,6 @@ public final class InventoryItemIconRenderer {
     return RendererAssets.AlphaMode.OPAQUE;
   }
 
-  private static int modulate(int sample, int multiplier) {
-    var a = ((sample >>> 24) & 0xFF) * ((multiplier >>> 24) & 0xFF) / 255;
-    var r = ((sample >> 16) & 0xFF) * ((multiplier >> 16) & 0xFF) / 255;
-    var g = ((sample >> 8) & 0xFF) * ((multiplier >> 8) & 0xFF) / 255;
-    var b = (sample & 0xFF) * (multiplier & 0xFF) / 255;
-    return (a << 24) | (r << 16) | (g << 8) | b;
-  }
-
-  private static int forceOpaque(int color) {
-    return 0xFF000000 | (color & 0x00FFFFFF);
-  }
-
-  private static int blend(int dstColor, int srcColor) {
-    var dstA = ((dstColor >>> 24) & 0xFF) / 255.0F;
-    var srcA = ((srcColor >>> 24) & 0xFF) / 255.0F;
-    var outA = srcA + dstA * (1.0F - srcA);
-    if (outA <= 0.0F) {
-      return 0;
-    }
-
-    var dstR = (dstColor >> 16) & 0xFF;
-    var dstG = (dstColor >> 8) & 0xFF;
-    var dstB = dstColor & 0xFF;
-    var srcR = (srcColor >> 16) & 0xFF;
-    var srcG = (srcColor >> 8) & 0xFF;
-    var srcB = srcColor & 0xFF;
-
-    var outR = Math.round((srcR * srcA + dstR * dstA * (1.0F - srcA)) / outA);
-    var outG = Math.round((srcG * srcA + dstG * dstA * (1.0F - srcA)) / outA);
-    var outB = Math.round((srcB * srcA + dstB * dstA * (1.0F - srcA)) / outA);
-    var outAlpha = Math.round(outA * 255.0F);
-    return (outAlpha << 24) | (outR << 16) | (outG << 8) | outB;
-  }
-
-  private static boolean isInside(boolean positiveArea, float w0, float w1, float w2, boolean topLeft0, boolean topLeft1, boolean topLeft2) {
-    var epsilon = 1.0E-5F;
-    if (positiveArea) {
-      return edgeInclusive(w0, topLeft0, epsilon) && edgeInclusive(w1, topLeft1, epsilon) && edgeInclusive(w2, topLeft2, epsilon);
-    }
-    return edgeInclusive(-w0, topLeft0, epsilon) && edgeInclusive(-w1, topLeft1, epsilon) && edgeInclusive(-w2, topLeft2, epsilon);
-  }
-
-  private static float edge(float ax, float ay, float bx, float by, float px, float py) {
-    return (px - ax) * (by - ay) - (py - ay) * (bx - ax);
-  }
-
-  private static boolean edgeInclusive(float edgeValue, boolean topLeft, float epsilon) {
-    return edgeValue > epsilon || (Math.abs(edgeValue) <= epsilon && topLeft);
-  }
-
-  private static boolean isTopLeft(float ax, float ay, float bx, float by) {
-    var dy = by - ay;
-    var dx = bx - ax;
-    return dy < 0.0F || (dy == 0.0F && dx > 0.0F);
-  }
-
   private static List<Object> freezeModelIdentity(@Nullable TrackingItemStackRenderState renderState) {
     if (renderState == null) {
       return List.of();
@@ -1026,27 +857,6 @@ public final class InventoryItemIconRenderer {
   ) {}
 
   private record ClipVertex(float x, float y, float z, float u, float v) {}
-
-  private record ProjectedVertex(
-    float x,
-    float y,
-    float depth,
-    float inverseW,
-    float uOverW,
-    float vOverW,
-    float aOverW,
-    float rOverW,
-    float gOverW,
-    float bOverW
-  ) {}
-
-  private record ProjectedTriangle(
-    ProjectedVertex v0,
-    ProjectedVertex v1,
-    ProjectedVertex v2,
-    RenderMaterial material,
-    float sortDepth
-  ) {}
 
   private static final class ItemSubmitCollector implements SubmitNodeCollector {
     private final ArrayList<RenderQuad> quads = new ArrayList<>();
