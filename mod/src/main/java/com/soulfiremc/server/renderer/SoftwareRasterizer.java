@@ -97,6 +97,32 @@ final class SoftwareRasterizer {
     );
   }
 
+  static void rasterizeScreenTriangle(
+    long animationTick,
+    ProjectedTriangle triangle,
+    RasterBuffers buffers,
+    int clipMinX,
+    int clipMinY,
+    int clipMaxX,
+    int clipMaxY
+  ) {
+    var width = buffers.image().getWidth();
+    var height = buffers.image().getHeight();
+    rasterizeTriangle(
+      animationTick,
+      triangle,
+      buffers,
+      clipMinX,
+      clipMinY,
+      clipMaxX,
+      clipMaxY,
+      new Viewport(width, height, 0.0F, 0.0F),
+      RasterFogState.DISABLED,
+      RasterFrontend.GUI_ITEM,
+      false
+    );
+  }
+
   static int blendStraightAlpha(int dstColor, int srcColor) {
     var dstA = ((dstColor >>> 24) & 0xFF) / 255.0F;
     var srcA = ((srcColor >>> 24) & 0xFF) / 255.0F;

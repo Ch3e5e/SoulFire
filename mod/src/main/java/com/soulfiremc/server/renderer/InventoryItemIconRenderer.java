@@ -157,6 +157,21 @@ public final class InventoryItemIconRenderer {
     return encodedImage != null ? encodedImage : missingImage();
   }
 
+  static @Nullable BufferedImage renderGuiItemIcon(TrackingItemStackRenderState renderState, long animationTick) {
+    try {
+      var scene = buildVanillaResolvedScene(renderState);
+      if (scene == null || scene.quads().isEmpty()) {
+        return null;
+      }
+
+      var normalizedFrames = fitFramesToSlot(List.of(renderFrame(scene, animationTick)));
+      return normalizedFrames.isEmpty() ? null : normalizedFrames.getFirst();
+    } catch (Throwable t) {
+      log.debug("Failed to render vanilla HUD item icon", t);
+      return null;
+    }
+  }
+
   private static @Nullable TrackingItemStackRenderState resolveVanillaState(
     @Nullable Minecraft minecraft,
     @Nullable ClientLevel level,

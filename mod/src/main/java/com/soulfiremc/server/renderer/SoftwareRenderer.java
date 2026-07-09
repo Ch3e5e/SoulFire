@@ -19,6 +19,7 @@ package com.soulfiremc.server.renderer;
 
 import lombok.experimental.UtilityClass;
 import lombok.extern.slf4j.Slf4j;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.phys.Vec3;
@@ -94,6 +95,7 @@ public class SoftwareRenderer {
 
       var rasterStart = System.nanoTime();
       RASTER_PIPELINE.render(ctx, sceneData, buffers);
+      renderOverlays(ctx, yRot, xRot, width, height, fov, buffers);
       debugTrace.rasterNanos(System.nanoTime() - rasterStart);
       debugTrace.totalNanos(System.nanoTime() - renderStart);
       debugTrace.logSummary(sceneData);
@@ -101,6 +103,43 @@ public class SoftwareRenderer {
       return buffers.image();
     } finally {
       RenderDebugTrace.unbind();
+    }
+  }
+
+  private static void renderOverlays(
+    RenderContext ctx,
+    float yRot,
+    float xRot,
+    int width,
+    int height,
+    double fov,
+    RasterBuffers buffers
+  ) {
+    var partialTick = partialTick();
+    var handScene = VanillaSubmitCollector.collectHandsWithItems(ctx, partialTick);
+    if (handScene.totalQuadCount() > 0) {
+      var handCamera = new Camera(Vec3.ZERO, yRot, xRot, width, height, hudFov(fov), 100.0F);
+      RASTER_PIPELINE.renderFirstPersonOverlay(handCamera, handScene, buffers, ctx.animationTick());
+    }
+
+    PovHudRenderer.render(ctx, buffers);
+  }
+
+  private static float partialTick() {
+    try {
+      var deltaTracker = Minecraft.getInstance().getDeltaTracker();
+      return deltaTracker != null ? deltaTracker.getGameTimeDeltaPartialTick(false) : 1.0F;
+    } catch (Throwable _) {
+      return 1.0F;
+    }
+  }
+
+  private static double hudFov(double fallback) {
+    try {
+      var cameraState = Minecraft.getInstance().gameRenderer.gameRenderState().levelRenderState.cameraRenderState;
+      return cameraState != null && Float.isFinite(cameraState.hudFov) && cameraState.hudFov > 0.0F ? cameraState.hudFov : fallback;
+    } catch (Throwable _) {
+      return fallback;
     }
   }
 }

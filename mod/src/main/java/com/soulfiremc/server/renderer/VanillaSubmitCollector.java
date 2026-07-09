@@ -73,6 +73,7 @@ import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.level.CardinalLighting;
+import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FluidState;
@@ -164,6 +165,31 @@ final class VanillaSubmitCollector implements SubmitNodeCollector, OrderedSubmit
     var collector = new VanillaSubmitCollector(ctx);
     var poseStack = new PoseStack();
     dispatcher.submit(renderState, collector.cameraRenderState(), renderState.x, renderState.y, renderState.z, poseStack, collector);
+    return collector.buildScene();
+  }
+
+  static SceneData collectHandsWithItems(RenderContext ctx, float partialTick) {
+    var minecraft = Minecraft.getInstance();
+    var player = ctx.localPlayer() != null ? ctx.localPlayer() : minecraft.player;
+    if (player == null
+      || ctx.cameraDetached()
+      || !minecraft.options.getCameraType().isFirstPerson()
+      || player.isSleeping()
+      || minecraft.gui.hud.isHidden()
+      || minecraft.gameMode != null && minecraft.gameMode.getPlayerMode() == GameType.SPECTATOR) {
+      return SceneData.EMPTY;
+    }
+
+    var collector = new VanillaSubmitCollector(ctx);
+    var poseStack = new PoseStack();
+    poseStack.pushPose();
+    try {
+      poseStack.mulPose(ctx.camera().viewRotationMatrix().invert(new Matrix4f()));
+      var light = minecraft.getEntityRenderDispatcher().getPackedLightCoords(player, partialTick);
+      minecraft.gameRenderer.itemInHandRenderer.submitHandsWithItems(partialTick, poseStack, collector, player, light);
+    } finally {
+      poseStack.popPose();
+    }
     return collector.buildScene();
   }
 

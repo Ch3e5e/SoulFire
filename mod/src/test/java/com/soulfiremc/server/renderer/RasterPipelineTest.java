@@ -60,6 +60,45 @@ class RasterPipelineTest {
   }
 
   @Test
+  void firstPersonOverlayClearsDepthBeforeRasterizing() {
+    var pipeline = new RasterPipeline();
+    var camera = new Camera(new Vec3(0.0, 0.0, 0.0), 0.0F, 0.0F, WIDTH, HEIGHT, 70.0, 64.0F);
+    var buffers = new RasterBuffers(WIDTH, HEIGHT);
+    buffers.clearColor(0xFF000000);
+    buffers.clearDepth();
+
+    var worldScene = SceneData.builder();
+    worldScene.add(quad(-1.0F, -1.0F, 4.0F, 1.0F, 1.0F, solidTexture(0xFFFF0000), RendererAssets.AlphaMode.OPAQUE, 0xFFFFFFFF));
+    pipeline.renderScene(camera, worldScene.build(), buffers, 0L);
+
+    var overlayScene = SceneData.builder();
+    overlayScene.add(quad(-1.0F, -1.0F, 8.0F, 1.0F, 1.0F, solidTexture(0xFF00FF00), RendererAssets.AlphaMode.OPAQUE, 0xFFFFFFFF));
+    pipeline.renderFirstPersonOverlay(camera, overlayScene.build(), buffers, 0L);
+
+    assertColorNear(buffers.image().getRGB(WIDTH / 2, HEIGHT / 2), 0xFF00FF00, 3);
+  }
+
+  @Test
+  void screenTriangleRasterizationHonorsClipRect() {
+    var buffers = new RasterBuffers(8, 8);
+    buffers.clearColor(0xFF000000);
+    buffers.clearDepth();
+    var material = RenderMaterial.create(solidTexture(0xFFFF0000), RendererAssets.AlphaMode.OPAQUE, 0xFFFFFFFF, true, 0.0F);
+    var triangle = new ProjectedTriangle(
+      screenVertex(0.0F, 0.0F),
+      screenVertex(8.0F, 0.0F),
+      screenVertex(0.0F, 8.0F),
+      material,
+      0.0F
+    );
+
+    SoftwareRasterizer.rasterizeScreenTriangle(0L, triangle, buffers, 2, 2, 5, 5);
+
+    assertColorNear(buffers.image().getRGB(3, 3), 0xFFFF0000, 3);
+    assertColorNear(buffers.image().getRGB(1, 3), 0xFF000000, 3);
+  }
+
+  @Test
   void nonFiniteProjectedGeometryIsDropped() {
     var pipeline = new RasterPipeline();
     var camera = new Camera(new Vec3(0.0, 0.0, 0.0), 0.0F, 0.0F, WIDTH, HEIGHT, 70.0, 64.0F);
@@ -1422,6 +1461,10 @@ class RasterPipelineTest {
 
   private static RenderVertex vertex(float x, float y, float z, float u, float v, int color) {
     return new RenderVertex(x, y, z, u, v, color);
+  }
+
+  private static ProjectedVertex screenVertex(float x, float y) {
+    return new ProjectedVertex(x, y, 0.0F, 1.0F, 0.0F, 0.0F, 255.0F, 255.0F, 255.0F, 255.0F);
   }
 
   private static RendererAssets.TextureImage solidTexture(int argb) {

@@ -37,6 +37,15 @@ public final class RasterPipeline {
     renderScene(camera, sceneData, buffers, animationTick, RasterFogState.DISABLED);
   }
 
+  public void renderFirstPersonOverlay(Camera camera, SceneData sceneData, RasterBuffers buffers, long animationTick) {
+    if (sceneData.totalQuadCount() == 0) {
+      return;
+    }
+
+    buffers.clearDepth();
+    renderScene(camera, sceneData, buffers, animationTick, RasterFogState.DISABLED);
+  }
+
   void renderScene(Camera camera, SceneData sceneData, RasterBuffers buffers, long animationTick, RasterFogState fogState) {
     rasterPass(camera, animationTick, sceneData.opaque(), buffers, false, RasterPassKind.OPAQUE, fogState);
     rasterPass(camera, animationTick, sceneData.cutout(), buffers, false, RasterPassKind.CUTOUT, fogState);
