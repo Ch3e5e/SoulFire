@@ -64,11 +64,12 @@ public final class RendererDebugDump {
     Files.createDirectories(runtimeTexturesDirectory);
     Files.createDirectories(atlasDirectory);
 
-    var debugTrace = RenderDebugTrace.createForced(width, height, maxDistance, player.getYRot(), player.getXRot());
+    var options = SoftwareRenderer.Options.defaults(player, width, height, fov, maxDistance).withForceDebugTrace(true);
+    var debugTrace = RenderDebugTrace.createForced(width, height, maxDistance, options.yRot(), options.xRot());
     RenderDebugTrace.bind(debugTrace);
     var renderStart = System.nanoTime();
     try {
-      var camera = new Camera(player.getEyePosition(), player.getYRot(), player.getXRot(), width, height, fov, maxDistance + 32.0F);
+      var camera = new Camera(options.eyePos(), options.yRot(), options.xRot(), width, height, fov, maxDistance + 32.0F);
       var ctx = RenderContext.create(level, player, camera, maxDistance);
 
       var blockEntityCollectStart = System.nanoTime();
@@ -94,6 +95,7 @@ public final class RendererDebugDump {
 
       var rasterStart = System.nanoTime();
       RASTER_PIPELINE.render(ctx, sceneData, buffers);
+      SoftwareRenderer.renderOverlays(ctx, options, buffers);
       var rasterNanos = System.nanoTime() - rasterStart;
       var totalNanos = System.nanoTime() - renderStart;
       debugTrace.rasterNanos(rasterNanos);

@@ -288,14 +288,147 @@ message BotRenderPovRequest {
   // Maximum: 1080 (values above this are clamped).
   // Minimum: 1 (values below this are clamped).
   int32 height = 4 [(google.api.field_behavior) = REQUIRED];
+
+  // Maximum render distance in blocks.
+  // Default: the bot's current render distance setting.
+  // Maximum: 2048 (values above this are clamped).
+  optional int32 max_distance = 5;
+
+  // Vertical field of view in degrees.
+  // Default: the renderer default FOV.
+  // Valid range: 1.0 to 179.0.
+  optional double fov = 6;
+
+  // Optional camera X coordinate.
+  // Defaults to the bot's current eye position.
+  optional double camera_x = 7;
+
+  // Optional camera Y coordinate.
+  // Defaults to the bot's current eye position.
+  optional double camera_y = 8;
+
+  // Optional camera Z coordinate.
+  // Defaults to the bot's current eye position.
+  optional double camera_z = 9;
+
+  // Optional yaw in degrees.
+  // Defaults to the bot's current yaw.
+  optional float y_rot = 10;
+
+  // Optional pitch in degrees.
+  // Defaults to the bot's current pitch.
+  optional float x_rot = 11;
+
+  // Whether to render the HUD overlay.
+  // Default: true.
+  optional bool include_hud = 12;
+
+  // Whether to render first-person hands and held items.
+  // Default: true.
+  optional bool include_hands = 13;
+
+  // Whether to include renderer debug counters in the response.
+  // Default: false.
+  bool include_debug_trace = 14;
 }
 
 // Response containing the rendered POV image.
 message BotRenderPovResponse {
   // Base64-encoded PNG image data.
   // Decode with standard Base64 decoder to get raw PNG bytes.
-  // The image uses the bot's current render distance setting.
+  // See metadata for the effective render settings used.
   string image_base64 = 1 [(google.api.field_behavior) = REQUIRED];
+
+  // MIME type for image_base64.
+  string image_mime_type = 2 [(google.api.field_behavior) = REQUIRED];
+
+  // Effective render settings used for this frame.
+  BotRenderPovMetadata metadata = 3 [(google.api.field_behavior) = REQUIRED];
+
+  // Optional debug counters and samples.
+  // Present only when include_debug_trace is true.
+  optional BotRenderPovDebugTrace debug_trace = 4;
+}
+
+// Effective settings used for a rendered POV frame.
+message BotRenderPovMetadata {
+  // Final image width in pixels after defaults and clamping.
+  int32 width = 1;
+
+  // Final image height in pixels after defaults and clamping.
+  int32 height = 2;
+
+  // Field of view in degrees.
+  double fov = 3;
+
+  // Maximum render distance in blocks.
+  int32 max_distance = 4;
+
+  // Camera X coordinate.
+  double camera_x = 5;
+
+  // Camera Y coordinate.
+  double camera_y = 6;
+
+  // Camera Z coordinate.
+  double camera_z = 7;
+
+  // Camera yaw in degrees.
+  float y_rot = 8;
+
+  // Camera pitch in degrees.
+  float x_rot = 9;
+
+  // Whether the HUD overlay was rendered.
+  bool included_hud = 10;
+
+  // Whether first-person hands and held items were rendered.
+  bool included_hands = 11;
+}
+
+// Renderer debug counters and samples for a single POV render.
+message BotRenderPovDebugTrace {
+  int64 render_id = 1;
+  int64 chunks_considered = 2;
+  int64 chunks_loaded = 3;
+  int64 sections_visible = 4;
+  int64 sections_meshed = 5;
+  int64 section_cache_hits = 6;
+  int64 section_cache_misses = 7;
+  int64 block_quads = 8;
+  int64 entities_considered = 9;
+  int64 entities_visible = 10;
+  int64 billboards = 11;
+  int64 weather_billboards = 12;
+  int64 vanilla_block_geometry_hits = 13;
+  int64 vanilla_block_geometry_fallbacks = 14;
+  int64 resource_block_geometry_fallbacks = 15;
+  int64 inventory_icon_ignored = 16;
+  int64 unknown_render_pipelines = 17;
+  int64 runtime_texture_mirror_skips = 18;
+  int64 opaque_triangles = 19;
+  int64 cutout_triangles = 20;
+  int64 translucent_triangles = 21;
+  int64 world_collect_nanos = 22;
+  int64 dynamic_collect_nanos = 23;
+  int64 raster_nanos = 24;
+  int64 total_nanos = 25;
+  int64 text_submissions = 26;
+  repeated BotRenderPovTextSubmission text_samples = 27;
+  repeated string notable_events = 28;
+  repeated string detailed_failures = 29;
+}
+
+// Sample of text submitted while rendering a debug frame.
+message BotRenderPovTextSubmission {
+  string source = 1;
+  string text = 2;
+  bool shadow = 3;
+  string display_mode = 4;
+  int32 light = 5;
+  string color = 6;
+  string background_color = 7;
+  string outline_color = 8;
 }
 
 // ============================================================================

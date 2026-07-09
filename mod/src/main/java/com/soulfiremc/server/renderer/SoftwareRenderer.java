@@ -25,6 +25,7 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.phys.Vec3;
 
 import java.awt.image.BufferedImage;
+import java.util.Objects;
 
 /// Software 3D renderer using CPU rasterization.
 @UtilityClass
@@ -40,17 +41,7 @@ public class SoftwareRenderer {
     double fov,
     int maxDistance
   ) {
-    return render(
-      level,
-      player,
-      player.getEyePosition(),
-      player.getYRot(),
-      player.getXRot(),
-      width,
-      height,
-      fov,
-      maxDistance
-    );
+    return renderWithResult(level, player, Options.defaults(player, width, height, fov, maxDistance)).image();
   }
 
   public static BufferedImage render(
@@ -64,12 +55,45 @@ public class SoftwareRenderer {
     double fov,
     int maxDistance
   ) {
-    var debugTrace = RenderDebugTrace.create(width, height, maxDistance, yRot, xRot);
+    return renderWithResult(
+      level,
+      localPlayer,
+      new Options(
+        eyePos,
+        yRot,
+        xRot,
+        width,
+        height,
+        fov,
+        maxDistance,
+        true,
+        true,
+        false
+      )
+    ).image();
+  }
+
+  public static Result renderWithResult(
+    ClientLevel level,
+    LocalPlayer localPlayer,
+    Options options
+  ) {
+    var debugTrace = options.forceDebugTrace()
+      ? RenderDebugTrace.createForced(options.width(), options.height(), options.maxDistance(), options.yRot(), options.xRot())
+      : RenderDebugTrace.create(options.width(), options.height(), options.maxDistance(), options.yRot(), options.xRot());
     RenderDebugTrace.bind(debugTrace);
     var renderStart = System.nanoTime();
     try {
-      var camera = new Camera(eyePos, yRot, xRot, width, height, fov, maxDistance + 32.0F);
-      var ctx = RenderContext.create(level, localPlayer, camera, maxDistance);
+      var camera = new Camera(
+        options.eyePos(),
+        options.yRot(),
+        options.xRot(),
+        options.width(),
+        options.height(),
+        options.fov(),
+        options.maxDistance() + 32.0F
+      );
+      var ctx = RenderContext.create(level, localPlayer, camera, options.maxDistance());
 
       var dynamicCollectNanos = 0L;
 
@@ -91,38 +115,46 @@ public class SoftwareRenderer {
       debugTrace.dynamicCollectNanos(dynamicCollectNanos);
 
       var sceneData = worldScene.merge(blockEntityScene).merge(dynamicScene).merge(cloudScene);
-      var buffers = new RasterBuffers(width, height);
+      var buffers = new RasterBuffers(options.width(), options.height());
 
       var rasterStart = System.nanoTime();
       RASTER_PIPELINE.render(ctx, sceneData, buffers);
-      renderOverlays(ctx, yRot, xRot, width, height, fov, buffers);
+      renderOverlays(ctx, options, buffers);
       debugTrace.rasterNanos(System.nanoTime() - rasterStart);
       debugTrace.totalNanos(System.nanoTime() - renderStart);
       debugTrace.logSummary(sceneData);
 
-      return buffers.image();
+      return new Result(buffers.image(), debugTrace.snapshot());
     } finally {
       RenderDebugTrace.unbind();
     }
   }
 
-  private static void renderOverlays(
+  static void renderOverlays(
     RenderContext ctx,
-    float yRot,
-    float xRot,
-    int width,
-    int height,
-    double fov,
+    Options options,
     RasterBuffers buffers
   ) {
-    var partialTick = partialTick();
-    var handScene = VanillaSubmitCollector.collectHandsWithItems(ctx, partialTick);
-    if (handScene.totalQuadCount() > 0) {
-      var handCamera = new Camera(Vec3.ZERO, yRot, xRot, width, height, hudFov(fov), 100.0F);
-      RASTER_PIPELINE.renderFirstPersonOverlay(handCamera, handScene, buffers, ctx.animationTick());
+    if (options.includeHands()) {
+      var partialTick = partialTick();
+      var handScene = VanillaSubmitCollector.collectHandsWithItems(ctx, partialTick);
+      if (handScene.totalQuadCount() > 0) {
+        var handCamera = new Camera(
+          Vec3.ZERO,
+          options.yRot(),
+          options.xRot(),
+          options.width(),
+          options.height(),
+          hudFov(options.fov()),
+          100.0F
+        );
+        RASTER_PIPELINE.renderFirstPersonOverlay(handCamera, handScene, buffers, ctx.animationTick());
+      }
     }
 
-    PovHudRenderer.render(ctx, buffers);
+    if (options.includeHud()) {
+      PovHudRenderer.render(ctx, buffers);
+    }
   }
 
   private static float partialTick() {
@@ -142,4 +174,42 @@ public class SoftwareRenderer {
       return fallback;
     }
   }
+
+  public record Options(
+    Vec3 eyePos,
+    float yRot,
+    float xRot,
+    int width,
+    int height,
+    double fov,
+    int maxDistance,
+    boolean includeHands,
+    boolean includeHud,
+    boolean forceDebugTrace
+  ) {
+    public Options {
+      Objects.requireNonNull(eyePos, "eyePos");
+    }
+
+    public static Options defaults(LocalPlayer player, int width, int height, double fov, int maxDistance) {
+      return new Options(
+        player.getEyePosition(),
+        player.getYRot(),
+        player.getXRot(),
+        width,
+        height,
+        fov,
+        maxDistance,
+        true,
+        true,
+        false
+      );
+    }
+
+    public Options withForceDebugTrace(boolean forceDebugTrace) {
+      return new Options(eyePos, yRot, xRot, width, height, fov, maxDistance, includeHands, includeHud, forceDebugTrace);
+    }
+  }
+
+  public record Result(BufferedImage image, RenderDebugTrace.Snapshot debugTrace) {}
 }

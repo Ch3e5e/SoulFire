@@ -28,6 +28,7 @@ import com.soulfiremc.server.database.generated.Tables;
 import com.soulfiremc.server.plugins.DialogHandler;
 import com.soulfiremc.server.renderer.InventoryItemIconRenderer;
 import com.soulfiremc.server.renderer.RenderConstants;
+import com.soulfiremc.server.renderer.RenderDebugTrace;
 import com.soulfiremc.server.renderer.SoftwareRenderer;
 import com.soulfiremc.server.settings.lib.InstanceSettingsImpl;
 import com.soulfiremc.server.settings.lib.SettingsSource;
@@ -50,6 +51,7 @@ import net.minecraft.world.entity.ItemOwner;
 import net.minecraft.world.inventory.*;
 import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.phys.Vec3;
 import org.jooq.impl.DSL;
 
 import javax.imageio.ImageIO;
@@ -417,15 +419,10 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
         throw Status.FAILED_PRECONDITION.withDescription("Bot '%s' is not online".formatted(botId)).asRuntimeException();
       }
 
-      // Use provided dimensions or defaults
-      var width = request.getWidth() > 0 ? request.getWidth() : RenderConstants.DEFAULT_WIDTH;
-      var height = request.getHeight() > 0 ? request.getHeight() : RenderConstants.DEFAULT_HEIGHT;
-
-      // Clamp dimensions to reasonable values
-      width = Math.min(Math.max(width, 1), 1920);
-      height = Math.min(Math.max(height, 1), 1080);
-      final var renderWidth = width;
-      final var renderHeight = height;
+      var renderWidth = effectiveDimension(request.getWidth(), RenderConstants.DEFAULT_WIDTH, 1920);
+      var renderHeight = effectiveDimension(request.getHeight(), RenderConstants.DEFAULT_HEIGHT, 1080);
+      var includeHud = !request.hasIncludeHud() || request.getIncludeHud();
+      var includeHands = !request.hasIncludeHands() || request.getIncludeHands();
 
       var response = callInBotContext(activeBot, () -> {
         var minecraft = activeBot.minecraft();
@@ -436,19 +433,31 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
         }
 
         var renderDistanceChunks = minecraft.options.getEffectiveRenderDistance();
-        var maxDistance = renderDistanceChunks * 16;
-        var image = SoftwareRenderer.render(
-          level,
-          player,
+        var maxDistance = effectiveMaxDistance(request, renderDistanceChunks);
+        var eyePos = effectiveEyePosition(request, player);
+        var options = new SoftwareRenderer.Options(
+          eyePos,
+          effectiveYRot(request, player),
+          effectiveXRot(request, player),
           renderWidth,
           renderHeight,
-          RenderConstants.DEFAULT_FOV,
-          maxDistance
+          effectiveFov(request),
+          maxDistance,
+          includeHands,
+          includeHud,
+          request.getIncludeDebugTrace()
         );
+        var result = SoftwareRenderer.renderWithResult(level, player, options);
 
-        return BotRenderPovResponse.newBuilder()
-          .setImageBase64(toBase64PNG(image))
-          .build();
+        var responseBuilder = BotRenderPovResponse.newBuilder()
+          .setImageBase64(toBase64PNG(result.image()))
+          .setImageMimeType("image/png")
+          .setMetadata(buildPovMetadata(options));
+        if (request.getIncludeDebugTrace()) {
+          responseBuilder.setDebugTrace(buildPovDebugTrace(result.debugTrace()));
+        }
+
+        return responseBuilder.build();
       });
 
       responseObserver.onNext(response);
@@ -457,6 +466,106 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
       log.error("Error rendering bot POV", t);
       throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
     }
+  }
+
+  private static int effectiveDimension(int requestedDimension, int defaultDimension, int maxDimension) {
+    var dimension = requestedDimension > 0 ? requestedDimension : defaultDimension;
+    return Math.min(Math.max(dimension, 1), maxDimension);
+  }
+
+  private static int effectiveMaxDistance(BotRenderPovRequest request, int renderDistanceChunks) {
+    var maxDistance = request.hasMaxDistance() && request.getMaxDistance() > 0
+      ? request.getMaxDistance()
+      : renderDistanceChunks * 16;
+    return Math.min(Math.max(maxDistance, 1), 2048);
+  }
+
+  private static double effectiveFov(BotRenderPovRequest request) {
+    if (!request.hasFov() || !Double.isFinite(request.getFov())) {
+      return RenderConstants.DEFAULT_FOV;
+    }
+
+    return Math.min(Math.max(request.getFov(), 1.0D), 179.0D);
+  }
+
+  private static Vec3 effectiveEyePosition(BotRenderPovRequest request, LocalPlayer player) {
+    var playerEyePosition = player.getEyePosition();
+    return new Vec3(
+      request.hasCameraX() && Double.isFinite(request.getCameraX()) ? request.getCameraX() : playerEyePosition.x,
+      request.hasCameraY() && Double.isFinite(request.getCameraY()) ? request.getCameraY() : playerEyePosition.y,
+      request.hasCameraZ() && Double.isFinite(request.getCameraZ()) ? request.getCameraZ() : playerEyePosition.z
+    );
+  }
+
+  private static float effectiveYRot(BotRenderPovRequest request, LocalPlayer player) {
+    return request.hasYRot() && Float.isFinite(request.getYRot()) ? request.getYRot() : player.getYRot();
+  }
+
+  private static float effectiveXRot(BotRenderPovRequest request, LocalPlayer player) {
+    var xRot = request.hasXRot() && Float.isFinite(request.getXRot()) ? request.getXRot() : player.getXRot();
+    return Math.min(Math.max(xRot, -90.0F), 90.0F);
+  }
+
+  private static BotRenderPovMetadata buildPovMetadata(SoftwareRenderer.Options options) {
+    return BotRenderPovMetadata.newBuilder()
+      .setWidth(options.width())
+      .setHeight(options.height())
+      .setFov(options.fov())
+      .setMaxDistance(options.maxDistance())
+      .setCameraX(options.eyePos().x)
+      .setCameraY(options.eyePos().y)
+      .setCameraZ(options.eyePos().z)
+      .setYRot(options.yRot())
+      .setXRot(options.xRot())
+      .setIncludedHud(options.includeHud())
+      .setIncludedHands(options.includeHands())
+      .build();
+  }
+
+  private static BotRenderPovDebugTrace buildPovDebugTrace(RenderDebugTrace.Snapshot snapshot) {
+    var builder = BotRenderPovDebugTrace.newBuilder()
+      .setRenderId(snapshot.renderId())
+      .setChunksConsidered(snapshot.chunksConsidered())
+      .setChunksLoaded(snapshot.chunksLoaded())
+      .setSectionsVisible(snapshot.sectionsVisible())
+      .setSectionsMeshed(snapshot.sectionsMeshed())
+      .setSectionCacheHits(snapshot.sectionCacheHits())
+      .setSectionCacheMisses(snapshot.sectionCacheMisses())
+      .setBlockQuads(snapshot.blockQuads())
+      .setEntitiesConsidered(snapshot.entitiesConsidered())
+      .setEntitiesVisible(snapshot.entitiesVisible())
+      .setBillboards(snapshot.billboards())
+      .setWeatherBillboards(snapshot.weatherBillboards())
+      .setVanillaBlockGeometryHits(snapshot.vanillaBlockGeometryHits())
+      .setVanillaBlockGeometryFallbacks(snapshot.vanillaBlockGeometryFallbacks())
+      .setResourceBlockGeometryFallbacks(snapshot.resourceBlockGeometryFallbacks())
+      .setInventoryIconIgnored(snapshot.inventoryIconIgnored())
+      .setUnknownRenderPipelines(snapshot.unknownRenderPipelines())
+      .setRuntimeTextureMirrorSkips(snapshot.runtimeTextureMirrorSkips())
+      .setOpaqueTriangles(snapshot.opaqueTriangles())
+      .setCutoutTriangles(snapshot.cutoutTriangles())
+      .setTranslucentTriangles(snapshot.translucentTriangles())
+      .setWorldCollectNanos(snapshot.worldCollectNanos())
+      .setDynamicCollectNanos(snapshot.dynamicCollectNanos())
+      .setRasterNanos(snapshot.rasterNanos())
+      .setTotalNanos(snapshot.totalNanos())
+      .setTextSubmissions(snapshot.textSubmissions())
+      .addAllNotableEvents(snapshot.notableEvents())
+      .addAllDetailedFailures(snapshot.detailedFailures());
+    for (var textSample : snapshot.textSamples()) {
+      builder.addTextSamples(BotRenderPovTextSubmission.newBuilder()
+        .setSource(textSample.source())
+        .setText(textSample.text())
+        .setShadow(textSample.shadow())
+        .setDisplayMode(textSample.displayMode())
+        .setLight(textSample.light())
+        .setColor(textSample.color())
+        .setBackgroundColor(textSample.backgroundColor())
+        .setOutlineColor(textSample.outlineColor())
+        .build());
+    }
+
+    return builder.build();
   }
 
   /**
