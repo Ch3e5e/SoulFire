@@ -48,13 +48,19 @@ import com.soulfiremc.server.settings.lib.BotSettingsSource;
 import com.soulfiremc.server.util.SFHelpers;
 import com.soulfiremc.shared.SFLogAppender;
 import com.viaversion.viaversion.api.protocol.version.ProtocolVersion;
+import io.netty.channel.Channel;
+import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
-import net.minecraft.client.*;
+import net.minecraft.client.DeltaTracker;
+import net.minecraft.client.FramerateLimiter;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.ResourceLoadStateTracker;
+import net.minecraft.client.User;
 import net.minecraft.client.gui.Gui;
 import net.minecraft.client.gui.Hud;
 import net.minecraft.client.gui.screens.ChatScreen;
@@ -82,16 +88,24 @@ import net.minecraft.server.network.EventLoopGroupHolder;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.net.Proxy;
-import java.util.*;
+import java.time.Duration;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Queue;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Slf4j
 @Getter
 public final class BotConnection {
+  private static final Duration DISCONNECT_TIMEOUT = Duration.ofSeconds(5);
   private static final ThreadLocal<BotConnection> CURRENT = new ThreadLocal<>();
   private final List<Runnable> shutdownHooks = new CopyOnWriteArrayList<>();
   private final Queue<Runnable> preTickHooks = new ConcurrentLinkedQueue<>();
@@ -109,14 +123,17 @@ public final class BotConnection {
   private final String accountName;
   private final ServerAddress serverAddress;
   private final SoulFireScheduler.RunnableWrapper runnableWrapper;
-  private final AtomicBoolean shutdownExecuting = new AtomicBoolean(false);
+  @Getter(AccessLevel.NONE)
+  private final NetworkChannelTracker networkChannelTracker = new NetworkChannelTracker();
+  @Getter(AccessLevel.NONE)
+  private final AtomicReference<CompletableFuture<Void>> shutdownFuture = new AtomicReference<>();
   private final Minecraft minecraft;
   @Nullable
   private final SFProxy proxy;
   private final boolean isStatusPing;
   @Setter
   private ProtocolVersion currentProtocolVersion;
-  private boolean isDisconnected;
+  private volatile boolean isDisconnected;
 
   public static BotConnection current() {
     var current = CURRENT.get();
@@ -396,33 +413,80 @@ public final class BotConnection {
     return current;
   }
 
-  public void disconnect(Component reason) {
-    if (!shutdownExecuting.getAndSet(true)) {
-      log.debug("Got Disconnected with reason: {}", PlainTextComponentSerializer.plainText().serialize(reason));
-      SoulFireAPI.postEvent(new BotDisconnectedEvent(this, reason));
+  public void trackNetworkChannel(Channel channel) {
+    networkChannelTracker.track(channel);
+  }
 
-      if (minecraft.isRunning()) {
-        try {
-          minecraft.submit(() -> {
-            if (minecraft.level != null) {
-              minecraft.level.disconnect(ClientLevel.DEFAULT_QUIT_MESSAGE);
-            }
+  public CompletableFuture<Void> disconnect(Component reason) {
+    var currentFuture = shutdownFuture.get();
+    if (currentFuture != null) {
+      return currentFuture;
+    }
 
-            minecraft.disconnectWithProgressScreen();
-          }).get(5, TimeUnit.SECONDS);
-        } catch (Throwable _) {
-        }
+    var newFuture = new CompletableFuture<Void>();
+    if (!shutdownFuture.compareAndSet(null, newFuture)) {
+      return Objects.requireNonNull(shutdownFuture.get());
+    }
 
-        minecraft.stop();
+    instanceManager.scheduler().execute(() -> {
+      try {
+        disconnectNow(reason);
+        newFuture.complete(null);
+      } catch (Throwable t) {
+        newFuture.completeExceptionally(t);
+      }
+    });
+    return newFuture;
+  }
+
+  private void disconnectNow(Component reason) throws InterruptedException, TimeoutException {
+    log.debug("Got Disconnected with reason: {}", PlainTextComponentSerializer.plainText().serialize(reason));
+    SoulFireAPI.postEvent(new BotDisconnectedEvent(this, reason));
+
+    try {
+      networkChannelTracker.closeAll(DISCONNECT_TIMEOUT);
+      stopMinecraftClient();
+      networkChannelTracker.closeAll(DISCONNECT_TIMEOUT);
+      if (networkChannelTracker.hasOpenChannels()) {
+        throw new IllegalStateException("Bot still has an open network channel after disconnecting");
       }
 
       isDisconnected = true;
-
-      // Run all shutdown hooks
-      shutdownHooks.forEach(Runnable::run);
-
-      // Shut down all executors
+    } finally {
+      minecraft.stop();
+      runShutdownHooks();
       scheduler.shutdown();
+    }
+  }
+
+  private void stopMinecraftClient() {
+    if (!minecraft.isRunning()) {
+      return;
+    }
+
+    try {
+      minecraft.submit(() -> {
+        if (minecraft.level != null) {
+          minecraft.level.disconnect(ClientLevel.DEFAULT_QUIT_MESSAGE);
+        }
+
+        minecraft.disconnectWithProgressScreen();
+      }).get(DISCONNECT_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      log.warn("Interrupted while cleaning up Minecraft client state for {}", accountName, e);
+    } catch (ExecutionException | TimeoutException e) {
+      log.warn("Failed to clean up Minecraft client state for {}", accountName, e);
+    }
+  }
+
+  private void runShutdownHooks() {
+    for (var shutdownHook : shutdownHooks) {
+      try {
+        shutdownHook.run();
+      } catch (Throwable t) {
+        log.error("Bot shutdown hook failed for {}", accountName, t);
+      }
     }
   }
 

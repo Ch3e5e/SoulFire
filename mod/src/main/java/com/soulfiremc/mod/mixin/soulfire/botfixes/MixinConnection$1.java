@@ -53,5 +53,6 @@ public class MixinConnection$1 {
     channel.pipeline().replace("timeout", "timeout", new ReadTimeoutHandler(botConnection.settingsSource().get(BotSettings.READ_TIMEOUT)));
     channel.pipeline().addFirst("sf_traffic", new SFTrafficHandler());
     NettyHelper.addRunnableWrapper("last_", botConnection.runnableWrapper(), channel);
+    botConnection.trackNetworkChannel(channel);
   }
 }

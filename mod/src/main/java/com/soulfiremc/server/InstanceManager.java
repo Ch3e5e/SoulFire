@@ -36,8 +36,19 @@ import com.soulfiremc.server.bot.BotConnectionFactory;
 import com.soulfiremc.server.database.AuditLogType;
 import com.soulfiremc.server.database.generated.Tables;
 import com.soulfiremc.server.metrics.InstanceMetricsCollector;
-import com.soulfiremc.server.settings.instance.*;
-import com.soulfiremc.server.settings.lib.*;
+import com.soulfiremc.server.settings.instance.AISettings;
+import com.soulfiremc.server.settings.instance.AccountSettings;
+import com.soulfiremc.server.settings.instance.AutomationSettings;
+import com.soulfiremc.server.settings.instance.BotSettings;
+import com.soulfiremc.server.settings.instance.PathfindingSettings;
+import com.soulfiremc.server.settings.instance.ProxySettings;
+import com.soulfiremc.server.settings.lib.BotSettingsDelegate;
+import com.soulfiremc.server.settings.lib.BotSettingsImpl;
+import com.soulfiremc.server.settings.lib.InstanceSettingsDelegate;
+import com.soulfiremc.server.settings.lib.InstanceSettingsImpl;
+import com.soulfiremc.server.settings.lib.InstanceSettingsSource;
+import com.soulfiremc.server.settings.lib.SettingsPageRegistry;
+import com.soulfiremc.server.settings.lib.SettingsSource;
 import com.soulfiremc.server.settings.property.Property;
 import com.soulfiremc.server.user.SoulFireUser;
 import com.soulfiremc.server.util.MathHelper;
@@ -59,8 +70,19 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -313,15 +335,11 @@ public final class InstanceManager {
 
   private void evictBots() {
     // Remove botConnections from the map that are closed
-    botConnections.entrySet().removeIf(entry -> {
-      var bot = entry.getValue();
+    for (var bot : List.copyOf(botConnections.values())) {
       if (bot.isDisconnected()) {
-        log.debug("Removing bot {}", bot.accountName());
-        SoulFireAPI.postEvent(new SessionBotRemoveEvent(this, bot));
-        return true;
+        removeBot(bot);
       }
-      return false;
-    });
+    }
   }
 
   private void refreshExpiredAccounts() {
@@ -695,27 +713,30 @@ public final class InstanceManager {
     return scheduler.runAsync(() -> {
       allBotsConnected.set(false);
       log.info("Disconnecting bots");
-      do {
-        var disconnectFuture = new ArrayList<CompletableFuture<?>>();
-        botConnections.entrySet().removeIf(entry -> {
-          var botConnection = entry.getValue();
-          disconnectFuture.add(scheduler.runAsync(() -> botConnection.disconnect(Component.text("Session stopped"))));
-          return true;
-        });
+    }).thenCompose(_ -> disconnectTrackedBots())
+      .thenRunAsync(() -> SoulFireAPI.postEvent(new SessionEndedEvent(this)), scheduler);
+  }
 
-        log.info("Waiting for all bots to fully disconnect");
-        for (var future : disconnectFuture) {
-          try {
-            future.get();
-          } catch (InterruptedException | ExecutionException e) {
-            log.error("Error while shutting down", e);
-          }
-        }
-      } while (!botConnections.isEmpty()); // To make sure really all bots are disconnected
+  private CompletableFuture<Void> disconnectTrackedBots() {
+    var bots = List.copyOf(botConnections.values());
+    if (bots.isEmpty()) {
+      return CompletableFuture.completedFuture(null);
+    }
 
-      // Notify plugins of state change
-      SoulFireAPI.postEvent(new SessionEndedEvent(this));
-    });
+    log.info("Waiting for {} bots to fully disconnect", bots.size());
+    var disconnectFutures = bots.stream()
+      .map(bot -> bot.disconnect(Component.text("Session stopped"))
+        .thenRunAsync(() -> removeBot(bot), scheduler))
+      .toArray(CompletableFuture[]::new);
+    return CompletableFuture.allOf(disconnectFutures)
+      .thenCompose(_ -> disconnectTrackedBots());
+  }
+
+  private void removeBot(BotConnection bot) {
+    if (botConnections.remove(bot.accountProfileId(), bot)) {
+      log.debug("Removing bot {}", bot.accountName());
+      SoulFireAPI.postEvent(new SessionBotRemoveEvent(this, bot));
+    }
   }
 
   public void addAuditLog(SoulFireUser source, AuditLogType logType, @Nullable String data) {

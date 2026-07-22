@@ -22,8 +22,13 @@ import com.soulfiremc.grpc.generated.BotPosition;
 import com.soulfiremc.grpc.generated.MetricsDistributions;
 import com.soulfiremc.grpc.generated.MetricsSnapshot;
 import com.soulfiremc.server.InstanceManager;
-import com.soulfiremc.server.api.event.bot.*;
+import com.soulfiremc.server.api.event.bot.BotConnectionInitEvent;
+import com.soulfiremc.server.api.event.bot.BotPacketPreReceiveEvent;
+import com.soulfiremc.server.api.event.bot.BotPacketPreSendEvent;
+import com.soulfiremc.server.api.event.bot.BotPostTickEvent;
+import com.soulfiremc.server.api.event.bot.BotPreTickEvent;
 import com.soulfiremc.server.api.event.session.SessionBotRemoveEvent;
+import com.soulfiremc.server.api.event.session.SessionEndedEvent;
 import com.soulfiremc.server.api.event.session.SessionStartEvent;
 import com.soulfiremc.server.api.event.session.SessionTickEvent;
 import com.soulfiremc.server.bot.BotConnection;
@@ -32,7 +37,10 @@ import net.lenni0451.lambdaevents.EventHandler;
 import net.minecraft.client.multiplayer.ClientLevel;
 
 import java.time.Instant;
-import java.util.*;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
@@ -151,6 +159,15 @@ public final class InstanceMetricsCollector {
     }
 
     resetCounters();
+  }
+
+  @EventHandler
+  public void onSessionEnded(SessionEndedEvent event) {
+    if (event.instanceManager() != instanceManager) {
+      return;
+    }
+
+    sampleSnapshot();
   }
 
   @EventHandler
