@@ -24,6 +24,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.api.AnnotationsProto;
 import com.google.api.FieldBehavior;
 import com.google.api.FieldBehaviorProto;
+import com.google.api.HttpRule;
 import com.google.protobuf.Descriptors.*;
 import com.google.protobuf.MessageOrBuilder;
 import com.linecorp.armeria.common.HttpHeaderNames;
@@ -61,12 +62,15 @@ final class OpenApiSpecGenerator {
   private final String publicAddress;
   private final Map<String, ProtoMethodMetadata> protoMethodMetadata;
   private final Map<String, ProtoFieldMetadata> protoFieldMetadata;
+  private final Map<String, Descriptor> protoMessageDescriptors;
+  private final Map<String, EnumDescriptor> protoEnumDescriptors;
   private final Map<String, ServiceInfo> rawServiceByName;
   private final Set<String> transcodedServiceNames;
   private final Map<String, StructInfo> structByTypeName;
   private final Map<String, EnumInfo> enumByTypeName;
   private final Map<String, String> canonicalSchemaNameByTypeName;
   private final Map<String, String> docStrings;
+  private final Set<String> operationIds = new HashSet<>();
   private final Set<String> usedSchemaNames = new TreeSet<>();
 
   private OpenApiSpecGenerator(
@@ -78,6 +82,8 @@ final class OpenApiSpecGenerator {
     this.publicAddress = normalizeBaseUrl(publicAddress);
     this.protoMethodMetadata = protoDescriptorMetadata.methodMetadata();
     this.protoFieldMetadata = protoDescriptorMetadata.fieldMetadata();
+    this.protoMessageDescriptors = protoDescriptorMetadata.messageDescriptors();
+    this.protoEnumDescriptors = protoDescriptorMetadata.enumDescriptors();
     this.rawServiceByName = specification.services().stream()
       .filter(service -> !service.name().endsWith(HTTP_SERVICE_SUFFIX))
       .collect(Collectors.toMap(ServiceInfo::name, Function.identity()));
@@ -230,25 +236,65 @@ final class OpenApiSpecGenerator {
       return;
     }
 
-    var endpoints = method.endpoints().stream()
-      .sorted(Comparator.comparing(EndpointInfo::pathMapping))
-      .toList();
-    if (endpoints.isEmpty()) {
+    if (transcoded) {
+      var httpMethod = method.httpMethod().name().toLowerCase(Locale.ROOT);
+      for (var index = 0; index < metadata.httpBindings().size(); index++) {
+        var binding = metadata.httpBindings().get(index);
+        if (!binding.method().equals(httpMethod)) {
+          continue;
+        }
+
+        addOperation(
+          paths,
+          binding.path(),
+          binding.method(),
+          service,
+          rawService,
+          method,
+          metadata,
+          binding,
+          index
+        );
+      }
       return;
     }
 
-    var examplePaths = method.examplePaths();
+    var endpoints = method.endpoints().stream()
+      .sorted(Comparator.comparing(EndpointInfo::pathMapping))
+      .toList();
     for (var index = 0; index < endpoints.size(); index++) {
-      var endpoint = endpoints.get(index);
-      var path = openApiPath(endpoint, examplePaths, index);
-      var pathItem = literalPathItem(paths, path);
       var httpMethod = method.httpMethod().name().toLowerCase(Locale.ROOT);
-      if (pathItem.has(httpMethod)) {
-        continue;
-      }
-
-      pathItem.set(httpMethod, buildOperation(service, rawService, method, metadata, transcoded, index));
+      addOperation(
+        paths,
+        normalizeArmeriaPath(endpoints.get(index).pathMapping()),
+        httpMethod,
+        service,
+        rawService,
+        method,
+        metadata,
+        null,
+        index
+      );
     }
+  }
+
+  private void addOperation(
+    ObjectNode paths,
+    String path,
+    String httpMethod,
+    ServiceInfo service,
+    ServiceInfo rawService,
+    MethodInfo method,
+    ProtoMethodMetadata metadata,
+    ProtoHttpBinding httpBinding,
+    int routeIndex
+  ) {
+    var pathItem = literalPathItem(paths, normalizePath(path));
+    if (pathItem.has(httpMethod)) {
+      return;
+    }
+
+    pathItem.set(httpMethod, buildOperation(service, rawService, method, metadata, httpBinding, routeIndex));
   }
 
   private ObjectNode buildOperation(
@@ -256,11 +302,12 @@ final class OpenApiSpecGenerator {
     ServiceInfo rawService,
     MethodInfo method,
     ProtoMethodMetadata metadata,
-    boolean transcoded,
+    ProtoHttpBinding httpBinding,
     int routeIndex
   ) {
     var baseServiceName = baseServiceName(service);
     var inputStruct = findInputStruct(rawService, method, metadata);
+    var transcoded = httpBinding != null;
     var operation = JSON_MAPPER.createObjectNode();
 
     var description = operationDescription(baseServiceName, method.name(), metadata);
@@ -272,7 +319,11 @@ final class OpenApiSpecGenerator {
       operation.put("description", description);
     }
 
-    operation.put("operationId", operationId(baseServiceName, method, routeIndex));
+    var operationId = operationId(metadata, routeIndex);
+    if (!operationIds.add(operationId)) {
+      throw new IllegalStateException("Duplicate OpenAPI operationId '%s'".formatted(operationId));
+    }
+    operation.put("operationId", operationId);
     operation.put("x-soulfire-transport", transcoded ? "http-json-transcoding" : "unframed-grpc-json");
     operation.put("x-soulfire-grpc-service", baseServiceName);
     operation.put("x-soulfire-grpc-method", method.name());
@@ -289,7 +340,14 @@ final class OpenApiSpecGenerator {
       operation.set("parameters", parameters);
     }
 
-    var requestBody = buildRequestBody(baseServiceName, rawService, method, inputStruct, transcoded);
+    var requestBody = buildRequestBody(
+      baseServiceName,
+      rawService,
+      method,
+      inputStruct,
+      metadata,
+      httpBinding
+    );
     if (requestBody != null) {
       operation.set("requestBody", requestBody);
     }
@@ -315,7 +373,7 @@ final class OpenApiSpecGenerator {
           parameterNode.put("description", description);
         }
 
-        var schema = schemaForType(parameter.typeSignature());
+        var schema = schemaForParameter(parameter, fieldMetadata);
         applyFieldSchemaMetadata(schema, fieldMetadata);
         parameterNode.set("schema", schema);
       });
@@ -328,23 +386,21 @@ final class OpenApiSpecGenerator {
     ServiceInfo rawService,
     MethodInfo method,
     StructInfo inputStruct,
-    boolean transcoded
+    ProtoMethodMetadata metadata,
+    ProtoHttpBinding httpBinding
   ) {
     ObjectNode schema = null;
     var requestExample = firstRawRequestExample(rawService, method.name());
 
-    if (!transcoded) {
+    if (httpBinding == null) {
       if (method.useParameterAsRoot() && method.parameters().size() == 1) {
-        schema = schemaForType(method.parameters().getFirst().typeSignature());
+        schema = schemaForMessage(metadata.inputDescriptor());
       } else if (!method.parameters().isEmpty()) {
         schema = objectSchemaForParameters(serviceName, method.name(), method.parameters(), inputStruct);
       }
-    } else {
-      var bodyParameters = method.parameters().stream()
-        .filter(parameter -> parameter.location() == FieldLocation.BODY)
-        .toList();
-      if (!bodyParameters.isEmpty()) {
-        schema = objectSchemaForParameters(serviceName, method.name(), bodyParameters, inputStruct);
+    } else if (!httpBinding.body().isBlank()) {
+      schema = schemaForHttpBody(method, inputStruct, metadata, httpBinding.body());
+      if (schema != null) {
         if (method.parameters().stream().anyMatch(parameter ->
           parameter.location() == FieldLocation.PATH || parameter.location() == FieldLocation.QUERY)) {
           requestExample = null;
@@ -369,6 +425,39 @@ final class OpenApiSpecGenerator {
     return requestBody;
   }
 
+  private ObjectNode schemaForHttpBody(
+    MethodInfo method,
+    StructInfo inputStruct,
+    ProtoMethodMetadata metadata,
+    String body
+  ) {
+    if (!"*".equals(body)) {
+      var bodyField = findProtoField(metadata.inputDescriptor(), body);
+      if (bodyField == null) {
+        throw new IllegalStateException(
+          "HTTP body field '%s' does not exist in %s".formatted(body, metadata.inputDescriptor().getFullName())
+        );
+      }
+
+      var schema = schemaForProtoField(bodyField);
+      schema.put("title", method.name() + "RequestBody");
+      return schema;
+    }
+
+    var fieldsOutsideBody = method.parameters().stream()
+      .filter(parameter -> parameter.location() == FieldLocation.PATH || parameter.location() == FieldLocation.QUERY)
+      .map(ParamInfo::name)
+      .map(fieldPath -> findTopLevelProtoField(metadata.inputDescriptor(), fieldPath))
+      .filter(Objects::nonNull)
+      .collect(Collectors.toUnmodifiableSet());
+    return buildProtoMessageSchema(
+      metadata.inputDescriptor(),
+      inputStruct,
+      method.name() + "RequestBody",
+      fieldsOutsideBody
+    );
+  }
+
   private ObjectNode objectSchemaForParameters(
     String serviceName,
     String methodName,
@@ -376,6 +465,7 @@ final class OpenApiSpecGenerator {
     StructInfo inputStruct
   ) {
     var schema = JSON_MAPPER.createObjectNode();
+    schema.put("title", methodName + "RequestBody");
     schema.put("type", "object");
     schema.put("additionalProperties", false);
 
@@ -384,12 +474,13 @@ final class OpenApiSpecGenerator {
 
     parameters.forEach(parameter -> {
       var fieldMetadata = findFieldMetadata(inputStruct, parameter.name());
-      properties.set(parameter.name(), schemaWithDescription(
-        applyFieldSchemaMetadata(schemaForType(parameter.typeSignature()), fieldMetadata),
+      var propertyName = fieldMetadata == null ? parameter.name() : fieldMetadata.jsonName();
+      properties.set(propertyName, schemaWithDescription(
+        applyFieldSchemaMetadata(schemaForParameter(parameter, fieldMetadata), fieldMetadata),
         parameterDescription(serviceName, methodName, parameter.name(), inputStruct)
       ));
       if (isRequired(parameter.requirement(), fieldMetadata)) {
-        required.add(parameter.name());
+        required.add(propertyName);
       }
     });
 
@@ -403,7 +494,7 @@ final class OpenApiSpecGenerator {
     successResponse.put("description", returnDescription.isBlank() ? "Successful response." : returnDescription);
     successResponse.putObject("content")
       .putObject("application/json")
-      .set("schema", schemaForType(method.returnTypeSignature()));
+      .set("schema", schemaForMessage(metadata.outputDescriptor()));
 
     if (!LoginServiceGrpc.SERVICE_NAME.equals(serviceName)) {
       responses.set("401", errorResponse("Missing or invalid API authorization header."));
@@ -470,6 +561,15 @@ final class OpenApiSpecGenerator {
   }
 
   private ObjectNode buildStructSchema(StructInfo struct, Deque<String> pending, Set<String> generated) {
+    var descriptor = protoMessageDescriptors.get(struct.name());
+    if (descriptor != null) {
+      var wellKnownSchema = wellKnownTypeSchema(descriptor.getFullName());
+      if (wellKnownSchema != null) {
+        return wellKnownSchema;
+      }
+      return buildProtoMessageSchema(descriptor, struct);
+    }
+
     var schema = JSON_MAPPER.createObjectNode();
     schema.put("type", "object");
     schema.put("additionalProperties", false);
@@ -502,7 +602,65 @@ final class OpenApiSpecGenerator {
     return schema;
   }
 
+  private ObjectNode buildProtoMessageSchema(Descriptor descriptor, StructInfo struct) {
+    return buildProtoMessageSchema(descriptor, struct, "", Set.of());
+  }
+
+  private ObjectNode buildProtoMessageSchema(
+    Descriptor descriptor,
+    StructInfo struct,
+    String title,
+    Set<FieldDescriptor> excludedFields
+  ) {
+    var schema = JSON_MAPPER.createObjectNode();
+    if (!title.isBlank()) {
+      schema.put("title", title);
+    }
+    schema.put("type", "object");
+    schema.put("additionalProperties", false);
+
+    var description = firstNonBlank(
+      struct == null ? "" : normalizeDocBlock(struct.descriptionInfo().docString()),
+      docString(descriptor.getFullName())
+    );
+    if (!description.isBlank()) {
+      schema.put("description", description);
+    }
+
+    var properties = schema.putObject("properties");
+    var required = schema.putArray("required");
+    for (var field : descriptor.getFields()) {
+      if (excludedFields.contains(field)) {
+        continue;
+      }
+
+      var fieldInfo = struct == null ? null : findFieldInfo(struct, field.getName());
+      var fieldMetadata = protoFieldMetadata.get(fieldKey(descriptor.getFullName(), field.getName()));
+      var fieldDescription = firstNonBlank(
+        fieldInfo == null ? "" : normalizeDocBlock(fieldInfo.descriptionInfo().docString()),
+        docString("%s/%s".formatted(descriptor.getFullName(), field.getName()))
+      );
+      var fieldSchema = schemaWithDescription(
+        applyFieldSchemaMetadata(schemaForProtoField(field), fieldMetadata),
+        fieldDescription
+      );
+      properties.set(field.getJsonName(), fieldSchema);
+
+      var requirement = fieldInfo == null ? FieldRequirement.UNSPECIFIED : fieldInfo.requirement();
+      if (isRequired(requirement, fieldMetadata)) {
+        required.add(field.getJsonName());
+      }
+    }
+
+    return schema;
+  }
+
   private ObjectNode buildEnumSchema(EnumInfo enumInfo) {
+    var descriptor = protoEnumDescriptors.get(enumInfo.name());
+    if (descriptor != null && "google.protobuf.NullValue".equals(descriptor.getFullName())) {
+      return schemaForEnum(descriptor);
+    }
+
     var schema = JSON_MAPPER.createObjectNode();
     schema.put("type", "string");
     var description = firstNonBlank(normalizeDocBlock(enumInfo.descriptionInfo().docString()), docString(enumInfo.name()));
@@ -693,16 +851,13 @@ final class OpenApiSpecGenerator {
     var parts = fieldPath.split("\\.");
     StructInfo currentStruct = struct;
     FieldInfo currentField = null;
-    for (var part : parts) {
-      currentField = currentStruct.fields().stream()
-        .filter(field -> field.name().equals(part))
-        .findFirst()
-        .orElse(null);
+    for (var index = 0; index < parts.length; index++) {
+      currentField = findFieldInfo(currentStruct, parts[index]);
       if (currentField == null) {
         return "";
       }
 
-      if (!part.equals(parts[parts.length - 1])) {
+      if (index < parts.length - 1) {
         currentStruct = structByTypeName.get(currentField.typeSignature().signature());
         if (currentStruct == null) {
           return "";
@@ -728,16 +883,13 @@ final class OpenApiSpecGenerator {
     var parts = fieldPath.split("\\.");
     StructInfo currentStruct = struct;
     FieldInfo currentField = null;
-    for (var part : parts) {
-      currentField = currentStruct.fields().stream()
-        .filter(field -> field.name().equals(part))
-        .findFirst()
-        .orElse(null);
+    for (var index = 0; index < parts.length; index++) {
+      currentField = findFieldInfo(currentStruct, parts[index]);
       if (currentField == null) {
         return null;
       }
 
-      if (!part.equals(parts[parts.length - 1])) {
+      if (index < parts.length - 1) {
         currentStruct = structByTypeName.get(currentField.typeSignature().signature());
         if (currentStruct == null) {
           return null;
@@ -745,7 +897,70 @@ final class OpenApiSpecGenerator {
       }
     }
 
-    return currentField == null ? null : protoFieldMetadata.get(fieldKey(currentStruct.name(), currentField.name()));
+    return currentField == null ? null : findProtoFieldMetadata(currentStruct, currentField);
+  }
+
+  private static FieldDescriptor findTopLevelProtoField(Descriptor descriptor, String fieldPath) {
+    if (fieldPath.isBlank()) {
+      return null;
+    }
+
+    return findDirectProtoField(descriptor, fieldPath.split("\\.", 2)[0]);
+  }
+
+  private static FieldDescriptor findProtoField(Descriptor descriptor, String fieldPath) {
+    if (fieldPath.isBlank()) {
+      return null;
+    }
+
+    var parts = fieldPath.split("\\.");
+    var currentDescriptor = descriptor;
+    FieldDescriptor currentField = null;
+    for (var index = 0; index < parts.length; index++) {
+      currentField = findDirectProtoField(currentDescriptor, parts[index]);
+      if (currentField == null) {
+        return null;
+      }
+
+      if (index < parts.length - 1) {
+        if (currentField.getJavaType() != FieldDescriptor.JavaType.MESSAGE) {
+          return null;
+        }
+        currentDescriptor = currentField.getMessageType();
+      }
+    }
+
+    return currentField;
+  }
+
+  private static FieldDescriptor findDirectProtoField(Descriptor descriptor, String fieldName) {
+    return descriptor.getFields().stream()
+      .filter(field -> field.getName().equals(fieldName) || field.getJsonName().equals(fieldName))
+      .findFirst()
+      .orElse(null);
+  }
+
+  private FieldInfo findFieldInfo(StructInfo struct, String fieldName) {
+    return struct.fields().stream()
+      .filter(field -> {
+        if (field.name().equals(fieldName)) {
+          return true;
+        }
+
+        var metadata = findProtoFieldMetadata(struct, field);
+        return metadata != null && metadata.jsonName().equals(fieldName);
+      })
+      .findFirst()
+      .orElse(null);
+  }
+
+  private ProtoFieldMetadata findProtoFieldMetadata(StructInfo struct, FieldInfo field) {
+    var metadata = protoFieldMetadata.get(fieldKey(struct.name(), field.name()));
+    if (metadata != null || struct.alias() == null) {
+      return metadata;
+    }
+
+    return protoFieldMetadata.get(fieldKey(struct.alias(), field.name()));
   }
 
   static boolean isRequired(FieldRequirement requirement, Set<FieldBehavior> behaviors) {
@@ -821,7 +1036,7 @@ final class OpenApiSpecGenerator {
       }
     }
 
-    return structByTypeName.get(metadata.inputTypeName());
+    return structByTypeName.get(metadata.inputDescriptor().getFullName());
   }
 
   private String firstRawRequestExample(ServiceInfo rawService, String methodName) {
@@ -865,6 +1080,18 @@ final class OpenApiSpecGenerator {
 
     if (typeSignature.type() == TypeSignatureType.ENUM || typeSignature.type() == TypeSignatureType.STRUCT) {
       var schemaName = canonicalSchemaNameByTypeName.getOrDefault(typeSignature.signature(), typeSignature.name());
+      if (typeSignature.type() == TypeSignatureType.STRUCT) {
+        var descriptor = protoMessageDescriptors.get(schemaName);
+        if (descriptor != null) {
+          return schemaForMessage(descriptor);
+        }
+      } else {
+        var descriptor = protoEnumDescriptors.get(schemaName);
+        if (descriptor != null) {
+          return schemaForEnum(descriptor);
+        }
+      }
+
       markSchemaUsed(schemaName);
       return schemaRef(schemaName);
     }
@@ -876,6 +1103,180 @@ final class OpenApiSpecGenerator {
     var schema = JSON_MAPPER.createObjectNode();
     schema.put("type", "object");
     schema.put("additionalProperties", true);
+    return schema;
+  }
+
+  private ObjectNode schemaForParameter(ParamInfo parameter, ProtoFieldMetadata fieldMetadata) {
+    return fieldMetadata == null
+      ? schemaForType(parameter.typeSignature())
+      : schemaForProtoField(fieldMetadata.descriptor());
+  }
+
+  private ObjectNode schemaForProtoField(FieldDescriptor field) {
+    ObjectNode schema;
+    if (field.isMapField()) {
+      var valueField = field.getMessageType().findFieldByName("value");
+      schema = JSON_MAPPER.createObjectNode();
+      schema.put("type", "object");
+      schema.set("additionalProperties", schemaForSingularProtoField(valueField));
+    } else if (field.isRepeated()) {
+      schema = JSON_MAPPER.createObjectNode();
+      schema.put("type", "array");
+      schema.set("items", schemaForSingularProtoField(field));
+    } else {
+      schema = schemaForSingularProtoField(field);
+    }
+
+    return field.toProto().getProto3Optional() ? nullableSchema(schema) : schema;
+  }
+
+  private ObjectNode schemaForSingularProtoField(FieldDescriptor field) {
+    return switch (field.getType()) {
+      case BOOL -> scalarSchema("boolean", null, "bool");
+      case BYTES -> scalarSchema("string", "byte", "bytes");
+      case STRING -> scalarSchema("string", null, "string");
+      case DOUBLE -> floatingPointSchema("double", "double");
+      case FLOAT -> floatingPointSchema("float", "float");
+      case INT32, SINT32, SFIXED32 -> scalarSchema("integer", "int32", field.getType().name().toLowerCase(Locale.ROOT));
+      case UINT32, FIXED32 -> unsignedInt32Schema(field.getType().name().toLowerCase(Locale.ROOT));
+      case INT64, SINT64, SFIXED64 -> signedInt64Schema(field.getType().name().toLowerCase(Locale.ROOT));
+      case UINT64, FIXED64 -> unsignedInt64Schema(field.getType().name().toLowerCase(Locale.ROOT));
+      case ENUM -> schemaForEnum(field.getEnumType());
+      case GROUP, MESSAGE -> schemaForMessage(field.getMessageType());
+    };
+  }
+
+  private ObjectNode schemaForMessage(Descriptor descriptor) {
+    var wellKnownSchema = wellKnownTypeSchema(descriptor.getFullName());
+    if (wellKnownSchema != null) {
+      return wellKnownSchema;
+    }
+
+    var schemaName = canonicalSchemaNameByTypeName.getOrDefault(descriptor.getFullName(), descriptor.getFullName());
+    markSchemaUsed(schemaName);
+    return schemaRef(schemaName);
+  }
+
+  private ObjectNode schemaForEnum(EnumDescriptor descriptor) {
+    if ("google.protobuf.NullValue".equals(descriptor.getFullName())) {
+      return JSON_MAPPER.createObjectNode()
+        .put("type", "null")
+        .put("x-protobuf-type", descriptor.getFullName());
+    }
+
+    var schemaName = canonicalSchemaNameByTypeName.getOrDefault(descriptor.getFullName(), descriptor.getFullName());
+    markSchemaUsed(schemaName);
+    return schemaRef(schemaName);
+  }
+
+  private static ObjectNode wellKnownTypeSchema(String typeName) {
+    return switch (typeName) {
+      case "google.protobuf.Any" -> anySchema();
+      case "google.protobuf.BoolValue" -> nullableSchema(scalarSchema("boolean", null, typeName));
+      case "google.protobuf.BytesValue" -> nullableSchema(scalarSchema("string", "byte", typeName));
+      case "google.protobuf.DoubleValue" -> nullableSchema(floatingPointSchema("double", typeName));
+      case "google.protobuf.Duration" -> durationSchema();
+      case "google.protobuf.Empty" -> emptyObjectSchema(typeName);
+      case "google.protobuf.FieldMask" -> scalarSchema("string", null, typeName);
+      case "google.protobuf.FloatValue" -> nullableSchema(floatingPointSchema("float", typeName));
+      case "google.protobuf.Int32Value" -> nullableSchema(scalarSchema("integer", "int32", typeName));
+      case "google.protobuf.Int64Value" -> nullableSchema(signedInt64Schema(typeName));
+      case "google.protobuf.ListValue" -> listValueSchema();
+      case "google.protobuf.StringValue" -> nullableSchema(scalarSchema("string", null, typeName));
+      case "google.protobuf.Struct" -> structSchema();
+      case "google.protobuf.Timestamp" -> timestampSchema();
+      case "google.protobuf.UInt32Value" -> nullableSchema(unsignedInt32Schema(typeName));
+      case "google.protobuf.UInt64Value" -> nullableSchema(unsignedInt64Schema(typeName));
+      case "google.protobuf.Value" -> JSON_MAPPER.createObjectNode()
+        .put("x-protobuf-type", typeName);
+      default -> null;
+    };
+  }
+
+  private static ObjectNode scalarSchema(String type, String format, String protobufType) {
+    var schema = JSON_MAPPER.createObjectNode();
+    schema.put("type", type);
+    if (format != null) {
+      schema.put("format", format);
+    }
+    schema.put("x-protobuf-type", protobufType);
+    return schema;
+  }
+
+  private static ObjectNode floatingPointSchema(String format, String protobufType) {
+    var schema = JSON_MAPPER.createObjectNode();
+    schema.put("x-protobuf-type", protobufType);
+    var alternatives = schema.putArray("anyOf");
+    alternatives.addObject()
+      .put("type", "number")
+      .put("format", format);
+    var specialValues = alternatives.addObject()
+      .put("type", "string")
+      .putArray("enum");
+    specialValues.add("NaN");
+    specialValues.add("Infinity");
+    specialValues.add("-Infinity");
+    return schema;
+  }
+
+  private static ObjectNode unsignedInt32Schema(String protobufType) {
+    return scalarSchema("integer", "int64", protobufType)
+      .put("minimum", 0)
+      .put("maximum", 4_294_967_295L);
+  }
+
+  private static ObjectNode signedInt64Schema(String protobufType) {
+    return scalarSchema("string", null, protobufType)
+      .put("pattern", "^-?(0|[1-9][0-9]*)$");
+  }
+
+  private static ObjectNode unsignedInt64Schema(String protobufType) {
+    return scalarSchema("string", null, protobufType)
+      .put("pattern", "^(0|[1-9][0-9]*)$");
+  }
+
+  private static ObjectNode timestampSchema() {
+    return scalarSchema("string", "date-time", "google.protobuf.Timestamp");
+  }
+
+  private static ObjectNode durationSchema() {
+    return scalarSchema("string", null, "google.protobuf.Duration")
+      .put("pattern", "^-?(0|[1-9][0-9]*)(\\.[0-9]{1,9})?s$");
+  }
+
+  private static ObjectNode structSchema() {
+    return JSON_MAPPER.createObjectNode()
+      .put("type", "object")
+      .put("additionalProperties", true)
+      .put("x-protobuf-type", "google.protobuf.Struct");
+  }
+
+  private static ObjectNode listValueSchema() {
+    var schema = JSON_MAPPER.createObjectNode();
+    schema.put("type", "array");
+    schema.put("x-protobuf-type", "google.protobuf.ListValue");
+    schema.set("items", JSON_MAPPER.createObjectNode());
+    return schema;
+  }
+
+  private static ObjectNode anySchema() {
+    var schema = JSON_MAPPER.createObjectNode();
+    schema.put("type", "object");
+    schema.put("additionalProperties", true);
+    schema.put("x-protobuf-type", "google.protobuf.Any");
+    schema.putObject("properties")
+      .putObject("@type")
+      .put("type", "string");
+    schema.putArray("required").add("@type");
+    return schema;
+  }
+
+  private static ObjectNode emptyObjectSchema(String protobufType) {
+    var schema = JSON_MAPPER.createObjectNode();
+    schema.put("type", "object");
+    schema.put("additionalProperties", false);
+    schema.put("x-protobuf-type", protobufType);
+    schema.putObject("properties");
     return schema;
   }
 
@@ -932,23 +1333,16 @@ final class OpenApiSpecGenerator {
 
     switch (normalized) {
       case "boolean", "bool" -> schema.put("type", "boolean");
-      case "float" -> {
-        schema.put("type", "number");
-        schema.put("format", "float");
-      }
-      case "double", "number" -> {
-        schema.put("type", "number");
-        schema.put("format", "double");
-      }
+      case "float" -> schema.setAll(floatingPointSchema("float", "float"));
+      case "double", "number" -> schema.setAll(floatingPointSchema("double", "double"));
       case "i", "i8", "i16", "i32", "integer", "int", "int32", "uint32", "sint32",
            "fixed32", "sfixed32" -> {
         schema.put("type", "integer");
         schema.put("format", "int32");
       }
-      case "i64", "int64", "uint64", "sint64", "fixed64", "sfixed64", "long", "long64", "l64" -> {
-        schema.put("type", "integer");
-        schema.put("format", "int64");
-      }
+      case "uint64", "fixed64" -> schema.setAll(unsignedInt64Schema(normalized));
+      case "i64", "int64", "sint64", "sfixed64", "long", "long64", "l64" ->
+        schema.setAll(signedInt64Schema(normalized));
       case "byte", "bytes", "binary" -> {
         schema.put("type", "string");
         schema.put("format", "byte");
@@ -993,17 +1387,10 @@ final class OpenApiSpecGenerator {
     return wrapper;
   }
 
-  private static String operationId(String serviceName, MethodInfo method, int routeIndex) {
-    var base = sanitizeIdentifier("%s_%s_%s".formatted(serviceName, method.name(), method.httpMethod().name()));
-    return routeIndex == 0 ? base : base + "_route" + (routeIndex + 1);
-  }
-
-  private static String openApiPath(EndpointInfo endpoint, List<String> examplePaths, int index) {
-    if (index < examplePaths.size() && !examplePaths.get(index).isBlank()) {
-      return normalizePath(examplePaths.get(index));
-    }
-
-    return normalizePath(endpoint.pathMapping());
+  private static String operationId(ProtoMethodMetadata metadata, int routeIndex) {
+    var methodName = metadata.methodName();
+    var base = Character.toLowerCase(methodName.charAt(0)) + methodName.substring(1);
+    return routeIndex == 0 ? base : base + "Route" + (routeIndex + 1);
   }
 
   static ObjectNode literalPathItem(ObjectNode paths, String path) {
@@ -1138,8 +1525,8 @@ final class OpenApiSpecGenerator {
     return path;
   }
 
-  private static String sanitizeIdentifier(String value) {
-    return value.replaceAll("[^A-Za-z0-9_]+", "_");
+  private static String normalizeArmeriaPath(String path) {
+    return normalizePath(path).replaceAll("/:([A-Za-z_][A-Za-z0-9_]*)", "/{$1}");
   }
 
   private static String fieldKey(String typeName, String fieldName) {
@@ -1218,6 +1605,8 @@ final class OpenApiSpecGenerator {
   private static ProtoDescriptorMetadata loadProtoDescriptorMetadata(List<ServiceConfig> services) {
     var methodMetadata = new LinkedHashMap<String, ProtoMethodMetadata>();
     var fieldMetadata = new LinkedHashMap<String, ProtoFieldMetadata>();
+    var messageDescriptors = new LinkedHashMap<String, Descriptor>();
+    var enumDescriptors = new LinkedHashMap<String, EnumDescriptor>();
     var processedServices = new HashSet<String>();
     var processedFiles = new HashSet<String>();
 
@@ -1238,7 +1627,13 @@ final class OpenApiSpecGenerator {
         }
 
         FileDescriptor fileDescriptor = supplier.getFileDescriptor();
-        collectFieldMetadata(fileDescriptor, fieldMetadata, processedFiles);
+        collectDescriptorMetadata(
+          fileDescriptor,
+          fieldMetadata,
+          messageDescriptors,
+          enumDescriptors,
+          processedFiles
+        );
         var protoServiceDescriptor = fileDescriptor.getServices().stream()
           .filter(descriptor -> descriptor.getFullName().equals(grpcServiceDescriptor.getName()))
           .findFirst()
@@ -1251,15 +1646,13 @@ final class OpenApiSpecGenerator {
           var apiMethod = method.getOptions().hasExtension(ApiDocsProto.apiMethod)
             ? method.getOptions().getExtension(ApiDocsProto.apiMethod)
             : ApiMethodDocs.getDefaultInstance();
-          var hasHttpBindings = method.getOptions().hasExtension(AnnotationsProto.http)
-            && method.getOptions().getExtension(AnnotationsProto.http).getPatternCase().getNumber() != 0;
           methodMetadata.putIfAbsent(
             methodKey(protoServiceDescriptor.getFullName(), method.getName()),
             new ProtoMethodMetadata(
               protoServiceDescriptor.getFullName(),
               method.getName(),
-              method.getInputType().getFullName(),
-              method.getOutputType().getFullName(),
+              method.getInputType(),
+              method.getOutputType(),
               !method.isClientStreaming() && !method.isServerStreaming(),
               List.of(),
               apiMethod.getDisplayName(),
@@ -1269,19 +1662,26 @@ final class OpenApiSpecGenerator {
               List.copyOf(apiMethod.getPreconditionsList()),
               apiMethod.getExecution(),
               List.copyOf(apiMethod.getSideEffectsList()),
-              hasHttpBindings
+              httpBindings(method)
             )
           );
         }
       }
     }
 
-    return new ProtoDescriptorMetadata(Map.copyOf(methodMetadata), Map.copyOf(fieldMetadata));
+    return new ProtoDescriptorMetadata(
+      Map.copyOf(methodMetadata),
+      Map.copyOf(fieldMetadata),
+      Map.copyOf(messageDescriptors),
+      Map.copyOf(enumDescriptors)
+    );
   }
 
-  private static void collectFieldMetadata(
+  private static void collectDescriptorMetadata(
     FileDescriptor fileDescriptor,
     Map<String, ProtoFieldMetadata> fieldMetadata,
+    Map<String, Descriptor> messageDescriptors,
+    Map<String, EnumDescriptor> enumDescriptors,
     Set<String> processedFiles
   ) {
     if (!processedFiles.add(fileDescriptor.getFullName())) {
@@ -1289,11 +1689,23 @@ final class OpenApiSpecGenerator {
     }
 
     fileDescriptor.getDependencies().forEach(dependency ->
-      collectFieldMetadata(dependency, fieldMetadata, processedFiles));
-    fileDescriptor.getMessageTypes().forEach(descriptor -> collectFieldMetadata(descriptor, fieldMetadata));
+      collectDescriptorMetadata(dependency, fieldMetadata, messageDescriptors, enumDescriptors, processedFiles));
+    fileDescriptor.getEnumTypes().forEach(descriptor ->
+      enumDescriptors.putIfAbsent(descriptor.getFullName(), descriptor));
+    fileDescriptor.getMessageTypes().forEach(descriptor ->
+      collectDescriptorMetadata(descriptor, fieldMetadata, messageDescriptors, enumDescriptors));
   }
 
-  private static void collectFieldMetadata(Descriptor descriptor, Map<String, ProtoFieldMetadata> fieldMetadata) {
+  private static void collectDescriptorMetadata(
+    Descriptor descriptor,
+    Map<String, ProtoFieldMetadata> fieldMetadata,
+    Map<String, Descriptor> messageDescriptors,
+    Map<String, EnumDescriptor> enumDescriptors
+  ) {
+    messageDescriptors.putIfAbsent(descriptor.getFullName(), descriptor);
+    descriptor.getEnumTypes().forEach(enumDescriptor ->
+      enumDescriptors.putIfAbsent(enumDescriptor.getFullName(), enumDescriptor));
+
     for (FieldDescriptor field : descriptor.getFields()) {
       var apiField = field.getOptions().hasExtension(ApiDocsProto.apiField)
         ? field.getOptions().getExtension(ApiDocsProto.apiField)
@@ -1305,16 +1717,56 @@ final class OpenApiSpecGenerator {
       fieldMetadata.putIfAbsent(
         fieldKey(descriptor.getFullName(), field.getName()),
         new ProtoFieldMetadata(
-          descriptor.getFullName(),
-          field.getName(),
+          field.getJsonName(),
           Set.copyOf(behaviors),
           apiField.getFormat(),
-          apiField.getExample()
+          apiField.getExample(),
+          field
         )
       );
     }
 
-    descriptor.getNestedTypes().forEach(nested -> collectFieldMetadata(nested, fieldMetadata));
+    descriptor.getNestedTypes().forEach(nested ->
+      collectDescriptorMetadata(nested, fieldMetadata, messageDescriptors, enumDescriptors));
+  }
+
+  private static List<ProtoHttpBinding> httpBindings(MethodDescriptor method) {
+    if (!method.getOptions().hasExtension(AnnotationsProto.http)) {
+      return List.of();
+    }
+
+    var bindings = new ArrayList<ProtoHttpBinding>();
+    collectHttpBindings(method.getOptions().getExtension(AnnotationsProto.http), bindings);
+    return List.copyOf(bindings);
+  }
+
+  private static void collectHttpBindings(HttpRule rule, List<ProtoHttpBinding> bindings) {
+    if (rule.getPatternCase() != HttpRule.PatternCase.PATTERN_NOT_SET) {
+      bindings.add(httpBinding(rule));
+    }
+    rule.getAdditionalBindingsList().forEach(binding -> collectHttpBindings(binding, bindings));
+  }
+
+  private static ProtoHttpBinding httpBinding(HttpRule rule) {
+    var method = switch (rule.getPatternCase()) {
+      case GET -> "get";
+      case PUT -> "put";
+      case POST -> "post";
+      case DELETE -> "delete";
+      case PATCH -> "patch";
+      case CUSTOM -> rule.getCustom().getKind().toLowerCase(Locale.ROOT);
+      case PATTERN_NOT_SET -> throw new IllegalArgumentException("HTTP rule has no path pattern");
+    };
+    var path = switch (rule.getPatternCase()) {
+      case GET -> rule.getGet();
+      case PUT -> rule.getPut();
+      case POST -> rule.getPost();
+      case DELETE -> rule.getDelete();
+      case PATCH -> rule.getPatch();
+      case CUSTOM -> rule.getCustom().getPath();
+      case PATTERN_NOT_SET -> throw new IllegalArgumentException("HTTP rule has no path pattern");
+    };
+    return new ProtoHttpBinding(method, normalizePath(path), rule.getBody());
   }
 
   private static Map<String, StructInfo> createStructLookup(Set<StructInfo> structs) {
@@ -1366,15 +1818,17 @@ final class OpenApiSpecGenerator {
 
   private record ProtoDescriptorMetadata(
     Map<String, ProtoMethodMetadata> methodMetadata,
-    Map<String, ProtoFieldMetadata> fieldMetadata
+    Map<String, ProtoFieldMetadata> fieldMetadata,
+    Map<String, Descriptor> messageDescriptors,
+    Map<String, EnumDescriptor> enumDescriptors
   ) {
   }
 
   private record ProtoMethodMetadata(
     String serviceName,
     String methodName,
-    String inputTypeName,
-    String outputTypeName,
+    Descriptor inputDescriptor,
+    Descriptor outputDescriptor,
     boolean unary,
     List<String> declaredExceptions,
     String displayName,
@@ -1384,16 +1838,26 @@ final class OpenApiSpecGenerator {
     List<String> preconditions,
     String execution,
     List<String> sideEffects,
-    boolean hasHttpBindings
+    List<ProtoHttpBinding> httpBindings
+  ) {
+    private boolean hasHttpBindings() {
+      return !httpBindings.isEmpty();
+    }
+  }
+
+  private record ProtoHttpBinding(
+    String method,
+    String path,
+    String body
   ) {
   }
 
   private record ProtoFieldMetadata(
-    String typeName,
-    String fieldName,
+    String jsonName,
     Set<FieldBehavior> behaviors,
     String format,
-    String example
+    String example,
+    FieldDescriptor descriptor
   ) {
   }
 }

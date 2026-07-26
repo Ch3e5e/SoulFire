@@ -23,10 +23,14 @@ import com.google.api.FieldBehavior;
 import com.linecorp.armeria.server.Server;
 import com.linecorp.armeria.server.docs.FieldRequirement;
 import com.linecorp.armeria.server.grpc.GrpcService;
+import com.soulfiremc.grpc.generated.InstanceServiceGrpc;
+import com.soulfiremc.grpc.generated.MetricsServiceGrpc;
+import com.soulfiremc.grpc.generated.ScriptServiceGrpc;
 import com.soulfiremc.grpc.generated.UserServiceGrpc;
 import org.junit.jupiter.api.Test;
 
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -146,6 +150,110 @@ class OpenApiSpecGeneratorTest {
         openApi.path("jsonSchemaDialect").asText()
       );
       assertFalse(openApi.toPrettyString().contains("\"nullable\""));
+    }
+  }
+
+  @Test
+  void generatedSpecUsesCanonicalHttpBindings() {
+    var grpcService = GrpcService.builder()
+      .addService(new UserServiceGrpc.UserServiceImplBase() {
+      })
+      .enableUnframedRequests(true)
+      .enableHttpJsonTranscoding(true)
+      .build();
+    try (var server = Server.builder()
+      .service(grpcService)
+      .build()) {
+      var openApi = OpenApiSpecGenerator.generate(server.config().serviceConfigs(), "https://example.com");
+      var paths = (ObjectNode) openApi.path("paths");
+      var operationIds = new HashSet<String>();
+
+      paths.properties().forEach(pathEntry ->
+        pathEntry.getValue().properties().forEach(operationEntry -> {
+          var operation = operationEntry.getValue();
+          assertTrue(operationIds.add(operation.path("operationId").asText()));
+          operation.path("parameters").forEach(parameter -> {
+            if ("path".equals(parameter.path("in").asText())) {
+              assertTrue(pathEntry.getKey().contains("{%s}".formatted(parameter.path("name").asText())));
+            }
+          });
+        }));
+
+      var deleteUser = paths.path("/v1/users/{id}").path("delete");
+      assertFalse(deleteUser.isMissingNode());
+      assertEquals("deleteUser", deleteUser.path("operationId").asText());
+    }
+  }
+
+  @Test
+  void generatedSchemasUseCanonicalProtoJsonShapes() {
+    var grpcService = GrpcService.builder()
+      .addService(new MetricsServiceGrpc.MetricsServiceImplBase() {
+      })
+      .enableUnframedRequests(true)
+      .enableHttpJsonTranscoding(true)
+      .build();
+    try (var server = Server.builder()
+      .service(grpcService)
+      .build()) {
+      var openApi = OpenApiSpecGenerator.generate(server.config().serviceConfigs(), "https://example.com");
+      var schemas = openApi.path("components").path("schemas");
+      var metrics = schemas.path("soulfire.v1.MetricsSnapshot").path("properties");
+
+      assertTrue(metrics.has("packetsSentTotal"));
+      assertFalse(metrics.has("packets_sent_total"));
+      assertEquals("string", metrics.path("packetsSentTotal").path("type").asText());
+      assertEquals("uint64", metrics.path("packetsSentTotal").path("x-protobuf-type").asText());
+      assertEquals("string", metrics.path("timestamp").path("type").asText());
+      assertEquals("date-time", metrics.path("timestamp").path("format").asText());
+      assertFalse(schemas.has("google.protobuf.Timestamp"));
+    }
+  }
+
+  @Test
+  void generatedRequestBodiesHaveStableNamesAndJsonProperties() {
+    var grpcService = GrpcService.builder()
+      .addService(new InstanceServiceGrpc.InstanceServiceImplBase() {
+      })
+      .addService(new ScriptServiceGrpc.ScriptServiceImplBase() {
+      })
+      .enableUnframedRequests(true)
+      .enableHttpJsonTranscoding(true)
+      .build();
+    try (var server = Server.builder()
+      .service(grpcService)
+      .build()) {
+      var openApi = OpenApiSpecGenerator.generate(server.config().serviceConfigs(), "https://example.com");
+      var createInstance = openApi.path("paths").path("/v1/instances").path("post");
+      var requestSchema = createInstance.path("requestBody").path("content").path("application/json").path("schema");
+
+      assertEquals("createInstance", createInstance.path("operationId").asText());
+      assertEquals("CreateInstanceRequestBody", requestSchema.path("title").asText());
+      assertTrue(requestSchema.path("properties").has("friendlyName"));
+      assertFalse(requestSchema.path("properties").has("friendly_name"));
+
+      var createScript = openApi.path("paths").path("/v1/instances/{instance_id}/scripts").path("post");
+      var scriptRequestSchema = createScript.path("requestBody").path("content").path("application/json").path("schema");
+      var scriptProperties = scriptRequestSchema.path("properties");
+      assertTrue(scriptProperties.has("nodes"));
+      assertFalse(scriptProperties.has("nodes.id"));
+      assertEquals("array", scriptProperties.path("nodes").path("type").asText());
+      assertEquals(
+        "#/components/schemas/soulfire.v1.ScriptNode",
+        scriptProperties.path("nodes").path("items").path("$ref").asText()
+      );
+      assertFalse(scriptProperties.has("instanceId"));
+      assertFalse(scriptProperties.has("instance_id"));
+
+      var authChain = findPropertySchema(openApi, "authChain");
+      assertNotNull(authChain);
+      assertEquals("object", authChain.path("type").asText());
+      assertTrue(authChain.path("additionalProperties").asBoolean());
+
+      var value = findPropertySchema(openApi, "value");
+      assertNotNull(value);
+      assertFalse(value.has("type"));
+      assertEquals("google.protobuf.Value", value.path("x-protobuf-type").asText());
     }
   }
 
