@@ -23,7 +23,6 @@ import com.soulfiremc.grpc.generated.*;
 import com.soulfiremc.server.InstanceManager;
 import com.soulfiremc.server.SoulFireServer;
 import com.soulfiremc.server.account.MinecraftAccount;
-import com.soulfiremc.server.api.SessionLifecycle;
 import com.soulfiremc.server.database.AuditLogType;
 import com.soulfiremc.server.database.generated.Tables;
 import com.soulfiremc.server.proxy.SFProxy;
@@ -67,6 +66,13 @@ public final class InstanceServiceImpl extends InstanceServiceGrpc.InstanceServi
 
   private String serializeSettings(InstanceSettingsImpl.Stem stem) {
     return GsonInstance.GSON.toJson(stem.serializeToTree());
+  }
+
+  private void refreshRuntimeSettings(UUID instanceId) {
+    soulFireServer.getInstance(instanceId).ifPresent(instance -> {
+      instance.invalidateSettingsCache();
+      instance.botStateManager().syncConfiguredAccounts();
+    });
   }
 
   @Override
@@ -121,7 +127,10 @@ public final class InstanceServiceImpl extends InstanceServiceGrpc.InstanceServi
               .setId(record.getId())
               .setFriendlyName(record.getFriendlyName())
               .setIcon(record.getIcon())
-              .setState(SessionLifecycle.valueOf(record.getSessionLifecycle()).toProto())
+              .setBotSummary(soulFireServer.getInstance(id)
+                .orElseThrow()
+                .botStateManager()
+                .summary())
               .addAllInstancePermissions(getInstancePermissions(id))
               .build();
           })
@@ -180,7 +189,7 @@ public final class InstanceServiceImpl extends InstanceServiceGrpc.InstanceServi
           .setFriendlyName(record.getFriendlyName())
           .setIcon(record.getIcon())
           .setConfig(settings.toProto())
-          .setState(SessionLifecycle.valueOf(record.getSessionLifecycle()).toProto())
+          .setBotSummary(instance.botStateManager().summary())
           .addAllInstancePermissions(getInstancePermissions(instanceId))
           .addAllSettingsDefinitions(registry.exportSettingsDefinitions())
           .addAllInstanceSettings(registry.exportSettingsPages())
@@ -221,7 +230,7 @@ public final class InstanceServiceImpl extends InstanceServiceGrpc.InstanceServi
           .execute();
       });
 
-      soulFireServer.getInstance(instanceId).ifPresent(InstanceManager::invalidateSettingsCache);
+      refreshRuntimeSettings(instanceId);
       responseObserver.onNext(InstanceUpdateMetaResponse.newBuilder().build());
       responseObserver.onCompleted();
     } catch (Throwable t) {
@@ -236,6 +245,19 @@ public final class InstanceServiceImpl extends InstanceServiceGrpc.InstanceServi
     ServerRPCConstants.USER_CONTEXT_KEY.get().hasPermissionOrThrow(PermissionContext.instance(InstancePermission.UPDATE_INSTANCE_CONFIG, instanceId));
 
     try {
+      var instance = soulFireServer.getInstance(instanceId)
+        .orElseThrow(() -> Status.NOT_FOUND
+          .withDescription("Instance '%s' not found".formatted(instanceId))
+          .asRuntimeException());
+      var newSettings = InstanceSettingsImpl.Stem.fromProto(request.getConfig());
+      var newAccountIds = newSettings.accounts().stream()
+        .map(MinecraftAccount::profileId)
+        .collect(Collectors.toSet());
+      var removedAccountIds = instance.settingsSource().accounts().keySet().stream()
+        .filter(profileId -> !newAccountIds.contains(profileId))
+        .toList();
+      instance.botStateManager().removeAccounts(removedAccountIds).join();
+
       var dsl = soulFireServer.dsl();
       dsl.transaction(cfg -> {
         var ctx = DSL.using(cfg);
@@ -244,8 +266,6 @@ public final class InstanceServiceImpl extends InstanceServiceGrpc.InstanceServi
           throw Status.NOT_FOUND.withDescription("Instance '%s' not found".formatted(instanceId)).asRuntimeException();
         }
 
-        var newSettings = InstanceSettingsImpl.Stem.fromProto(request.getConfig());
-
         ctx.update(Tables.INSTANCES)
           .set(Tables.INSTANCES.SETTINGS, serializeSettings(newSettings))
           .set(Tables.INSTANCES.UPDATED_AT, LocalDateTime.now(ZoneOffset.UTC))
@@ -253,7 +273,7 @@ public final class InstanceServiceImpl extends InstanceServiceGrpc.InstanceServi
           .execute();
       });
 
-      soulFireServer.getInstance(instanceId).ifPresent(InstanceManager::invalidateSettingsCache);
+      refreshRuntimeSettings(instanceId);
       responseObserver.onNext(InstanceUpdateConfigResponse.newBuilder().build());
       responseObserver.onCompleted();
     } catch (Throwable t) {
@@ -292,7 +312,7 @@ public final class InstanceServiceImpl extends InstanceServiceGrpc.InstanceServi
           .execute();
       });
 
-      soulFireServer.getInstance(instanceId).ifPresent(InstanceManager::invalidateSettingsCache);
+      refreshRuntimeSettings(instanceId);
       responseObserver.onNext(InstanceUpdateConfigEntryResponse.newBuilder().build());
       responseObserver.onCompleted();
     } catch (Throwable t) {
@@ -327,7 +347,7 @@ public final class InstanceServiceImpl extends InstanceServiceGrpc.InstanceServi
           .execute();
       });
 
-      soulFireServer.getInstance(instanceId).ifPresent(InstanceManager::invalidateSettingsCache);
+      refreshRuntimeSettings(instanceId);
       responseObserver.onNext(InstanceAddAccountResponse.newBuilder().build());
       responseObserver.onCompleted();
     } catch (Throwable t) {
@@ -343,6 +363,12 @@ public final class InstanceServiceImpl extends InstanceServiceGrpc.InstanceServi
     ServerRPCConstants.USER_CONTEXT_KEY.get().hasPermissionOrThrow(PermissionContext.instance(InstancePermission.UPDATE_INSTANCE_CONFIG, instanceId));
 
     try {
+      var instance = soulFireServer.getInstance(instanceId)
+        .orElseThrow(() -> Status.NOT_FOUND
+          .withDescription("Instance '%s' not found".formatted(instanceId))
+          .asRuntimeException());
+      instance.botStateManager().removeAccounts(List.of(profileId)).join();
+
       var dsl = soulFireServer.dsl();
       dsl.transaction(cfg -> {
         var ctx = DSL.using(cfg);
@@ -364,7 +390,8 @@ public final class InstanceServiceImpl extends InstanceServiceGrpc.InstanceServi
           .execute();
       });
 
-      soulFireServer.getInstance(instanceId).ifPresent(InstanceManager::invalidateSettingsCache);
+      instance.invalidateSettingsCache();
+      instance.botStateManager().syncConfiguredAccounts();
       responseObserver.onNext(InstanceRemoveAccountResponse.newBuilder().build());
       responseObserver.onCompleted();
     } catch (Throwable t) {
@@ -401,7 +428,7 @@ public final class InstanceServiceImpl extends InstanceServiceGrpc.InstanceServi
           .execute();
       });
 
-      soulFireServer.getInstance(instanceId).ifPresent(InstanceManager::invalidateSettingsCache);
+      refreshRuntimeSettings(instanceId);
       responseObserver.onNext(InstanceUpdateAccountResponse.newBuilder().build());
       responseObserver.onCompleted();
     } catch (Throwable t) {
@@ -438,7 +465,7 @@ public final class InstanceServiceImpl extends InstanceServiceGrpc.InstanceServi
           .execute();
       });
 
-      soulFireServer.getInstance(instanceId).ifPresent(InstanceManager::invalidateSettingsCache);
+      refreshRuntimeSettings(instanceId);
       responseObserver.onNext(InstanceAddAccountsBatchResponse.newBuilder().build());
       responseObserver.onCompleted();
     } catch (Throwable t) {
@@ -456,6 +483,11 @@ public final class InstanceServiceImpl extends InstanceServiceGrpc.InstanceServi
       var profileIds = request.getProfileIdsList().stream()
         .map(UUID::fromString)
         .collect(Collectors.toSet());
+      var instance = soulFireServer.getInstance(instanceId)
+        .orElseThrow(() -> Status.NOT_FOUND
+          .withDescription("Instance '%s' not found".formatted(instanceId))
+          .asRuntimeException());
+      instance.botStateManager().removeAccounts(profileIds).join();
 
       var dsl = soulFireServer.dsl();
       dsl.transaction(cfg -> {
@@ -478,7 +510,8 @@ public final class InstanceServiceImpl extends InstanceServiceGrpc.InstanceServi
           .execute();
       });
 
-      soulFireServer.getInstance(instanceId).ifPresent(InstanceManager::invalidateSettingsCache);
+      instance.invalidateSettingsCache();
+      instance.botStateManager().syncConfiguredAccounts();
       responseObserver.onNext(InstanceRemoveAccountsBatchResponse.newBuilder().build());
       responseObserver.onCompleted();
     } catch (Throwable t) {
@@ -513,7 +546,7 @@ public final class InstanceServiceImpl extends InstanceServiceGrpc.InstanceServi
           .execute();
       });
 
-      soulFireServer.getInstance(instanceId).ifPresent(InstanceManager::invalidateSettingsCache);
+      refreshRuntimeSettings(instanceId);
       responseObserver.onNext(InstanceAddProxyResponse.newBuilder().build());
       responseObserver.onCompleted();
     } catch (Throwable t) {
@@ -552,7 +585,7 @@ public final class InstanceServiceImpl extends InstanceServiceGrpc.InstanceServi
           .execute();
       });
 
-      soulFireServer.getInstance(instanceId).ifPresent(InstanceManager::invalidateSettingsCache);
+      refreshRuntimeSettings(instanceId);
       responseObserver.onNext(InstanceRemoveProxyResponse.newBuilder().build());
       responseObserver.onCompleted();
     } catch (Throwable t) {
@@ -591,7 +624,7 @@ public final class InstanceServiceImpl extends InstanceServiceGrpc.InstanceServi
           .execute();
       });
 
-      soulFireServer.getInstance(instanceId).ifPresent(InstanceManager::invalidateSettingsCache);
+      refreshRuntimeSettings(instanceId);
       responseObserver.onNext(InstanceUpdateProxyResponse.newBuilder().build());
       responseObserver.onCompleted();
     } catch (Throwable t) {
@@ -628,7 +661,7 @@ public final class InstanceServiceImpl extends InstanceServiceGrpc.InstanceServi
           .execute();
       });
 
-      soulFireServer.getInstance(instanceId).ifPresent(InstanceManager::invalidateSettingsCache);
+      refreshRuntimeSettings(instanceId);
       responseObserver.onNext(InstanceAddProxiesBatchResponse.newBuilder().build());
       responseObserver.onCompleted();
     } catch (Throwable t) {
@@ -666,32 +699,11 @@ public final class InstanceServiceImpl extends InstanceServiceGrpc.InstanceServi
           .execute();
       });
 
-      soulFireServer.getInstance(instanceId).ifPresent(InstanceManager::invalidateSettingsCache);
+      refreshRuntimeSettings(instanceId);
       responseObserver.onNext(InstanceRemoveProxiesBatchResponse.newBuilder().build());
       responseObserver.onCompleted();
     } catch (Throwable t) {
       log.error("Error removing instance proxies batch", t);
-      throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
-    }
-  }
-
-  @Override
-  public void changeInstanceState(InstanceStateChangeRequest request, StreamObserver<InstanceStateChangeResponse> responseObserver) {
-    var instanceId = UUID.fromString(request.getId());
-    ServerRPCConstants.USER_CONTEXT_KEY.get().hasPermissionOrThrow(PermissionContext.instance(InstancePermission.CHANGE_INSTANCE_STATE, instanceId));
-
-    try {
-      var optionalInstance = soulFireServer.getInstance(instanceId);
-      if (optionalInstance.isEmpty()) {
-        throw Status.NOT_FOUND.withDescription("Instance '%s' not found".formatted(instanceId)).asRuntimeException();
-      }
-
-      var instance = optionalInstance.get();
-      instance.switchToState(ServerRPCConstants.USER_CONTEXT_KEY.get(), SessionLifecycle.fromProto(request.getState())).join();
-      responseObserver.onNext(InstanceStateChangeResponse.newBuilder().build());
-      responseObserver.onCompleted();
-    } catch (Throwable t) {
-      log.error("Error changing instance state", t);
       throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
     }
   }
@@ -732,10 +744,6 @@ public final class InstanceServiceImpl extends InstanceServiceGrpc.InstanceServi
           .setUser(userBuilder.build())
           .setType(switch (auditLogType) {
             case EXECUTE_COMMAND -> InstanceAuditLogResponse.AuditLogEntryType.EXECUTE_COMMAND;
-            case START_SESSION -> InstanceAuditLogResponse.AuditLogEntryType.START_SESSION;
-            case PAUSE_SESSION -> InstanceAuditLogResponse.AuditLogEntryType.PAUSE_SESSION;
-            case RESUME_SESSION -> InstanceAuditLogResponse.AuditLogEntryType.RESUME_SESSION;
-            case STOP_SESSION -> InstanceAuditLogResponse.AuditLogEntryType.STOP_SESSION;
             case AUTOMATION_START -> InstanceAuditLogResponse.AuditLogEntryType.AUTOMATION_START;
             case AUTOMATION_PAUSE -> InstanceAuditLogResponse.AuditLogEntryType.AUTOMATION_PAUSE;
             case AUTOMATION_RESUME -> InstanceAuditLogResponse.AuditLogEntryType.AUTOMATION_RESUME;
@@ -745,6 +753,8 @@ public final class InstanceServiceImpl extends InstanceServiceGrpc.InstanceServi
             case AUTOMATION_RESET_MEMORY -> InstanceAuditLogResponse.AuditLogEntryType.AUTOMATION_RESET_MEMORY;
             case AUTOMATION_RESET_COORDINATION -> InstanceAuditLogResponse.AuditLogEntryType.AUTOMATION_RESET_COORDINATION;
             case AUTOMATION_RELEASE_CLAIMS -> InstanceAuditLogResponse.AuditLogEntryType.AUTOMATION_RELEASE_CLAIMS;
+            case BOT_DESIRED_STATE_CHANGE -> InstanceAuditLogResponse.AuditLogEntryType.BOT_DESIRED_STATE_CHANGE;
+            case BOT_RESTART -> InstanceAuditLogResponse.AuditLogEntryType.BOT_RESTART;
           })
           .setTimestamp(Timestamps.fromMillis(auditLog.getCreatedAt().toInstant(ZoneOffset.UTC).toEpochMilli()))
           .setData(auditLog.getData() != null ? auditLog.getData() : "")

@@ -1,3 +1,5 @@
+import datetime
+
 from soulfire import common_pb2 as _common_pb2
 from soulfire import api_docs_pb2 as _api_docs_pb2
 from google.api import annotations_pb2 as _annotations_pb2
@@ -12,6 +14,23 @@ from collections.abc import Iterable as _Iterable, Mapping as _Mapping
 from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
+
+class BotDesiredState(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    BOT_DESIRED_STATE_UNSPECIFIED: _ClassVar[BotDesiredState]
+    BOT_DESIRED_STATE_STOPPED: _ClassVar[BotDesiredState]
+    BOT_DESIRED_STATE_RUNNING: _ClassVar[BotDesiredState]
+
+class BotRuntimeState(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    BOT_RUNTIME_STATE_UNSPECIFIED: _ClassVar[BotRuntimeState]
+    BOT_RUNTIME_STATE_STOPPED: _ClassVar[BotRuntimeState]
+    BOT_RUNTIME_STATE_QUEUED: _ClassVar[BotRuntimeState]
+    BOT_RUNTIME_STATE_STARTING: _ClassVar[BotRuntimeState]
+    BOT_RUNTIME_STATE_RUNNING: _ClassVar[BotRuntimeState]
+    BOT_RUNTIME_STATE_RETRYING: _ClassVar[BotRuntimeState]
+    BOT_RUNTIME_STATE_STOPPING: _ClassVar[BotRuntimeState]
+    BOT_RUNTIME_STATE_FAILED: _ClassVar[BotRuntimeState]
 
 class BotConnectionPhase(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -70,6 +89,17 @@ class DialogAfterAction(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     DIALOG_AFTER_ACTION_CLOSE: _ClassVar[DialogAfterAction]
     DIALOG_AFTER_ACTION_NONE: _ClassVar[DialogAfterAction]
     DIALOG_AFTER_ACTION_WAIT_FOR_RESPONSE: _ClassVar[DialogAfterAction]
+BOT_DESIRED_STATE_UNSPECIFIED: BotDesiredState
+BOT_DESIRED_STATE_STOPPED: BotDesiredState
+BOT_DESIRED_STATE_RUNNING: BotDesiredState
+BOT_RUNTIME_STATE_UNSPECIFIED: BotRuntimeState
+BOT_RUNTIME_STATE_STOPPED: BotRuntimeState
+BOT_RUNTIME_STATE_QUEUED: BotRuntimeState
+BOT_RUNTIME_STATE_STARTING: BotRuntimeState
+BOT_RUNTIME_STATE_RUNNING: BotRuntimeState
+BOT_RUNTIME_STATE_RETRYING: BotRuntimeState
+BOT_RUNTIME_STATE_STOPPING: BotRuntimeState
+BOT_RUNTIME_STATE_FAILED: BotRuntimeState
 BOT_CONNECTION_PHASE_UNSPECIFIED: BotConnectionPhase
 BOT_CONNECTION_PHASE_CONNECTING: BotConnectionPhase
 BOT_CONNECTION_PHASE_CONNECTED: BotConnectionPhase
@@ -122,21 +152,105 @@ class BotListRequest(_message.Message):
     instance_id: str
     def __init__(self, instance_id: _Optional[str] = ...) -> None: ...
 
+class BotStatus(_message.Message):
+    __slots__ = ("profile_id", "desired_state", "runtime_state", "last_error", "updated_at")
+    PROFILE_ID_FIELD_NUMBER: _ClassVar[int]
+    DESIRED_STATE_FIELD_NUMBER: _ClassVar[int]
+    RUNTIME_STATE_FIELD_NUMBER: _ClassVar[int]
+    LAST_ERROR_FIELD_NUMBER: _ClassVar[int]
+    UPDATED_AT_FIELD_NUMBER: _ClassVar[int]
+    profile_id: str
+    desired_state: BotDesiredState
+    runtime_state: BotRuntimeState
+    last_error: str
+    updated_at: _timestamp_pb2.Timestamp
+    def __init__(self, profile_id: _Optional[str] = ..., desired_state: _Optional[_Union[BotDesiredState, str]] = ..., runtime_state: _Optional[_Union[BotRuntimeState, str]] = ..., last_error: _Optional[str] = ..., updated_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
+
+class BotFleetSummary(_message.Message):
+    __slots__ = ("total_bots", "desired_bots", "online_bots", "starting_bots", "retrying_bots", "failed_bots")
+    TOTAL_BOTS_FIELD_NUMBER: _ClassVar[int]
+    DESIRED_BOTS_FIELD_NUMBER: _ClassVar[int]
+    ONLINE_BOTS_FIELD_NUMBER: _ClassVar[int]
+    STARTING_BOTS_FIELD_NUMBER: _ClassVar[int]
+    RETRYING_BOTS_FIELD_NUMBER: _ClassVar[int]
+    FAILED_BOTS_FIELD_NUMBER: _ClassVar[int]
+    total_bots: int
+    desired_bots: int
+    online_bots: int
+    starting_bots: int
+    retrying_bots: int
+    failed_bots: int
+    def __init__(self, total_bots: _Optional[int] = ..., desired_bots: _Optional[int] = ..., online_bots: _Optional[int] = ..., starting_bots: _Optional[int] = ..., retrying_bots: _Optional[int] = ..., failed_bots: _Optional[int] = ...) -> None: ...
+
+class SetBotsDesiredStateRequest(_message.Message):
+    __slots__ = ("instance_id", "bot_ids", "desired_state")
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    BOT_IDS_FIELD_NUMBER: _ClassVar[int]
+    DESIRED_STATE_FIELD_NUMBER: _ClassVar[int]
+    instance_id: str
+    bot_ids: _containers.RepeatedScalarFieldContainer[str]
+    desired_state: BotDesiredState
+    def __init__(self, instance_id: _Optional[str] = ..., bot_ids: _Optional[_Iterable[str]] = ..., desired_state: _Optional[_Union[BotDesiredState, str]] = ...) -> None: ...
+
+class SetBotsDesiredStateResponse(_message.Message):
+    __slots__ = ("bots",)
+    BOTS_FIELD_NUMBER: _ClassVar[int]
+    bots: _containers.RepeatedCompositeFieldContainer[BotStatus]
+    def __init__(self, bots: _Optional[_Iterable[_Union[BotStatus, _Mapping]]] = ...) -> None: ...
+
+class RestartBotsRequest(_message.Message):
+    __slots__ = ("instance_id", "bot_ids")
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    BOT_IDS_FIELD_NUMBER: _ClassVar[int]
+    instance_id: str
+    bot_ids: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, instance_id: _Optional[str] = ..., bot_ids: _Optional[_Iterable[str]] = ...) -> None: ...
+
+class RestartBotsResponse(_message.Message):
+    __slots__ = ("bots",)
+    BOTS_FIELD_NUMBER: _ClassVar[int]
+    bots: _containers.RepeatedCompositeFieldContainer[BotStatus]
+    def __init__(self, bots: _Optional[_Iterable[_Union[BotStatus, _Mapping]]] = ...) -> None: ...
+
+class WatchBotStatusesRequest(_message.Message):
+    __slots__ = ("instance_id",)
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    instance_id: str
+    def __init__(self, instance_id: _Optional[str] = ...) -> None: ...
+
+class BotStatusSnapshot(_message.Message):
+    __slots__ = ("bots",)
+    BOTS_FIELD_NUMBER: _ClassVar[int]
+    bots: _containers.RepeatedCompositeFieldContainer[BotStatus]
+    def __init__(self, bots: _Optional[_Iterable[_Union[BotStatus, _Mapping]]] = ...) -> None: ...
+
+class WatchBotStatusesResponse(_message.Message):
+    __slots__ = ("snapshot", "update", "removed_bot_id")
+    SNAPSHOT_FIELD_NUMBER: _ClassVar[int]
+    UPDATE_FIELD_NUMBER: _ClassVar[int]
+    REMOVED_BOT_ID_FIELD_NUMBER: _ClassVar[int]
+    snapshot: BotStatusSnapshot
+    update: BotStatus
+    removed_bot_id: str
+    def __init__(self, snapshot: _Optional[_Union[BotStatusSnapshot, _Mapping]] = ..., update: _Optional[_Union[BotStatus, _Mapping]] = ..., removed_bot_id: _Optional[str] = ...) -> None: ...
+
 class BotListEntry(_message.Message):
-    __slots__ = ("profile_id", "is_online", "live_state", "ping_ms", "connection_phase", "account_name")
+    __slots__ = ("profile_id", "is_online", "live_state", "ping_ms", "connection_phase", "account_name", "status")
     PROFILE_ID_FIELD_NUMBER: _ClassVar[int]
     IS_ONLINE_FIELD_NUMBER: _ClassVar[int]
     LIVE_STATE_FIELD_NUMBER: _ClassVar[int]
     PING_MS_FIELD_NUMBER: _ClassVar[int]
     CONNECTION_PHASE_FIELD_NUMBER: _ClassVar[int]
     ACCOUNT_NAME_FIELD_NUMBER: _ClassVar[int]
+    STATUS_FIELD_NUMBER: _ClassVar[int]
     profile_id: str
     is_online: bool
     live_state: BotLiveState
     ping_ms: int
     connection_phase: BotConnectionPhase
     account_name: str
-    def __init__(self, profile_id: _Optional[str] = ..., is_online: bool = ..., live_state: _Optional[_Union[BotLiveState, _Mapping]] = ..., ping_ms: _Optional[int] = ..., connection_phase: _Optional[_Union[BotConnectionPhase, str]] = ..., account_name: _Optional[str] = ...) -> None: ...
+    status: BotStatus
+    def __init__(self, profile_id: _Optional[str] = ..., is_online: bool = ..., live_state: _Optional[_Union[BotLiveState, _Mapping]] = ..., ping_ms: _Optional[int] = ..., connection_phase: _Optional[_Union[BotConnectionPhase, str]] = ..., account_name: _Optional[str] = ..., status: _Optional[_Union[BotStatus, _Mapping]] = ...) -> None: ...
 
 class BotListResponse(_message.Message):
     __slots__ = ("bots",)
@@ -197,10 +311,12 @@ class BotLiveState(_message.Message):
     def __init__(self, x: _Optional[float] = ..., y: _Optional[float] = ..., z: _Optional[float] = ..., xRot: _Optional[float] = ..., yRot: _Optional[float] = ..., health: _Optional[float] = ..., max_health: _Optional[float] = ..., food_level: _Optional[int] = ..., saturation_level: _Optional[float] = ..., inventory: _Optional[_Iterable[_Union[InventorySlot, _Mapping]]] = ..., selected_hotbar_slot: _Optional[int] = ..., dimension: _Optional[str] = ..., experience_level: _Optional[int] = ..., experience_progress: _Optional[float] = ..., skin_texture_hash: _Optional[str] = ..., game_mode: _Optional[_Union[GameMode, str]] = ...) -> None: ...
 
 class BotInfoResponse(_message.Message):
-    __slots__ = ("live_state",)
+    __slots__ = ("live_state", "status")
     LIVE_STATE_FIELD_NUMBER: _ClassVar[int]
+    STATUS_FIELD_NUMBER: _ClassVar[int]
     live_state: BotLiveState
-    def __init__(self, live_state: _Optional[_Union[BotLiveState, _Mapping]] = ...) -> None: ...
+    status: BotStatus
+    def __init__(self, live_state: _Optional[_Union[BotLiveState, _Mapping]] = ..., status: _Optional[_Union[BotStatus, _Mapping]] = ...) -> None: ...
 
 class BotUpdateConfigEntryRequest(_message.Message):
     __slots__ = ("instance_id", "bot_id", "namespace", "key", "value")

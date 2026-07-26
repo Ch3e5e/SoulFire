@@ -95,7 +95,7 @@ public final class MCPService {
 
     // === Instance Management Tools ===
     tools.add(tool("list_instances",
-      "List all SoulFire instances visible to the current user. Returns instance IDs, names, states, and permissions.",
+      "List all SoulFire instances visible to the current user. Returns instance IDs, names, bot summaries, and permissions.",
       Map.of(), List.of(),
       authed((_, _) ->
         MCPService.<InstanceListResponse>grpc(o -> instanceService.listInstances(InstanceListRequest.newBuilder().build(), o)))));
@@ -117,7 +117,7 @@ public final class MCPService {
           InstanceDeleteRequest.newBuilder().setId(str(args, "id")).build(), o)))));
 
     tools.add(tool("get_instance_info",
-      "Get detailed information about a specific instance including its configuration, state, settings definitions, and plugins.",
+      "Get detailed information about a specific instance including its configuration, bot summary, settings definitions, and plugins.",
       Map.of("id", prop("string", "UUID of the instance")),
       List.of("id"),
       authed((_, args) ->
@@ -140,19 +140,6 @@ public final class MCPService {
         }
         return MCPService.<InstanceUpdateMetaResponse>grpc(o -> instanceService.updateInstanceMeta(builder.build(), o));
       })));
-
-    tools.add(tool("change_instance_state",
-      "Change the lifecycle state of an instance. Use to start (RUNNING=1), pause (PAUSED=2), or stop (STOPPED=4) bot sessions.",
-      Map.of(
-        "id", prop("string", "UUID of the instance"),
-        "state", prop("integer", "Target state: 0=STARTING, 1=RUNNING, 2=PAUSED, 3=STOPPING, 4=STOPPED")),
-      List.of("id", "state"),
-      authed((_, args) ->
-        MCPService.<InstanceStateChangeResponse>grpc(o -> instanceService.changeInstanceState(
-          InstanceStateChangeRequest.newBuilder()
-            .setId(str(args, "id"))
-            .setStateValue(num(args, "state"))
-            .build(), o)))));
 
     tools.add(tool("update_instance_config_entry",
       "Update a single configuration setting for an instance by namespace and key.",
@@ -289,6 +276,37 @@ public final class MCPService {
       })));
 
     // === Bot Control Tools ===
+    tools.add(tool("set_bots_desired_state",
+      "Set configured bots to running or stopped. SoulFire persists the desired state and reconciles connections asynchronously.",
+      Map.of(
+        "instance_id", prop("string", "UUID of the instance"),
+        "bot_ids", arrayProp("Profile UUIDs of the configured bots"),
+        "desired_state", prop("string", "Desired state: running or stopped")),
+      List.of("instance_id", "bot_ids", "desired_state"),
+      authed((_, args) -> {
+        var rawState = str(args, "desired_state").trim().toUpperCase(Locale.ROOT);
+        var desiredState = BotDesiredState.valueOf("BOT_DESIRED_STATE_" + rawState);
+        return MCPService.<SetBotsDesiredStateResponse>grpc(o -> botService.setBotsDesiredState(
+          SetBotsDesiredStateRequest.newBuilder()
+            .setInstanceId(str(args, "instance_id"))
+            .addAllBotIds(strList(args, "bot_ids"))
+            .setDesiredState(desiredState)
+            .build(), o));
+      })));
+
+    tools.add(tool("restart_bots",
+      "Reconnect configured bots and leave their desired state set to running.",
+      Map.of(
+        "instance_id", prop("string", "UUID of the instance"),
+        "bot_ids", arrayProp("Profile UUIDs of the configured bots")),
+      List.of("instance_id", "bot_ids"),
+      authed((_, args) ->
+        MCPService.<RestartBotsResponse>grpc(o -> botService.restartBots(
+          RestartBotsRequest.newBuilder()
+            .setInstanceId(str(args, "instance_id"))
+            .addAllBotIds(strList(args, "bot_ids"))
+            .build(), o)))));
+
     tools.add(tool("get_bot_list",
       "Get a list of all bots in an instance with their status, position, health, and other live data.",
       Map.of("instance_id", prop("string", "UUID of the instance")),

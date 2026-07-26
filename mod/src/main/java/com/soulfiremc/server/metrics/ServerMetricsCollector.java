@@ -20,7 +20,6 @@ package com.soulfiremc.server.metrics;
 import com.google.protobuf.Timestamp;
 import com.soulfiremc.grpc.generated.ServerMetricsSnapshot;
 import com.soulfiremc.server.SoulFireServer;
-import com.soulfiremc.server.api.SessionLifecycle;
 import com.sun.management.OperatingSystemMXBean;
 import lombok.extern.slf4j.Slf4j;
 
@@ -86,18 +85,22 @@ public final class ServerMetricsCollector {
     // Aggregate bots across all instances
     var totalBotsOnline = 0;
     var totalBotsTotal = 0;
-    var activeInstances = 0;
+    var totalBotsDesired = 0;
+    var instancesWithDesiredBots = 0;
+    var totalBotsStarting = 0;
+    var totalBotsRetrying = 0;
+    var totalBotsFailed = 0;
     for (var instance : soulFireServer.instances().values()) {
-      if (!instance.sessionLifecycle().isFullyStopped()) {
-        activeInstances++;
+      var summary = instance.botStateManager().summary();
+      totalBotsOnline += summary.getOnlineBots();
+      totalBotsTotal += summary.getTotalBots();
+      totalBotsDesired += summary.getDesiredBots();
+      totalBotsStarting += summary.getStartingBots();
+      totalBotsRetrying += summary.getRetryingBots();
+      totalBotsFailed += summary.getFailedBots();
+      if (summary.getDesiredBots() > 0) {
+        instancesWithDesiredBots++;
       }
-
-      for (var bot : instance.botConnections().values()) {
-        if (!bot.isDisconnected()) {
-          totalBotsOnline++;
-        }
-      }
-      totalBotsTotal += instance.settingsSource().accounts().size();
     }
 
     var snapshot = ServerMetricsSnapshot.newBuilder()
@@ -119,7 +122,11 @@ public final class ServerMetricsCollector {
       .setAvailableProcessors(availableProcessors)
       .setTotalBotsOnline(totalBotsOnline)
       .setTotalBotsTotal(totalBotsTotal)
-      .setActiveInstances(activeInstances)
+      .setTotalBotsDesired(totalBotsDesired)
+      .setInstancesWithDesiredBots(instancesWithDesiredBots)
+      .setTotalBotsStarting(totalBotsStarting)
+      .setTotalBotsRetrying(totalBotsRetrying)
+      .setTotalBotsFailed(totalBotsFailed)
       .build();
 
     synchronized (snapshots) {

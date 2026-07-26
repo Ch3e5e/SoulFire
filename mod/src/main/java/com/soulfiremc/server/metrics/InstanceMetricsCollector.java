@@ -23,14 +23,11 @@ import com.soulfiremc.grpc.generated.MetricsDistributions;
 import com.soulfiremc.grpc.generated.MetricsSnapshot;
 import com.soulfiremc.server.InstanceManager;
 import com.soulfiremc.server.api.event.bot.BotConnectionInitEvent;
+import com.soulfiremc.server.api.event.bot.BotConnectionRemovedEvent;
 import com.soulfiremc.server.api.event.bot.BotPacketPreReceiveEvent;
 import com.soulfiremc.server.api.event.bot.BotPacketPreSendEvent;
 import com.soulfiremc.server.api.event.bot.BotPostTickEvent;
 import com.soulfiremc.server.api.event.bot.BotPreTickEvent;
-import com.soulfiremc.server.api.event.session.SessionBotRemoveEvent;
-import com.soulfiremc.server.api.event.session.SessionEndedEvent;
-import com.soulfiremc.server.api.event.session.SessionStartEvent;
-import com.soulfiremc.server.api.event.session.SessionTickEvent;
 import com.soulfiremc.server.bot.BotConnection;
 import lombok.extern.slf4j.Slf4j;
 import net.lenni0451.lambdaevents.EventHandler;
@@ -45,7 +42,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
 /// Collects and stores per-instance metrics in a ring buffer.
- /// Metrics are sampled every 3 seconds (every 6th session tick at 500ms intervals).
+ /// Metrics are sampled every 3 seconds (every 6th instance tick at 500ms intervals).
  /// Thread-safe: counters use atomic operations, snapshot buffer is synchronized.
 @Slf4j
 public final class InstanceMetricsCollector {
@@ -89,6 +86,7 @@ public final class InstanceMetricsCollector {
 
   public InstanceMetricsCollector(InstanceManager instanceManager) {
     this.instanceManager = instanceManager;
+    resetCounters();
   }
 
   @EventHandler
@@ -137,35 +135,12 @@ public final class InstanceMetricsCollector {
     }
   }
 
-  @EventHandler
-  public void onSessionTick(SessionTickEvent event) {
-    if (event.instanceManager() != instanceManager) {
-      return;
-    }
-
+  public void tick() {
     tickCounter++;
     if (tickCounter < TICKS_PER_SAMPLE) {
       return;
     }
     tickCounter = 0;
-
-    sampleSnapshot();
-  }
-
-  @EventHandler
-  public void onSessionStart(SessionStartEvent event) {
-    if (event.instanceManager() != instanceManager) {
-      return;
-    }
-
-    resetCounters();
-  }
-
-  @EventHandler
-  public void onSessionEnded(SessionEndedEvent event) {
-    if (event.instanceManager() != instanceManager) {
-      return;
-    }
 
     sampleSnapshot();
   }
@@ -180,8 +155,8 @@ public final class InstanceMetricsCollector {
   }
 
   @EventHandler
-  public void onBotRemove(SessionBotRemoveEvent event) {
-    if (event.instanceManager() != instanceManager) {
+  public void onBotRemove(BotConnectionRemovedEvent event) {
+    if (!isOurInstance(event.connection())) {
       return;
     }
 
@@ -189,7 +164,7 @@ public final class InstanceMetricsCollector {
   }
 
   private boolean isOurInstance(BotConnection connection) {
-    return instanceManager.botConnections().containsKey(connection.accountProfileId());
+    return connection.instanceManager() == instanceManager;
   }
 
   private void resetCounters() {

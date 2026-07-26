@@ -4,6 +4,7 @@ from typing import cast
 import pytest
 
 from soulfire.bot import SoulFireBot
+from soulfire.bot_connect import BotServiceClient
 from soulfire.bot_live_connect import BotLiveServiceClient
 from soulfire.bot_live_pb2 import (
     BotEvent,
@@ -43,6 +44,7 @@ async def test_bot_scopes_event_stream() -> None:
     bot = SoulFireBot(
         "instance-id",
         "bot-id",
+        cast(BotServiceClient, object()),
         cast(BotLiveServiceClient, service),
     )
 
@@ -63,6 +65,7 @@ async def test_bot_scopes_chat_command() -> None:
     bot = SoulFireBot(
         "instance-id",
         "bot-id",
+        cast(BotServiceClient, object()),
         cast(BotLiveServiceClient, service),
     )
 

@@ -18,10 +18,10 @@ from connectrpc.protocol import ProtocolType
 from connectrpc.server import ConnectASGIApplication, ConnectWSGIApplication, Endpoint, EndpointSync
 from pyqwest import Client, SyncClient
 
-from .bot_pb2 import BotClickDialogButtonRequest, BotClickDialogButtonResponse, BotCloseContainerRequest, BotCloseContainerResponse, BotCloseDialogRequest, BotCloseDialogResponse, BotContainerButtonClickRequest, BotContainerButtonClickResponse, BotGetDialogRequest, BotGetDialogResponse, BotInfoRequest, BotInfoResponse, BotInventoryClickRequest, BotInventoryClickResponse, BotInventoryStateRequest, BotInventoryStateResponse, BotListRequest, BotListResponse, BotMouseClickRequest, BotMouseClickResponse, BotOpenInventoryRequest, BotOpenInventoryResponse, BotRenderPovRequest, BotRenderPovResponse, BotResetMovementRequest, BotResetMovementResponse, BotSetContainerTextRequest, BotSetContainerTextResponse, BotSetHotbarSlotRequest, BotSetHotbarSlotResponse, BotSetMovementStateRequest, BotSetMovementStateResponse, BotSetRotationRequest, BotSetRotationResponse, BotSubmitDialogRequest, BotSubmitDialogResponse, BotUpdateConfigEntryRequest, BotUpdateConfigEntryResponse
+from .bot_pb2 import BotClickDialogButtonRequest, BotClickDialogButtonResponse, BotCloseContainerRequest, BotCloseContainerResponse, BotCloseDialogRequest, BotCloseDialogResponse, BotContainerButtonClickRequest, BotContainerButtonClickResponse, BotGetDialogRequest, BotGetDialogResponse, BotInfoRequest, BotInfoResponse, BotInventoryClickRequest, BotInventoryClickResponse, BotInventoryStateRequest, BotInventoryStateResponse, BotListRequest, BotListResponse, BotMouseClickRequest, BotMouseClickResponse, BotOpenInventoryRequest, BotOpenInventoryResponse, BotRenderPovRequest, BotRenderPovResponse, BotResetMovementRequest, BotResetMovementResponse, BotSetContainerTextRequest, BotSetContainerTextResponse, BotSetHotbarSlotRequest, BotSetHotbarSlotResponse, BotSetMovementStateRequest, BotSetMovementStateResponse, BotSetRotationRequest, BotSetRotationResponse, BotSubmitDialogRequest, BotSubmitDialogResponse, BotUpdateConfigEntryRequest, BotUpdateConfigEntryResponse, RestartBotsRequest, RestartBotsResponse, SetBotsDesiredStateRequest, SetBotsDesiredStateResponse, WatchBotStatusesRequest, WatchBotStatusesResponse
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Iterable, Mapping
+    from collections.abc import AsyncGenerator, AsyncIterator, Iterable, Iterator, Mapping
 
     from connectrpc.codec import Codec
     from connectrpc.compression import Compression
@@ -35,6 +35,15 @@ _PROTO_BINARY_CODEC = google_protobuf_binary_codec()
 _GZIP_COMPRESSION = GzipCompression()
 
 class BotService(Protocol):
+    async def set_bots_desired_state(self, request: SetBotsDesiredStateRequest, ctx: RequestContext[SetBotsDesiredStateRequest, SetBotsDesiredStateResponse]) -> SetBotsDesiredStateResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def restart_bots(self, request: RestartBotsRequest, ctx: RequestContext[RestartBotsRequest, RestartBotsResponse]) -> RestartBotsResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    def watch_bot_statuses(self, request: WatchBotStatusesRequest, ctx: RequestContext[WatchBotStatusesRequest, WatchBotStatusesResponse]) -> AsyncIterator[WatchBotStatusesResponse]:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
     async def get_bot_list(self, request: BotListRequest, ctx: RequestContext[BotListRequest, BotListResponse]) -> BotListResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
@@ -106,6 +115,36 @@ class BotServiceASGIApplication(ConnectASGIApplication[BotService]):
         super().__init__(
             service=service,
             endpoints=lambda svc: {
+                "/soulfire.v1.BotService/SetBotsDesiredState": Endpoint.unary(
+                    method=MethodInfo(
+                        name="SetBotsDesiredState",
+                        service_name="soulfire.v1.BotService",
+                        input=SetBotsDesiredStateRequest,
+                        output=SetBotsDesiredStateResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.set_bots_desired_state,
+                ),
+                "/soulfire.v1.BotService/RestartBots": Endpoint.unary(
+                    method=MethodInfo(
+                        name="RestartBots",
+                        service_name="soulfire.v1.BotService",
+                        input=RestartBotsRequest,
+                        output=RestartBotsResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.restart_bots,
+                ),
+                "/soulfire.v1.BotService/WatchBotStatuses": Endpoint.server_stream(
+                    method=MethodInfo(
+                        name="WatchBotStatuses",
+                        service_name="soulfire.v1.BotService",
+                        input=WatchBotStatusesRequest,
+                        output=WatchBotStatusesResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.watch_bot_statuses,
+                ),
                 "/soulfire.v1.BotService/GetBotList": Endpoint.unary(
                     method=MethodInfo(
                         name="GetBotList",
@@ -334,6 +373,66 @@ class BotServiceClient(ConnectClient):
             interceptors=interceptors,
             http_client=http_client,
         )
+    async def set_bots_desired_state(
+        self,
+        request: SetBotsDesiredStateRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> SetBotsDesiredStateResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="SetBotsDesiredState",
+                service_name="soulfire.v1.BotService",
+                input=SetBotsDesiredStateRequest,
+                output=SetBotsDesiredStateResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def restart_bots(
+        self,
+        request: RestartBotsRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> RestartBotsResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="RestartBots",
+                service_name="soulfire.v1.BotService",
+                input=RestartBotsRequest,
+                output=RestartBotsResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    def watch_bot_statuses(
+        self,
+        request: WatchBotStatusesRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> AsyncIterator[WatchBotStatusesResponse]:
+        return self.execute_server_stream(
+            request=request,
+            method=MethodInfo(
+                name="WatchBotStatuses",
+                service_name="soulfire.v1.BotService",
+                input=WatchBotStatusesRequest,
+                output=WatchBotStatusesResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
     async def get_bot_list(
         self,
         request: BotListRequest,
@@ -715,6 +814,15 @@ class BotServiceClient(ConnectClient):
         )
 
 class BotServiceSync(Protocol):
+    def set_bots_desired_state(self, request: SetBotsDesiredStateRequest, ctx: RequestContext[SetBotsDesiredStateRequest, SetBotsDesiredStateResponse]) -> SetBotsDesiredStateResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    def restart_bots(self, request: RestartBotsRequest, ctx: RequestContext[RestartBotsRequest, RestartBotsResponse]) -> RestartBotsResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    def watch_bot_statuses(self, request: WatchBotStatusesRequest, ctx: RequestContext[WatchBotStatusesRequest, WatchBotStatusesResponse]) -> Iterator[WatchBotStatusesResponse]:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
     def get_bot_list(self, request: BotListRequest, ctx: RequestContext[BotListRequest, BotListResponse]) -> BotListResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
@@ -784,6 +892,36 @@ class BotServiceWSGIApplication(ConnectWSGIApplication):
     ) -> None:
         super().__init__(
             endpoints={
+                "/soulfire.v1.BotService/SetBotsDesiredState": EndpointSync.unary(
+                    method=MethodInfo(
+                        name="SetBotsDesiredState",
+                        service_name="soulfire.v1.BotService",
+                        input=SetBotsDesiredStateRequest,
+                        output=SetBotsDesiredStateResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=service.set_bots_desired_state,
+                ),
+                "/soulfire.v1.BotService/RestartBots": EndpointSync.unary(
+                    method=MethodInfo(
+                        name="RestartBots",
+                        service_name="soulfire.v1.BotService",
+                        input=RestartBotsRequest,
+                        output=RestartBotsResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=service.restart_bots,
+                ),
+                "/soulfire.v1.BotService/WatchBotStatuses": EndpointSync.server_stream(
+                    method=MethodInfo(
+                        name="WatchBotStatuses",
+                        service_name="soulfire.v1.BotService",
+                        input=WatchBotStatusesRequest,
+                        output=WatchBotStatusesResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=service.watch_bot_statuses,
+                ),
                 "/soulfire.v1.BotService/GetBotList": EndpointSync.unary(
                     method=MethodInfo(
                         name="GetBotList",
@@ -1011,6 +1149,63 @@ class BotServiceClientSync(ConnectClientSync):
             read_max_bytes=read_max_bytes,
             interceptors=interceptors,
             http_client=http_client,
+        )
+    def set_bots_desired_state(
+        self,
+        request: SetBotsDesiredStateRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> SetBotsDesiredStateResponse:
+        return self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="SetBotsDesiredState",
+                service_name="soulfire.v1.BotService",
+                input=SetBotsDesiredStateRequest,
+                output=SetBotsDesiredStateResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+    def restart_bots(
+        self,
+        request: RestartBotsRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> RestartBotsResponse:
+        return self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="RestartBots",
+                service_name="soulfire.v1.BotService",
+                input=RestartBotsRequest,
+                output=RestartBotsResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+    def watch_bot_statuses(
+        self,
+        request: WatchBotStatusesRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> Iterator[WatchBotStatusesResponse]:
+        return self.execute_server_stream(
+            request=request,
+            method=MethodInfo(
+                name="WatchBotStatuses",
+                service_name="soulfire.v1.BotService",
+                input=WatchBotStatusesRequest,
+                output=WatchBotStatusesResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
         )
     def get_bot_list(
         self,

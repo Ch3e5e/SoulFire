@@ -16,6 +16,13 @@ import {
 } from "@connectrpc/connect-web";
 
 import {
+  BotDesiredState,
+  BotService,
+  type BotListEntry,
+  type BotStatus,
+  type WatchBotStatusesResponse,
+} from "./generated/soulfire/bot_pb.js";
+import {
   BotEventFilterSchema,
   BotLiveService,
   type AttackEntityRequestSchema,
@@ -30,6 +37,7 @@ import {
   type SwingArmRequestSchema,
   type UseItemRequestSchema,
 } from "./generated/soulfire/bot_live_pb.js";
+import { InstanceService } from "./generated/soulfire/instance_pb.js";
 import {
   LoginService,
   type NextAuthFlowResponse,
@@ -50,6 +58,11 @@ export interface SoulFireOptions {
   defaultTimeoutMs?: number;
   fetch?: GrpcWebTransportOptions["fetch"];
   interceptors?: Interceptor[];
+}
+
+export interface BotSelection {
+  botIds?: readonly string[];
+  count?: number;
 }
 
 type ScopedRequest<T extends DescMessage> = Omit<
@@ -157,7 +170,9 @@ export class SoulFire {
   public instance(instanceId: string): SoulFireInstance {
     return new SoulFireInstance(
       instanceId,
+      createClient(BotService, this.#transport),
       createClient(BotLiveService, this.#transport),
+      createClient(InstanceService, this.#transport),
     );
   }
 
@@ -191,17 +206,156 @@ export class SoulFire {
 }
 
 export class SoulFireInstance {
+  readonly #botClient: Client<typeof BotService>;
   readonly #botLiveClient: Client<typeof BotLiveService>;
+  readonly #instanceClient: Client<typeof InstanceService>;
 
   public constructor(
     public readonly id: string,
+    botClient: Client<typeof BotService>,
     botLiveClient: Client<typeof BotLiveService>,
+    instanceClient: Client<typeof InstanceService>,
   ) {
+    this.#botClient = botClient;
     this.#botLiveClient = botLiveClient;
+    this.#instanceClient = instanceClient;
   }
 
   public bot(botId: string): SoulFireBot {
-    return new SoulFireBot(this.id, botId, this.#botLiveClient);
+    return new SoulFireBot(
+      this.id,
+      botId,
+      this.#botClient,
+      this.#botLiveClient,
+    );
+  }
+
+  public async bots(options?: CallOptions): Promise<BotListEntry[]> {
+    const response = await this.#botClient.getBotList(
+      { instanceId: this.id },
+      options,
+    );
+    return response.bots;
+  }
+
+  public watchBotStatuses(
+    options?: CallOptions,
+  ): AsyncIterable<WatchBotStatusesResponse> {
+    return this.#botClient.watchBotStatuses(
+      { instanceId: this.id },
+      options,
+    );
+  }
+
+  public async start(
+    selection?: BotSelection,
+    options?: CallOptions,
+  ): Promise<BotStatus[]> {
+    const botIds = await this.#selectBotIds(
+      selection,
+      (bot) => bot.status?.desiredState !== BotDesiredState.RUNNING,
+      options,
+    );
+    if (botIds.length === 0) {
+      return [];
+    }
+    const response = await this.#botClient.setBotsDesiredState(
+      {
+        instanceId: this.id,
+        botIds,
+        desiredState: BotDesiredState.RUNNING,
+      },
+      options,
+    );
+    return response.bots;
+  }
+
+  public async stop(
+    selection?: BotSelection,
+    options?: CallOptions,
+  ): Promise<BotStatus[]> {
+    const botIds = await this.#selectBotIds(
+      selection,
+      (bot) => bot.status?.desiredState === BotDesiredState.RUNNING,
+      options,
+    );
+    if (botIds.length === 0) {
+      return [];
+    }
+    const response = await this.#botClient.setBotsDesiredState(
+      {
+        instanceId: this.id,
+        botIds,
+        desiredState: BotDesiredState.STOPPED,
+      },
+      options,
+    );
+    return response.bots;
+  }
+
+  public async restart(
+    selection?: BotSelection,
+    options?: CallOptions,
+  ): Promise<BotStatus[]> {
+    const botIds = await this.#selectBotIds(
+      selection,
+      (bot) => bot.status?.desiredState === BotDesiredState.RUNNING,
+      options,
+    );
+    if (botIds.length === 0) {
+      return [];
+    }
+    const response = await this.#botClient.restartBots(
+      { instanceId: this.id, botIds },
+      options,
+    );
+    return response.bots;
+  }
+
+  async #selectBotIds(
+    selection: BotSelection | undefined,
+    countFilter: (bot: BotListEntry) => boolean,
+    options: CallOptions | undefined,
+  ): Promise<string[]> {
+    if (selection?.botIds !== undefined && selection.count !== undefined) {
+      throw new TypeError("Use either botIds or count, not both");
+    }
+    if (selection?.botIds !== undefined) {
+      return [...new Set(selection.botIds)];
+    }
+
+    const bots = await this.bots(options);
+    const candidates = bots.filter(countFilter);
+    if (selection?.count === undefined) {
+      return candidates.map((bot) => bot.profileId);
+    }
+
+    const count = normalizeCount(selection.count);
+    if (count === 0) {
+      return [];
+    }
+    if (await this.#shuffleAccountsEnabled(options)) {
+      shuffle(candidates);
+    }
+    return candidates.slice(0, count).map((bot) => bot.profileId);
+  }
+
+  async #shuffleAccountsEnabled(options?: CallOptions): Promise<boolean> {
+    const response = await this.#instanceClient.getInstanceInfo(
+      { id: this.id },
+      options,
+    );
+    if (response.result.case !== "info") {
+      return false;
+    }
+    const accountSettings = response.result.value.config?.settings.find(
+      (namespace) => namespace.namespace === "account",
+    );
+    const shuffleSetting = accountSettings?.entries.find(
+      (entry) => entry.key === "shuffle-accounts",
+    );
+    return shuffleSetting?.value?.kind.case === "boolValue"
+      && shuffleSetting.value.kind.value;
   }
 }
 
@@ -209,8 +363,52 @@ export class SoulFireBot {
   public constructor(
     public readonly instanceId: string,
     public readonly id: string,
+    private readonly botClient: Client<typeof BotService>,
     private readonly liveClient: Client<typeof BotLiveService>,
   ) {}
+
+  public async start(options?: CallOptions): Promise<BotStatus> {
+    const response = await this.botClient.setBotsDesiredState(
+      {
+        instanceId: this.instanceId,
+        botIds: [this.id],
+        desiredState: BotDesiredState.RUNNING,
+      },
+      options,
+    );
+    return requiredBotStatus(response.bots, this.id);
+  }
+
+  public async stop(options?: CallOptions): Promise<BotStatus> {
+    const response = await this.botClient.setBotsDesiredState(
+      {
+        instanceId: this.instanceId,
+        botIds: [this.id],
+        desiredState: BotDesiredState.STOPPED,
+      },
+      options,
+    );
+    return requiredBotStatus(response.bots, this.id);
+  }
+
+  public async restart(options?: CallOptions): Promise<BotStatus> {
+    const response = await this.botClient.restartBots(
+      { instanceId: this.instanceId, botIds: [this.id] },
+      options,
+    );
+    return requiredBotStatus(response.bots, this.id);
+  }
+
+  public async status(options?: CallOptions): Promise<BotStatus> {
+    const response = await this.botClient.getBotInfo(
+      { instanceId: this.instanceId, botId: this.id },
+      options,
+    );
+    if (response.status === undefined) {
+      throw new Error(`SoulFire did not return status for bot ${this.id}`);
+    }
+    return response.status;
+  }
 
   public events(
     filter: MessageInitShape<typeof BotEventFilterSchema> =
@@ -391,4 +589,32 @@ export class SoulFireBot {
       )
       .then(() => undefined);
   }
+}
+
+function normalizeCount(count: number): number {
+  if (!Number.isFinite(count)) {
+    throw new TypeError("Bot count must be a finite number");
+  }
+  return Math.max(0, Math.floor(count));
+}
+
+function shuffle<T>(values: T[]): void {
+  for (let index = values.length - 1; index > 0; index -= 1) {
+    const selectedIndex = Math.floor(Math.random() * (index + 1));
+    [values[index], values[selectedIndex]] = [
+      values[selectedIndex] as T,
+      values[index] as T,
+    ];
+  }
+}
+
+function requiredBotStatus(
+  statuses: readonly BotStatus[],
+  botId: string,
+): BotStatus {
+  const status = statuses.find((candidate) => candidate.profileId === botId);
+  if (status === undefined) {
+    throw new Error(`SoulFire did not return status for bot ${botId}`);
+  }
+  return status;
 }

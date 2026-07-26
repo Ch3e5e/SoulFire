@@ -3,10 +3,10 @@
 The SoulFire SDKs provide typed gRPC-Web clients for scripting bots managed by
 a SoulFire server.
 
-The initial SDK surface follows the automation RPCs that the server implements
-today. It can connect to an existing server or provision a local dedicated
-server. It intentionally does not model instance lifecycle, bot counts, or the
-planned per-bot desired-state API.
+The SDK can connect to an existing server or provision a local dedicated
+server. Instances provide permission and configuration boundaries, while each
+configured account is controlled as an independent bot with its own persistent
+desired state.
 
 ## Packages
 
@@ -18,6 +18,13 @@ planned per-bot desired-state API.
 Both packages use gRPC-Web exclusively. They share the Protobuf definitions in
 `proto/src/main/proto` and expose generated clients when the high-level bot API
 does not cover an RPC.
+
+The high-level clients support:
+
+- Starting, stopping, and restarting one bot, explicit bot IDs, or a count
+- Watching desired and runtime status as a server stream
+- Sending chat, querying the world, interacting, and pathfinding
+- Installing and managing a local SoulFire dedicated server
 
 ## Generate the bindings
 

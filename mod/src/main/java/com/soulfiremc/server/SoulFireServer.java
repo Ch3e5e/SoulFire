@@ -20,7 +20,6 @@ package com.soulfiremc.server;
 import com.google.gson.JsonElement;
 import com.soulfiremc.builddata.BuildData;
 import com.soulfiremc.mod.util.SFConstants;
-import com.soulfiremc.server.api.SessionLifecycle;
 import com.soulfiremc.server.api.SoulFireAPI;
 import com.soulfiremc.server.api.event.lifecycle.ServerSettingsRegistryInitEvent;
 import com.soulfiremc.server.api.event.session.InstanceInitEvent;
@@ -287,8 +286,7 @@ public final class SoulFireServer {
       for (var record : dsl().selectFrom(Tables.INSTANCES).fetch()) {
         try {
           var instanceId = UUID.fromString(record.getId());
-          var lifecycle = SessionLifecycle.valueOf(record.getSessionLifecycle());
-          var instance = new InstanceManager(this, dsl(), instanceId, lifecycle);
+          var instance = new InstanceManager(this, dsl(), instanceId);
           SoulFireAPI.postEvent(new InstanceInitEvent(instance));
 
           instances.put(instance.id(), instance);
@@ -329,14 +327,13 @@ public final class SoulFireServer {
       .set(Tables.INSTANCES.FRIENDLY_NAME, friendlyName)
       .set(Tables.INSTANCES.ICON, InstanceConstants.randomInstanceIcon())
       .set(Tables.INSTANCES.OWNER_ID, owner.getUniqueId().toString())
-      .set(Tables.INSTANCES.SESSION_LIFECYCLE, SessionLifecycle.STOPPED.name())
       .set(Tables.INSTANCES.SETTINGS, GsonInstance.GSON.toJson(InstanceSettingsImpl.Stem.EMPTY.serializeToTree()))
       .set(Tables.INSTANCES.CREATED_AT, now)
       .set(Tables.INSTANCES.UPDATED_AT, now)
       .set(Tables.INSTANCES.VERSION, 0L)
       .execute();
 
-    var instanceManager = new InstanceManager(this, dsl(), id, SessionLifecycle.STOPPED);
+    var instanceManager = new InstanceManager(this, dsl(), id);
     SoulFireAPI.postEvent(new InstanceInitEvent(instanceManager));
 
     instances.put(instanceManager.id(), instanceManager);

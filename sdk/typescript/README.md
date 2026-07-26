@@ -25,9 +25,61 @@ const soulfire = SoulFire.connect({
 const bot = soulfire
   .instance("instance-uuid")
   .bot("bot-uuid");
+
+await bot.start();
 ```
 
 The token is sent as a bearer token on every authenticated request.
+
+## Control bots
+
+Bot intent is persistent. Calling `start()` sets the bot's desired state to
+running, while `stop()` sets it to stopped:
+
+```ts
+const instance = soulfire.instance("instance-uuid");
+const bot = instance.bot("bot-uuid");
+
+await bot.start();
+await bot.restart();
+await bot.stop();
+```
+
+You can control a group without creating one wrapper per bot:
+
+```ts
+await instance.start({ count: 25 });
+await instance.stop({ botIds: ["bot-uuid-1", "bot-uuid-2"] });
+await instance.restart();
+```
+
+With no selection, `start()` targets stopped bots, `stop()` targets desired
+bots, and `restart()` targets desired bots. A `count` selection follows the
+instance's `account.shuffle-accounts` setting. Explicit `botIds` always use the
+IDs you provide.
+
+## Watch bot status
+
+`watchBotStatuses()` first yields a complete snapshot, then incremental updates
+and removals:
+
+```ts
+for await (const event of instance.watchBotStatuses()) {
+  switch (event.event.case) {
+    case "snapshot":
+      console.log(event.event.value.bots);
+      break;
+    case "update":
+      console.log(event.event.value.profileId, event.event.value.runtimeState);
+      break;
+    case "removedBotId":
+      console.log("Removed", event.event.value);
+      break;
+  }
+}
+```
+
+Use `await bot.status()` when you only need the current state of one bot.
 
 ## Provision a local server
 
@@ -109,8 +161,6 @@ const response = await instances.listInstances({});
 Generated modules follow the Protobuf service names and are available under
 `@soulfiremc/sdk/generated`.
 
-## Current scope
-
-The first release does not abstract instance lifecycle, bot counts, or the
-planned per-bot desired-state API. Those APIs will be added after the
-corresponding server model is stable.
+Instances are not lifecycle units. They compartmentalize accounts, settings,
+proxies, permissions, scripts, and automation. Each bot can be controlled
+independently.

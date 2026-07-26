@@ -18,7 +18,7 @@ from connectrpc.protocol import ProtocolType
 from connectrpc.server import ConnectASGIApplication, ConnectWSGIApplication, Endpoint, EndpointSync
 from pyqwest import Client, SyncClient
 
-from .instance_pb2 import DeleteAccountMetadataEntryRequest, DeleteAccountMetadataEntryResponse, DeleteInstanceMetadataEntryRequest, DeleteInstanceMetadataEntryResponse, GetAccountMetadataRequest, GetAccountMetadataResponse, GetInstanceMetadataRequest, GetInstanceMetadataResponse, InstanceAddAccountRequest, InstanceAddAccountResponse, InstanceAddAccountsBatchRequest, InstanceAddAccountsBatchResponse, InstanceAddProxiesBatchRequest, InstanceAddProxiesBatchResponse, InstanceAddProxyRequest, InstanceAddProxyResponse, InstanceAuditLogRequest, InstanceAuditLogResponse, InstanceCreateRequest, InstanceCreateResponse, InstanceDeleteRequest, InstanceDeleteResponse, InstanceInfoRequest, InstanceInfoResponse, InstanceListRequest, InstanceListResponse, InstanceRemoveAccountRequest, InstanceRemoveAccountResponse, InstanceRemoveAccountsBatchRequest, InstanceRemoveAccountsBatchResponse, InstanceRemoveProxiesBatchRequest, InstanceRemoveProxiesBatchResponse, InstanceRemoveProxyRequest, InstanceRemoveProxyResponse, InstanceStateChangeRequest, InstanceStateChangeResponse, InstanceUpdateAccountRequest, InstanceUpdateAccountResponse, InstanceUpdateConfigEntryRequest, InstanceUpdateConfigEntryResponse, InstanceUpdateConfigRequest, InstanceUpdateConfigResponse, InstanceUpdateMetaRequest, InstanceUpdateMetaResponse, InstanceUpdateProxyRequest, InstanceUpdateProxyResponse, SetAccountMetadataEntryRequest, SetAccountMetadataEntryResponse, SetInstanceMetadataEntryRequest, SetInstanceMetadataEntryResponse
+from .instance_pb2 import DeleteAccountMetadataEntryRequest, DeleteAccountMetadataEntryResponse, DeleteInstanceMetadataEntryRequest, DeleteInstanceMetadataEntryResponse, GetAccountMetadataRequest, GetAccountMetadataResponse, GetInstanceMetadataRequest, GetInstanceMetadataResponse, InstanceAddAccountRequest, InstanceAddAccountResponse, InstanceAddAccountsBatchRequest, InstanceAddAccountsBatchResponse, InstanceAddProxiesBatchRequest, InstanceAddProxiesBatchResponse, InstanceAddProxyRequest, InstanceAddProxyResponse, InstanceAuditLogRequest, InstanceAuditLogResponse, InstanceCreateRequest, InstanceCreateResponse, InstanceDeleteRequest, InstanceDeleteResponse, InstanceInfoRequest, InstanceInfoResponse, InstanceListRequest, InstanceListResponse, InstanceRemoveAccountRequest, InstanceRemoveAccountResponse, InstanceRemoveAccountsBatchRequest, InstanceRemoveAccountsBatchResponse, InstanceRemoveProxiesBatchRequest, InstanceRemoveProxiesBatchResponse, InstanceRemoveProxyRequest, InstanceRemoveProxyResponse, InstanceUpdateAccountRequest, InstanceUpdateAccountResponse, InstanceUpdateConfigEntryRequest, InstanceUpdateConfigEntryResponse, InstanceUpdateConfigRequest, InstanceUpdateConfigResponse, InstanceUpdateMetaRequest, InstanceUpdateMetaResponse, InstanceUpdateProxyRequest, InstanceUpdateProxyResponse, SetAccountMetadataEntryRequest, SetAccountMetadataEntryResponse, SetInstanceMetadataEntryRequest, SetInstanceMetadataEntryResponse
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Iterable, Mapping
@@ -84,9 +84,6 @@ class InstanceService(Protocol):
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
     async def remove_instance_proxies_batch(self, request: InstanceRemoveProxiesBatchRequest, ctx: RequestContext[InstanceRemoveProxiesBatchRequest, InstanceRemoveProxiesBatchResponse]) -> InstanceRemoveProxiesBatchResponse:
-        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
-
-    async def change_instance_state(self, request: InstanceStateChangeRequest, ctx: RequestContext[InstanceStateChangeRequest, InstanceStateChangeResponse]) -> InstanceStateChangeResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
     async def get_audit_log(self, request: InstanceAuditLogRequest, ctx: RequestContext[InstanceAuditLogRequest, InstanceAuditLogResponse]) -> InstanceAuditLogResponse:
@@ -293,16 +290,6 @@ class InstanceServiceASGIApplication(ConnectASGIApplication[InstanceService]):
                         idempotency_level=IdempotencyLevel.UNKNOWN,
                     ),
                     function=svc.remove_instance_proxies_batch,
-                ),
-                "/soulfire.v1.InstanceService/ChangeInstanceState": Endpoint.unary(
-                    method=MethodInfo(
-                        name="ChangeInstanceState",
-                        service_name="soulfire.v1.InstanceService",
-                        input=InstanceStateChangeRequest,
-                        output=InstanceStateChangeResponse,
-                        idempotency_level=IdempotencyLevel.UNKNOWN,
-                    ),
-                    function=svc.change_instance_state,
                 ),
                 "/soulfire.v1.InstanceService/GetAuditLog": Endpoint.unary(
                     method=MethodInfo(
@@ -752,26 +739,6 @@ class InstanceServiceClient(ConnectClient):
             timeout_ms=timeout_ms,
         )
 
-    async def change_instance_state(
-        self,
-        request: InstanceStateChangeRequest,
-        *,
-        headers: Headers | Mapping[str, str] | None = None,
-        timeout_ms: int | None = None,
-    ) -> InstanceStateChangeResponse:
-        return await self.execute_unary(
-            request=request,
-            method=MethodInfo(
-                name="ChangeInstanceState",
-                service_name="soulfire.v1.InstanceService",
-                input=InstanceStateChangeRequest,
-                output=InstanceStateChangeResponse,
-                idempotency_level=IdempotencyLevel.UNKNOWN,
-            ),
-            headers=headers,
-            timeout_ms=timeout_ms,
-        )
-
     async def get_audit_log(
         self,
         request: InstanceAuditLogRequest,
@@ -962,9 +929,6 @@ class InstanceServiceSync(Protocol):
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
     def remove_instance_proxies_batch(self, request: InstanceRemoveProxiesBatchRequest, ctx: RequestContext[InstanceRemoveProxiesBatchRequest, InstanceRemoveProxiesBatchResponse]) -> InstanceRemoveProxiesBatchResponse:
-        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
-
-    def change_instance_state(self, request: InstanceStateChangeRequest, ctx: RequestContext[InstanceStateChangeRequest, InstanceStateChangeResponse]) -> InstanceStateChangeResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
     def get_audit_log(self, request: InstanceAuditLogRequest, ctx: RequestContext[InstanceAuditLogRequest, InstanceAuditLogResponse]) -> InstanceAuditLogResponse:
@@ -1169,16 +1133,6 @@ class InstanceServiceWSGIApplication(ConnectWSGIApplication):
                         idempotency_level=IdempotencyLevel.UNKNOWN,
                     ),
                     function=service.remove_instance_proxies_batch,
-                ),
-                "/soulfire.v1.InstanceService/ChangeInstanceState": EndpointSync.unary(
-                    method=MethodInfo(
-                        name="ChangeInstanceState",
-                        service_name="soulfire.v1.InstanceService",
-                        input=InstanceStateChangeRequest,
-                        output=InstanceStateChangeResponse,
-                        idempotency_level=IdempotencyLevel.UNKNOWN,
-                    ),
-                    function=service.change_instance_state,
                 ),
                 "/soulfire.v1.InstanceService/GetAuditLog": EndpointSync.unary(
                     method=MethodInfo(
@@ -1606,25 +1560,6 @@ class InstanceServiceClientSync(ConnectClientSync):
                 service_name="soulfire.v1.InstanceService",
                 input=InstanceRemoveProxiesBatchRequest,
                 output=InstanceRemoveProxiesBatchResponse,
-                idempotency_level=IdempotencyLevel.UNKNOWN,
-            ),
-            headers=headers,
-            timeout_ms=timeout_ms,
-        )
-    def change_instance_state(
-        self,
-        request: InstanceStateChangeRequest,
-        *,
-        headers: Headers | Mapping[str, str] | None = None,
-        timeout_ms: int | None = None,
-    ) -> InstanceStateChangeResponse:
-        return self.execute_unary(
-            request=request,
-            method=MethodInfo(
-                name="ChangeInstanceState",
-                service_name="soulfire.v1.InstanceService",
-                input=InstanceStateChangeRequest,
-                output=InstanceStateChangeResponse,
                 idempotency_level=IdempotencyLevel.UNKNOWN,
             ),
             headers=headers,

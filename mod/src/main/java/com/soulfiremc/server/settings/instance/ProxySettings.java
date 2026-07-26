@@ -52,7 +52,7 @@ public final class ProxySettings implements SettingsObject {
       .namespace(NAMESPACE)
       .key("sticky-proxies")
       .uiName("Sticky proxies")
-      .description("Reuse the last successfully assigned proxy for each bot on the next session start when possible")
+      .description("Reuse the last successfully assigned proxy when each bot reconnects")
       .defaultValue(false)
       .build();
   public static final StringProperty<SettingsSource.Instance> PROXY_CHECK_ADDRESS =

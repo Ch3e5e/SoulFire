@@ -551,7 +551,7 @@ public final class ScriptServiceImpl extends ScriptServiceGrpc.ScriptServiceImpl
     var instanceId = UUID.fromString(request.getInstanceId());
     var scriptId = UUID.fromString(request.getScriptId());
     ServerRPCConstants.USER_CONTEXT_KEY.get().hasPermissionOrThrow(
-      PermissionContext.instance(InstancePermission.CHANGE_INSTANCE_STATE, instanceId));
+      PermissionContext.instance(InstancePermission.EXECUTE_SCRIPTS, instanceId));
 
     try {
       // Load and unpause the script in the database
@@ -676,7 +676,7 @@ public final class ScriptServiceImpl extends ScriptServiceGrpc.ScriptServiceImpl
     var instanceId = UUID.fromString(request.getInstanceId());
     var scriptId = UUID.fromString(request.getScriptId());
     ServerRPCConstants.USER_CONTEXT_KEY.get().hasPermissionOrThrow(
-      PermissionContext.instance(InstancePermission.CHANGE_INSTANCE_STATE, instanceId));
+      PermissionContext.instance(InstancePermission.EXECUTE_SCRIPTS, instanceId));
 
     try {
       // Set paused=true in the database to persist the paused state
@@ -1794,7 +1794,7 @@ public final class ScriptServiceImpl extends ScriptServiceGrpc.ScriptServiceImpl
   public void dryRunScript(DryRunScriptRequest request, StreamObserver<ScriptEvent> responseObserver) {
     var instanceId = UUID.fromString(request.getInstanceId());
     ServerRPCConstants.USER_CONTEXT_KEY.get().hasPermissionOrThrow(
-      PermissionContext.instance(InstancePermission.CHANGE_INSTANCE_STATE, instanceId));
+      PermissionContext.instance(InstancePermission.EXECUTE_SCRIPTS, instanceId));
 
     try {
       var scriptId = UUID.fromString(request.getScriptId());

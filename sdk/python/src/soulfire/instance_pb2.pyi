@@ -2,6 +2,7 @@ import datetime
 
 from soulfire import common_pb2 as _common_pb2
 from soulfire import api_docs_pb2 as _api_docs_pb2
+from soulfire import bot_pb2 as _bot_pb2
 from google.api import annotations_pb2 as _annotations_pb2
 from google.api import field_behavior_pb2 as _field_behavior_pb2
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
@@ -14,19 +15,6 @@ from collections.abc import Iterable as _Iterable, Mapping as _Mapping
 from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
-
-class InstanceState(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
-    __slots__ = ()
-    STARTING: _ClassVar[InstanceState]
-    RUNNING: _ClassVar[InstanceState]
-    PAUSED: _ClassVar[InstanceState]
-    STOPPING: _ClassVar[InstanceState]
-    STOPPED: _ClassVar[InstanceState]
-STARTING: InstanceState
-RUNNING: InstanceState
-PAUSED: InstanceState
-STOPPING: InstanceState
-STOPPED: InstanceState
 
 class InstanceUser(_message.Message):
     __slots__ = ("id", "username", "email")
@@ -79,18 +67,18 @@ class InstanceListRequest(_message.Message):
 class InstanceListResponse(_message.Message):
     __slots__ = ("instances",)
     class Instance(_message.Message):
-        __slots__ = ("id", "friendly_name", "icon", "state", "instance_permissions")
+        __slots__ = ("id", "friendly_name", "icon", "instance_permissions", "bot_summary")
         ID_FIELD_NUMBER: _ClassVar[int]
         FRIENDLY_NAME_FIELD_NUMBER: _ClassVar[int]
         ICON_FIELD_NUMBER: _ClassVar[int]
-        STATE_FIELD_NUMBER: _ClassVar[int]
         INSTANCE_PERMISSIONS_FIELD_NUMBER: _ClassVar[int]
+        BOT_SUMMARY_FIELD_NUMBER: _ClassVar[int]
         id: str
         friendly_name: str
         icon: str
-        state: InstanceState
         instance_permissions: _containers.RepeatedCompositeFieldContainer[InstancePermissionState]
-        def __init__(self, id: _Optional[str] = ..., friendly_name: _Optional[str] = ..., icon: _Optional[str] = ..., state: _Optional[_Union[InstanceState, str]] = ..., instance_permissions: _Optional[_Iterable[_Union[InstancePermissionState, _Mapping]]] = ...) -> None: ...
+        bot_summary: _bot_pb2.BotFleetSummary
+        def __init__(self, id: _Optional[str] = ..., friendly_name: _Optional[str] = ..., icon: _Optional[str] = ..., instance_permissions: _Optional[_Iterable[_Union[InstancePermissionState, _Mapping]]] = ..., bot_summary: _Optional[_Union[_bot_pb2.BotFleetSummary, _Mapping]] = ...) -> None: ...
     INSTANCES_FIELD_NUMBER: _ClassVar[int]
     instances: _containers.RepeatedCompositeFieldContainer[InstanceListResponse.Instance]
     def __init__(self, instances: _Optional[_Iterable[_Union[InstanceListResponse.Instance, _Mapping]]] = ...) -> None: ...
@@ -112,26 +100,26 @@ class InstanceInfoRequest(_message.Message):
     def __init__(self, id: _Optional[str] = ..., if_modified_since: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class InstanceInfo(_message.Message):
-    __slots__ = ("friendly_name", "icon", "config", "state", "instance_permissions", "settings_definitions", "instance_settings", "plugins", "last_modified")
+    __slots__ = ("friendly_name", "icon", "config", "instance_permissions", "settings_definitions", "instance_settings", "plugins", "last_modified", "bot_summary")
     FRIENDLY_NAME_FIELD_NUMBER: _ClassVar[int]
     ICON_FIELD_NUMBER: _ClassVar[int]
     CONFIG_FIELD_NUMBER: _ClassVar[int]
-    STATE_FIELD_NUMBER: _ClassVar[int]
     INSTANCE_PERMISSIONS_FIELD_NUMBER: _ClassVar[int]
     SETTINGS_DEFINITIONS_FIELD_NUMBER: _ClassVar[int]
     INSTANCE_SETTINGS_FIELD_NUMBER: _ClassVar[int]
     PLUGINS_FIELD_NUMBER: _ClassVar[int]
     LAST_MODIFIED_FIELD_NUMBER: _ClassVar[int]
+    BOT_SUMMARY_FIELD_NUMBER: _ClassVar[int]
     friendly_name: str
     icon: str
     config: InstanceConfig
-    state: InstanceState
     instance_permissions: _containers.RepeatedCompositeFieldContainer[InstancePermissionState]
     settings_definitions: _containers.RepeatedCompositeFieldContainer[_common_pb2.SettingsDefinition]
     instance_settings: _containers.RepeatedCompositeFieldContainer[_common_pb2.SettingsPage]
     plugins: _containers.RepeatedCompositeFieldContainer[_common_pb2.ServerPlugin]
     last_modified: _timestamp_pb2.Timestamp
-    def __init__(self, friendly_name: _Optional[str] = ..., icon: _Optional[str] = ..., config: _Optional[_Union[InstanceConfig, _Mapping]] = ..., state: _Optional[_Union[InstanceState, str]] = ..., instance_permissions: _Optional[_Iterable[_Union[InstancePermissionState, _Mapping]]] = ..., settings_definitions: _Optional[_Iterable[_Union[_common_pb2.SettingsDefinition, _Mapping]]] = ..., instance_settings: _Optional[_Iterable[_Union[_common_pb2.SettingsPage, _Mapping]]] = ..., plugins: _Optional[_Iterable[_Union[_common_pb2.ServerPlugin, _Mapping]]] = ..., last_modified: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
+    bot_summary: _bot_pb2.BotFleetSummary
+    def __init__(self, friendly_name: _Optional[str] = ..., icon: _Optional[str] = ..., config: _Optional[_Union[InstanceConfig, _Mapping]] = ..., instance_permissions: _Optional[_Iterable[_Union[InstancePermissionState, _Mapping]]] = ..., settings_definitions: _Optional[_Iterable[_Union[_common_pb2.SettingsDefinition, _Mapping]]] = ..., instance_settings: _Optional[_Iterable[_Union[_common_pb2.SettingsPage, _Mapping]]] = ..., plugins: _Optional[_Iterable[_Union[_common_pb2.ServerPlugin, _Mapping]]] = ..., last_modified: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., bot_summary: _Optional[_Union[_bot_pb2.BotFleetSummary, _Mapping]] = ...) -> None: ...
 
 class InstanceNotModified(_message.Message):
     __slots__ = ("last_modified",)
@@ -311,18 +299,6 @@ class InstanceRemoveProxiesBatchResponse(_message.Message):
     __slots__ = ()
     def __init__(self) -> None: ...
 
-class InstanceStateChangeRequest(_message.Message):
-    __slots__ = ("id", "state")
-    ID_FIELD_NUMBER: _ClassVar[int]
-    STATE_FIELD_NUMBER: _ClassVar[int]
-    id: str
-    state: InstanceState
-    def __init__(self, id: _Optional[str] = ..., state: _Optional[_Union[InstanceState, str]] = ...) -> None: ...
-
-class InstanceStateChangeResponse(_message.Message):
-    __slots__ = ()
-    def __init__(self) -> None: ...
-
 class InstanceAuditLogRequest(_message.Message):
     __slots__ = ("id",)
     ID_FIELD_NUMBER: _ClassVar[int]
@@ -424,10 +400,6 @@ class InstanceAuditLogResponse(_message.Message):
     class AuditLogEntryType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
         __slots__ = ()
         EXECUTE_COMMAND: _ClassVar[InstanceAuditLogResponse.AuditLogEntryType]
-        START_SESSION: _ClassVar[InstanceAuditLogResponse.AuditLogEntryType]
-        PAUSE_SESSION: _ClassVar[InstanceAuditLogResponse.AuditLogEntryType]
-        RESUME_SESSION: _ClassVar[InstanceAuditLogResponse.AuditLogEntryType]
-        STOP_SESSION: _ClassVar[InstanceAuditLogResponse.AuditLogEntryType]
         AUTOMATION_START: _ClassVar[InstanceAuditLogResponse.AuditLogEntryType]
         AUTOMATION_PAUSE: _ClassVar[InstanceAuditLogResponse.AuditLogEntryType]
         AUTOMATION_RESUME: _ClassVar[InstanceAuditLogResponse.AuditLogEntryType]
@@ -437,11 +409,9 @@ class InstanceAuditLogResponse(_message.Message):
         AUTOMATION_RESET_MEMORY: _ClassVar[InstanceAuditLogResponse.AuditLogEntryType]
         AUTOMATION_RESET_COORDINATION: _ClassVar[InstanceAuditLogResponse.AuditLogEntryType]
         AUTOMATION_RELEASE_CLAIMS: _ClassVar[InstanceAuditLogResponse.AuditLogEntryType]
+        BOT_DESIRED_STATE_CHANGE: _ClassVar[InstanceAuditLogResponse.AuditLogEntryType]
+        BOT_RESTART: _ClassVar[InstanceAuditLogResponse.AuditLogEntryType]
     EXECUTE_COMMAND: InstanceAuditLogResponse.AuditLogEntryType
-    START_SESSION: InstanceAuditLogResponse.AuditLogEntryType
-    PAUSE_SESSION: InstanceAuditLogResponse.AuditLogEntryType
-    RESUME_SESSION: InstanceAuditLogResponse.AuditLogEntryType
-    STOP_SESSION: InstanceAuditLogResponse.AuditLogEntryType
     AUTOMATION_START: InstanceAuditLogResponse.AuditLogEntryType
     AUTOMATION_PAUSE: InstanceAuditLogResponse.AuditLogEntryType
     AUTOMATION_RESUME: InstanceAuditLogResponse.AuditLogEntryType
@@ -451,6 +421,8 @@ class InstanceAuditLogResponse(_message.Message):
     AUTOMATION_RESET_MEMORY: InstanceAuditLogResponse.AuditLogEntryType
     AUTOMATION_RESET_COORDINATION: InstanceAuditLogResponse.AuditLogEntryType
     AUTOMATION_RELEASE_CLAIMS: InstanceAuditLogResponse.AuditLogEntryType
+    BOT_DESIRED_STATE_CHANGE: InstanceAuditLogResponse.AuditLogEntryType
+    BOT_RESTART: InstanceAuditLogResponse.AuditLogEntryType
     class AuditLogEntry(_message.Message):
         __slots__ = ("id", "user", "type", "timestamp", "data")
         ID_FIELD_NUMBER: _ClassVar[int]

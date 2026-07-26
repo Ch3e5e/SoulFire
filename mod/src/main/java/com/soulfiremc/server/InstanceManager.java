@@ -21,18 +21,13 @@ import com.google.gson.JsonElement;
 import com.soulfiremc.mod.util.SFConstants;
 import com.soulfiremc.server.account.MCAuthService;
 import com.soulfiremc.server.account.MinecraftAccount;
-import com.soulfiremc.server.api.SessionLifecycle;
 import com.soulfiremc.server.api.SoulFireAPI;
+import com.soulfiremc.server.api.event.bot.BotConnectionRemovedEvent;
 import com.soulfiremc.server.api.event.lifecycle.InstanceSettingsRegistryInitEvent;
-import com.soulfiremc.server.api.event.session.SessionBotRemoveEvent;
-import com.soulfiremc.server.api.event.session.SessionEndedEvent;
-import com.soulfiremc.server.api.event.session.SessionStartEvent;
-import com.soulfiremc.server.api.event.session.SessionTickEvent;
 import com.soulfiremc.server.api.metadata.MetadataHolder;
 import com.soulfiremc.server.api.metrics.InstancePluginStats;
 import com.soulfiremc.server.automation.AutomationTeamCoordinator;
 import com.soulfiremc.server.bot.BotConnection;
-import com.soulfiremc.server.bot.BotConnectionFactory;
 import com.soulfiremc.server.database.AuditLogType;
 import com.soulfiremc.server.database.generated.Tables;
 import com.soulfiremc.server.metrics.InstanceMetricsCollector;
@@ -42,8 +37,6 @@ import com.soulfiremc.server.settings.instance.AutomationSettings;
 import com.soulfiremc.server.settings.instance.BotSettings;
 import com.soulfiremc.server.settings.instance.PathfindingSettings;
 import com.soulfiremc.server.settings.instance.ProxySettings;
-import com.soulfiremc.server.settings.lib.BotSettingsDelegate;
-import com.soulfiremc.server.settings.lib.BotSettingsImpl;
 import com.soulfiremc.server.settings.lib.InstanceSettingsDelegate;
 import com.soulfiremc.server.settings.lib.InstanceSettingsImpl;
 import com.soulfiremc.server.settings.lib.InstanceSettingsSource;
@@ -51,15 +44,12 @@ import com.soulfiremc.server.settings.lib.SettingsPageRegistry;
 import com.soulfiremc.server.settings.lib.SettingsSource;
 import com.soulfiremc.server.settings.property.Property;
 import com.soulfiremc.server.user.SoulFireUser;
-import com.soulfiremc.server.util.MathHelper;
 import com.soulfiremc.server.util.SFHelpers;
-import com.soulfiremc.server.util.TimeUtil;
 import com.soulfiremc.server.util.structs.CachedLazyObject;
 import com.soulfiremc.server.util.structs.GsonInstance;
 import com.soulfiremc.shared.SFLogAppender;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
-import net.kyori.adventure.text.Component;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.jooq.DSLContext;
 import org.jooq.impl.DSL;
@@ -71,23 +61,17 @@ import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 
 /// Represents a single instance.
-/// An instance persists settings over restarts and manages bot sessions and session state.
+/// An instance persists settings and provides a compartment for independently controlled bots.
 @Slf4j
 @Getter
 public final class InstanceManager {
@@ -106,8 +90,7 @@ public final class InstanceManager {
   private final InstanceMetricsCollector metricsCollector;
   private final InstancePluginStats pluginStats;
   private final AutomationTeamCoordinator automationCoordinator;
-  private final AtomicBoolean allBotsConnected = new AtomicBoolean(false);
-  private SessionLifecycle sessionLifecycle = SessionLifecycle.STOPPED;
+  private final BotStateManager botStateManager;
 
   public static InstanceManager current() {
     var current = CURRENT.get();
@@ -125,7 +108,7 @@ public final class InstanceManager {
     return Optional.ofNullable(CURRENT.get());
   }
 
-  public InstanceManager(SoulFireServer soulFireServer, DSLContext dsl, UUID id, SessionLifecycle lastState) {
+  public InstanceManager(SoulFireServer soulFireServer, DSLContext dsl, UUID id) {
     this.id = id;
     this.runnableWrapper = soulFireServer.runnableWrapper().with(new InstanceRunnableWrapper(this));
     this.scheduler = new SoulFireScheduler(runnableWrapper);
@@ -161,15 +144,10 @@ public final class InstanceManager {
       return registry;
     }).join();
 
+    this.botStateManager = new BotStateManager(this);
     this.scheduler.scheduleWithFixedDelay(this::tick, 0, 500, TimeUnit.MILLISECONDS);
     this.scheduler.scheduleWithFixedDelay(this::refreshExpiredAccounts, 0, 1, TimeUnit.HOURS);
-
-    // Resync stopped state to DB
-    this.sessionLifecycle(SessionLifecycle.STOPPED);
-
-    if (settingsSource.get(BotSettings.RESTORE_ON_REBOOT)) {
-      switchToState(null, lastState);
-    }
+    this.botStateManager.restoreDesiredBots();
   }
 
   private void initPersistentMetadata() {
@@ -272,11 +250,7 @@ public final class InstanceManager {
 
   private void tick() {
     automationCoordinator.tick();
-
-    if (sessionLifecycle().isTicking()) {
-      SoulFireAPI.postEvent(new SessionTickEvent(this));
-    }
-
+    metricsCollector.tick();
     persistDirtyMetadata();
     evictBots();
   }
@@ -389,7 +363,7 @@ public final class InstanceManager {
     }
   }
 
-  private void persistAccountMetadataUpdates(Map<UUID, Map<String, Map<String, JsonElement>>> metadataUpdates) {
+  void persistAccountMetadataUpdates(Map<UUID, Map<String, Map<String, JsonElement>>> metadataUpdates) {
     if (metadataUpdates.isEmpty()) {
       return;
     }
@@ -417,7 +391,7 @@ public final class InstanceManager {
     });
   }
 
-  private MinecraftAccount refreshAccount(MinecraftAccount account) {
+  MinecraftAccount refreshAccount(MinecraftAccount account) {
     var authService = MCAuthService.convertService(account.authType());
     if (!authService.isExpired(account)) {
       return account;
@@ -452,224 +426,8 @@ public final class InstanceManager {
     return refreshedAccount;
   }
 
-  public CompletableFuture<?> switchToState(@Nullable SoulFireUser initiator, SessionLifecycle targetState) {
-    return switch (targetState) {
-      case STARTING, RUNNING -> switch (sessionLifecycle()) {
-        case STARTING, RUNNING, STOPPING -> CompletableFuture.completedFuture(null);
-        case PAUSED -> {
-          if (initiator != null) {
-            addAuditLog(initiator, AuditLogType.RESUME_SESSION, null);
-          }
-
-          this.sessionLifecycle(allBotsConnected.get() ? SessionLifecycle.RUNNING : SessionLifecycle.STARTING);
-          yield CompletableFuture.completedFuture(null);
-        }
-        case STOPPED -> {
-          if (initiator != null) {
-            addAuditLog(initiator, AuditLogType.START_SESSION, null);
-          }
-
-          yield scheduler.runAsync(this::start);
-        }
-      };
-      case PAUSED -> switch (sessionLifecycle()) {
-        case STARTING, RUNNING -> {
-          if (initiator != null) {
-            addAuditLog(initiator, AuditLogType.PAUSE_SESSION, null);
-          }
-
-          this.sessionLifecycle(SessionLifecycle.PAUSED);
-          yield CompletableFuture.completedFuture(null);
-        }
-        case STOPPING, PAUSED -> CompletableFuture.completedFuture(null);
-        case STOPPED -> {
-          if (initiator != null) {
-            addAuditLog(initiator, AuditLogType.START_SESSION, null);
-            addAuditLog(initiator, AuditLogType.PAUSE_SESSION, null);
-          }
-
-          yield scheduler.runAsync(this::start)
-            .thenRunAsync(() -> this.sessionLifecycle(SessionLifecycle.PAUSED), scheduler);
-        }
-      };
-      case STOPPING, STOPPED -> switch (sessionLifecycle()) {
-        case STARTING, RUNNING, PAUSED -> {
-          if (initiator != null) {
-            addAuditLog(initiator, AuditLogType.STOP_SESSION, null);
-          }
-          yield stopSessionPermanently();
-        }
-        case STOPPING, STOPPED -> CompletableFuture.completedFuture(null);
-      };
-    };
-  }
-
-  private void start() {
-    if (!sessionLifecycle().isFullyStopped()) {
-      throw new IllegalStateException("Another session is still running");
-    }
-
-    allBotsConnected.set(false);
-    this.sessionLifecycle(SessionLifecycle.STARTING);
-
-    log.info("Preparing bot session");
-
-    var botAmount = settingsSource.get(BotSettings.AMOUNT); // How many bots to connect
-    var botsPerProxy =
-      settingsSource.get(ProxySettings.BOTS_PER_PROXY); // How many bots per proxy are allowed
-    var stickyProxiesEnabled = settingsSource.get(ProxySettings.STICKY_PROXIES);
-
-    var proxies = new ArrayList<>(settingsSource.proxies()
-      .stream()
-      .map(p -> new StickyProxyAllocator.ProxyAllocation(p, botsPerProxy))
-      .toList());
-    {
-      var availableProxies = proxies.size();
-      if (availableProxies == 0) {
-        log.info("No proxies provided, session will be performed without proxies");
-      } else {
-        var maxBots = MathHelper.sumCapOverflow(proxies.stream().mapToInt(StickyProxyAllocator.ProxyAllocation::availableBots));
-        if (botAmount > maxBots) {
-          log.warn("You have requested {} bots, but only {} are possible with the current amount of proxies.", botAmount, maxBots);
-          log.warn("Continuing with {} bots due to proxies.", maxBots);
-          botAmount = maxBots;
-        }
-
-        if (settingsSource.get(ProxySettings.SHUFFLE_PROXIES)) {
-          Collections.shuffle(proxies);
-        }
-      }
-    }
-
-    List<MinecraftAccount> selectedAccounts;
-    {
-      var accounts = new ArrayList<>(settingsSource.accounts().values());
-      var availableAccounts = accounts.size();
-      if (availableAccounts == 0) {
-        throw new IllegalStateException("No accounts configured. Please import accounts before starting a session.");
-      }
-
-      if (botAmount > availableAccounts) {
-        throw new IllegalStateException(
-          "Not enough accounts. You requested %d bots but only have %d accounts imported.".formatted(botAmount, availableAccounts));
-      }
-
-      if (settingsSource.get(AccountSettings.SHUFFLE_ACCOUNTS)) {
-        Collections.shuffle(accounts);
-      }
-
-      selectedAccounts = accounts.subList(0, botAmount);
-    }
-
-    var refreshedAccounts = selectedAccounts.stream().map(this::refreshAccount).toList();
-    var assignedProxies = StickyProxyAllocator.assign(refreshedAccounts, proxies, stickyProxiesEnabled);
-    var stickyMetadataUpdates = new LinkedHashMap<UUID, Map<String, Map<String, JsonElement>>>();
-    var preparedAssignments = new ArrayList<StickyProxyAllocator.AssignedProxy>(assignedProxies.size());
-    for (var assignedProxy : assignedProxies) {
-      var minecraftAccount = assignedProxy.account();
-      if (stickyProxiesEnabled && assignedProxy.proxy() != null) {
-        var updatedMetadata = StickyProxyAllocator.withSelectedProxy(minecraftAccount.persistentMetadata(), assignedProxy.proxy());
-        if (!updatedMetadata.equals(minecraftAccount.persistentMetadata())) {
-          stickyMetadataUpdates.put(minecraftAccount.profileId(), updatedMetadata);
-        }
-        minecraftAccount = minecraftAccount.withPersistentMetadata(updatedMetadata);
-      }
-      preparedAssignments.add(new StickyProxyAllocator.AssignedProxy(minecraftAccount, assignedProxy.proxy()));
-    }
-
-    if (!stickyMetadataUpdates.isEmpty()) {
-      persistAccountMetadataUpdates(stickyMetadataUpdates);
-      invalidateSettingsCache();
-    }
-
-    var factories = new ArrayBlockingQueue<BotConnectionFactory>(preparedAssignments.size());
-    for (var preparedAssignment : preparedAssignments) {
-      var minecraftAccount = preparedAssignment.account();
-      var lastAccountObject = new AtomicReference<>(minecraftAccount);
-      var botSettings = new BotSettingsDelegate(new CachedLazyObject<>(() -> {
-        var fetchedSettingsSource = this.settingsSource();
-        var fetchedAccount = fetchedSettingsSource.accounts().get(minecraftAccount.profileId());
-        if (fetchedAccount == null) {
-          fetchedAccount = lastAccountObject.get();
-        } else {
-          lastAccountObject.set(fetchedAccount);
-        }
-
-        return new BotSettingsImpl(fetchedAccount, fetchedSettingsSource);
-      }, 1, TimeUnit.SECONDS));
-      var protocolVersion = botSettings.get(BotSettings.PROTOCOL_VERSION, BotSettings.PROTOCOL_VERSION_PARSER);
-      var serverAddress = BotConnectionFactory.parseAddress(settingsSource.get(BotSettings.ADDRESS), protocolVersion);
-      factories.add(
-        new BotConnectionFactory(
-          this,
-          botSettings,
-          protocolVersion,
-          serverAddress,
-          preparedAssignment.proxy()
-        ));
-    }
-
-    var usedProxies = proxies.stream().filter(StickyProxyAllocator.ProxyAllocation::hasBots).count();
-    if (usedProxies == 0) {
-      log.info("Starting session with {} bots", factories.size());
-    } else {
-      log.info("Starting session with {} bots and {} active proxies", factories.size(), usedProxies);
-    }
-
-    pluginStats.reset();
-    SoulFireAPI.postEvent(new SessionStartEvent(this));
-
-    var connectSemaphore = new Semaphore(settingsSource.get(BotSettings.CONCURRENT_CONNECTS));
-    scheduler.schedule(
-      () -> {
-        allBotsConnected.set(false);
-        while (!factories.isEmpty()) {
-          var factory = factories.poll();
-          if (factory == null) {
-            break;
-          }
-
-          try {
-            connectSemaphore.acquire();
-          } catch (InterruptedException _) {
-            Thread.currentThread().interrupt();
-            break;
-          }
-
-          log.debug("Scheduling bot {}", factory.settingsSource().stem().lastKnownName());
-          scheduler.schedule(
-            SoulFireScheduler.FinalizableRunnable.withFinalizer(() -> {
-              if (sessionLifecycle().isStoppedOrStopping()) {
-                return;
-              }
-
-              TimeUtil.waitCondition(() -> sessionLifecycle().isPaused());
-
-              log.debug("Connecting bot {}", factory.settingsSource().stem().lastKnownName());
-              var botConnection = factory.prepareConnection(false);
-              storeNewBot(botConnection);
-
-              try {
-                botConnection.connect().get();
-              } catch (Throwable e) {
-                log.error("Error while connecting", e);
-              }
-            }, connectSemaphore::release));
-
-          TimeUtil.waitTime(
-            settingsSource.getRandom(BotSettings.JOIN_DELAY).getAsLong(),
-            TimeUnit.MILLISECONDS);
-        }
-
-        allBotsConnected.set(true);
-        if (this.sessionLifecycle() == SessionLifecycle.STARTING) {
-          this.sessionLifecycle(SessionLifecycle.RUNNING);
-        }
-      });
-  }
-
   public CompletableFuture<?> deleteInstance() {
-    return stopSessionPermanently()
+    return botStateManager.shutdown()
       .thenRunAsync(scheduler::shutdown, soulFireServer.scheduler())
       .thenRunAsync(() -> {
         try {
@@ -681,61 +439,15 @@ public final class InstanceManager {
   }
 
   public CompletableFuture<?> shutdownHook() {
-    return stopSession()
+    return botStateManager.shutdown()
       .thenRunAsync(scheduler::shutdown, soulFireServer.scheduler());
   }
 
-  public CompletableFuture<?> stopSessionPermanently() {
-    if (sessionLifecycle().isStoppedOrStopping()) {
-      return CompletableFuture.completedFuture(null);
-    }
-
-    log.info("Stopping bot session");
-    this.sessionLifecycle(SessionLifecycle.STOPPING);
-
-    return this.stopSession()
-      .thenRunAsync(() -> {
-        this.sessionLifecycle(SessionLifecycle.STOPPED);
-        log.info("Session stopped");
-      }, scheduler);
-  }
-
-  private void sessionLifecycle(SessionLifecycle sessionLifecycle) {
-    this.sessionLifecycle = sessionLifecycle;
-    dsl.update(Tables.INSTANCES)
-      .set(Tables.INSTANCES.SESSION_LIFECYCLE, sessionLifecycle.name())
-      .set(Tables.INSTANCES.UPDATED_AT, LocalDateTime.now(ZoneOffset.UTC))
-      .where(Tables.INSTANCES.ID.eq(id.toString()))
-      .execute();
-  }
-
-  public CompletableFuture<?> stopSession() {
-    return scheduler.runAsync(() -> {
-      allBotsConnected.set(false);
-      log.info("Disconnecting bots");
-    }).thenCompose(_ -> disconnectTrackedBots())
-      .thenRunAsync(() -> SoulFireAPI.postEvent(new SessionEndedEvent(this)), scheduler);
-  }
-
-  private CompletableFuture<Void> disconnectTrackedBots() {
-    var bots = List.copyOf(botConnections.values());
-    if (bots.isEmpty()) {
-      return CompletableFuture.completedFuture(null);
-    }
-
-    log.info("Waiting for {} bots to fully disconnect", bots.size());
-    var disconnectFutures = bots.stream()
-      .map(bot -> bot.disconnect(Component.text("Session stopped"))
-        .thenRunAsync(() -> removeBot(bot), scheduler))
-      .toArray(CompletableFuture[]::new);
-    return CompletableFuture.allOf(disconnectFutures)
-      .thenCompose(_ -> disconnectTrackedBots());
-  }
-
-  private void removeBot(BotConnection bot) {
+  void removeBot(BotConnection bot) {
     if (botConnections.remove(bot.accountProfileId(), bot)) {
       log.debug("Removing bot {}", bot.accountName());
-      SoulFireAPI.postEvent(new SessionBotRemoveEvent(this, bot));
+      botStateManager.connectionRemoved(bot);
+      SoulFireAPI.postEvent(new BotConnectionRemovedEvent(bot));
     }
   }
 
@@ -771,8 +483,8 @@ public final class InstanceManager {
     return new ArrayList<>(botConnections.values());
   }
 
-  public void storeNewBot(BotConnection connection) {
-    botConnections.put(connection.accountProfileId(), connection);
+  public boolean storeNewBot(BotConnection connection) {
+    return botConnections.putIfAbsent(connection.accountProfileId(), connection) == null;
   }
 
   @Override

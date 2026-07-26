@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import os
-from collections.abc import Callable, Iterable
+import random
+from collections.abc import AsyncIterator, Callable, Iterable, Iterator
 from types import TracebackType
 from typing import Any, TypeVar
 
@@ -12,7 +13,21 @@ from connectrpc.protocol import ProtocolType
 from ._auth import BearerAuthInterceptor, BearerAuthInterceptorSync, TokenProvider
 from ._install import LocalServerHandle, LocalSoulFireServer
 from .bot import SoulFireBot, SoulFireBotSync
+from .bot_connect import BotServiceClient, BotServiceClientSync
 from .bot_live_connect import BotLiveServiceClient, BotLiveServiceClientSync
+from .bot_pb2 import (
+    BOT_DESIRED_STATE_RUNNING,
+    BOT_DESIRED_STATE_STOPPED,
+    BotListEntry,
+    BotListRequest,
+    BotStatus,
+    RestartBotsRequest,
+    SetBotsDesiredStateRequest,
+    WatchBotStatusesRequest,
+    WatchBotStatusesResponse,
+)
+from .instance_connect import InstanceServiceClient, InstanceServiceClientSync
+from .instance_pb2 import InstanceInfoRequest
 from .login_connect import LoginServiceClient, LoginServiceClientSync
 from .login_pb2 import EmailCodeRequest, LoginRequest, NextAuthFlowResponse
 
@@ -45,7 +60,9 @@ class SoulFire:
         self._clients: list[Any] = []
         self._local_server_handle: LocalServerHandle | None = None
         self.local_server: LocalSoulFireServer | None = None
+        self.bot_service = self.service(BotServiceClient)
         self.bot_live = self.service(BotLiveServiceClient)
+        self.instance_service = self.service(InstanceServiceClient)
         self.login_service = self.service(LoginServiceClient)
 
     @classmethod
@@ -116,7 +133,12 @@ class SoulFire:
         return client
 
     def instance(self, instance_id: str) -> SoulFireInstance:
-        return SoulFireInstance(instance_id, self.bot_live)
+        return SoulFireInstance(
+            instance_id,
+            self.bot_service,
+            self.bot_live,
+            self.instance_service,
+        )
 
     async def begin_login(
         self,
@@ -175,13 +197,159 @@ class SoulFireInstance:
     def __init__(
         self,
         instance_id: str,
+        bot_service: BotServiceClient,
         bot_live: BotLiveServiceClient,
+        instance_service: InstanceServiceClient,
     ) -> None:
         self.id = instance_id
+        self._bot_service = bot_service
         self._bot_live = bot_live
+        self._instance_service = instance_service
 
     def bot(self, bot_id: str) -> SoulFireBot:
-        return SoulFireBot(self.id, bot_id, self._bot_live)
+        return SoulFireBot(self.id, bot_id, self._bot_service, self._bot_live)
+
+    async def bots(
+        self,
+        *,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> list[BotListEntry]:
+        response = await self._bot_service.get_bot_list(
+            BotListRequest(instance_id=self.id),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+        return list(response.bots)
+
+    def watch_bot_statuses(
+        self,
+        *,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> AsyncIterator[WatchBotStatusesResponse]:
+        return self._bot_service.watch_bot_statuses(
+            WatchBotStatusesRequest(instance_id=self.id),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def start(
+        self,
+        *,
+        bot_ids: Iterable[str] | None = None,
+        count: int | None = None,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> list[BotStatus]:
+        selected = await self._select_bot_ids(
+            bot_ids,
+            count,
+            lambda bot: bot.status.desired_state != BOT_DESIRED_STATE_RUNNING,
+            headers,
+            timeout_ms,
+        )
+        if not selected:
+            return []
+        response = await self._bot_service.set_bots_desired_state(
+            SetBotsDesiredStateRequest(
+                instance_id=self.id,
+                bot_ids=selected,
+                desired_state=BOT_DESIRED_STATE_RUNNING,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+        return list(response.bots)
+
+    async def stop(
+        self,
+        *,
+        bot_ids: Iterable[str] | None = None,
+        count: int | None = None,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> list[BotStatus]:
+        selected = await self._select_bot_ids(
+            bot_ids,
+            count,
+            lambda bot: bot.status.desired_state == BOT_DESIRED_STATE_RUNNING,
+            headers,
+            timeout_ms,
+        )
+        if not selected:
+            return []
+        response = await self._bot_service.set_bots_desired_state(
+            SetBotsDesiredStateRequest(
+                instance_id=self.id,
+                bot_ids=selected,
+                desired_state=BOT_DESIRED_STATE_STOPPED,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+        return list(response.bots)
+
+    async def restart(
+        self,
+        *,
+        bot_ids: Iterable[str] | None = None,
+        count: int | None = None,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> list[BotStatus]:
+        selected = await self._select_bot_ids(
+            bot_ids,
+            count,
+            lambda bot: bot.status.desired_state == BOT_DESIRED_STATE_RUNNING,
+            headers,
+            timeout_ms,
+        )
+        if not selected:
+            return []
+        response = await self._bot_service.restart_bots(
+            RestartBotsRequest(instance_id=self.id, bot_ids=selected),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+        return list(response.bots)
+
+    async def _select_bot_ids(
+        self,
+        bot_ids: Iterable[str] | None,
+        count: int | None,
+        count_filter: Callable[[BotListEntry], bool],
+        headers: dict[str, str] | None,
+        timeout_ms: int | None,
+    ) -> list[str]:
+        explicit = _explicit_bot_ids(bot_ids, count)
+        if explicit is not None:
+            return explicit
+
+        bots = await self.bots(headers=headers, timeout_ms=timeout_ms)
+        candidates = [bot for bot in bots if count_filter(bot)]
+        if count is None:
+            return [bot.profile_id for bot in candidates]
+        normalized_count = _normalize_count(count)
+        if normalized_count == 0:
+            return []
+        if await self._shuffle_accounts_enabled(headers, timeout_ms):
+            random.shuffle(candidates)
+        return [bot.profile_id for bot in candidates[:normalized_count]]
+
+    async def _shuffle_accounts_enabled(
+        self,
+        headers: dict[str, str] | None,
+        timeout_ms: int | None,
+    ) -> bool:
+        response = await self._instance_service.get_instance_info(
+            InstanceInfoRequest(id=self.id),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+        if response.WhichOneof("result") != "info":
+            return False
+        return _has_shuffle_accounts(response.info.config.settings)
 
 
 class SoulFireSync:
@@ -203,7 +371,9 @@ class SoulFireSync:
         self._clients: list[Any] = []
         self._local_server_handle: LocalServerHandle | None = None
         self.local_server: LocalSoulFireServer | None = None
+        self.bot_service = self.service(BotServiceClientSync)
         self.bot_live = self.service(BotLiveServiceClientSync)
+        self.instance_service = self.service(InstanceServiceClientSync)
         self.login_service = self.service(LoginServiceClientSync)
 
     @classmethod
@@ -273,7 +443,12 @@ class SoulFireSync:
         return client
 
     def instance(self, instance_id: str) -> SoulFireInstanceSync:
-        return SoulFireInstanceSync(instance_id, self.bot_live)
+        return SoulFireInstanceSync(
+            instance_id,
+            self.bot_service,
+            self.bot_live,
+            self.instance_service,
+        )
 
     def begin_login(
         self,
@@ -332,10 +507,180 @@ class SoulFireInstanceSync:
     def __init__(
         self,
         instance_id: str,
+        bot_service: BotServiceClientSync,
         bot_live: BotLiveServiceClientSync,
+        instance_service: InstanceServiceClientSync,
     ) -> None:
         self.id = instance_id
+        self._bot_service = bot_service
         self._bot_live = bot_live
+        self._instance_service = instance_service
 
     def bot(self, bot_id: str) -> SoulFireBotSync:
-        return SoulFireBotSync(self.id, bot_id, self._bot_live)
+        return SoulFireBotSync(self.id, bot_id, self._bot_service, self._bot_live)
+
+    def bots(
+        self,
+        *,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> list[BotListEntry]:
+        response = self._bot_service.get_bot_list(
+            BotListRequest(instance_id=self.id),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+        return list(response.bots)
+
+    def watch_bot_statuses(
+        self,
+        *,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> Iterator[WatchBotStatusesResponse]:
+        return self._bot_service.watch_bot_statuses(
+            WatchBotStatusesRequest(instance_id=self.id),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    def start(
+        self,
+        *,
+        bot_ids: Iterable[str] | None = None,
+        count: int | None = None,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> list[BotStatus]:
+        selected = self._select_bot_ids(
+            bot_ids,
+            count,
+            lambda bot: bot.status.desired_state != BOT_DESIRED_STATE_RUNNING,
+            headers,
+            timeout_ms,
+        )
+        if not selected:
+            return []
+        response = self._bot_service.set_bots_desired_state(
+            SetBotsDesiredStateRequest(
+                instance_id=self.id,
+                bot_ids=selected,
+                desired_state=BOT_DESIRED_STATE_RUNNING,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+        return list(response.bots)
+
+    def stop(
+        self,
+        *,
+        bot_ids: Iterable[str] | None = None,
+        count: int | None = None,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> list[BotStatus]:
+        selected = self._select_bot_ids(
+            bot_ids,
+            count,
+            lambda bot: bot.status.desired_state == BOT_DESIRED_STATE_RUNNING,
+            headers,
+            timeout_ms,
+        )
+        if not selected:
+            return []
+        response = self._bot_service.set_bots_desired_state(
+            SetBotsDesiredStateRequest(
+                instance_id=self.id,
+                bot_ids=selected,
+                desired_state=BOT_DESIRED_STATE_STOPPED,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+        return list(response.bots)
+
+    def restart(
+        self,
+        *,
+        bot_ids: Iterable[str] | None = None,
+        count: int | None = None,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> list[BotStatus]:
+        selected = self._select_bot_ids(
+            bot_ids,
+            count,
+            lambda bot: bot.status.desired_state == BOT_DESIRED_STATE_RUNNING,
+            headers,
+            timeout_ms,
+        )
+        if not selected:
+            return []
+        response = self._bot_service.restart_bots(
+            RestartBotsRequest(instance_id=self.id, bot_ids=selected),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+        return list(response.bots)
+
+    def _select_bot_ids(
+        self,
+        bot_ids: Iterable[str] | None,
+        count: int | None,
+        count_filter: Callable[[BotListEntry], bool],
+        headers: dict[str, str] | None,
+        timeout_ms: int | None,
+    ) -> list[str]:
+        explicit = _explicit_bot_ids(bot_ids, count)
+        if explicit is not None:
+            return explicit
+
+        bots = self.bots(headers=headers, timeout_ms=timeout_ms)
+        candidates = [bot for bot in bots if count_filter(bot)]
+        if count is None:
+            return [bot.profile_id for bot in candidates]
+        normalized_count = _normalize_count(count)
+        if normalized_count == 0:
+            return []
+        if self._shuffle_accounts_enabled(headers, timeout_ms):
+            random.shuffle(candidates)
+        return [bot.profile_id for bot in candidates[:normalized_count]]
+
+    def _shuffle_accounts_enabled(
+        self,
+        headers: dict[str, str] | None,
+        timeout_ms: int | None,
+    ) -> bool:
+        response = self._instance_service.get_instance_info(
+            InstanceInfoRequest(id=self.id),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+        if response.WhichOneof("result") != "info":
+            return False
+        return _has_shuffle_accounts(response.info.config.settings)
+
+
+def _explicit_bot_ids(bot_ids: Iterable[str] | None, count: int | None) -> list[str] | None:
+    if bot_ids is not None and count is not None:
+        raise ValueError("Use either bot_ids or count, not both")
+    if bot_ids is None:
+        return None
+    return list(dict.fromkeys(bot_ids))
+
+
+def _normalize_count(count: int) -> int:
+    if isinstance(count, bool):
+        raise TypeError("Bot count must be an integer")
+    return max(0, int(count))
+
+
+def _has_shuffle_accounts(settings: Iterable[Any]) -> bool:
+    for namespace in settings:
+        if namespace.namespace != "account":
+            continue
+        for entry in namespace.entries:
+            if entry.key == "shuffle-accounts" and entry.value.WhichOneof("kind") == "bool_value":
+                return entry.value.bool_value
+    return False

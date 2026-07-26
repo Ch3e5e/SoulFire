@@ -109,7 +109,7 @@ class GetInstanceMetricsResponse(_message.Message):
     def __init__(self, snapshots: _Optional[_Iterable[_Union[MetricsSnapshot, _Mapping]]] = ..., distributions: _Optional[_Union[MetricsDistributions, _Mapping]] = ...) -> None: ...
 
 class ServerMetricsSnapshot(_message.Message):
-    __slots__ = ("timestamp", "process_cpu_load", "system_cpu_load", "heap_used_bytes", "heap_committed_bytes", "heap_max_bytes", "non_heap_used_bytes", "thread_count", "daemon_thread_count", "gc_collection_count", "gc_collection_time_ms", "uptime_ms", "available_processors", "total_bots_online", "total_bots_total", "active_instances")
+    __slots__ = ("timestamp", "process_cpu_load", "system_cpu_load", "heap_used_bytes", "heap_committed_bytes", "heap_max_bytes", "non_heap_used_bytes", "thread_count", "daemon_thread_count", "gc_collection_count", "gc_collection_time_ms", "uptime_ms", "available_processors", "total_bots_online", "total_bots_total", "total_bots_desired", "instances_with_desired_bots", "total_bots_starting", "total_bots_retrying", "total_bots_failed")
     TIMESTAMP_FIELD_NUMBER: _ClassVar[int]
     PROCESS_CPU_LOAD_FIELD_NUMBER: _ClassVar[int]
     SYSTEM_CPU_LOAD_FIELD_NUMBER: _ClassVar[int]
@@ -125,7 +125,11 @@ class ServerMetricsSnapshot(_message.Message):
     AVAILABLE_PROCESSORS_FIELD_NUMBER: _ClassVar[int]
     TOTAL_BOTS_ONLINE_FIELD_NUMBER: _ClassVar[int]
     TOTAL_BOTS_TOTAL_FIELD_NUMBER: _ClassVar[int]
-    ACTIVE_INSTANCES_FIELD_NUMBER: _ClassVar[int]
+    TOTAL_BOTS_DESIRED_FIELD_NUMBER: _ClassVar[int]
+    INSTANCES_WITH_DESIRED_BOTS_FIELD_NUMBER: _ClassVar[int]
+    TOTAL_BOTS_STARTING_FIELD_NUMBER: _ClassVar[int]
+    TOTAL_BOTS_RETRYING_FIELD_NUMBER: _ClassVar[int]
+    TOTAL_BOTS_FAILED_FIELD_NUMBER: _ClassVar[int]
     timestamp: _timestamp_pb2.Timestamp
     process_cpu_load: float
     system_cpu_load: float
@@ -141,8 +145,12 @@ class ServerMetricsSnapshot(_message.Message):
     available_processors: int
     total_bots_online: int
     total_bots_total: int
-    active_instances: int
-    def __init__(self, timestamp: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., process_cpu_load: _Optional[float] = ..., system_cpu_load: _Optional[float] = ..., heap_used_bytes: _Optional[int] = ..., heap_committed_bytes: _Optional[int] = ..., heap_max_bytes: _Optional[int] = ..., non_heap_used_bytes: _Optional[int] = ..., thread_count: _Optional[int] = ..., daemon_thread_count: _Optional[int] = ..., gc_collection_count: _Optional[int] = ..., gc_collection_time_ms: _Optional[int] = ..., uptime_ms: _Optional[int] = ..., available_processors: _Optional[int] = ..., total_bots_online: _Optional[int] = ..., total_bots_total: _Optional[int] = ..., active_instances: _Optional[int] = ...) -> None: ...
+    total_bots_desired: int
+    instances_with_desired_bots: int
+    total_bots_starting: int
+    total_bots_retrying: int
+    total_bots_failed: int
+    def __init__(self, timestamp: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., process_cpu_load: _Optional[float] = ..., system_cpu_load: _Optional[float] = ..., heap_used_bytes: _Optional[int] = ..., heap_committed_bytes: _Optional[int] = ..., heap_max_bytes: _Optional[int] = ..., non_heap_used_bytes: _Optional[int] = ..., thread_count: _Optional[int] = ..., daemon_thread_count: _Optional[int] = ..., gc_collection_count: _Optional[int] = ..., gc_collection_time_ms: _Optional[int] = ..., uptime_ms: _Optional[int] = ..., available_processors: _Optional[int] = ..., total_bots_online: _Optional[int] = ..., total_bots_total: _Optional[int] = ..., total_bots_desired: _Optional[int] = ..., instances_with_desired_bots: _Optional[int] = ..., total_bots_starting: _Optional[int] = ..., total_bots_retrying: _Optional[int] = ..., total_bots_failed: _Optional[int] = ...) -> None: ...
 
 class GetServerMetricsRequest(_message.Message):
     __slots__ = ("since",)

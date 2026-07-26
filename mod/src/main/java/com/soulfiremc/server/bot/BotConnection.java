@@ -161,6 +161,8 @@ public final class BotConnection {
   private final boolean isStatusPing;
   @Setter
   private ProtocolVersion currentProtocolVersion;
+  @Nullable
+  private volatile String disconnectReason;
   private volatile boolean isDisconnected;
 
   public static BotConnection current() {
@@ -585,7 +587,8 @@ public final class BotConnection {
   }
 
   private void disconnectNow(Component reason) throws InterruptedException, TimeoutException {
-    log.debug("Got Disconnected with reason: {}", PlainTextComponentSerializer.plainText().serialize(reason));
+    disconnectReason = PlainTextComponentSerializer.plainText().serialize(reason);
+    log.debug("Got Disconnected with reason: {}", disconnectReason);
     SoulFireAPI.postEvent(new BotDisconnectedEvent(this, reason));
 
     try {

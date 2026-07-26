@@ -36,6 +36,8 @@ import com.soulfiremc.server.user.PermissionContext;
 import com.soulfiremc.server.util.MouseClickHelper;
 import com.soulfiremc.server.util.structs.GsonInstance;
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
+import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -72,6 +74,150 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
   /// to populate a {@link BotListEntry}. Any field may be absent when the bot
   /// has not fully spawned.
   private record BotRuntimeInfo(BotLiveState liveState, BotConnectionPhase phase, Integer pingMs) {}
+
+  @Override
+  public void setBotsDesiredState(
+    SetBotsDesiredStateRequest request,
+    StreamObserver<SetBotsDesiredStateResponse> responseObserver) {
+    try {
+      var instanceId = UUID.fromString(request.getInstanceId());
+      var user = ServerRPCConstants.USER_CONTEXT_KEY.get();
+      user.hasPermissionOrThrow(PermissionContext.instance(InstancePermission.CONTROL_BOTS, instanceId));
+      var instance = soulFireServer.getInstance(instanceId)
+        .orElseThrow(() -> Status.NOT_FOUND
+          .withDescription("Instance '%s' not found".formatted(instanceId))
+          .asRuntimeException());
+      var botIds = parseBotIds(request.getBotIdsList());
+      var statuses = instance.botStateManager()
+        .setDesiredState(user, botIds, request.getDesiredState());
+
+      responseObserver.onNext(SetBotsDesiredStateResponse.newBuilder()
+        .addAllBots(statuses)
+        .build());
+      responseObserver.onCompleted();
+    } catch (StatusRuntimeException exception) {
+      responseObserver.onError(exception);
+    } catch (IllegalArgumentException exception) {
+      responseObserver.onError(Status.INVALID_ARGUMENT
+        .withDescription(exception.getMessage())
+        .withCause(exception)
+        .asRuntimeException());
+    } catch (Throwable throwable) {
+      log.error("Error setting bot desired state", throwable);
+      responseObserver.onError(Status.INTERNAL
+        .withDescription(throwable.getMessage())
+        .withCause(throwable)
+        .asRuntimeException());
+    }
+  }
+
+  @Override
+  public void restartBots(
+    RestartBotsRequest request,
+    StreamObserver<RestartBotsResponse> responseObserver) {
+    try {
+      var instanceId = UUID.fromString(request.getInstanceId());
+      var user = ServerRPCConstants.USER_CONTEXT_KEY.get();
+      user.hasPermissionOrThrow(PermissionContext.instance(InstancePermission.CONTROL_BOTS, instanceId));
+      var instance = soulFireServer.getInstance(instanceId)
+        .orElseThrow(() -> Status.NOT_FOUND
+          .withDescription("Instance '%s' not found".formatted(instanceId))
+          .asRuntimeException());
+      var statuses = instance.botStateManager()
+        .restartBots(user, parseBotIds(request.getBotIdsList()));
+
+      responseObserver.onNext(RestartBotsResponse.newBuilder()
+        .addAllBots(statuses)
+        .build());
+      responseObserver.onCompleted();
+    } catch (StatusRuntimeException exception) {
+      responseObserver.onError(exception);
+    } catch (IllegalArgumentException exception) {
+      responseObserver.onError(Status.INVALID_ARGUMENT
+        .withDescription(exception.getMessage())
+        .withCause(exception)
+        .asRuntimeException());
+    } catch (Throwable throwable) {
+      log.error("Error restarting bots", throwable);
+      responseObserver.onError(Status.INTERNAL
+        .withDescription(throwable.getMessage())
+        .withCause(throwable)
+        .asRuntimeException());
+    }
+  }
+
+  @Override
+  public void watchBotStatuses(
+    WatchBotStatusesRequest request,
+    StreamObserver<WatchBotStatusesResponse> responseObserver) {
+    Runnable closeSubscription = () -> {
+    };
+    try {
+      var instanceId = UUID.fromString(request.getInstanceId());
+      ServerRPCConstants.USER_CONTEXT_KEY.get()
+        .hasPermissionOrThrow(PermissionContext.instance(InstancePermission.READ_BOT_INFO, instanceId));
+      var instance = soulFireServer.getInstance(instanceId)
+        .orElseThrow(() -> Status.NOT_FOUND
+          .withDescription("Instance '%s' not found".formatted(instanceId))
+          .asRuntimeException());
+      var observerLock = new Object();
+      var pendingEvents = new ArrayDeque<WatchBotStatusesResponse>();
+      var initialSnapshotSent = new boolean[]{false};
+      var subscription = instance.botStateManager().subscribe(event -> {
+        var response = WatchBotStatusesResponse.newBuilder();
+        if (event.status() != null) {
+          response.setUpdate(event.status());
+        } else if (event.removedBotId() != null) {
+          response.setRemovedBotId(event.removedBotId().toString());
+        } else {
+          return;
+        }
+        synchronized (observerLock) {
+          if (initialSnapshotSent[0]) {
+            responseObserver.onNext(response.build());
+          } else {
+            pendingEvents.addLast(response.build());
+          }
+        }
+      });
+      closeSubscription = subscription.close();
+
+      if (responseObserver instanceof ServerCallStreamObserver<WatchBotStatusesResponse> serverObserver) {
+        serverObserver.setOnCancelHandler(closeSubscription);
+      }
+      synchronized (observerLock) {
+        responseObserver.onNext(WatchBotStatusesResponse.newBuilder()
+          .setSnapshot(BotStatusSnapshot.newBuilder()
+            .addAllBots(subscription.snapshot())
+            .build())
+          .build());
+        initialSnapshotSent[0] = true;
+        while (!pendingEvents.isEmpty()) {
+          responseObserver.onNext(pendingEvents.removeFirst());
+        }
+      }
+    } catch (StatusRuntimeException exception) {
+      closeSubscription.run();
+      responseObserver.onError(exception);
+    } catch (IllegalArgumentException exception) {
+      closeSubscription.run();
+      responseObserver.onError(Status.INVALID_ARGUMENT
+        .withDescription(exception.getMessage())
+        .withCause(exception)
+        .asRuntimeException());
+    } catch (Throwable throwable) {
+      closeSubscription.run();
+      log.error("Error watching bot statuses", throwable);
+      responseObserver.onError(Status.INTERNAL
+        .withDescription(throwable.getMessage())
+        .withCause(throwable)
+        .asRuntimeException());
+    }
+  }
+
+  private static List<UUID> parseBotIds(Collection<String> values) {
+    return values.stream().map(UUID::fromString).toList();
+  }
 
   /**
    * Builds a BotLiveState from a LocalPlayer. Exposed package-private so
@@ -309,17 +455,19 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
       var responseBuilder = BotListResponse.newBuilder();
       for (var account : instance.settingsSource().accounts().values()) {
         var profileId = account.profileId();
+        var activeBot = botConnections.get(profileId);
+        var isOnline = activeBot != null && !activeBot.isDisconnected();
         var entryBuilder = BotListEntry.newBuilder()
           .setProfileId(profileId.toString())
-          .setIsOnline(botConnections.containsKey(profileId));
+          .setIsOnline(isOnline)
+          .setStatus(instance.botStateManager().status(profileId));
 
         var accountName = account.lastKnownName();
         if (accountName != null) {
           entryBuilder.setAccountName(accountName);
         }
 
-        var activeBot = botConnections.get(profileId);
-        if (activeBot == null || activeBot.isDisconnected()) {
+        if (!isOnline) {
           entryBuilder.setConnectionPhase(BotConnectionPhase.BOT_CONNECTION_PHASE_DISCONNECTED);
         } else {
           var info = callInBotContext(activeBot, () -> {
@@ -377,7 +525,8 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
         throw Status.NOT_FOUND.withDescription("Bot '%s' not found in instance '%s'".formatted(botId, instanceId)).asRuntimeException();
       }
 
-      var botInfoResponseBuilder = BotInfoResponse.newBuilder();
+      var botInfoResponseBuilder = BotInfoResponse.newBuilder()
+        .setStatus(instance.botStateManager().status(botId));
       var activeBot = instance.botConnections().get(botId);
       if (activeBot != null) {
         var liveState = callInBotContext(activeBot, () -> {

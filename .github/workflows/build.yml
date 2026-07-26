@@ -25,7 +25,7 @@ jobs:
           distribution: 'temurin'
           check-latest: true
       - name: Execute Gradle Build
-        run: ./gradlew build test printSFCLIFlags --stacktrace | grep -q -- "--bot-amount" || exit 1
+        run: ./gradlew build test printSFCLIFlags --stacktrace
       - name: Get version
         id: get-version
         run: |

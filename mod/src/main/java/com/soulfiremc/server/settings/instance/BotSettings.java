@@ -54,17 +54,6 @@ public final class BotSettings implements SettingsObject {
       .description("Address to connect to")
       .defaultValue("127.0.0.1:25565")
       .build();
-  public static final IntProperty<SettingsSource.Instance> AMOUNT =
-    ImmutableIntProperty.<SettingsSource.Instance>builder()
-      .sourceType(SettingsSource.Instance.INSTANCE)
-      .namespace(NAMESPACE)
-      .key("amount")
-      .uiName("Amount")
-      .description("Amount of bots to connect")
-      .defaultValue(1)
-      .minValue(1)
-      .maxValue(Integer.MAX_VALUE)
-      .build();
   public static final MinMaxProperty<SettingsSource.Instance> JOIN_DELAY = ImmutableMinMaxProperty.<SettingsSource.Instance>builder()
     .sourceType(SettingsSource.Instance.INSTANCE)
     .namespace(NAMESPACE)
@@ -145,15 +134,13 @@ public final class BotSettings implements SettingsObject {
       .minValue(1)
       .maxValue(Integer.MAX_VALUE)
       .build();
-  public static final BooleanProperty<SettingsSource.Instance> RESTORE_ON_REBOOT =
-    ImmutableBooleanProperty.<SettingsSource.Instance>builder()
-      .sourceType(SettingsSource.Instance.INSTANCE)
+  public static final BooleanProperty<SettingsSource.Bot> RESTORE_ON_REBOOT =
+    ImmutableBooleanProperty.<SettingsSource.Bot>builder()
+      .sourceType(SettingsSource.Bot.INSTANCE)
       .namespace(NAMESPACE)
       .key("restore-on-reboot")
       .uiName("Restore on Reboot")
-      .description("""
-        Whether the session should be restored after a reboot of the SoulFire machine.
-        If turned off, the session will not be restored after a reboot.""")
+      .description("Reconnect this bot when SoulFire starts if it was previously desired to be running.")
       .defaultValue(true)
       .build();
   public static final BooleanProperty<SettingsSource.Bot> IGNORE_PACKET_HANDLING_ERRORS =

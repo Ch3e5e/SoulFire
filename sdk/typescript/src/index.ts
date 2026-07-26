@@ -2,6 +2,7 @@ export {
   SoulFire,
   SoulFireBot,
   SoulFireInstance,
+  type BotSelection,
   type SoulFireOptions,
   type TokenProvider,
 } from "./client.js";
@@ -27,7 +28,15 @@ export {
   type PathfindProgress,
   type WorldPosition,
 } from "./generated/soulfire/bot_live_pb.js";
-export type { BotLiveState } from "./generated/soulfire/bot_pb.js";
+export {
+  BotDesiredState,
+  BotRuntimeState,
+  type BotFleetSummary,
+  type BotListEntry,
+  type BotLiveState,
+  type BotStatus,
+  type WatchBotStatusesResponse,
+} from "./generated/soulfire/bot_pb.js";
 export {
   NextAuthFlowResponse_Failure_Reason,
   type NextAuthFlowResponse,

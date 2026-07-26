@@ -344,7 +344,7 @@ public final class AuthSystem {
           case INSTANCE_COMMAND_EXECUTION, INSTANCE_SUBSCRIBE_LOGS,
                ACCESS_OBJECT_STORAGE,
                DOWNLOAD_URL, CHECK_PROXY, AUTHENTICATE_MC_ACCOUNT,
-               CHANGE_INSTANCE_STATE, UPDATE_INSTANCE_CONFIG,
+               CONTROL_BOTS, EXECUTE_SCRIPTS, UPDATE_INSTANCE_CONFIG,
                READ_INSTANCE, READ_INSTANCE_AUDIT_LOGS,
                READ_BOT_INFO, UPDATE_BOT_CONFIG -> TriState.byBoolean(isOwnerOfInstance(instance.instanceId()));
           case UNRECOGNIZED -> throw new IllegalStateException("Unexpected value: " + instance.instancePermission());

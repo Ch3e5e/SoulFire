@@ -52,7 +52,6 @@ class InstancePermission(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     UPDATE_INSTANCE_META: _ClassVar[InstancePermission]
     UPDATE_INSTANCE_CONFIG: _ClassVar[InstancePermission]
     DELETE_INSTANCE: _ClassVar[InstancePermission]
-    CHANGE_INSTANCE_STATE: _ClassVar[InstancePermission]
     AUTHENTICATE_MC_ACCOUNT: _ClassVar[InstancePermission]
     CHECK_PROXY: _ClassVar[InstancePermission]
     DOWNLOAD_URL: _ClassVar[InstancePermission]
@@ -61,6 +60,8 @@ class InstancePermission(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     READ_INSTANCE_AUDIT_LOGS: _ClassVar[InstancePermission]
     READ_BOT_INFO: _ClassVar[InstancePermission]
     UPDATE_BOT_CONFIG: _ClassVar[InstancePermission]
+    CONTROL_BOTS: _ClassVar[InstancePermission]
+    EXECUTE_SCRIPTS: _ClassVar[InstancePermission]
 
 class UserRole(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -103,7 +104,6 @@ READ_INSTANCE: InstancePermission
 UPDATE_INSTANCE_META: InstancePermission
 UPDATE_INSTANCE_CONFIG: InstancePermission
 DELETE_INSTANCE: InstancePermission
-CHANGE_INSTANCE_STATE: InstancePermission
 AUTHENTICATE_MC_ACCOUNT: InstancePermission
 CHECK_PROXY: InstancePermission
 DOWNLOAD_URL: InstancePermission
@@ -112,6 +112,8 @@ INSTANCE_SUBSCRIBE_LOGS: InstancePermission
 READ_INSTANCE_AUDIT_LOGS: InstancePermission
 READ_BOT_INFO: InstancePermission
 UPDATE_BOT_CONFIG: InstancePermission
+CONTROL_BOTS: InstancePermission
+EXECUTE_SCRIPTS: InstancePermission
 ADMIN: UserRole
 USER: UserRole
 SERVER: SettingsPageEntryScopeType

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterable, Iterator
 
+from .bot_connect import BotServiceClient, BotServiceClientSync
 from .bot_live_connect import BotLiveServiceClient, BotLiveServiceClientSync
 from .bot_live_pb2 import (
     AttackEntityRequest,
@@ -26,6 +27,14 @@ from .bot_live_pb2 import (
     SwingArmRequest,
     UseItemRequest,
 )
+from .bot_pb2 import (
+    BOT_DESIRED_STATE_RUNNING,
+    BOT_DESIRED_STATE_STOPPED,
+    BotInfoRequest,
+    BotStatus,
+    RestartBotsRequest,
+    SetBotsDesiredStateRequest,
+)
 
 
 def default_event_filter() -> BotEventFilter:
@@ -41,11 +50,49 @@ class SoulFireBot:
         self,
         instance_id: str,
         bot_id: str,
+        bot_client: BotServiceClient,
         live_client: BotLiveServiceClient,
     ) -> None:
         self.instance_id = instance_id
         self.id = bot_id
+        self._bot_client = bot_client
         self._live_client = live_client
+
+    async def start(self, *, timeout_ms: int | None = None) -> BotStatus:
+        response = await self._bot_client.set_bots_desired_state(
+            SetBotsDesiredStateRequest(
+                instance_id=self.instance_id,
+                bot_ids=[self.id],
+                desired_state=BOT_DESIRED_STATE_RUNNING,
+            ),
+            timeout_ms=timeout_ms,
+        )
+        return _required_status(response.bots, self.id)
+
+    async def stop(self, *, timeout_ms: int | None = None) -> BotStatus:
+        response = await self._bot_client.set_bots_desired_state(
+            SetBotsDesiredStateRequest(
+                instance_id=self.instance_id,
+                bot_ids=[self.id],
+                desired_state=BOT_DESIRED_STATE_STOPPED,
+            ),
+            timeout_ms=timeout_ms,
+        )
+        return _required_status(response.bots, self.id)
+
+    async def restart(self, *, timeout_ms: int | None = None) -> BotStatus:
+        response = await self._bot_client.restart_bots(
+            RestartBotsRequest(instance_id=self.instance_id, bot_ids=[self.id]),
+            timeout_ms=timeout_ms,
+        )
+        return _required_status(response.bots, self.id)
+
+    async def status(self, *, timeout_ms: int | None = None) -> BotStatus:
+        response = await self._bot_client.get_bot_info(
+            BotInfoRequest(instance_id=self.instance_id, bot_id=self.id),
+            timeout_ms=timeout_ms,
+        )
+        return response.status
 
     def events(
         self,
@@ -268,11 +315,49 @@ class SoulFireBotSync:
         self,
         instance_id: str,
         bot_id: str,
+        bot_client: BotServiceClientSync,
         live_client: BotLiveServiceClientSync,
     ) -> None:
         self.instance_id = instance_id
         self.id = bot_id
+        self._bot_client = bot_client
         self._live_client = live_client
+
+    def start(self, *, timeout_ms: int | None = None) -> BotStatus:
+        response = self._bot_client.set_bots_desired_state(
+            SetBotsDesiredStateRequest(
+                instance_id=self.instance_id,
+                bot_ids=[self.id],
+                desired_state=BOT_DESIRED_STATE_RUNNING,
+            ),
+            timeout_ms=timeout_ms,
+        )
+        return _required_status(response.bots, self.id)
+
+    def stop(self, *, timeout_ms: int | None = None) -> BotStatus:
+        response = self._bot_client.set_bots_desired_state(
+            SetBotsDesiredStateRequest(
+                instance_id=self.instance_id,
+                bot_ids=[self.id],
+                desired_state=BOT_DESIRED_STATE_STOPPED,
+            ),
+            timeout_ms=timeout_ms,
+        )
+        return _required_status(response.bots, self.id)
+
+    def restart(self, *, timeout_ms: int | None = None) -> BotStatus:
+        response = self._bot_client.restart_bots(
+            RestartBotsRequest(instance_id=self.instance_id, bot_ids=[self.id]),
+            timeout_ms=timeout_ms,
+        )
+        return _required_status(response.bots, self.id)
+
+    def status(self, *, timeout_ms: int | None = None) -> BotStatus:
+        response = self._bot_client.get_bot_info(
+            BotInfoRequest(instance_id=self.instance_id, bot_id=self.id),
+            timeout_ms=timeout_ms,
+        )
+        return response.status
 
     def events(
         self,
@@ -488,3 +573,10 @@ class SoulFireBotSync:
             ),
             timeout_ms=timeout_ms,
         )
+
+
+def _required_status(statuses: Iterable[BotStatus], bot_id: str) -> BotStatus:
+    for status in statuses:
+        if status.profile_id == bot_id:
+            return status
+    raise RuntimeError(f"SoulFire did not return status for bot {bot_id}")

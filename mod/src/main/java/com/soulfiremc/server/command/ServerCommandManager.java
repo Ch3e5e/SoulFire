@@ -70,7 +70,7 @@ public final class ServerCommandManager {
     ClickCommand.register(dispatcher);
 
     // Instance commands
-    SessionCommand.register(dispatcher);
+    BotsCommand.register(dispatcher);
 
     // Utility commands
     OnlineCommand.register(dispatcher);
