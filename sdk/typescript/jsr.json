@@ -1,0 +1,38 @@
+{
+  "$schema": "https://jsr.io/schema/config-file.v1.json",
+  "name": "@soulfiremc/sdk",
+  "version": "0.1.1",
+  "license": "AGPL-3.0-only",
+  "exports": {
+    ".": "./src/index.ts",
+    "./generated/google/api/annotations_pb": "./src/generated/google/api/annotations_pb.ts",
+    "./generated/google/api/field_behavior_pb": "./src/generated/google/api/field_behavior_pb.ts",
+    "./generated/google/api/http_pb": "./src/generated/google/api/http_pb.ts",
+    "./generated/soulfire/api_docs_pb": "./src/generated/soulfire/api_docs_pb.ts",
+    "./generated/soulfire/automation_pb": "./src/generated/soulfire/automation_pb.ts",
+    "./generated/soulfire/bot_live_pb": "./src/generated/soulfire/bot_live_pb.ts",
+    "./generated/soulfire/bot_pb": "./src/generated/soulfire/bot_pb.ts",
+    "./generated/soulfire/client_pb": "./src/generated/soulfire/client_pb.ts",
+    "./generated/soulfire/command_pb": "./src/generated/soulfire/command_pb.ts",
+    "./generated/soulfire/common_pb": "./src/generated/soulfire/common_pb.ts",
+    "./generated/soulfire/download_pb": "./src/generated/soulfire/download_pb.ts",
+    "./generated/soulfire/instance_live_pb": "./src/generated/soulfire/instance_live_pb.ts",
+    "./generated/soulfire/instance_pb": "./src/generated/soulfire/instance_pb.ts",
+    "./generated/soulfire/login_pb": "./src/generated/soulfire/login_pb.ts",
+    "./generated/soulfire/logs_pb": "./src/generated/soulfire/logs_pb.ts",
+    "./generated/soulfire/mc-auth_pb": "./src/generated/soulfire/mc-auth_pb.ts",
+    "./generated/soulfire/metrics_pb": "./src/generated/soulfire/metrics_pb.ts",
+    "./generated/soulfire/plugin_stats_pb": "./src/generated/soulfire/plugin_stats_pb.ts",
+    "./generated/soulfire/proxy-check_pb": "./src/generated/soulfire/proxy-check_pb.ts",
+    "./generated/soulfire/script_pb": "./src/generated/soulfire/script_pb.ts",
+    "./generated/soulfire/server_pb": "./src/generated/soulfire/server_pb.ts",
+    "./generated/soulfire/user_pb": "./src/generated/soulfire/user_pb.ts"
+  },
+  "publish": {
+    "include": [
+      "README.md",
+      "package.json",
+      "src/**/*.ts"
+    ]
+  }
+}

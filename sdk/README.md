@@ -10,8 +10,8 @@ desired state.
 
 ## Packages
 
-- [`@soulfiremc/sdk`](./typescript/README.md) for browsers and JavaScript
-  runtimes with `fetch`
+- [`@soulfiremc/sdk`](./typescript/README.md), published on npm and JSR, for
+  browsers and JavaScript runtimes with `fetch`
 - [`soulfire`](./python/README.md) for synchronous and asyncio Python
   applications
 

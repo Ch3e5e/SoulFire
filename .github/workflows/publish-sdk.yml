@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Version declared by both SDK package manifests
+        description: Version declared by all SDK package manifests
         required: true
         type: string
       publish_npm:
@@ -15,6 +15,11 @@ on:
         type: boolean
       publish_pypi:
         description: Publish soulfire to PyPI
+        required: true
+        default: true
+        type: boolean
+      publish_jsr:
+        description: Publish @soulfiremc/sdk to JSR
         required: true
         default: true
         type: boolean
@@ -29,7 +34,7 @@ concurrency:
 jobs:
   build:
     name: Build and verify packages
-    if: inputs.publish_npm || inputs.publish_pypi
+    if: inputs.publish_npm || inputs.publish_pypi || inputs.publish_jsr
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -54,6 +59,7 @@ jobs:
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
           node -e 'const version = require("./sdk/typescript/package.json").version; if (version !== process.env.RELEASE_VERSION) throw new Error(`TypeScript SDK version ${version} does not match ${process.env.RELEASE_VERSION}`)'
+          node -e 'const version = require("./sdk/typescript/jsr.json").version; if (version !== process.env.RELEASE_VERSION) throw new Error(`JSR SDK version ${version} does not match ${process.env.RELEASE_VERSION}`)'
           python -c 'import os, pathlib, re; text = pathlib.Path("sdk/python/pyproject.toml").read_text(); match = re.search(r"(?m)^version = \"([^\"]+)\"$", text); version = match.group(1) if match else None; expected = os.environ["RELEASE_VERSION"]; assert version == expected, f"Python SDK version {version} does not match {expected}"'
       - name: Install TypeScript dependencies
         run: pnpm install --frozen-lockfile
@@ -65,6 +71,10 @@ jobs:
         run: pnpm sdk:lint-proto
       - name: Check TypeScript SDK
         run: pnpm --filter @soulfiremc/sdk check
+      - name: Verify JSR package
+        if: inputs.publish_jsr
+        working-directory: sdk/typescript
+        run: npx --yes jsr@0.14.3 publish --dry-run
       - name: Install Python SDK dependencies
         run: python -m pip install --disable-pip-version-check -e 'sdk/python[dev]'
       - name: Check Python SDK
@@ -146,3 +156,27 @@ jobs:
         uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # release/v1
         with:
           packages-dir: dist/python
+
+  publish-jsr:
+    name: Publish to JSR
+    if: inputs.publish_jsr
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Publish JSR package
+        working-directory: sdk/typescript
+        run: npx --yes jsr@0.14.3 publish

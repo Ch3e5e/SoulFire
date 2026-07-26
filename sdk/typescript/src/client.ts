@@ -40,10 +40,14 @@ import {
   type BotEvent,
   type DigBlockRequestSchema,
   type FindBlocksRequestSchema,
+  type FindBlocksResponse,
   type GetBlockRequestSchema,
+  type GetBlockResponse,
   type GoToRequestSchema,
   type InteractEntityRequestSchema,
   type ListNearbyEntitiesRequestSchema,
+  type ListNearbyEntitiesResponse,
+  type PathfindProgress,
   type PlaceBlockRequestSchema,
   type ReleaseItemRequestSchema,
   type RespawnRequestSchema,
@@ -68,7 +72,10 @@ import {
 import {
   MCAuthService,
   type CredentialsAuthRequestSchema,
+  type CredentialsAuthResponse,
   type DeviceCodeAuthRequestSchema,
+  type DeviceCodeAuthResponse,
+  type RefreshResponse,
   type RefreshRequestSchema,
 } from "./generated/soulfire/mc-auth_pb.js";
 import type {
@@ -420,7 +427,7 @@ export class SoulFireInstance {
   public loginCredentials(
     request: InstanceScopedRequest<typeof CredentialsAuthRequestSchema>,
     options?: CallOptions,
-  ) {
+  ): AsyncIterable<CredentialsAuthResponse> {
     return this.#requireMcAuthClient().loginCredentials(
       { ...request, instanceId: this.id },
       options,
@@ -430,7 +437,7 @@ export class SoulFireInstance {
   public loginDeviceCode(
     request: InstanceScopedRequest<typeof DeviceCodeAuthRequestSchema>,
     options?: CallOptions,
-  ) {
+  ): AsyncIterable<DeviceCodeAuthResponse> {
     return this.#requireMcAuthClient().loginDeviceCode(
       { ...request, instanceId: this.id },
       options,
@@ -440,7 +447,7 @@ export class SoulFireInstance {
   public refreshAccount(
     request: InstanceScopedRequest<typeof RefreshRequestSchema>,
     options?: CallOptions,
-  ) {
+  ): Promise<RefreshResponse> {
     return this.#requireMcAuthClient().refresh(
       { ...request, instanceId: this.id },
       options,
@@ -703,7 +710,7 @@ export class SoulFireBot {
   public getBlock(
     request: ScopedRequest<typeof GetBlockRequestSchema>,
     options?: CallOptions,
-  ) {
+  ): Promise<GetBlockResponse> {
     return this.liveClient.getBlock(
       {
         ...request,
@@ -717,7 +724,7 @@ export class SoulFireBot {
   public findBlocks(
     request: ScopedRequest<typeof FindBlocksRequestSchema>,
     options?: CallOptions,
-  ) {
+  ): Promise<FindBlocksResponse> {
     return this.liveClient.findBlocks(
       {
         ...request,
@@ -731,7 +738,7 @@ export class SoulFireBot {
   public listNearbyEntities(
     request: ScopedRequest<typeof ListNearbyEntitiesRequestSchema>,
     options?: CallOptions,
-  ) {
+  ): Promise<ListNearbyEntitiesResponse> {
     return this.liveClient.listNearbyEntities(
       {
         ...request,
@@ -745,7 +752,7 @@ export class SoulFireBot {
   public digBlock(
     request: ScopedRequest<typeof DigBlockRequestSchema>,
     options?: CallOptions,
-  ) {
+  ): Promise<BotActionResult> {
     return this.liveClient.digBlock(
       {
         ...request,
@@ -759,7 +766,7 @@ export class SoulFireBot {
   public placeBlock(
     request: ScopedRequest<typeof PlaceBlockRequestSchema>,
     options?: CallOptions,
-  ) {
+  ): Promise<BotActionResult> {
     return this.liveClient.placeBlock(
       {
         ...request,
@@ -773,7 +780,7 @@ export class SoulFireBot {
   public useItem(
     request: ScopedRequest<typeof UseItemRequestSchema>,
     options?: CallOptions,
-  ) {
+  ): Promise<BotActionResult> {
     return this.liveClient.useItem(
       {
         ...request,
@@ -787,7 +794,7 @@ export class SoulFireBot {
   public releaseItem(
     request: ScopedRequest<typeof ReleaseItemRequestSchema> = {},
     options?: CallOptions,
-  ) {
+  ): Promise<BotActionResult> {
     return this.liveClient.releaseItem(
       {
         ...request,
@@ -801,7 +808,7 @@ export class SoulFireBot {
   public attackEntity(
     request: ScopedRequest<typeof AttackEntityRequestSchema>,
     options?: CallOptions,
-  ) {
+  ): Promise<BotActionResult> {
     return this.liveClient.attackEntity(
       {
         ...request,
@@ -815,7 +822,7 @@ export class SoulFireBot {
   public interactEntity(
     request: ScopedRequest<typeof InteractEntityRequestSchema>,
     options?: CallOptions,
-  ) {
+  ): Promise<BotActionResult> {
     return this.liveClient.interactEntity(
       {
         ...request,
@@ -829,7 +836,7 @@ export class SoulFireBot {
   public swingArm(
     request: ScopedRequest<typeof SwingArmRequestSchema>,
     options?: CallOptions,
-  ) {
+  ): Promise<BotActionResult> {
     return this.liveClient.swingArm(
       {
         ...request,
@@ -843,7 +850,7 @@ export class SoulFireBot {
   public respawn(
     request: ScopedRequest<typeof RespawnRequestSchema> = {},
     options?: CallOptions,
-  ) {
+  ): Promise<BotActionResult> {
     return this.liveClient.respawn(
       {
         ...request,
@@ -857,7 +864,7 @@ export class SoulFireBot {
   public goTo(
     request: ScopedRequest<typeof GoToRequestSchema>,
     options?: CallOptions,
-  ) {
+  ): AsyncIterable<PathfindProgress> {
     return this.liveClient.goTo(
       {
         ...request,

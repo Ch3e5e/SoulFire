@@ -5,8 +5,16 @@ or JavaScript runtime with `fetch`. The SDK always uses gRPC-Web.
 
 ## Install
 
+From npm:
+
 ```bash
 pnpm add @soulfiremc/sdk
+```
+
+From JSR:
+
+```bash
+deno add jsr:@soulfiremc/sdk
 ```
 
 ## Connect to a bot
