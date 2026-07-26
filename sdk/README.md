@@ -12,7 +12,7 @@ desired state.
 
 - [`@soulfiremc/sdk`](./typescript/README.md) for browsers and JavaScript
   runtimes with `fetch`
-- [`soulfire-sdk`](./python/README.md) for synchronous and asyncio Python
+- [`soulfire`](./python/README.md) for synchronous and asyncio Python
   applications
 
 Both packages use gRPC-Web exclusively. They share the Protobuf definitions in

@@ -187,7 +187,7 @@ def _resolve_release(version: str | None) -> dict[str, Any]:
         if requested_version is None
         else f"{RELEASES_API}/tags/{urllib.parse.quote(requested_version, safe='')}"
     )
-    release = _read_json(endpoint, user_agent="soulfire-sdk-python")
+    release = _read_json(endpoint, user_agent="soulfire-python")
     if not isinstance(release.get("tag_name"), str) or not isinstance(release.get("assets"), list):
         raise RuntimeError("SoulFire release metadata was incomplete")
     return release
@@ -245,7 +245,7 @@ def _ensure_jvm(jvm_directory: Path) -> Path:
         f"?architecture={_detect_architecture()}"
         f"&image_type=jre&os={_detect_os()}&vendor=eclipse"
     )
-    releases = _read_json(metadata_url, user_agent="soulfire-sdk-python")
+    releases = _read_json(metadata_url, user_agent="soulfire-python")
     try:
         release = releases[0]
         package = release["binary"]["package"]
@@ -302,7 +302,7 @@ def _ensure_download(url: str, destination: Path, checksum: str) -> None:
 def _download_file(url: str, destination: Path, checksum: str) -> None:
     request = urllib.request.Request(
         url,
-        headers={"User-Agent": "soulfire-sdk-python"},
+        headers={"User-Agent": "soulfire-python"},
     )
     digest = hashlib.sha256()
     with urllib.request.urlopen(request) as response, destination.open("xb") as output:

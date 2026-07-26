@@ -1,0 +1,148 @@
+name: Publish SDKs
+run-name: Publish SDKs v${{ inputs.version }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version declared by both SDK package manifests
+        required: true
+        type: string
+      publish_npm:
+        description: Publish @soulfiremc/sdk to npm
+        required: true
+        default: true
+        type: boolean
+      publish_pypi:
+        description: Publish soulfire to PyPI
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-sdks
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and verify packages
+    if: inputs.publish_npm || inputs.publish_pypi
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Set up Python
+        uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
+        with:
+          python-version: "3.10"
+      - name: Verify release version
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          node -e 'const version = require("./sdk/typescript/package.json").version; if (version !== process.env.RELEASE_VERSION) throw new Error(`TypeScript SDK version ${version} does not match ${process.env.RELEASE_VERSION}`)'
+          python -c 'import os, tomllib; version = tomllib.load(open("sdk/python/pyproject.toml", "rb"))["project"]["version"]; expected = os.environ["RELEASE_VERSION"]; assert version == expected, f"Python SDK version {version} does not match {expected}"'
+      - name: Install TypeScript dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Generate SDK bindings
+        run: pnpm sdk:generate
+      - name: Verify generated bindings
+        run: git diff --exit-code -- sdk/typescript/src/generated sdk/python/src/soulfire
+      - name: Lint Protobuf definitions
+        run: pnpm sdk:lint-proto
+      - name: Check TypeScript SDK
+        run: pnpm --filter @soulfiremc/sdk check
+      - name: Install Python SDK dependencies
+        run: python -m pip install --disable-pip-version-check -e 'sdk/python[dev]'
+      - name: Check Python SDK
+        run: |
+          python -m ruff check sdk/python
+          python -m ruff format --check sdk/python
+          python -m pytest sdk/python
+      - name: Build npm package
+        if: inputs.publish_npm
+        working-directory: sdk/typescript
+        run: |
+          mkdir -p ../../.artifacts/npm
+          npm pack --pack-destination ../../.artifacts/npm
+      - name: Build Python package
+        if: inputs.publish_pypi
+        working-directory: sdk/python
+        run: python -m hatchling build
+      - name: Upload npm package
+        if: inputs.publish_npm
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: npm-package
+          path: .artifacts/npm/*.tgz
+          if-no-files-found: error
+          retention-days: 1
+      - name: Upload Python package
+        if: inputs.publish_pypi
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: python-package
+          path: sdk/python/dist/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-npm:
+    name: Publish to npm
+    if: inputs.publish_npm
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Install current npm
+        run: npm install --global npm@latest
+      - name: Download npm package
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: npm-package
+          path: dist/npm
+      - name: Publish npm package
+        run: npm publish dist/npm/*.tgz --access public
+
+  publish-pypi:
+    name: Publish to PyPI
+    if: inputs.publish_pypi
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Download Python package
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: python-package
+          path: dist/python
+      - name: Publish Python package
+        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # release/v1
+        with:
+          packages-dir: dist/python

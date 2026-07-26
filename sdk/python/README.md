@@ -1,12 +1,12 @@
 # SoulFire Python SDK
 
-Use `soulfire-sdk` to control bots through a SoulFire server from synchronous
+Use `soulfire` to control bots through a SoulFire server from synchronous
 or asyncio Python applications. The SDK always uses gRPC-Web.
 
 ## Install
 
 ```bash
-pip install soulfire-sdk
+pip install soulfire
 ```
 
 ## Connect and stream events
