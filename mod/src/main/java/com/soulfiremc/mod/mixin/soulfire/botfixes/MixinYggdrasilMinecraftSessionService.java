@@ -22,6 +22,7 @@ import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.mojang.authlib.exceptions.AuthenticationException;
 import com.mojang.authlib.yggdrasil.YggdrasilAuthenticationService;
 import com.mojang.authlib.yggdrasil.YggdrasilMinecraftSessionService;
+import com.soulfiremc.server.account.AuthType;
 import com.soulfiremc.server.account.TheAlteningAuthService;
 import com.soulfiremc.server.account.service.BedrockData;
 import com.soulfiremc.server.account.service.OfflineJavaData;
@@ -47,8 +48,8 @@ public class MixinYggdrasilMinecraftSessionService {
       case OnlineChainJavaData onlineChainJavaData -> onlineChainJavaData.getJavaAuthManager(bot.proxy()).getMinecraftToken().getUpToDateUnchecked().getToken();
       case OnlineSimpleJavaData onlineSimpleJavaData -> onlineSimpleJavaData.accessToken();
       case TheAlteningJavaData theAlteningJavaData -> theAlteningJavaData.accessToken();
-      case OfflineJavaData ignored -> throw new IllegalArgumentException("Invalid auth type: " + account.authType());
-      case BedrockData ignored -> throw new IllegalArgumentException("Invalid auth type: " + account.authType());
+      case OfflineJavaData ignored -> throw incompatibleJavaOnlineModeAuth(account.authType());
+      case BedrockData ignored -> throw incompatibleJavaOnlineModeAuth(account.authType());
     };
 
     if (accountData instanceof TheAlteningJavaData) {
@@ -59,6 +60,11 @@ public class MixinYggdrasilMinecraftSessionService {
     }
 
     original.call(actualProfileId, actualAuthenticationToken, serverId);
+  }
+
+  private static IllegalArgumentException incompatibleJavaOnlineModeAuth(AuthType authType) {
+    return new IllegalArgumentException(
+      "Server requested Java online-mode authentication, but account auth type %s is incompatible".formatted(authType));
   }
 
   private static Proxy toJavaProxy(SFProxy proxy) {
