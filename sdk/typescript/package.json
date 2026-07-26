@@ -2,7 +2,24 @@
   "name": "@soulfiremc/sdk",
   "version": "0.1.0",
   "description": "TypeScript SDK for automating SoulFire bots over gRPC-Web.",
+  "keywords": [
+    "minecraft",
+    "bot",
+    "automation",
+    "grpc-web",
+    "soulfire"
+  ],
+  "author": "SoulFire",
   "license": "AGPL-3.0-only",
+  "homepage": "https://soulfiremc.com/docs/sdk/typescript",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/soulfiremc-com/SoulFire.git",
+    "directory": "sdk/typescript"
+  },
+  "bugs": {
+    "url": "https://github.com/soulfiremc-com/SoulFire/issues"
+  },
   "type": "module",
   "sideEffects": false,
   "exports": {
