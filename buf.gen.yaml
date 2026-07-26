@@ -1,0 +1,16 @@
+version: v2
+plugins:
+  - local: protoc-gen-es
+    out: sdk/typescript/src/generated
+    include_imports: true
+    opt:
+      - target=ts
+      - import_extension=js
+  - remote: buf.build/protocolbuffers/python:v31.1
+    out: sdk/python/src
+  - remote: buf.build/protocolbuffers/pyi:v31.1
+    out: sdk/python/src
+  - remote: buf.build/connectrpc/py:v0.11.1
+    out: sdk/python/src
+    opt:
+      - protobuf=google

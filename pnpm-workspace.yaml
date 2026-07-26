@@ -1,0 +1,5 @@
+packages:
+  - sdk/typescript
+
+allowBuilds:
+  "@bufbuild/buf": true

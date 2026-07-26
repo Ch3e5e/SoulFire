@@ -104,6 +104,10 @@ regularly.
 To learn more about the Developer API, take a look at the
 official [plugin example](https://github.com/soulfiremc-com/SoulFirePluginExample).
 
+SoulFire also includes [TypeScript and Python SDKs](sdk/README.md) for
+connecting over gRPC-Web, streaming bot events, issuing current per-bot
+actions, and provisioning a local dedicated server.
+
 ## 🌈 Community
 
 Feel free to join our Discord community server:

@@ -49,3 +49,13 @@ out/
 temp/
 tmp/
 .fabric
+
+# SDK toolchains
+.soulfire/
+node_modules/
+sdk/typescript/dist/
+sdk/python/.venv/
+sdk/python/.pytest_cache/
+sdk/python/.ruff_cache/
+sdk/python/dist/
+**/__pycache__/

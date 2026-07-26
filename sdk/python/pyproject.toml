@@ -1,0 +1,51 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "soulfire-sdk"
+version = "0.1.0"
+description = "Python SDK for automating SoulFire bots over gRPC-Web."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "AGPL-3.0-only"
+authors = [
+  { name = "SoulFire" },
+]
+dependencies = [
+  "connectrpc>=0.11.1,<0.12",
+  "googleapis-common-protos>=1.70,<2",
+  "protobuf>=6.31.1,<8",
+]
+
+[project.urls]
+Homepage = "https://soulfiremc.com"
+Repository = "https://github.com/soulfiremc-com/SoulFire"
+
+[project.optional-dependencies]
+dev = [
+  "hatchling>=1.27",
+  "pytest>=9.1,<10",
+  "pytest-asyncio>=1.2,<2",
+  "ruff>=0.16,<0.17",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/soulfire"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+extend-exclude = [
+  "src/soulfire/*_connect.py",
+  "src/soulfire/*_pb2.py",
+  "src/soulfire/*_pb2.pyi",
+]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
