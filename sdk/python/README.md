@@ -36,7 +36,9 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-The default event filter includes state changes, chat, and lifecycle events.
+The default event filter includes status, state, inventory, damage, chat, and
+lifecycle events. The stream stays open while the bot is stopped and follows
+the configured account across reconnects.
 
 ## Control bots
 
@@ -119,6 +121,91 @@ Pass `version` to pin a release tag. Existing verified downloads are reused.
 ```python
 await bot.send_chat("Hello from the SoulFire SDK")
 ```
+
+Action calls return after the bot game thread executes them. Failed or
+cancelled actions raise `SoulFireActionError`, which includes the action ID and
+server result.
+
+## Control inventory and movement
+
+```python
+from soulfire.bot_pb2 import LEFT_CLICK
+
+inventory = await bot.inventory()
+print(inventory.slots)
+
+await bot.select_hotbar(0)
+await bot.click_inventory(12, LEFT_CLICK)
+await bot.transfer_inventory_slot(12)
+await bot.move_inventory_stack(12, 36)
+
+await bot.set_movement(forward=True, sprint=True)
+await bot.look(90, 0)
+await bot.reset_movement()
+```
+
+The synchronous bot exposes the same methods without `await`.
+
+## Coordinate multiple controllers
+
+```python
+lease = await bot.acquire_control(ttl_seconds=30)
+try:
+    await bot.send_chat("This action carries the lease token")
+    await lease.renew(ttl_seconds=30)
+finally:
+    await lease.release()
+```
+
+Control leases are optional. Acquiring one prevents other clients from issuing
+actions until the lease is released or expires.
+
+## Use composable behaviors
+
+```python
+from soulfire import AttackNearest, CollectBlocks, run_behaviors
+
+await run_behaviors(
+    bot,
+    [
+        CollectBlocks(["minecraft:oak_log"], max_count=16),
+        AttackNearest(["minecraft:zombie"]),
+    ],
+)
+```
+
+The package includes `CollectBlocks`, `FollowEntity`, `AttackNearest`,
+`AutoEat`, and `Build`.
+
+## Provision instances and accounts
+
+```python
+from soulfire.common_pb2 import MICROSOFT_JAVA_DEVICE_CODE
+
+instance = await soulfire.create_instance("automation")
+
+async for step in instance.login_device_code(MICROSOFT_JAVA_DEVICE_CODE):
+    if step.WhichOneof("data") == "device_code":
+        print(step.device_code.verification_uri, step.device_code.user_code)
+    elif step.WhichOneof("data") == "account":
+        await instance.add_accounts([step.account])
+```
+
+Instance listing, settings, account and proxy batches, credentials login,
+device-code login, and account refresh are available on async and synchronous
+clients.
+
+## Manage an installed server
+
+```python
+print(soulfire.local_server.version)
+print(soulfire.local_server_logs)
+
+await soulfire.restart_local_server()
+await soulfire.stop_local_server()
+```
+
+Restart keeps the same directory, port, release, and root API token.
 
 ## Use the synchronous client
 

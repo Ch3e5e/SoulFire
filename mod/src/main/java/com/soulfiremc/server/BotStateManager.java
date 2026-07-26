@@ -205,6 +205,7 @@ public final class BotStateManager {
             runtimeEntries.remove(botId);
             generations.remove(botId);
             proxyLeases.remove(botId);
+            instanceManager.botControlLeaseManager().clear(botId);
           }
         }
         normalizedBotIds.forEach(this::publishRemoved);
@@ -231,6 +232,7 @@ public final class BotStateManager {
           generations.remove(botId);
           queuedBotIds.remove(botId);
           proxyLeases.remove(botId);
+          instanceManager.botControlLeaseManager().clear(botId);
           connectQueue.removeIf(queued -> queued.botId().equals(botId));
           removedIds.add(botId);
         }

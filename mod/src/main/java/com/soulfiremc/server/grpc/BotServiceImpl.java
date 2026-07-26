@@ -23,6 +23,9 @@ import com.mojang.authlib.GameProfile;
 import com.soulfiremc.grpc.generated.*;
 import com.soulfiremc.server.SoulFireServer;
 import com.soulfiremc.server.bot.BotConnection;
+import com.soulfiremc.server.bot.BotControlLeaseManager;
+import com.soulfiremc.server.bot.CompletableControlTask;
+import com.soulfiremc.server.bot.ControlStopReason;
 import com.soulfiremc.server.bot.ControlTask;
 import com.soulfiremc.server.database.generated.Tables;
 import com.soulfiremc.server.plugins.DialogHandler;
@@ -64,6 +67,9 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.*;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 @Slf4j
 @RequiredArgsConstructor
@@ -296,6 +302,74 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
     return botConnection.runnableWrapper().wrap(callable).call();
   }
 
+  private static void executeAction(BotConnection bot, Runnable action) throws Exception {
+    var task = new CompletableControlTask(ControlTask.once("gRPC bot action", action));
+    callInBotContext(bot, () -> {
+      bot.botControl().replace(task);
+      return null;
+    });
+    try {
+      var reason = task.completion().get(10, TimeUnit.SECONDS);
+      if (reason != ControlStopReason.COMPLETED && reason != ControlStopReason.CLAIMED) {
+        throw Status.ABORTED
+          .withDescription("Bot action was " + reason.name().toLowerCase(Locale.ROOT))
+          .asRuntimeException();
+      }
+    } catch (TimeoutException e) {
+      bot.botControl().cancel(task);
+      throw Status.DEADLINE_EXCEEDED
+        .withDescription("Bot action did not execute within 10 seconds")
+        .withCause(e)
+        .asRuntimeException();
+    } catch (ExecutionException e) {
+      if (e.getCause() instanceof Exception cause) {
+        throw cause;
+      }
+      throw e;
+    }
+  }
+
+  private static RuntimeException toGrpcError(Throwable throwable) {
+    if (throwable instanceof StatusRuntimeException statusError) {
+      return statusError;
+    }
+    return Status.INTERNAL
+      .withDescription(Objects.requireNonNullElse(
+        throwable.getMessage(),
+        throwable.getClass().getSimpleName()))
+      .withCause(throwable)
+      .asRuntimeException();
+  }
+
+  private static void requireBotControl(
+    SoulFireServer soulFireServer,
+    UUID instanceId,
+    UUID botId
+  ) {
+    ServerRPCConstants.USER_CONTEXT_KEY.get()
+      .hasPermissionOrThrow(PermissionContext.instance(
+        InstancePermission.CONTROL_BOT_ACTIONS,
+        instanceId));
+    var instance = soulFireServer.getInstance(instanceId)
+      .orElseThrow(() -> Status.NOT_FOUND
+        .withDescription("Instance '%s' not found".formatted(instanceId))
+        .asRuntimeException());
+    if (!instance.settingsSource().accounts().containsKey(botId)) {
+      throw Status.NOT_FOUND
+        .withDescription("Bot '%s' is not configured".formatted(botId))
+        .asRuntimeException();
+    }
+    try {
+      instance.botControlLeaseManager().authorize(
+        botId,
+        ServerRPCConstants.BOT_CONTROL_TOKEN_CONTEXT_KEY.get());
+    } catch (BotControlLeaseManager.InvalidLeaseException e) {
+      throw Status.PERMISSION_DENIED
+        .withDescription(e.getMessage())
+        .asRuntimeException();
+    }
+  }
+
   private static InventorySlot buildInventorySlot(int slotIndex, ItemStack item) {
     var slotBuilder = InventorySlot.newBuilder()
       .setSlot(slotIndex)
@@ -330,6 +404,36 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
     }
 
     return slotBuilder.build();
+  }
+
+  static BotInventoryStateResponse buildInventoryStatePublic(
+    Minecraft minecraft,
+    LocalPlayer player,
+    boolean renderIcons
+  ) {
+    var container = player.containerMenu;
+    var responseBuilder = BotInventoryStateResponse.newBuilder()
+      .setLayout(buildContainerLayout(container, getContainerTitle(container, minecraft)))
+      .setSelectedHotbarSlot(player.getInventory().getSelectedSlot());
+
+    for (var slot : container.slots) {
+      var item = slot.getItem();
+      if (item.isEmpty()) {
+        continue;
+      }
+      responseBuilder.addSlots(renderIcons
+        ? buildInventorySlot(minecraft, minecraft.level, player, slot.index, item)
+        : buildInventorySlot(slot.index, item));
+    }
+
+    var carried = container.getCarried();
+    if (!carried.isEmpty()) {
+      responseBuilder.setCarriedItem(renderIcons
+        ? buildInventorySlot(minecraft, minecraft.level, player, -1, carried)
+        : buildInventorySlot(-1, carried));
+    }
+
+    return responseBuilder.build();
   }
 
   /**
@@ -434,7 +538,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
       responseObserver.onCompleted();
     } catch (Throwable t) {
       log.error("Error updating bot config entry", t);
-      throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
+      throw toGrpcError(t);
     }
   }
 
@@ -503,7 +607,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
       responseObserver.onCompleted();
     } catch (Throwable t) {
       log.error("Error getting bot list", t);
-      throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
+      throw toGrpcError(t);
     }
   }
 
@@ -546,7 +650,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
       responseObserver.onCompleted();
     } catch (Throwable t) {
       log.error("Error getting instance info", t);
-      throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
+      throw toGrpcError(t);
     }
   }
 
@@ -613,7 +717,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
       responseObserver.onCompleted();
     } catch (Throwable t) {
       log.error("Error rendering bot POV", t);
-      throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
+      throw toGrpcError(t);
     }
   }
 
@@ -1517,7 +1621,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
   public void clickInventorySlot(BotInventoryClickRequest request, StreamObserver<BotInventoryClickResponse> responseObserver) {
     var instanceId = UUID.fromString(request.getInstanceId());
     var botId = UUID.fromString(request.getBotId());
-    ServerRPCConstants.USER_CONTEXT_KEY.get().hasPermissionOrThrow(PermissionContext.instance(InstancePermission.UPDATE_BOT_CONFIG, instanceId));
+    requireBotControl(soulFireServer, instanceId, botId);
 
     try {
       var optionalInstance = soulFireServer.getInstance(instanceId);
@@ -1584,9 +1688,9 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
         }
 
         var containerId = player.containerMenu.containerId;
-        activeBot.botControl().replace(
-          ControlTask.once(() ->
-            gameMode.handleContainerInput(containerId, slotId, mouseButton, clickType, player)));
+        executeAction(
+          activeBot,
+          () -> gameMode.handleContainerInput(containerId, slotId, mouseButton, clickType, player));
 
         return BotInventoryClickResponse.newBuilder()
           .setSuccess(true)
@@ -1597,7 +1701,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
       responseObserver.onCompleted();
     } catch (Throwable t) {
       log.error("Error clicking inventory slot", t);
-      throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
+      throw toGrpcError(t);
     }
   }
 
@@ -1605,7 +1709,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
   public void closeContainer(BotCloseContainerRequest request, StreamObserver<BotCloseContainerResponse> responseObserver) {
     var instanceId = UUID.fromString(request.getInstanceId());
     var botId = UUID.fromString(request.getBotId());
-    ServerRPCConstants.USER_CONTEXT_KEY.get().hasPermissionOrThrow(PermissionContext.instance(InstancePermission.UPDATE_BOT_CONFIG, instanceId));
+    requireBotControl(soulFireServer, instanceId, botId);
 
     try {
       var optionalInstance = soulFireServer.getInstance(instanceId);
@@ -1625,7 +1729,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
           throw Status.FAILED_PRECONDITION.withDescription("Bot player is not available").asRuntimeException();
         }
 
-        activeBot.botControl().replace(ControlTask.once(player::closeContainer));
+        executeAction(activeBot, player::closeContainer);
         return BotCloseContainerResponse.newBuilder()
           .setSuccess(true)
           .build();
@@ -1635,7 +1739,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
       responseObserver.onCompleted();
     } catch (Throwable t) {
       log.error("Error closing container", t);
-      throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
+      throw toGrpcError(t);
     }
   }
 
@@ -1643,7 +1747,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
   public void openInventory(BotOpenInventoryRequest request, StreamObserver<BotOpenInventoryResponse> responseObserver) {
     var instanceId = UUID.fromString(request.getInstanceId());
     var botId = UUID.fromString(request.getBotId());
-    ServerRPCConstants.USER_CONTEXT_KEY.get().hasPermissionOrThrow(PermissionContext.instance(InstancePermission.UPDATE_BOT_CONFIG, instanceId));
+    requireBotControl(soulFireServer, instanceId, botId);
 
     try {
       var optionalInstance = soulFireServer.getInstance(instanceId);
@@ -1663,7 +1767,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
           throw Status.FAILED_PRECONDITION.withDescription("Bot player is not available").asRuntimeException();
         }
 
-        activeBot.botControl().replace(ControlTask.once(player::sendOpenInventory));
+        executeAction(activeBot, player::sendOpenInventory);
         return BotOpenInventoryResponse.newBuilder()
           .setSuccess(true)
           .build();
@@ -1673,7 +1777,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
       responseObserver.onCompleted();
     } catch (Throwable t) {
       log.error("Error opening inventory", t);
-      throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
+      throw toGrpcError(t);
     }
   }
 
@@ -1681,7 +1785,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
   public void mouseClick(BotMouseClickRequest request, StreamObserver<BotMouseClickResponse> responseObserver) {
     var instanceId = UUID.fromString(request.getInstanceId());
     var botId = UUID.fromString(request.getBotId());
-    ServerRPCConstants.USER_CONTEXT_KEY.get().hasPermissionOrThrow(PermissionContext.instance(InstancePermission.UPDATE_BOT_CONFIG, instanceId));
+    requireBotControl(soulFireServer, instanceId, botId);
 
     try {
       var optionalInstance = soulFireServer.getInstance(instanceId);
@@ -1706,15 +1810,17 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
 
         return switch (request.getButton()) {
           case LEFT_BUTTON -> {
-            activeBot.botControl().replace(ControlTask.once(() ->
-              MouseClickHelper.performLeftClick(player, level, gameMode)));
+            executeAction(
+              activeBot,
+              () -> MouseClickHelper.performLeftClick(player, level, gameMode));
             yield BotMouseClickResponse.newBuilder()
               .setSuccess(true)
               .build();
           }
           case RIGHT_BUTTON -> {
-            activeBot.botControl().replace(ControlTask.once(() ->
-              MouseClickHelper.performRightClick(player, level, gameMode)));
+            executeAction(
+              activeBot,
+              () -> MouseClickHelper.performRightClick(player, level, gameMode));
             yield BotMouseClickResponse.newBuilder()
               .setSuccess(true)
               .build();
@@ -1730,7 +1836,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
       responseObserver.onCompleted();
     } catch (Throwable t) {
       log.error("Error performing mouse click", t);
-      throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
+      throw toGrpcError(t);
     }
   }
 
@@ -1738,7 +1844,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
   public void clickContainerButton(BotContainerButtonClickRequest request, StreamObserver<BotContainerButtonClickResponse> responseObserver) {
     var instanceId = UUID.fromString(request.getInstanceId());
     var botId = UUID.fromString(request.getBotId());
-    ServerRPCConstants.USER_CONTEXT_KEY.get().hasPermissionOrThrow(PermissionContext.instance(InstancePermission.UPDATE_BOT_CONFIG, instanceId));
+    requireBotControl(soulFireServer, instanceId, botId);
 
     try {
       var optionalInstance = soulFireServer.getInstance(instanceId);
@@ -1782,8 +1888,9 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
         }
 
         log.info("Clicking container button {} on container {} (type: {})", buttonId, container.containerId, container.getClass().getSimpleName());
-        activeBot.botControl().replace(
-          ControlTask.once(() -> gameMode.handleInventoryButtonClick(container.containerId, buttonId)));
+        executeAction(
+          activeBot,
+          () -> gameMode.handleInventoryButtonClick(container.containerId, buttonId));
         return BotContainerButtonClickResponse.newBuilder()
           .setSuccess(true)
           .build();
@@ -1793,7 +1900,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
       responseObserver.onCompleted();
     } catch (Throwable t) {
       log.error("Error clicking container button", t);
-      throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
+      throw toGrpcError(t);
     }
   }
 
@@ -1822,33 +1929,14 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
           throw Status.FAILED_PRECONDITION.withDescription("Bot player is not available").asRuntimeException();
         }
 
-        var container = player.containerMenu;
-        var title = getContainerTitle(container, minecraft);
-        var layout = buildContainerLayout(container, title);
-        var responseBuilder = BotInventoryStateResponse.newBuilder()
-          .setLayout(layout)
-          .setSelectedHotbarSlot(player.getInventory().getSelectedSlot());
-
-        for (var slot : container.slots) {
-          var item = slot.getItem();
-          if (!item.isEmpty()) {
-            responseBuilder.addSlots(buildInventorySlot(minecraft, minecraft.level, player, slot.index, item));
-          }
-        }
-
-        var carried = container.getCarried();
-        if (!carried.isEmpty()) {
-          responseBuilder.setCarriedItem(buildInventorySlot(minecraft, minecraft.level, player, -1, carried));
-        }
-
-        return responseBuilder.build();
+        return buildInventoryStatePublic(minecraft, player, true);
       });
 
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (Throwable t) {
       log.error("Error getting inventory state", t);
-      throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
+      throw toGrpcError(t);
     }
   }
 
@@ -1860,7 +1948,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
   public void setContainerText(BotSetContainerTextRequest request, StreamObserver<BotSetContainerTextResponse> responseObserver) {
     var instanceId = UUID.fromString(request.getInstanceId());
     var botId = UUID.fromString(request.getBotId());
-    ServerRPCConstants.USER_CONTEXT_KEY.get().hasPermissionOrThrow(PermissionContext.instance(InstancePermission.UPDATE_BOT_CONFIG, instanceId));
+    requireBotControl(soulFireServer, instanceId, botId);
 
     try {
       var optionalInstance = soulFireServer.getInstance(instanceId);
@@ -1890,8 +1978,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
             throw Status.FAILED_PRECONDITION.withDescription("Bot network connection is not available").asRuntimeException();
           }
 
-          activeBot.botControl().replace(
-            ControlTask.once(() -> anvilMenu.setItemName(text)));
+          executeAction(activeBot, () -> anvilMenu.setItemName(text));
           return BotSetContainerTextResponse.newBuilder()
             .setSuccess(true)
             .build();
@@ -1907,7 +1994,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
       responseObserver.onCompleted();
     } catch (Throwable t) {
       log.error("Error setting container text", t);
-      throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
+      throw toGrpcError(t);
     }
   }
 
@@ -1938,7 +2025,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
       responseObserver.onCompleted();
     } catch (Throwable t) {
       log.error("Error getting dialog", t);
-      throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
+      throw toGrpcError(t);
     }
   }
 
@@ -1946,7 +2033,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
   public void submitDialog(BotSubmitDialogRequest request, StreamObserver<BotSubmitDialogResponse> responseObserver) {
     var instanceId = UUID.fromString(request.getInstanceId());
     var botId = UUID.fromString(request.getBotId());
-    ServerRPCConstants.USER_CONTEXT_KEY.get().hasPermissionOrThrow(PermissionContext.instance(InstancePermission.UPDATE_BOT_CONFIG, instanceId));
+    requireBotControl(soulFireServer, instanceId, botId);
 
     try {
       var optionalInstance = soulFireServer.getInstance(instanceId);
@@ -1980,7 +2067,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
       responseObserver.onCompleted();
     } catch (Throwable t) {
       log.error("Error submitting dialog", t);
-      throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
+      throw toGrpcError(t);
     }
   }
 
@@ -1988,7 +2075,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
   public void clickDialogButton(BotClickDialogButtonRequest request, StreamObserver<BotClickDialogButtonResponse> responseObserver) {
     var instanceId = UUID.fromString(request.getInstanceId());
     var botId = UUID.fromString(request.getBotId());
-    ServerRPCConstants.USER_CONTEXT_KEY.get().hasPermissionOrThrow(PermissionContext.instance(InstancePermission.UPDATE_BOT_CONFIG, instanceId));
+    requireBotControl(soulFireServer, instanceId, botId);
 
     try {
       var optionalInstance = soulFireServer.getInstance(instanceId);
@@ -2022,7 +2109,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
       responseObserver.onCompleted();
     } catch (Throwable t) {
       log.error("Error clicking dialog button", t);
-      throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
+      throw toGrpcError(t);
     }
   }
 
@@ -2030,7 +2117,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
   public void closeDialog(BotCloseDialogRequest request, StreamObserver<BotCloseDialogResponse> responseObserver) {
     var instanceId = UUID.fromString(request.getInstanceId());
     var botId = UUID.fromString(request.getBotId());
-    ServerRPCConstants.USER_CONTEXT_KEY.get().hasPermissionOrThrow(PermissionContext.instance(InstancePermission.UPDATE_BOT_CONFIG, instanceId));
+    requireBotControl(soulFireServer, instanceId, botId);
 
     try {
       var optionalInstance = soulFireServer.getInstance(instanceId);
@@ -2055,7 +2142,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
       responseObserver.onCompleted();
     } catch (Throwable t) {
       log.error("Error closing dialog", t);
-      throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
+      throw toGrpcError(t);
     }
   }
 
@@ -2064,7 +2151,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
     var instanceId = UUID.fromString(request.getInstanceId());
     var botId = UUID.fromString(request.getBotId());
     var slot = request.getSlot();
-    ServerRPCConstants.USER_CONTEXT_KEY.get().hasPermissionOrThrow(PermissionContext.instance(InstancePermission.UPDATE_BOT_CONFIG, instanceId));
+    requireBotControl(soulFireServer, instanceId, botId);
 
     try {
       // Validate slot range
@@ -2097,8 +2184,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
             .build();
         }
 
-        activeBot.botControl().replace(
-          ControlTask.once(() -> player.getInventory().setSelectedSlot(slot)));
+        executeAction(activeBot, () -> player.getInventory().setSelectedSlot(slot));
         log.info("Setting hotbar slot to {} for bot {}", slot, botId);
         return BotSetHotbarSlotResponse.newBuilder()
           .setSuccess(true)
@@ -2109,7 +2195,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
       responseObserver.onCompleted();
     } catch (Throwable t) {
       log.error("Error setting hotbar slot", t);
-      throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
+      throw toGrpcError(t);
     }
   }
 
@@ -2117,7 +2203,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
   public void setMovementState(BotSetMovementStateRequest request, StreamObserver<BotSetMovementStateResponse> responseObserver) {
     var instanceId = UUID.fromString(request.getInstanceId());
     var botId = UUID.fromString(request.getBotId());
-    ServerRPCConstants.USER_CONTEXT_KEY.get().hasPermissionOrThrow(PermissionContext.instance(InstancePermission.UPDATE_BOT_CONFIG, instanceId));
+    requireBotControl(soulFireServer, instanceId, botId);
 
     try {
       var optionalInstance = soulFireServer.getInstance(instanceId);
@@ -2132,7 +2218,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
       }
 
       // Apply movement state changes
-      activeBot.botControl().replace(ControlTask.once(() -> {
+      executeAction(activeBot, () -> {
         var controlState = activeBot.controlState();
 
         if (request.hasForward()) {
@@ -2156,7 +2242,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
         if (request.hasSprint()) {
           controlState.sprint(request.getSprint());
         }
-      }));
+      });
 
       responseObserver.onNext(BotSetMovementStateResponse.newBuilder()
         .setSuccess(true)
@@ -2164,7 +2250,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
       responseObserver.onCompleted();
     } catch (Throwable t) {
       log.error("Error setting movement state", t);
-      throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
+      throw toGrpcError(t);
     }
   }
 
@@ -2172,7 +2258,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
   public void resetMovement(BotResetMovementRequest request, StreamObserver<BotResetMovementResponse> responseObserver) {
     var instanceId = UUID.fromString(request.getInstanceId());
     var botId = UUID.fromString(request.getBotId());
-    ServerRPCConstants.USER_CONTEXT_KEY.get().hasPermissionOrThrow(PermissionContext.instance(InstancePermission.UPDATE_BOT_CONFIG, instanceId));
+    requireBotControl(soulFireServer, instanceId, botId);
 
     try {
       var optionalInstance = soulFireServer.getInstance(instanceId);
@@ -2187,8 +2273,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
       }
 
       // Reset all movement
-      activeBot.botControl().replace(ControlTask.once(() ->
-        activeBot.controlState().resetAll()));
+      executeAction(activeBot, () -> activeBot.controlState().resetAll());
 
       log.info("Reset movement for bot {}", botId);
 
@@ -2198,7 +2283,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
       responseObserver.onCompleted();
     } catch (Throwable t) {
       log.error("Error resetting movement", t);
-      throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
+      throw toGrpcError(t);
     }
   }
 
@@ -2206,7 +2291,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
   public void setRotation(BotSetRotationRequest request, StreamObserver<BotSetRotationResponse> responseObserver) {
     var instanceId = UUID.fromString(request.getInstanceId());
     var botId = UUID.fromString(request.getBotId());
-    ServerRPCConstants.USER_CONTEXT_KEY.get().hasPermissionOrThrow(PermissionContext.instance(InstancePermission.UPDATE_BOT_CONFIG, instanceId));
+    requireBotControl(soulFireServer, instanceId, botId);
 
     try {
       var optionalInstance = soulFireServer.getInstance(instanceId);
@@ -2246,7 +2331,9 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
             .build();
         }
 
-        activeBot.botControl().replace(ControlTask.once(() -> activeBot.rotationControl().lookTo(finalYaw, finalPitch)));
+        executeAction(
+          activeBot,
+          () -> activeBot.rotationControl().lookTo(finalYaw, finalPitch));
         return BotSetRotationResponse.newBuilder()
           .setSuccess(true)
           .build();
@@ -2256,7 +2343,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
       responseObserver.onCompleted();
     } catch (Throwable t) {
       log.error("Error setting rotation", t);
-      throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
+      throw toGrpcError(t);
     }
   }
 }

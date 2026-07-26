@@ -62,6 +62,7 @@ class InstancePermission(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     UPDATE_BOT_CONFIG: _ClassVar[InstancePermission]
     CONTROL_BOTS: _ClassVar[InstancePermission]
     EXECUTE_SCRIPTS: _ClassVar[InstancePermission]
+    CONTROL_BOT_ACTIONS: _ClassVar[InstancePermission]
 
 class UserRole(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -114,6 +115,7 @@ READ_BOT_INFO: InstancePermission
 UPDATE_BOT_CONFIG: InstancePermission
 CONTROL_BOTS: InstancePermission
 EXECUTE_SCRIPTS: InstancePermission
+CONTROL_BOT_ACTIONS: InstancePermission
 ADMIN: UserRole
 USER: UserRole
 SERVER: SettingsPageEntryScopeType

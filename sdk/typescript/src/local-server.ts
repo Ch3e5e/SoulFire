@@ -49,6 +49,10 @@ interface AdoptiumRelease {
 export interface LocalServerHandle {
   readonly info: LocalSoulFireServer;
   readonly token: string;
+  isRunning(): boolean;
+  logs(): readonly string[];
+  restart(): Promise<void>;
+  stop(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -82,36 +86,41 @@ export async function installLocalServer(
   const port = options.port ?? (await findAvailablePort());
   validatePort(port);
 
-  const child = spawn(
-    javaPath,
-    [
-      ...(options.javaArgs ?? []),
-      `-Dsf.grpc.port=${port}`,
-      "-jar",
-      jarPath,
-    ],
-    {
-      cwd: runDirectory,
-      env: {
-        ...process.env,
-        JAVA_HOME: getJavaHome(path.join(directory, "jvm-25")),
+  const logs: string[] = [];
+  const handleLog = (line: string) => {
+    logs.push(line);
+    options.onLog?.(line);
+  };
+  const spawnServer = () =>
+    spawn(
+      javaPath,
+      [
+        ...(options.javaArgs ?? []),
+        `-Dsf.grpc.port=${port}`,
+        "-jar",
+        jarPath,
+      ],
+      {
+        cwd: runDirectory,
+        env: {
+          ...process.env,
+          JAVA_HOME: getJavaHome(path.join(directory, "jvm-25")),
+        },
+        stdio: "pipe",
+        windowsHide: true,
       },
-      stdio: "pipe",
-      windowsHide: true,
-    },
-  );
+    );
+  let child = spawnServer();
 
   try {
     await waitForServerReady(
       child,
-      options.onLog,
+      handleLog,
       options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS,
     );
     const secretKey = await readFile(path.join(runDirectory, "secret-key.bin"));
     const baseUrl = `http://127.0.0.1:${port}`;
-
-    return {
-      info: {
+    let info: LocalSoulFireServer = {
         baseUrl,
         directory,
         jarPath,
@@ -119,8 +128,25 @@ export async function installLocalServer(
         pid: requirePid(child.pid),
         runDirectory,
         version: release.tag_name,
+      };
+    return {
+      get info() {
+        return info;
       },
       token: createRootApiToken(secretKey),
+      isRunning: () => child.exitCode === null && child.signalCode === null,
+      logs: () => [...logs],
+      restart: async () => {
+        await stopChild(child);
+        child = spawnServer();
+        await waitForServerReady(
+          child,
+          handleLog,
+          options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS,
+        );
+        info = { ...info, pid: requirePid(child.pid) };
+      },
+      stop: () => stopChild(child),
       close: () => stopChild(child),
     };
   } catch (error) {

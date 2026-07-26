@@ -1526,7 +1526,8 @@ message BotCloseDialogResponse {
 // - READ_BOT_INFO: Required for GetBotList, GetBotInfo, GetInventoryState,
 //                  RenderBotPov, GetDialog
 // - CONTROL_BOTS: Required to start, stop, or restart bots
-// - UPDATE_BOT_CONFIG: Required for all other operations that modify bot state
+// - UPDATE_BOT_CONFIG: Required for persistent per-bot setting changes
+// - CONTROL_BOT_ACTIONS: Required for live movement, inventory, and dialog actions
 //
 // Error Handling:
 // - NOT_FOUND: Instance or bot does not exist
@@ -1634,7 +1635,7 @@ service BotService {
   // Performs a click action on an inventory/container slot.
   // Supports various click types (left, right, shift, drop, swap, middle).
   // The bot must be online with a valid player and gameMode.
-  // Requires UPDATE_BOT_CONFIG permission.
+  // Requires CONTROL_BOT_ACTIONS permission.
   rpc ClickInventorySlot (BotInventoryClickRequest) returns (BotInventoryClickResponse) {
     option (google.api.http) = {
       post: "/v1/instances/{instance_id}/bots/{bot_id}/inventory/slots/{slot}:click"
@@ -1642,7 +1643,7 @@ service BotService {
     };
     option (soulfire.v1.api_method) = {
       display_name: "Click inventory slot"
-      permissions: "UPDATE_BOT_CONFIG"
+      permissions: "CONTROL_BOT_ACTIONS"
       scope: "instance.bot"
       preconditions: "Bot must be online."
       preconditions: "Player and game mode state must be available."
@@ -1668,12 +1669,12 @@ service BotService {
   // Closes the currently open container (chest, crafting table, etc.).
   // Returns to the player inventory view.
   // The bot must be online with a valid player.
-  // Requires UPDATE_BOT_CONFIG permission.
+  // Requires CONTROL_BOT_ACTIONS permission.
   rpc CloseContainer (BotCloseContainerRequest) returns (BotCloseContainerResponse) {
     option (google.api.http) = { post: "/v1/instances/{instance_id}/bots/{bot_id}/container:close" };
     option (soulfire.v1.api_method) = {
       display_name: "Close container"
-      permissions: "UPDATE_BOT_CONFIG"
+      permissions: "CONTROL_BOT_ACTIONS"
       scope: "instance.bot"
       preconditions: "Bot must be online."
       preconditions: "Player state must be available."
@@ -1685,12 +1686,12 @@ service BotService {
   // Opens the player's inventory screen.
   // Sends a packet to the server to display the inventory UI.
   // The bot must be online with a valid player.
-  // Requires UPDATE_BOT_CONFIG permission.
+  // Requires CONTROL_BOT_ACTIONS permission.
   rpc OpenInventory (BotOpenInventoryRequest) returns (BotOpenInventoryResponse) {
     option (google.api.http) = { post: "/v1/instances/{instance_id}/bots/{bot_id}/inventory:open" };
     option (soulfire.v1.api_method) = {
       display_name: "Open inventory"
-      permissions: "UPDATE_BOT_CONFIG"
+      permissions: "CONTROL_BOT_ACTIONS"
       scope: "instance.bot"
       preconditions: "Bot must be online."
       preconditions: "Player state must be available."
@@ -1703,7 +1704,7 @@ service BotService {
   // Left click: attack entity or start breaking block.
   // Right click: use item or interact with entity/block.
   // The bot must be online with valid player, level, and gameMode.
-  // Requires UPDATE_BOT_CONFIG permission.
+  // Requires CONTROL_BOT_ACTIONS permission.
   rpc MouseClick (BotMouseClickRequest) returns (BotMouseClickResponse) {
     option (google.api.http) = {
       post: "/v1/instances/{instance_id}/bots/{bot_id}/mouse:click"
@@ -1711,7 +1712,7 @@ service BotService {
     };
     option (soulfire.v1.api_method) = {
       display_name: "Mouse click"
-      permissions: "UPDATE_BOT_CONFIG"
+      permissions: "CONTROL_BOT_ACTIONS"
       scope: "instance.bot"
       preconditions: "Bot must be online."
       preconditions: "Player, level, and game mode state must be available."
@@ -1724,14 +1725,14 @@ service BotService {
   // Used for: stonecutter recipes, enchanting, loom patterns, villager trades,
   // beacon effects, crafter slot toggles, lectern page navigation.
   // The action is queued and executed on the next game tick.
-  // Requires UPDATE_BOT_CONFIG permission.
+  // Requires CONTROL_BOT_ACTIONS permission.
   rpc ClickContainerButton (BotContainerButtonClickRequest) returns (BotContainerButtonClickResponse) {
     option (google.api.http) = {
       post: "/v1/instances/{instance_id}/bots/{bot_id}/container/buttons/{button_id}:click"
     };
     option (soulfire.v1.api_method) = {
       display_name: "Click container button"
-      permissions: "UPDATE_BOT_CONFIG"
+      permissions: "CONTROL_BOT_ACTIONS"
       scope: "instance.bot"
       execution: "Queued for the next game tick"
       side_effects: "Activates the selected container-specific action button."
@@ -1741,7 +1742,7 @@ service BotService {
   // Sets text in a container's text input field.
   // Currently only supports anvil item renaming (field_id: "item_name").
   // The action is queued and executed on the next game tick.
-  // Requires UPDATE_BOT_CONFIG permission.
+  // Requires CONTROL_BOT_ACTIONS permission.
   rpc SetContainerText (BotSetContainerTextRequest) returns (BotSetContainerTextResponse) {
     option (google.api.http) = {
       post: "/v1/instances/{instance_id}/bots/{bot_id}/container/text-inputs/{field_id}:set"
@@ -1749,7 +1750,7 @@ service BotService {
     };
     option (soulfire.v1.api_method) = {
       display_name: "Set container text"
-      permissions: "UPDATE_BOT_CONFIG"
+      permissions: "CONTROL_BOT_ACTIONS"
       scope: "instance.bot"
       execution: "Queued for the next game tick"
       side_effects: "Updates the selected container text input."
@@ -1759,14 +1760,14 @@ service BotService {
   // Changes the selected hotbar slot.
   // Valid slot range: 0-8 (corresponding to slots 1-9 in the UI).
   // The action is queued and executed on the next game tick.
-  // Requires UPDATE_BOT_CONFIG permission.
+  // Requires CONTROL_BOT_ACTIONS permission.
   rpc SetHotbarSlot (BotSetHotbarSlotRequest) returns (BotSetHotbarSlotResponse) {
     option (google.api.http) = {
       post: "/v1/instances/{instance_id}/bots/{bot_id}/hotbar/{slot}:select"
     };
     option (soulfire.v1.api_method) = {
       display_name: "Select hotbar slot"
-      permissions: "UPDATE_BOT_CONFIG"
+      permissions: "CONTROL_BOT_ACTIONS"
       scope: "instance.bot"
       execution: "Queued for the next game tick"
       side_effects: "Changes the selected hotbar slot."
@@ -1777,7 +1778,7 @@ service BotService {
   // Only specified fields are changed; omitted fields retain their current value.
   // Movement persists until explicitly changed or reset.
   // The action is queued and executed on the next game tick.
-  // Requires UPDATE_BOT_CONFIG permission.
+  // Requires CONTROL_BOT_ACTIONS permission.
   rpc SetMovementState (BotSetMovementStateRequest) returns (BotSetMovementStateResponse) {
     option (google.api.http) = {
       post: "/v1/instances/{instance_id}/bots/{bot_id}/movement:set"
@@ -1785,7 +1786,7 @@ service BotService {
     };
     option (soulfire.v1.api_method) = {
       display_name: "Set movement state"
-      permissions: "UPDATE_BOT_CONFIG"
+      permissions: "CONTROL_BOT_ACTIONS"
       scope: "instance.bot"
       execution: "Queued for the next game tick"
       side_effects: "Updates the persisted movement control state."
@@ -1795,12 +1796,12 @@ service BotService {
   // Resets all movement to stopped state.
   // Equivalent to releasing all movement keys.
   // The action is queued and executed on the next game tick.
-  // Requires UPDATE_BOT_CONFIG permission.
+  // Requires CONTROL_BOT_ACTIONS permission.
   rpc ResetMovement (BotResetMovementRequest) returns (BotResetMovementResponse) {
     option (google.api.http) = { post: "/v1/instances/{instance_id}/bots/{bot_id}/movement:reset" };
     option (soulfire.v1.api_method) = {
       display_name: "Reset movement"
-      permissions: "UPDATE_BOT_CONFIG"
+      permissions: "CONTROL_BOT_ACTIONS"
       scope: "instance.bot"
       execution: "Queued for the next game tick"
       side_effects: "Clears all movement inputs."
@@ -1810,7 +1811,7 @@ service BotService {
   // Sets the bot's view rotation (look direction).
   // Yaw is normalized to -180 to 180, pitch is clamped to -90 to 90.
   // The action is queued and executed on the next game tick.
-  // Requires UPDATE_BOT_CONFIG permission.
+  // Requires CONTROL_BOT_ACTIONS permission.
   rpc SetRotation (BotSetRotationRequest) returns (BotSetRotationResponse) {
     option (google.api.http) = {
       post: "/v1/instances/{instance_id}/bots/{bot_id}/rotation:set"
@@ -1818,7 +1819,7 @@ service BotService {
     };
     option (soulfire.v1.api_method) = {
       display_name: "Set bot rotation"
-      permissions: "UPDATE_BOT_CONFIG"
+      permissions: "CONTROL_BOT_ACTIONS"
       scope: "instance.bot"
       execution: "Queued for the next game tick"
       side_effects: "Updates the bot's look direction."
@@ -1843,7 +1844,7 @@ service BotService {
   // Used for dialogs containing text fields, checkboxes, dropdowns, or sliders.
   // The dialog is closed after submission.
   // Note: Full dialog response packets are not yet implemented; this clears local state.
-  // Requires UPDATE_BOT_CONFIG permission.
+  // Requires CONTROL_BOT_ACTIONS permission.
   rpc SubmitDialog (BotSubmitDialogRequest) returns (BotSubmitDialogResponse) {
     option (google.api.http) = {
       post: "/v1/instances/{instance_id}/bots/{bot_id}/dialog:submit"
@@ -1851,7 +1852,7 @@ service BotService {
     };
     option (soulfire.v1.api_method) = {
       display_name: "Submit dialog"
-      permissions: "UPDATE_BOT_CONFIG"
+      permissions: "CONTROL_BOT_ACTIONS"
       scope: "instance.bot"
       execution: "Immediate"
       side_effects: "Submits the current dialog and clears the local dialog state."
@@ -1862,14 +1863,14 @@ service BotService {
   // Button index depends on dialog type (see BotClickDialogButtonRequest).
   // The dialog is typically closed after the button click.
   // Note: Full dialog button packets are not yet implemented; this clears local state.
-  // Requires UPDATE_BOT_CONFIG permission.
+  // Requires CONTROL_BOT_ACTIONS permission.
   rpc ClickDialogButton (BotClickDialogButtonRequest) returns (BotClickDialogButtonResponse) {
     option (google.api.http) = {
       post: "/v1/instances/{instance_id}/bots/{bot_id}/dialog/buttons/{button_index}:click"
     };
     option (soulfire.v1.api_method) = {
       display_name: "Click dialog button"
-      permissions: "UPDATE_BOT_CONFIG"
+      permissions: "CONTROL_BOT_ACTIONS"
       scope: "instance.bot"
       execution: "Immediate"
       side_effects: "Invokes a dialog action and usually clears the local dialog state."
@@ -1878,12 +1879,12 @@ service BotService {
 
   // Closes/dismisses the current dialog.
   // Clears the local dialog state.
-  // Requires UPDATE_BOT_CONFIG permission.
+  // Requires CONTROL_BOT_ACTIONS permission.
   rpc CloseDialog (BotCloseDialogRequest) returns (BotCloseDialogResponse) {
     option (google.api.http) = { post: "/v1/instances/{instance_id}/bots/{bot_id}/dialog:close" };
     option (soulfire.v1.api_method) = {
       display_name: "Close dialog"
-      permissions: "UPDATE_BOT_CONFIG"
+      permissions: "CONTROL_BOT_ACTIONS"
       scope: "instance.bot"
       execution: "Immediate"
       side_effects: "Closes the current dialog and clears the local dialog state."

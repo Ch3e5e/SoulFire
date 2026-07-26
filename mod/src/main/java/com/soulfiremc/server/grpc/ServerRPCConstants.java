@@ -22,6 +22,8 @@ import io.grpc.Context;
 
 public final class ServerRPCConstants {
   public static final Context.Key<SoulFireUser> USER_CONTEXT_KEY = Context.key("user");
+  public static final Context.Key<String> BOT_CONTROL_TOKEN_CONTEXT_KEY =
+    Context.key("bot-control-token");
 
   private ServerRPCConstants() {}
 }

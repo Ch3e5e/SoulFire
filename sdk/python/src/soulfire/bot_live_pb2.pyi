@@ -37,6 +37,7 @@ class ChatSource(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     CHAT_SOURCE_SYSTEM: _ClassVar[ChatSource]
     CHAT_SOURCE_ACTION_BAR: _ClassVar[ChatSource]
     CHAT_SOURCE_WHISPER: _ClassVar[ChatSource]
+    CHAT_SOURCE_UNKNOWN: _ClassVar[ChatSource]
 
 class BotLifecycleKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -54,6 +55,13 @@ class EntityEventKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     ENTITY_EVENT_SPAWN: _ClassVar[EntityEventKind]
     ENTITY_EVENT_UPDATE: _ClassVar[EntityEventKind]
     ENTITY_EVENT_DESPAWN: _ClassVar[EntityEventKind]
+
+class BotActionStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    BOT_ACTION_STATUS_UNSPECIFIED: _ClassVar[BotActionStatus]
+    BOT_ACTION_STATUS_COMPLETED: _ClassVar[BotActionStatus]
+    BOT_ACTION_STATUS_CANCELLED: _ClassVar[BotActionStatus]
+    BOT_ACTION_STATUS_FAILED: _ClassVar[BotActionStatus]
 
 class PathfindStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -78,6 +86,7 @@ CHAT_SOURCE_PLAYER: ChatSource
 CHAT_SOURCE_SYSTEM: ChatSource
 CHAT_SOURCE_ACTION_BAR: ChatSource
 CHAT_SOURCE_WHISPER: ChatSource
+CHAT_SOURCE_UNKNOWN: ChatSource
 BOT_LIFECYCLE_UNSPECIFIED: BotLifecycleKind
 BOT_LIFECYCLE_CONNECTING: BotLifecycleKind
 BOT_LIFECYCLE_CONNECTED: BotLifecycleKind
@@ -89,6 +98,10 @@ ENTITY_EVENT_UNSPECIFIED: EntityEventKind
 ENTITY_EVENT_SPAWN: EntityEventKind
 ENTITY_EVENT_UPDATE: EntityEventKind
 ENTITY_EVENT_DESPAWN: EntityEventKind
+BOT_ACTION_STATUS_UNSPECIFIED: BotActionStatus
+BOT_ACTION_STATUS_COMPLETED: BotActionStatus
+BOT_ACTION_STATUS_CANCELLED: BotActionStatus
+BOT_ACTION_STATUS_FAILED: BotActionStatus
 PATHFIND_STATUS_UNSPECIFIED: PathfindStatus
 PATHFIND_STATUS_PLANNING: PathfindStatus
 PATHFIND_STATUS_MOVING: PathfindStatus
@@ -156,7 +169,7 @@ class NearbyEntity(_message.Message):
     def __init__(self, entity_id: _Optional[int] = ..., entity_type: _Optional[str] = ..., position: _Optional[_Union[WorldPosition, _Mapping]] = ..., distance: _Optional[float] = ..., display_name: _Optional[str] = ..., is_player: bool = ..., health: _Optional[float] = ...) -> None: ...
 
 class BotEventFilter(_message.Message):
-    __slots__ = ("include_state_deltas", "include_chat", "include_lifecycle", "include_entity_events", "entity_radius", "include_block_updates", "block_radius")
+    __slots__ = ("include_state_deltas", "include_chat", "include_lifecycle", "include_entity_events", "entity_radius", "include_block_updates", "block_radius", "include_inventory", "include_damage")
     INCLUDE_STATE_DELTAS_FIELD_NUMBER: _ClassVar[int]
     INCLUDE_CHAT_FIELD_NUMBER: _ClassVar[int]
     INCLUDE_LIFECYCLE_FIELD_NUMBER: _ClassVar[int]
@@ -164,6 +177,8 @@ class BotEventFilter(_message.Message):
     ENTITY_RADIUS_FIELD_NUMBER: _ClassVar[int]
     INCLUDE_BLOCK_UPDATES_FIELD_NUMBER: _ClassVar[int]
     BLOCK_RADIUS_FIELD_NUMBER: _ClassVar[int]
+    INCLUDE_INVENTORY_FIELD_NUMBER: _ClassVar[int]
+    INCLUDE_DAMAGE_FIELD_NUMBER: _ClassVar[int]
     include_state_deltas: bool
     include_chat: bool
     include_lifecycle: bool
@@ -171,7 +186,9 @@ class BotEventFilter(_message.Message):
     entity_radius: float
     include_block_updates: bool
     block_radius: float
-    def __init__(self, include_state_deltas: bool = ..., include_chat: bool = ..., include_lifecycle: bool = ..., include_entity_events: bool = ..., entity_radius: _Optional[float] = ..., include_block_updates: bool = ..., block_radius: _Optional[float] = ...) -> None: ...
+    include_inventory: bool
+    include_damage: bool
+    def __init__(self, include_state_deltas: bool = ..., include_chat: bool = ..., include_lifecycle: bool = ..., include_entity_events: bool = ..., entity_radius: _Optional[float] = ..., include_block_updates: bool = ..., block_radius: _Optional[float] = ..., include_inventory: bool = ..., include_damage: bool = ...) -> None: ...
 
 class WatchBotEventsRequest(_message.Message):
     __slots__ = ("instance_id", "bot_id", "filter")
@@ -257,21 +274,53 @@ class BotBlockUpdateEvent(_message.Message):
     new_block_id: str
     def __init__(self, position: _Optional[_Union[BlockPosition, _Mapping]] = ..., old_block_id: _Optional[str] = ..., new_block_id: _Optional[str] = ...) -> None: ...
 
+class BotInventoryEvent(_message.Message):
+    __slots__ = ("state",)
+    STATE_FIELD_NUMBER: _ClassVar[int]
+    state: _bot_pb2.BotInventoryStateResponse
+    def __init__(self, state: _Optional[_Union[_bot_pb2.BotInventoryStateResponse, _Mapping]] = ...) -> None: ...
+
+class BotDamageEvent(_message.Message):
+    __slots__ = ("previous_health", "health", "amount")
+    PREVIOUS_HEALTH_FIELD_NUMBER: _ClassVar[int]
+    HEALTH_FIELD_NUMBER: _ClassVar[int]
+    AMOUNT_FIELD_NUMBER: _ClassVar[int]
+    previous_health: float
+    health: float
+    amount: float
+    def __init__(self, previous_health: _Optional[float] = ..., health: _Optional[float] = ..., amount: _Optional[float] = ...) -> None: ...
+
 class BotEvent(_message.Message):
-    __slots__ = ("snapshot", "state_delta", "chat", "lifecycle", "entity_event", "block_update")
+    __slots__ = ("snapshot", "state_delta", "chat", "lifecycle", "entity_event", "block_update", "status", "inventory", "damage")
     SNAPSHOT_FIELD_NUMBER: _ClassVar[int]
     STATE_DELTA_FIELD_NUMBER: _ClassVar[int]
     CHAT_FIELD_NUMBER: _ClassVar[int]
     LIFECYCLE_FIELD_NUMBER: _ClassVar[int]
     ENTITY_EVENT_FIELD_NUMBER: _ClassVar[int]
     BLOCK_UPDATE_FIELD_NUMBER: _ClassVar[int]
+    STATUS_FIELD_NUMBER: _ClassVar[int]
+    INVENTORY_FIELD_NUMBER: _ClassVar[int]
+    DAMAGE_FIELD_NUMBER: _ClassVar[int]
     snapshot: _bot_pb2.BotLiveState
     state_delta: BotStateDelta
     chat: BotChatEvent
     lifecycle: BotLifecycleEvent
     entity_event: BotEntityEvent
     block_update: BotBlockUpdateEvent
-    def __init__(self, snapshot: _Optional[_Union[_bot_pb2.BotLiveState, _Mapping]] = ..., state_delta: _Optional[_Union[BotStateDelta, _Mapping]] = ..., chat: _Optional[_Union[BotChatEvent, _Mapping]] = ..., lifecycle: _Optional[_Union[BotLifecycleEvent, _Mapping]] = ..., entity_event: _Optional[_Union[BotEntityEvent, _Mapping]] = ..., block_update: _Optional[_Union[BotBlockUpdateEvent, _Mapping]] = ...) -> None: ...
+    status: _bot_pb2.BotStatus
+    inventory: BotInventoryEvent
+    damage: BotDamageEvent
+    def __init__(self, snapshot: _Optional[_Union[_bot_pb2.BotLiveState, _Mapping]] = ..., state_delta: _Optional[_Union[BotStateDelta, _Mapping]] = ..., chat: _Optional[_Union[BotChatEvent, _Mapping]] = ..., lifecycle: _Optional[_Union[BotLifecycleEvent, _Mapping]] = ..., entity_event: _Optional[_Union[BotEntityEvent, _Mapping]] = ..., block_update: _Optional[_Union[BotBlockUpdateEvent, _Mapping]] = ..., status: _Optional[_Union[_bot_pb2.BotStatus, _Mapping]] = ..., inventory: _Optional[_Union[BotInventoryEvent, _Mapping]] = ..., damage: _Optional[_Union[BotDamageEvent, _Mapping]] = ...) -> None: ...
+
+class BotActionResult(_message.Message):
+    __slots__ = ("action_id", "status", "error")
+    ACTION_ID_FIELD_NUMBER: _ClassVar[int]
+    STATUS_FIELD_NUMBER: _ClassVar[int]
+    ERROR_FIELD_NUMBER: _ClassVar[int]
+    action_id: str
+    status: BotActionStatus
+    error: str
+    def __init__(self, action_id: _Optional[str] = ..., status: _Optional[_Union[BotActionStatus, str]] = ..., error: _Optional[str] = ...) -> None: ...
 
 class SendChatRequest(_message.Message):
     __slots__ = ("instance_id", "bot_id", "message")
@@ -284,8 +333,10 @@ class SendChatRequest(_message.Message):
     def __init__(self, instance_id: _Optional[str] = ..., bot_id: _Optional[str] = ..., message: _Optional[str] = ...) -> None: ...
 
 class SendChatResponse(_message.Message):
-    __slots__ = ()
-    def __init__(self) -> None: ...
+    __slots__ = ("result",)
+    RESULT_FIELD_NUMBER: _ClassVar[int]
+    result: BotActionResult
+    def __init__(self, result: _Optional[_Union[BotActionResult, _Mapping]] = ...) -> None: ...
 
 class GetBlockRequest(_message.Message):
     __slots__ = ("instance_id", "bot_id", "position")
@@ -358,8 +409,10 @@ class DigBlockRequest(_message.Message):
     def __init__(self, instance_id: _Optional[str] = ..., bot_id: _Optional[str] = ..., position: _Optional[_Union[BlockPosition, _Mapping]] = ..., cancel: bool = ...) -> None: ...
 
 class DigBlockResponse(_message.Message):
-    __slots__ = ()
-    def __init__(self) -> None: ...
+    __slots__ = ("result",)
+    RESULT_FIELD_NUMBER: _ClassVar[int]
+    result: BotActionResult
+    def __init__(self, result: _Optional[_Union[BotActionResult, _Mapping]] = ...) -> None: ...
 
 class PlaceBlockRequest(_message.Message):
     __slots__ = ("instance_id", "bot_id", "against", "face", "hand")
@@ -376,8 +429,10 @@ class PlaceBlockRequest(_message.Message):
     def __init__(self, instance_id: _Optional[str] = ..., bot_id: _Optional[str] = ..., against: _Optional[_Union[BlockPosition, _Mapping]] = ..., face: _Optional[_Union[BlockFace, str]] = ..., hand: _Optional[_Union[Hand, str]] = ...) -> None: ...
 
 class PlaceBlockResponse(_message.Message):
-    __slots__ = ()
-    def __init__(self) -> None: ...
+    __slots__ = ("result",)
+    RESULT_FIELD_NUMBER: _ClassVar[int]
+    result: BotActionResult
+    def __init__(self, result: _Optional[_Union[BotActionResult, _Mapping]] = ...) -> None: ...
 
 class UseItemRequest(_message.Message):
     __slots__ = ("instance_id", "bot_id", "hand")
@@ -390,8 +445,24 @@ class UseItemRequest(_message.Message):
     def __init__(self, instance_id: _Optional[str] = ..., bot_id: _Optional[str] = ..., hand: _Optional[_Union[Hand, str]] = ...) -> None: ...
 
 class UseItemResponse(_message.Message):
-    __slots__ = ()
-    def __init__(self) -> None: ...
+    __slots__ = ("result",)
+    RESULT_FIELD_NUMBER: _ClassVar[int]
+    result: BotActionResult
+    def __init__(self, result: _Optional[_Union[BotActionResult, _Mapping]] = ...) -> None: ...
+
+class ReleaseItemRequest(_message.Message):
+    __slots__ = ("instance_id", "bot_id")
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    BOT_ID_FIELD_NUMBER: _ClassVar[int]
+    instance_id: str
+    bot_id: str
+    def __init__(self, instance_id: _Optional[str] = ..., bot_id: _Optional[str] = ...) -> None: ...
+
+class ReleaseItemResponse(_message.Message):
+    __slots__ = ("result",)
+    RESULT_FIELD_NUMBER: _ClassVar[int]
+    result: BotActionResult
+    def __init__(self, result: _Optional[_Union[BotActionResult, _Mapping]] = ...) -> None: ...
 
 class AttackEntityRequest(_message.Message):
     __slots__ = ("instance_id", "bot_id", "entity_id", "sprinting")
@@ -406,8 +477,10 @@ class AttackEntityRequest(_message.Message):
     def __init__(self, instance_id: _Optional[str] = ..., bot_id: _Optional[str] = ..., entity_id: _Optional[int] = ..., sprinting: bool = ...) -> None: ...
 
 class AttackEntityResponse(_message.Message):
-    __slots__ = ()
-    def __init__(self) -> None: ...
+    __slots__ = ("result",)
+    RESULT_FIELD_NUMBER: _ClassVar[int]
+    result: BotActionResult
+    def __init__(self, result: _Optional[_Union[BotActionResult, _Mapping]] = ...) -> None: ...
 
 class InteractEntityRequest(_message.Message):
     __slots__ = ("instance_id", "bot_id", "entity_id", "hand", "sneaking")
@@ -424,8 +497,10 @@ class InteractEntityRequest(_message.Message):
     def __init__(self, instance_id: _Optional[str] = ..., bot_id: _Optional[str] = ..., entity_id: _Optional[int] = ..., hand: _Optional[_Union[Hand, str]] = ..., sneaking: bool = ...) -> None: ...
 
 class InteractEntityResponse(_message.Message):
-    __slots__ = ()
-    def __init__(self) -> None: ...
+    __slots__ = ("result",)
+    RESULT_FIELD_NUMBER: _ClassVar[int]
+    result: BotActionResult
+    def __init__(self, result: _Optional[_Union[BotActionResult, _Mapping]] = ...) -> None: ...
 
 class SwingArmRequest(_message.Message):
     __slots__ = ("instance_id", "bot_id", "hand")
@@ -438,8 +513,24 @@ class SwingArmRequest(_message.Message):
     def __init__(self, instance_id: _Optional[str] = ..., bot_id: _Optional[str] = ..., hand: _Optional[_Union[Hand, str]] = ...) -> None: ...
 
 class SwingArmResponse(_message.Message):
-    __slots__ = ()
-    def __init__(self) -> None: ...
+    __slots__ = ("result",)
+    RESULT_FIELD_NUMBER: _ClassVar[int]
+    result: BotActionResult
+    def __init__(self, result: _Optional[_Union[BotActionResult, _Mapping]] = ...) -> None: ...
+
+class RespawnRequest(_message.Message):
+    __slots__ = ("instance_id", "bot_id")
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    BOT_ID_FIELD_NUMBER: _ClassVar[int]
+    instance_id: str
+    bot_id: str
+    def __init__(self, instance_id: _Optional[str] = ..., bot_id: _Optional[str] = ...) -> None: ...
+
+class RespawnResponse(_message.Message):
+    __slots__ = ("result",)
+    RESULT_FIELD_NUMBER: _ClassVar[int]
+    result: BotActionResult
+    def __init__(self, result: _Optional[_Union[BotActionResult, _Mapping]] = ...) -> None: ...
 
 class PathfindGoal(_message.Message):
     __slots__ = ("block", "near", "entity", "xz")
@@ -486,16 +577,14 @@ class PathfindGoal(_message.Message):
     def __init__(self, block: _Optional[_Union[PathfindGoal.BlockGoal, _Mapping]] = ..., near: _Optional[_Union[PathfindGoal.NearGoal, _Mapping]] = ..., entity: _Optional[_Union[PathfindGoal.EntityGoal, _Mapping]] = ..., xz: _Optional[_Union[PathfindGoal.XZGoal, _Mapping]] = ...) -> None: ...
 
 class PathfindOptions(_message.Message):
-    __slots__ = ("allow_mining", "allow_placing", "allow_damage", "timeout_seconds")
+    __slots__ = ("allow_mining", "allow_placing", "timeout_seconds")
     ALLOW_MINING_FIELD_NUMBER: _ClassVar[int]
     ALLOW_PLACING_FIELD_NUMBER: _ClassVar[int]
-    ALLOW_DAMAGE_FIELD_NUMBER: _ClassVar[int]
     TIMEOUT_SECONDS_FIELD_NUMBER: _ClassVar[int]
     allow_mining: bool
     allow_placing: bool
-    allow_damage: bool
     timeout_seconds: int
-    def __init__(self, allow_mining: bool = ..., allow_placing: bool = ..., allow_damage: bool = ..., timeout_seconds: _Optional[int] = ...) -> None: ...
+    def __init__(self, allow_mining: bool = ..., allow_placing: bool = ..., timeout_seconds: _Optional[int] = ...) -> None: ...
 
 class GoToRequest(_message.Message):
     __slots__ = ("instance_id", "bot_id", "goal", "options")
@@ -510,16 +599,18 @@ class GoToRequest(_message.Message):
     def __init__(self, instance_id: _Optional[str] = ..., bot_id: _Optional[str] = ..., goal: _Optional[_Union[PathfindGoal, _Mapping]] = ..., options: _Optional[_Union[PathfindOptions, _Mapping]] = ...) -> None: ...
 
 class PathfindProgress(_message.Message):
-    __slots__ = ("status", "distance_remaining", "position", "error")
+    __slots__ = ("status", "distance_remaining", "position", "error", "action_id")
     STATUS_FIELD_NUMBER: _ClassVar[int]
     DISTANCE_REMAINING_FIELD_NUMBER: _ClassVar[int]
     POSITION_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
+    ACTION_ID_FIELD_NUMBER: _ClassVar[int]
     status: PathfindStatus
     distance_remaining: float
     position: WorldPosition
     error: str
-    def __init__(self, status: _Optional[_Union[PathfindStatus, str]] = ..., distance_remaining: _Optional[float] = ..., position: _Optional[_Union[WorldPosition, _Mapping]] = ..., error: _Optional[str] = ...) -> None: ...
+    action_id: str
+    def __init__(self, status: _Optional[_Union[PathfindStatus, str]] = ..., distance_remaining: _Optional[float] = ..., position: _Optional[_Union[WorldPosition, _Mapping]] = ..., error: _Optional[str] = ..., action_id: _Optional[str] = ...) -> None: ...
 
 class StopPathfindingRequest(_message.Message):
     __slots__ = ("instance_id", "bot_id")
@@ -530,5 +621,61 @@ class StopPathfindingRequest(_message.Message):
     def __init__(self, instance_id: _Optional[str] = ..., bot_id: _Optional[str] = ...) -> None: ...
 
 class StopPathfindingResponse(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class AcquireBotControlRequest(_message.Message):
+    __slots__ = ("instance_id", "bot_id", "ttl_seconds")
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    BOT_ID_FIELD_NUMBER: _ClassVar[int]
+    TTL_SECONDS_FIELD_NUMBER: _ClassVar[int]
+    instance_id: str
+    bot_id: str
+    ttl_seconds: int
+    def __init__(self, instance_id: _Optional[str] = ..., bot_id: _Optional[str] = ..., ttl_seconds: _Optional[int] = ...) -> None: ...
+
+class BotControlLease(_message.Message):
+    __slots__ = ("token", "expires_at")
+    TOKEN_FIELD_NUMBER: _ClassVar[int]
+    EXPIRES_AT_FIELD_NUMBER: _ClassVar[int]
+    token: str
+    expires_at: _timestamp_pb2.Timestamp
+    def __init__(self, token: _Optional[str] = ..., expires_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
+
+class AcquireBotControlResponse(_message.Message):
+    __slots__ = ("lease",)
+    LEASE_FIELD_NUMBER: _ClassVar[int]
+    lease: BotControlLease
+    def __init__(self, lease: _Optional[_Union[BotControlLease, _Mapping]] = ...) -> None: ...
+
+class RenewBotControlRequest(_message.Message):
+    __slots__ = ("instance_id", "bot_id", "token", "ttl_seconds")
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    BOT_ID_FIELD_NUMBER: _ClassVar[int]
+    TOKEN_FIELD_NUMBER: _ClassVar[int]
+    TTL_SECONDS_FIELD_NUMBER: _ClassVar[int]
+    instance_id: str
+    bot_id: str
+    token: str
+    ttl_seconds: int
+    def __init__(self, instance_id: _Optional[str] = ..., bot_id: _Optional[str] = ..., token: _Optional[str] = ..., ttl_seconds: _Optional[int] = ...) -> None: ...
+
+class RenewBotControlResponse(_message.Message):
+    __slots__ = ("lease",)
+    LEASE_FIELD_NUMBER: _ClassVar[int]
+    lease: BotControlLease
+    def __init__(self, lease: _Optional[_Union[BotControlLease, _Mapping]] = ...) -> None: ...
+
+class ReleaseBotControlRequest(_message.Message):
+    __slots__ = ("instance_id", "bot_id", "token")
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    BOT_ID_FIELD_NUMBER: _ClassVar[int]
+    TOKEN_FIELD_NUMBER: _ClassVar[int]
+    instance_id: str
+    bot_id: str
+    token: str
+    def __init__(self, instance_id: _Optional[str] = ..., bot_id: _Optional[str] = ..., token: _Optional[str] = ...) -> None: ...
+
+class ReleaseBotControlResponse(_message.Message):
     __slots__ = ()
     def __init__(self) -> None: ...

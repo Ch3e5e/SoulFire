@@ -9,6 +9,8 @@ from typing import Any, TypeVar
 
 from connectrpc.interceptor import Interceptor, InterceptorSync
 from connectrpc.protocol import ProtocolType
+from google.protobuf import json_format
+from google.protobuf.struct_pb2 import Value
 
 from ._auth import BearerAuthInterceptor, BearerAuthInterceptorSync, TokenProvider
 from ._install import LocalServerHandle, LocalSoulFireServer
@@ -26,10 +28,33 @@ from .bot_pb2 import (
     WatchBotStatusesRequest,
     WatchBotStatusesResponse,
 )
+from .common_pb2 import MinecraftAccountProto, ProxyProto
 from .instance_connect import InstanceServiceClient, InstanceServiceClientSync
-from .instance_pb2 import InstanceInfoRequest
+from .instance_pb2 import (
+    InstanceAddAccountsBatchRequest,
+    InstanceAddProxiesBatchRequest,
+    InstanceCreateRequest,
+    InstanceDeleteRequest,
+    InstanceInfo,
+    InstanceInfoRequest,
+    InstanceListRequest,
+    InstanceListResponse,
+    InstanceRemoveAccountsBatchRequest,
+    InstanceRemoveProxiesBatchRequest,
+    InstanceUpdateConfigEntryRequest,
+    InstanceUpdateMetaRequest,
+)
 from .login_connect import LoginServiceClient, LoginServiceClientSync
 from .login_pb2 import EmailCodeRequest, LoginRequest, NextAuthFlowResponse
+from .mc_auth_connect import MCAuthServiceClient, MCAuthServiceClientSync
+from .mc_auth_pb2 import (
+    CredentialsAuthRequest,
+    CredentialsAuthResponse,
+    DeviceCodeAuthRequest,
+    DeviceCodeAuthResponse,
+    RefreshRequest,
+    RefreshResponse,
+)
 
 ClientT = TypeVar("ClientT")
 
@@ -59,11 +84,11 @@ class SoulFire:
         )
         self._clients: list[Any] = []
         self._local_server_handle: LocalServerHandle | None = None
-        self.local_server: LocalSoulFireServer | None = None
         self.bot_service = self.service(BotServiceClient)
         self.bot_live = self.service(BotLiveServiceClient)
         self.instance_service = self.service(InstanceServiceClient)
         self.login_service = self.service(LoginServiceClient)
+        self.mc_auth_service = self.service(MCAuthServiceClient)
 
     @classmethod
     def connect(
@@ -116,11 +141,33 @@ class SoulFire:
             await asyncio.to_thread(local_server.close)
             raise
         client._local_server_handle = local_server
-        client.local_server = local_server.info
         return client
 
     def set_token(self, token: TokenProvider | None) -> None:
         self._token = token
+
+    @property
+    def local_server(self) -> LocalSoulFireServer | None:
+        handle = self._local_server_handle
+        return None if handle is None else handle.info
+
+    @property
+    def local_server_logs(self) -> tuple[str, ...]:
+        handle = self._local_server_handle
+        return () if handle is None else handle.logs
+
+    @property
+    def is_local_server_running(self) -> bool:
+        handle = self._local_server_handle
+        return handle is not None and handle.is_running
+
+    async def restart_local_server(self) -> None:
+        handle = self._require_local_server()
+        await asyncio.to_thread(handle.restart)
+
+    async def stop_local_server(self) -> None:
+        handle = self._require_local_server()
+        await asyncio.to_thread(handle.stop)
 
     def service(self, client_type: Callable[..., ClientT]) -> ClientT:
         client = client_type(
@@ -138,7 +185,35 @@ class SoulFire:
             self.bot_service,
             self.bot_live,
             self.instance_service,
+            self.mc_auth_service,
         )
+
+    async def instances(
+        self,
+        *,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> list[InstanceListResponse.Instance]:
+        response = await self.instance_service.list_instances(
+            InstanceListRequest(),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+        return list(response.instances)
+
+    async def create_instance(
+        self,
+        friendly_name: str,
+        *,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> SoulFireInstance:
+        response = await self.instance_service.create_instance(
+            InstanceCreateRequest(friendlyName=friendly_name),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+        return self.instance(response.id)
 
     async def begin_login(
         self,
@@ -192,6 +267,11 @@ class SoulFire:
     ) -> None:
         await self.close()
 
+    def _require_local_server(self) -> LocalServerHandle:
+        if self._local_server_handle is None:
+            raise RuntimeError("This client does not manage a local SoulFire server")
+        return self._local_server_handle
+
 
 class SoulFireInstance:
     def __init__(
@@ -200,14 +280,183 @@ class SoulFireInstance:
         bot_service: BotServiceClient,
         bot_live: BotLiveServiceClient,
         instance_service: InstanceServiceClient,
+        mc_auth_service: MCAuthServiceClient | None = None,
     ) -> None:
         self.id = instance_id
         self._bot_service = bot_service
         self._bot_live = bot_live
         self._instance_service = instance_service
+        self._mc_auth_service = mc_auth_service
 
     def bot(self, bot_id: str) -> SoulFireBot:
         return SoulFireBot(self.id, bot_id, self._bot_service, self._bot_live)
+
+    async def info(
+        self,
+        *,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> InstanceInfo:
+        response = await self._instance_service.get_instance_info(
+            InstanceInfoRequest(id=self.id),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+        if response.WhichOneof("result") != "info":
+            raise RuntimeError(f"SoulFire did not return instance {self.id}")
+        return response.info
+
+    async def delete(
+        self,
+        *,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> None:
+        await self._instance_service.delete_instance(
+            InstanceDeleteRequest(id=self.id),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def update_name(
+        self,
+        friendly_name: str,
+        *,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> None:
+        await self._instance_service.update_instance_meta(
+            InstanceUpdateMetaRequest(id=self.id, friendly_name=friendly_name),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def set_config_entry(
+        self,
+        namespace: str,
+        key: str,
+        value: Any,
+        *,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> None:
+        await self._instance_service.update_instance_config_entry(
+            InstanceUpdateConfigEntryRequest(
+                id=self.id,
+                namespace=namespace,
+                key=key,
+                value=_to_proto_value(value),
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def add_accounts(
+        self,
+        accounts: Iterable[MinecraftAccountProto],
+        *,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> None:
+        await self._instance_service.add_instance_accounts_batch(
+            InstanceAddAccountsBatchRequest(id=self.id, accounts=accounts),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def remove_accounts(
+        self,
+        profile_ids: Iterable[str],
+        *,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> None:
+        await self._instance_service.remove_instance_accounts_batch(
+            InstanceRemoveAccountsBatchRequest(
+                id=self.id,
+                profile_ids=dict.fromkeys(profile_ids),
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def add_proxies(
+        self,
+        proxies: Iterable[ProxyProto],
+        *,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> None:
+        await self._instance_service.add_instance_proxies_batch(
+            InstanceAddProxiesBatchRequest(id=self.id, proxies=proxies),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def remove_proxies(
+        self,
+        addresses: Iterable[str],
+        *,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> None:
+        await self._instance_service.remove_instance_proxies_batch(
+            InstanceRemoveProxiesBatchRequest(
+                id=self.id,
+                addresses=dict.fromkeys(addresses),
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    def login_credentials(
+        self,
+        service: int,
+        payload: Iterable[str],
+        *,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> AsyncIterator[CredentialsAuthResponse]:
+        return self._require_mc_auth().login_credentials(
+            CredentialsAuthRequest(
+                instance_id=self.id,
+                service=service,
+                payload=payload,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    def login_device_code(
+        self,
+        service: int,
+        *,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> AsyncIterator[DeviceCodeAuthResponse]:
+        return self._require_mc_auth().login_device_code(
+            DeviceCodeAuthRequest(instance_id=self.id, service=service),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def refresh_account(
+        self,
+        account: MinecraftAccountProto,
+        *,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> RefreshResponse:
+        return await self._require_mc_auth().refresh(
+            RefreshRequest(instance_id=self.id, account=account),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    def _require_mc_auth(self) -> MCAuthServiceClient:
+        if self._mc_auth_service is None:
+            raise RuntimeError("Minecraft authentication is unavailable")
+        return self._mc_auth_service
 
     async def bots(
         self,
@@ -370,11 +619,11 @@ class SoulFireSync:
         )
         self._clients: list[Any] = []
         self._local_server_handle: LocalServerHandle | None = None
-        self.local_server: LocalSoulFireServer | None = None
         self.bot_service = self.service(BotServiceClientSync)
         self.bot_live = self.service(BotLiveServiceClientSync)
         self.instance_service = self.service(InstanceServiceClientSync)
         self.login_service = self.service(LoginServiceClientSync)
+        self.mc_auth_service = self.service(MCAuthServiceClientSync)
 
     @classmethod
     def connect(
@@ -426,11 +675,31 @@ class SoulFireSync:
             local_server.close()
             raise
         client._local_server_handle = local_server
-        client.local_server = local_server.info
         return client
 
     def set_token(self, token: TokenProvider | None) -> None:
         self._token = token
+
+    @property
+    def local_server(self) -> LocalSoulFireServer | None:
+        handle = self._local_server_handle
+        return None if handle is None else handle.info
+
+    @property
+    def local_server_logs(self) -> tuple[str, ...]:
+        handle = self._local_server_handle
+        return () if handle is None else handle.logs
+
+    @property
+    def is_local_server_running(self) -> bool:
+        handle = self._local_server_handle
+        return handle is not None and handle.is_running
+
+    def restart_local_server(self) -> None:
+        self._require_local_server().restart()
+
+    def stop_local_server(self) -> None:
+        self._require_local_server().stop()
 
     def service(self, client_type: Callable[..., ClientT]) -> ClientT:
         client = client_type(
@@ -448,7 +717,35 @@ class SoulFireSync:
             self.bot_service,
             self.bot_live,
             self.instance_service,
+            self.mc_auth_service,
         )
+
+    def instances(
+        self,
+        *,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> list[InstanceListResponse.Instance]:
+        response = self.instance_service.list_instances(
+            InstanceListRequest(),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+        return list(response.instances)
+
+    def create_instance(
+        self,
+        friendly_name: str,
+        *,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> SoulFireInstanceSync:
+        response = self.instance_service.create_instance(
+            InstanceCreateRequest(friendlyName=friendly_name),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+        return self.instance(response.id)
 
     def begin_login(
         self,
@@ -502,6 +799,11 @@ class SoulFireSync:
     ) -> None:
         self.close()
 
+    def _require_local_server(self) -> LocalServerHandle:
+        if self._local_server_handle is None:
+            raise RuntimeError("This client does not manage a local SoulFire server")
+        return self._local_server_handle
+
 
 class SoulFireInstanceSync:
     def __init__(
@@ -510,14 +812,183 @@ class SoulFireInstanceSync:
         bot_service: BotServiceClientSync,
         bot_live: BotLiveServiceClientSync,
         instance_service: InstanceServiceClientSync,
+        mc_auth_service: MCAuthServiceClientSync | None = None,
     ) -> None:
         self.id = instance_id
         self._bot_service = bot_service
         self._bot_live = bot_live
         self._instance_service = instance_service
+        self._mc_auth_service = mc_auth_service
 
     def bot(self, bot_id: str) -> SoulFireBotSync:
         return SoulFireBotSync(self.id, bot_id, self._bot_service, self._bot_live)
+
+    def info(
+        self,
+        *,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> InstanceInfo:
+        response = self._instance_service.get_instance_info(
+            InstanceInfoRequest(id=self.id),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+        if response.WhichOneof("result") != "info":
+            raise RuntimeError(f"SoulFire did not return instance {self.id}")
+        return response.info
+
+    def delete(
+        self,
+        *,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> None:
+        self._instance_service.delete_instance(
+            InstanceDeleteRequest(id=self.id),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    def update_name(
+        self,
+        friendly_name: str,
+        *,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> None:
+        self._instance_service.update_instance_meta(
+            InstanceUpdateMetaRequest(id=self.id, friendly_name=friendly_name),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    def set_config_entry(
+        self,
+        namespace: str,
+        key: str,
+        value: Any,
+        *,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> None:
+        self._instance_service.update_instance_config_entry(
+            InstanceUpdateConfigEntryRequest(
+                id=self.id,
+                namespace=namespace,
+                key=key,
+                value=_to_proto_value(value),
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    def add_accounts(
+        self,
+        accounts: Iterable[MinecraftAccountProto],
+        *,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> None:
+        self._instance_service.add_instance_accounts_batch(
+            InstanceAddAccountsBatchRequest(id=self.id, accounts=accounts),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    def remove_accounts(
+        self,
+        profile_ids: Iterable[str],
+        *,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> None:
+        self._instance_service.remove_instance_accounts_batch(
+            InstanceRemoveAccountsBatchRequest(
+                id=self.id,
+                profile_ids=dict.fromkeys(profile_ids),
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    def add_proxies(
+        self,
+        proxies: Iterable[ProxyProto],
+        *,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> None:
+        self._instance_service.add_instance_proxies_batch(
+            InstanceAddProxiesBatchRequest(id=self.id, proxies=proxies),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    def remove_proxies(
+        self,
+        addresses: Iterable[str],
+        *,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> None:
+        self._instance_service.remove_instance_proxies_batch(
+            InstanceRemoveProxiesBatchRequest(
+                id=self.id,
+                addresses=dict.fromkeys(addresses),
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    def login_credentials(
+        self,
+        service: int,
+        payload: Iterable[str],
+        *,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> Iterator[CredentialsAuthResponse]:
+        return self._require_mc_auth().login_credentials(
+            CredentialsAuthRequest(
+                instance_id=self.id,
+                service=service,
+                payload=payload,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    def login_device_code(
+        self,
+        service: int,
+        *,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> Iterator[DeviceCodeAuthResponse]:
+        return self._require_mc_auth().login_device_code(
+            DeviceCodeAuthRequest(instance_id=self.id, service=service),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    def refresh_account(
+        self,
+        account: MinecraftAccountProto,
+        *,
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> RefreshResponse:
+        return self._require_mc_auth().refresh(
+            RefreshRequest(instance_id=self.id, account=account),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    def _require_mc_auth(self) -> MCAuthServiceClientSync:
+        if self._mc_auth_service is None:
+            raise RuntimeError("Minecraft authentication is unavailable")
+        return self._mc_auth_service
 
     def bots(
         self,
@@ -684,3 +1155,9 @@ def _has_shuffle_accounts(settings: Iterable[Any]) -> bool:
             if entry.key == "shuffle-accounts" and entry.value.WhichOneof("kind") == "bool_value":
                 return entry.value.bool_value
     return False
+
+
+def _to_proto_value(value: Any) -> Value:
+    if isinstance(value, Value):
+        return value
+    return json_format.ParseDict(value, Value())

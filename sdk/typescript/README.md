@@ -110,8 +110,10 @@ execution path.
 
 ## Stream bot events
 
-`events()` returns an async iterable. Its default filter includes state
-changes, chat, and lifecycle events:
+`events()` returns an async iterable. Its default filter includes status,
+state, inventory, damage, chat, and lifecycle events. The stream stays open
+while the bot is stopped and follows the same configured account across
+reconnects:
 
 ```ts
 for await (const event of bot.events()) {
@@ -144,8 +146,111 @@ for await (const event of bot.events(undefined, {
 await bot.sendChat("Hello from the SoulFire SDK");
 ```
 
-The bot wrapper also exposes the world-query, interaction, and pathfinding
-calls currently implemented by `BotLiveService`.
+Action promises resolve after the bot game thread executes the action. A
+cancelled or failed action throws `SoulFireActionError` with the action ID and
+server result.
+
+## Control inventory and movement
+
+```ts
+import { ClickType } from "@soulfiremc/sdk";
+
+const inventory = await bot.inventory();
+console.log(inventory.slots);
+
+await bot.selectHotbar(0);
+await bot.clickInventory(12, ClickType.LEFT_CLICK);
+await bot.transferInventorySlot(12);
+await bot.moveInventoryStack(12, 36);
+
+await bot.setMovement({ forward: true, sprint: true });
+await bot.look(90, 0);
+await bot.resetMovement();
+```
+
+`moveInventoryStack()` waits for every click before sending the next one.
+
+## Coordinate multiple controllers
+
+Control leases are optional. Without a lease, authorized clients can issue
+actions normally. Once a client acquires a lease, other clients must wait for
+it to be released or expire:
+
+```ts
+const lease = await bot.acquireControl(30);
+
+try {
+  await bot.sendChat("This action carries the lease token");
+  await lease.renew(30);
+} finally {
+  await lease.release();
+}
+```
+
+Leases belong to the configured bot identity, not one transient Minecraft
+connection.
+
+## Use composable behaviors
+
+```ts
+import {
+  attackNearest,
+  collectBlocks,
+  runBehaviors,
+} from "@soulfiremc/sdk";
+
+const controller = new AbortController();
+
+await runBehaviors(
+  bot,
+  [
+    collectBlocks({ blockIds: ["minecraft:oak_log"], maxCount: 16 }),
+    attackNearest({ entityTypes: ["minecraft:zombie"] }),
+  ],
+  { signal: controller.signal },
+);
+```
+
+`collectBlocks`, `followEntity`, `attackNearest`, `autoEat`, and `build` use
+the public bot API. They are building blocks, not special server-side modes.
+
+## Provision instances and accounts
+
+Operators can create compartmentalized instances and authenticate accounts:
+
+```ts
+import { AccountTypeDeviceCode } from "@soulfiremc/sdk";
+
+const instance = await soulfire.createInstance("automation");
+
+for await (const step of instance.loginDeviceCode({
+  service: AccountTypeDeviceCode.MICROSOFT_JAVA_DEVICE_CODE,
+})) {
+  if (step.data.case === "deviceCode") {
+    console.log(step.data.value.verificationUri, step.data.value.userCode);
+  }
+  if (step.data.case === "account") {
+    await instance.addAccounts([step.data.value]);
+  }
+}
+```
+
+Instance listing, configuration updates, account and proxy batch operations,
+credentials login, device-code login, and account refresh have high-level
+wrappers.
+
+## Manage an installed server
+
+```ts
+console.log(soulfire.localServer?.version);
+console.log(soulfire.localServerLogs);
+
+await soulfire.restartLocalServer();
+await soulfire.stopLocalServer();
+```
+
+Restart keeps the same directory, port, release, and root API token. These
+methods are only available for a process created by `SoulFire.install()`.
 
 ## Call a generated service
 

@@ -28,6 +28,7 @@ import com.soulfiremc.server.api.metadata.MetadataHolder;
 import com.soulfiremc.server.api.metrics.InstancePluginStats;
 import com.soulfiremc.server.automation.AutomationTeamCoordinator;
 import com.soulfiremc.server.bot.BotConnection;
+import com.soulfiremc.server.bot.BotControlLeaseManager;
 import com.soulfiremc.server.database.AuditLogType;
 import com.soulfiremc.server.database.generated.Tables;
 import com.soulfiremc.server.metrics.InstanceMetricsCollector;
@@ -77,6 +78,7 @@ import java.util.concurrent.TimeUnit;
 public final class InstanceManager {
   private static final ThreadLocal<InstanceManager> CURRENT = new ThreadLocal<>();
   private final Map<UUID, BotConnection> botConnections = new ConcurrentHashMap<>();
+  private final BotControlLeaseManager botControlLeaseManager = new BotControlLeaseManager();
   private final MetadataHolder<Object> metadata = new MetadataHolder<>();
   private final MetadataHolder<JsonElement> persistentMetadata = new MetadataHolder<>();
   private final UUID id;

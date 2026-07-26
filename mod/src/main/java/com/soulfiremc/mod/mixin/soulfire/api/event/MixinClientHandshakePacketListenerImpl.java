@@ -21,10 +21,14 @@ import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.soulfiremc.server.api.SoulFireAPI;
 import com.soulfiremc.server.api.event.bot.BotClientBrandEvent;
+import com.soulfiremc.server.api.event.bot.BotConnectedEvent;
 import com.soulfiremc.server.bot.BotConnection;
 import net.minecraft.client.multiplayer.ClientHandshakePacketListenerImpl;
+import net.minecraft.network.protocol.login.ClientboundLoginFinishedPacket;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(ClientHandshakePacketListenerImpl.class)
 public class MixinClientHandshakePacketListenerImpl {
@@ -33,5 +37,10 @@ public class MixinClientHandshakePacketListenerImpl {
     var event = new BotClientBrandEvent(BotConnection.current(), original.call());
     SoulFireAPI.postEvent(event);
     return event.clientBrand();
+  }
+
+  @Inject(method = "handleLoginFinished", at = @At("RETURN"))
+  private void postConnected(ClientboundLoginFinishedPacket packet, CallbackInfo ci) {
+    SoulFireAPI.postEvent(new BotConnectedEvent(BotConnection.current()));
   }
 }

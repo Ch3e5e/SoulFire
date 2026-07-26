@@ -88,6 +88,7 @@ public final class RPCServer {
           HttpHeaderNames.CONTENT_TYPE,
           HttpHeaderNames.of("X-GRPC-WEB"),
           HttpHeaderNames.of("X-User-Agent"),
+          HttpHeaderNames.of("X-SoulFire-Control-Token"),
           HttpHeaderNames.AUTHORIZATION
         )
         // Expose trailers of the HTTP response to the client.

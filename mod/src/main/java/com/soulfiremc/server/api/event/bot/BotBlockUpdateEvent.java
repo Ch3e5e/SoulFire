@@ -15,21 +15,17 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-package com.soulfiremc.server.util;
+package com.soulfiremc.server.api.event.bot;
 
-import io.grpc.Metadata;
+import com.soulfiremc.server.api.event.SoulFireBotEvent;
+import com.soulfiremc.server.bot.BotConnection;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.block.state.BlockState;
 
-import static io.grpc.Metadata.ASCII_STRING_MARSHALLER;
-
-public final class RPCConstants {
-  public static final int LOGIN_RATE_LIMIT = 20;
-
-  public static final String API_AUDIENCE = "api";
-  public static final String WEBDAV_AUDIENCE = "webdav";
-  public static final Metadata.Key<String> AUTHORIZATION_METADATA_KEY =
-    Metadata.Key.of("Authorization", ASCII_STRING_MARSHALLER);
-  public static final Metadata.Key<String> BOT_CONTROL_TOKEN_METADATA_KEY =
-    Metadata.Key.of("X-SoulFire-Control-Token", ASCII_STRING_MARSHALLER);
-
-  private RPCConstants() {}
-}
+/// Fired after the bot's observed client world changes one block state.
+public record BotBlockUpdateEvent(
+  BotConnection connection,
+  BlockPos position,
+  BlockState previousState,
+  BlockState state
+) implements SoulFireBotEvent {}

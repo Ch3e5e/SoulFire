@@ -384,6 +384,11 @@ enum InstancePermission {
   CONTROL_BOTS = 21;
   // Permission to activate, deactivate, and dry-run scripts.
   EXECUTE_SCRIPTS = 22;
+  // Permission to control a connected bot in the Minecraft world.
+  // Required for chat, movement, inventory, interaction, and pathfinding RPCs.
+  // This is deliberately separate from UPDATE_BOT_CONFIG so operators can
+  // script bots without changing persistent settings.
+  CONTROL_BOT_ACTIONS = 23;
 }
 
 // The role assigned to a user account, determining their base permission level.

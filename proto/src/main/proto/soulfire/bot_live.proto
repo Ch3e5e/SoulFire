@@ -33,7 +33,7 @@ import "google/protobuf/timestamp.proto";
 // authoritative.
 //
 // All RPCs require READ_BOT_INFO (for reads and event streams) or
-// UPDATE_BOT_CONFIG (for actions) on the owning instance.
+// CONTROL_BOT_ACTIONS (for actions) on the owning instance.
 // ============================================================================
 
 // A block position in a specific dimension. Coordinates are Minecraft block
@@ -144,6 +144,10 @@ message BotEventFilter {
   // Maximum radius (blocks) for block updates. Ignored if
   // include_block_updates is false. Server clamps to a sane upper bound.
   float block_radius = 7;
+  // Deliver inventory and open-container snapshots when their state changes.
+  bool include_inventory = 8;
+  // Deliver explicit damage events.
+  bool include_damage = 9;
 }
 
 // Request to subscribe to a bot's live event stream.
@@ -187,6 +191,9 @@ enum ChatSource {
   CHAT_SOURCE_ACTION_BAR = 3;
   // Whisper directed at this bot.
   CHAT_SOURCE_WHISPER = 4;
+  // The client received a message but Minecraft did not expose reliable
+  // source metadata for it.
+  CHAT_SOURCE_UNKNOWN = 5;
 }
 
 // A single chat or system message observed by the bot.
@@ -254,6 +261,18 @@ message BotBlockUpdateEvent {
   string new_block_id = 3 [(google.api.field_behavior) = REQUIRED];
 }
 
+// Current inventory or open-container state after a change.
+message BotInventoryEvent {
+  BotInventoryStateResponse state = 1 [(google.api.field_behavior) = REQUIRED];
+}
+
+// Damage observed by the bot.
+message BotDamageEvent {
+  float previous_health = 1 [(google.api.field_behavior) = REQUIRED];
+  float health = 2 [(google.api.field_behavior) = REQUIRED];
+  float amount = 3 [(google.api.field_behavior) = REQUIRED];
+}
+
 // A single message on the bot event stream.
 message BotEvent {
   oneof event {
@@ -265,7 +284,26 @@ message BotEvent {
     BotLifecycleEvent lifecycle = 4;
     BotEntityEvent entity_event = 5;
     BotBlockUpdateEvent block_update = 6;
+    // Persistent desired state and controller state. This is emitted first and
+    // whenever it changes, including while the bot is offline or reconnecting.
+    BotStatus status = 7;
+    BotInventoryEvent inventory = 8;
+    BotDamageEvent damage = 9;
   }
+}
+
+// Final outcome of an imperative bot action.
+enum BotActionStatus {
+  BOT_ACTION_STATUS_UNSPECIFIED = 0;
+  BOT_ACTION_STATUS_COMPLETED = 1;
+  BOT_ACTION_STATUS_CANCELLED = 2;
+  BOT_ACTION_STATUS_FAILED = 3;
+}
+
+message BotActionResult {
+  string action_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  BotActionStatus status = 2 [(google.api.field_behavior) = REQUIRED];
+  optional string error = 3;
 }
 
 // ============================================================================
@@ -282,6 +320,7 @@ message SendChatRequest {
 }
 
 message SendChatResponse {
+  BotActionResult result = 1 [(google.api.field_behavior) = REQUIRED];
 }
 
 // ============================================================================
@@ -352,6 +391,7 @@ message DigBlockRequest {
 }
 
 message DigBlockResponse {
+  BotActionResult result = 1 [(google.api.field_behavior) = REQUIRED];
 }
 
 message PlaceBlockRequest {
@@ -367,6 +407,7 @@ message PlaceBlockRequest {
 }
 
 message PlaceBlockResponse {
+  BotActionResult result = 1 [(google.api.field_behavior) = REQUIRED];
 }
 
 message UseItemRequest {
@@ -378,6 +419,16 @@ message UseItemRequest {
 }
 
 message UseItemResponse {
+  BotActionResult result = 1 [(google.api.field_behavior) = REQUIRED];
+}
+
+message ReleaseItemRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+}
+
+message ReleaseItemResponse {
+  BotActionResult result = 1 [(google.api.field_behavior) = REQUIRED];
 }
 
 message AttackEntityRequest {
@@ -392,6 +443,7 @@ message AttackEntityRequest {
 }
 
 message AttackEntityResponse {
+  BotActionResult result = 1 [(google.api.field_behavior) = REQUIRED];
 }
 
 message InteractEntityRequest {
@@ -407,6 +459,7 @@ message InteractEntityRequest {
 }
 
 message InteractEntityResponse {
+  BotActionResult result = 1 [(google.api.field_behavior) = REQUIRED];
 }
 
 message SwingArmRequest {
@@ -416,6 +469,16 @@ message SwingArmRequest {
 }
 
 message SwingArmResponse {
+  BotActionResult result = 1 [(google.api.field_behavior) = REQUIRED];
+}
+
+message RespawnRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+}
+
+message RespawnResponse {
+  BotActionResult result = 1 [(google.api.field_behavior) = REQUIRED];
 }
 
 // ============================================================================
@@ -462,10 +525,8 @@ message PathfindOptions {
   bool allow_mining = 1;
   // If true, the bot may place blocks (e.g. bridge, pillar) when necessary.
   bool allow_placing = 2;
-  // If true, the bot may take damage (e.g. short fall) when useful.
-  bool allow_damage = 3;
   // Maximum wall-clock seconds for planning + traversal. 0 means server default.
-  int32 timeout_seconds = 4;
+  int32 timeout_seconds = 3;
 }
 
 message GoToRequest {
@@ -499,6 +560,7 @@ message PathfindProgress {
   optional WorldPosition position = 3;
   // Present when status is FAILED. Human-readable failure reason.
   optional string error = 4;
+  string action_id = 5 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
 }
 
 message StopPathfindingRequest {
@@ -507,6 +569,44 @@ message StopPathfindingRequest {
 }
 
 message StopPathfindingResponse {
+}
+
+// Exclusive control lease for coordinating multiple SDK clients, scripts, and
+// built-in automation against the same bot.
+message AcquireBotControlRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  // Requested lease lifetime. The server clamps this to its configured range.
+  uint32 ttl_seconds = 3;
+}
+
+message BotControlLease {
+  string token = 1 [(google.api.field_behavior) = REQUIRED];
+  google.protobuf.Timestamp expires_at = 2 [(google.api.field_behavior) = REQUIRED];
+}
+
+message AcquireBotControlResponse {
+  BotControlLease lease = 1 [(google.api.field_behavior) = REQUIRED];
+}
+
+message RenewBotControlRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string token = 3 [(google.api.field_behavior) = REQUIRED];
+  uint32 ttl_seconds = 4;
+}
+
+message RenewBotControlResponse {
+  BotControlLease lease = 1 [(google.api.field_behavior) = REQUIRED];
+}
+
+message ReleaseBotControlRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string token = 3 [(google.api.field_behavior) = REQUIRED];
+}
+
+message ReleaseBotControlResponse {
 }
 
 // ============================================================================
@@ -518,9 +618,8 @@ message StopPathfindingResponse {
 // Permissions:
 // - READ_BOT_INFO: required for WatchBotEvents, GetBlock, FindBlocks,
 //                  ListNearbyEntities.
-// - UPDATE_BOT_CONFIG: required for SendChat, DigBlock, PlaceBlock, UseItem,
-//                      AttackEntity, InteractEntity, SwingArm, GoTo,
-//                      StopPathfinding.
+// - CONTROL_BOT_ACTIONS: required for chat, interactions, pathfinding, and
+//                        exclusive control leases.
 //
 // Error handling mirrors BotService:
 // - NOT_FOUND: instance or bot does not exist.
@@ -530,16 +629,15 @@ message StopPathfindingResponse {
 // - INTERNAL: unexpected server errors.
 service BotLiveService {
   // Subscribes to a single multiplexed event stream for one bot. The first
-  // message is always a snapshot; subsequent messages are deltas and events
-  // according to the filter. The server may emit additional snapshots if the
-  // session reconnects or the client falls behind.
+  // message is always the current BotStatus. The stream remains open while the
+  // bot is stopped and follows the configured bot across reconnects. Live
+  // snapshots and filtered events begin whenever a connection becomes ready.
   rpc WatchBotEvents (WatchBotEventsRequest) returns (stream BotEvent) {
     option (soulfire.v1.api_method) = {
       display_name: "Watch bot events"
       permissions: "READ_BOT_INFO"
       scope: "instance.bot"
-      preconditions: "Bot must be online."
-      execution: "Opens a live event stream until the client cancels or the bot disconnects."
+      execution: "Opens a live event stream until the client cancels or the account is removed."
       side_effects: "Allocates server-side subscription resources for the bot."
     };
   }
@@ -553,10 +651,10 @@ service BotLiveService {
     };
     option (soulfire.v1.api_method) = {
       display_name: "Send chat"
-      permissions: "UPDATE_BOT_CONFIG"
+      permissions: "CONTROL_BOT_ACTIONS"
       scope: "instance.bot"
       preconditions: "Bot must be online."
-      execution: "Queued for the next game tick."
+      execution: "Completes after the message has been submitted on the bot game thread."
       side_effects: "Transmits the message to the Minecraft server."
     };
   }
@@ -612,12 +710,12 @@ service BotLiveService {
     };
     option (soulfire.v1.api_method) = {
       display_name: "Dig block"
-      permissions: "UPDATE_BOT_CONFIG"
+      permissions: "CONTROL_BOT_ACTIONS"
       scope: "instance.bot"
       preconditions: "Bot must be online."
       preconditions: "Target block must be within reach and loaded."
-      execution: "Immediate"
-      side_effects: "Begins or cancels block breaking at the target."
+      execution: "Completes when the block is broken, cancelled, or the action fails."
+      side_effects: "Breaks or cancels breaking the target block."
     };
   }
 
@@ -630,7 +728,7 @@ service BotLiveService {
     };
     option (soulfire.v1.api_method) = {
       display_name: "Place block"
-      permissions: "UPDATE_BOT_CONFIG"
+      permissions: "CONTROL_BOT_ACTIONS"
       scope: "instance.bot"
       preconditions: "Bot must be online."
       preconditions: "Target adjacent position must be within reach and loaded."
@@ -647,11 +745,27 @@ service BotLiveService {
     };
     option (soulfire.v1.api_method) = {
       display_name: "Use item"
-      permissions: "UPDATE_BOT_CONFIG"
+      permissions: "CONTROL_BOT_ACTIONS"
       scope: "instance.bot"
       preconditions: "Bot must be online."
       execution: "Immediate"
       side_effects: "Triggers the held item's use behaviour."
+    };
+  }
+
+  // Releases an item that is currently being used, such as firing a drawn bow
+  // or stopping eating.
+  rpc ReleaseItem (ReleaseItemRequest) returns (ReleaseItemResponse) {
+    option (google.api.http) = {
+      post: "/v1/instances/{instance_id}/bots/{bot_id}/actions/release-item"
+      body: "*"
+    };
+    option (soulfire.v1.api_method) = {
+      display_name: "Release item"
+      permissions: "CONTROL_BOT_ACTIONS"
+      scope: "instance.bot"
+      preconditions: "Bot must be online."
+      execution: "Completes after the release is performed on the bot game thread."
     };
   }
 
@@ -663,7 +777,7 @@ service BotLiveService {
     };
     option (soulfire.v1.api_method) = {
       display_name: "Attack entity"
-      permissions: "UPDATE_BOT_CONFIG"
+      permissions: "CONTROL_BOT_ACTIONS"
       scope: "instance.bot"
       preconditions: "Bot must be online."
       preconditions: "Target entity must be observable and within reach."
@@ -681,7 +795,7 @@ service BotLiveService {
     };
     option (soulfire.v1.api_method) = {
       display_name: "Interact with entity"
-      permissions: "UPDATE_BOT_CONFIG"
+      permissions: "CONTROL_BOT_ACTIONS"
       scope: "instance.bot"
       preconditions: "Bot must be online."
       preconditions: "Target entity must be observable and within reach."
@@ -698,11 +812,26 @@ service BotLiveService {
     };
     option (soulfire.v1.api_method) = {
       display_name: "Swing arm"
-      permissions: "UPDATE_BOT_CONFIG"
+      permissions: "CONTROL_BOT_ACTIONS"
       scope: "instance.bot"
       preconditions: "Bot must be online."
       execution: "Immediate"
       side_effects: "Sends an arm swing animation packet."
+    };
+  }
+
+  // Respawns a dead bot.
+  rpc Respawn (RespawnRequest) returns (RespawnResponse) {
+    option (google.api.http) = {
+      post: "/v1/instances/{instance_id}/bots/{bot_id}/actions:respawn"
+      body: "*"
+    };
+    option (soulfire.v1.api_method) = {
+      display_name: "Respawn bot"
+      permissions: "CONTROL_BOT_ACTIONS"
+      scope: "instance.bot"
+      preconditions: "Bot must be online and dead."
+      execution: "Completes after the respawn request is sent."
     };
   }
 
@@ -713,7 +842,7 @@ service BotLiveService {
   rpc GoTo (GoToRequest) returns (stream PathfindProgress) {
     option (soulfire.v1.api_method) = {
       display_name: "Pathfind to goal"
-      permissions: "UPDATE_BOT_CONFIG"
+      permissions: "CONTROL_BOT_ACTIONS"
       scope: "instance.bot"
       preconditions: "Bot must be online."
       execution: "Starts a pathfinding session that streams progress updates."
@@ -728,10 +857,50 @@ service BotLiveService {
     };
     option (soulfire.v1.api_method) = {
       display_name: "Stop pathfinding"
-      permissions: "UPDATE_BOT_CONFIG"
+      permissions: "CONTROL_BOT_ACTIONS"
       scope: "instance.bot"
       execution: "Immediate"
       side_effects: "Cancels any in-progress pathfinding session for this bot."
+    };
+  }
+
+  // Acquires exclusive action control for a bot. While the lease is active,
+  // action calls must include its token in the X-SoulFire-Control-Token
+  // request header.
+  rpc AcquireBotControl (AcquireBotControlRequest) returns (AcquireBotControlResponse) {
+    option (google.api.http) = {
+      post: "/v1/instances/{instance_id}/bots/{bot_id}/control:acquire"
+      body: "*"
+    };
+    option (soulfire.v1.api_method) = {
+      display_name: "Acquire bot control"
+      permissions: "CONTROL_BOT_ACTIONS"
+      scope: "instance.bot"
+      side_effects: "Prevents other clients from issuing actions until the lease is released or expires."
+    };
+  }
+
+  rpc RenewBotControl (RenewBotControlRequest) returns (RenewBotControlResponse) {
+    option (google.api.http) = {
+      post: "/v1/instances/{instance_id}/bots/{bot_id}/control:renew"
+      body: "*"
+    };
+    option (soulfire.v1.api_method) = {
+      display_name: "Renew bot control"
+      permissions: "CONTROL_BOT_ACTIONS"
+      scope: "instance.bot"
+    };
+  }
+
+  rpc ReleaseBotControl (ReleaseBotControlRequest) returns (ReleaseBotControlResponse) {
+    option (google.api.http) = {
+      post: "/v1/instances/{instance_id}/bots/{bot_id}/control:release"
+      body: "*"
+    };
+    option (soulfire.v1.api_method) = {
+      display_name: "Release bot control"
+      permissions: "CONTROL_BOT_ACTIONS"
+      scope: "instance.bot"
     };
   }
 }

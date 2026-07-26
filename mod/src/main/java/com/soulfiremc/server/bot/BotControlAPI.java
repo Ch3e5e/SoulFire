@@ -58,6 +58,19 @@ public final class BotControlAPI {
     return clearTasks(ControlStopReason.CANCELLED, null);
   }
 
+  public synchronized boolean cancel(ControlTask task) {
+    var active = activeTask();
+    if (active == task) {
+      finishActiveTask(ControlStopReason.CANCELLED, null);
+      return true;
+    }
+    if (!taskStack.remove(task)) {
+      return false;
+    }
+    stopTask(task, ControlStopReason.CANCELLED, null);
+    return true;
+  }
+
   public synchronized boolean hasActiveTask() {
     return activeTask() != null;
   }

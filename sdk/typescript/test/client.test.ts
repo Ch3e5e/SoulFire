@@ -11,6 +11,7 @@ import {
   type SetBotsDesiredStateRequest,
 } from "../src/generated/soulfire/bot_pb.js";
 import {
+  BotActionStatus,
   BotLiveService,
   type SendChatRequest,
   type WatchBotEventsRequest,
@@ -44,6 +45,8 @@ describe("SoulFireBot", () => {
       botId: "bot-id",
       filter: {
         includeChat: true,
+        includeDamage: true,
+        includeInventory: true,
         includeLifecycle: true,
         includeStateDeltas: true,
       },
@@ -56,7 +59,12 @@ describe("SoulFireBot", () => {
       service(BotLiveService, {
         sendChat(request) {
           received = request;
-          return {};
+          return {
+            result: {
+              actionId: "action-id",
+              status: BotActionStatus.COMPLETED,
+            },
+          };
         },
       });
     });
@@ -74,6 +82,48 @@ describe("SoulFireBot", () => {
       botId: "bot-id",
       message: "hello",
     });
+  });
+
+  it("attaches and clears an acquired control lease", async () => {
+    const actionTokens: Array<string | null> = [];
+    const transport = createRouterTransport(({ service }) => {
+      service(BotLiveService, {
+        acquireBotControl() {
+          return {
+            lease: {
+              token: "lease-token",
+            },
+          };
+        },
+        releaseBotControl() {
+          return {};
+        },
+        sendChat(_request, context) {
+          actionTokens.push(
+            context.requestHeader.get("X-SoulFire-Control-Token"),
+          );
+          return {
+            result: {
+              actionId: "action-id",
+              status: BotActionStatus.COMPLETED,
+            },
+          };
+        },
+      });
+    });
+    const bot = new SoulFireBot(
+      "instance-id",
+      "bot-id",
+      createClient(BotService, transport),
+      createClient(BotLiveService, transport),
+    );
+
+    const lease = await bot.acquireControl();
+    await bot.sendChat("leased");
+    await lease.release();
+    await bot.sendChat("unleased");
+
+    expect(actionTokens).toEqual(["lease-token", null]);
   });
 });
 

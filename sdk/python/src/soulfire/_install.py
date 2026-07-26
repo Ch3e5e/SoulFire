@@ -20,7 +20,7 @@ import urllib.parse
 import urllib.request
 import zipfile
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -46,16 +46,39 @@ class LocalServerHandle:
     info: LocalSoulFireServer
     token: str
     _process: subprocess.Popen[str]
+    _command: tuple[str, ...]
+    _environment: dict[str, str]
+    _on_log: Callable[[str], None]
+    _startup_timeout: float
+    _logs: list[str]
+
+    @property
+    def is_running(self) -> bool:
+        return self._process.poll() is None
+
+    @property
+    def logs(self) -> tuple[str, ...]:
+        return tuple(self._logs)
+
+    def stop(self) -> None:
+        _stop_process(self._process)
+
+    def restart(self) -> None:
+        self.stop()
+        self._process = _spawn_server(
+            self._command,
+            self.info.run_directory,
+            self._environment,
+        )
+        _wait_for_server_ready(
+            self._process,
+            self._on_log,
+            self._startup_timeout,
+        )
+        self.info = replace(self.info, pid=self._process.pid)
 
     def close(self) -> None:
-        if self._process.poll() is not None:
-            return
-        self._process.terminate()
-        try:
-            self._process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            self._process.kill()
-            self._process.wait()
+        self.stop()
 
 
 def install_local_server(
@@ -85,29 +108,32 @@ def install_local_server(
     selected_port = port if port is not None else _find_available_port()
     _validate_port(selected_port)
 
-    process = subprocess.Popen(
-        [
-            str(java_path),
-            *java_args,
-            f"-Dsf.grpc.port={selected_port}",
-            "-jar",
-            str(jar_path),
-        ],
-        cwd=run_directory,
-        env={
-            **os.environ,
-            "JAVA_HOME": str(_java_home(install_directory / "jvm-25")),
-        },
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        bufsize=1,
+    command = (
+        str(java_path),
+        *java_args,
+        f"-Dsf.grpc.port={selected_port}",
+        "-jar",
+        str(jar_path),
+    )
+    environment = {
+        **os.environ,
+        "JAVA_HOME": str(_java_home(install_directory / "jvm-25")),
+    }
+    logs: list[str] = []
+
+    def handle_log(line: str) -> None:
+        logs.append(line)
+        if on_log is not None:
+            on_log(line)
+
+    process = _spawn_server(
+        command,
+        run_directory,
+        environment,
     )
 
     try:
-        _wait_for_server_ready(process, on_log, startup_timeout)
+        _wait_for_server_ready(process, handle_log, startup_timeout)
         secret_key = (run_directory / "secret-key.bin").read_bytes()
         base_url = f"http://127.0.0.1:{selected_port}"
         return LocalServerHandle(
@@ -122,10 +148,33 @@ def install_local_server(
             ),
             token=_create_root_api_token(secret_key),
             _process=process,
+            _command=command,
+            _environment=environment,
+            _on_log=handle_log,
+            _startup_timeout=startup_timeout,
+            _logs=logs,
         )
     except BaseException:
         _stop_process(process)
         raise
+
+
+def _spawn_server(
+    command: Iterable[str],
+    run_directory: Path,
+    environment: dict[str, str],
+) -> subprocess.Popen[str]:
+    return subprocess.Popen(
+        list(command),
+        cwd=run_directory,
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+    )
 
 
 def _resolve_release(version: str | None) -> dict[str, Any]:

@@ -18,7 +18,7 @@ from connectrpc.protocol import ProtocolType
 from connectrpc.server import ConnectASGIApplication, ConnectWSGIApplication, Endpoint, EndpointSync
 from pyqwest import Client, SyncClient
 
-from .bot_live_pb2 import AttackEntityRequest, AttackEntityResponse, BotEvent, DigBlockRequest, DigBlockResponse, FindBlocksRequest, FindBlocksResponse, GetBlockRequest, GetBlockResponse, GoToRequest, InteractEntityRequest, InteractEntityResponse, ListNearbyEntitiesRequest, ListNearbyEntitiesResponse, PathfindProgress, PlaceBlockRequest, PlaceBlockResponse, SendChatRequest, SendChatResponse, StopPathfindingRequest, StopPathfindingResponse, SwingArmRequest, SwingArmResponse, UseItemRequest, UseItemResponse, WatchBotEventsRequest
+from .bot_live_pb2 import AcquireBotControlRequest, AcquireBotControlResponse, AttackEntityRequest, AttackEntityResponse, BotEvent, DigBlockRequest, DigBlockResponse, FindBlocksRequest, FindBlocksResponse, GetBlockRequest, GetBlockResponse, GoToRequest, InteractEntityRequest, InteractEntityResponse, ListNearbyEntitiesRequest, ListNearbyEntitiesResponse, PathfindProgress, PlaceBlockRequest, PlaceBlockResponse, ReleaseBotControlRequest, ReleaseBotControlResponse, ReleaseItemRequest, ReleaseItemResponse, RenewBotControlRequest, RenewBotControlResponse, RespawnRequest, RespawnResponse, SendChatRequest, SendChatResponse, StopPathfindingRequest, StopPathfindingResponse, SwingArmRequest, SwingArmResponse, UseItemRequest, UseItemResponse, WatchBotEventsRequest
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator, Iterable, Iterator, Mapping
@@ -59,6 +59,9 @@ class BotLiveService(Protocol):
     async def use_item(self, request: UseItemRequest, ctx: RequestContext[UseItemRequest, UseItemResponse]) -> UseItemResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
+    async def release_item(self, request: ReleaseItemRequest, ctx: RequestContext[ReleaseItemRequest, ReleaseItemResponse]) -> ReleaseItemResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
     async def attack_entity(self, request: AttackEntityRequest, ctx: RequestContext[AttackEntityRequest, AttackEntityResponse]) -> AttackEntityResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
@@ -68,10 +71,22 @@ class BotLiveService(Protocol):
     async def swing_arm(self, request: SwingArmRequest, ctx: RequestContext[SwingArmRequest, SwingArmResponse]) -> SwingArmResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
+    async def respawn(self, request: RespawnRequest, ctx: RequestContext[RespawnRequest, RespawnResponse]) -> RespawnResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
     def go_to(self, request: GoToRequest, ctx: RequestContext[GoToRequest, PathfindProgress]) -> AsyncIterator[PathfindProgress]:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
     async def stop_pathfinding(self, request: StopPathfindingRequest, ctx: RequestContext[StopPathfindingRequest, StopPathfindingResponse]) -> StopPathfindingResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def acquire_bot_control(self, request: AcquireBotControlRequest, ctx: RequestContext[AcquireBotControlRequest, AcquireBotControlResponse]) -> AcquireBotControlResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def renew_bot_control(self, request: RenewBotControlRequest, ctx: RequestContext[RenewBotControlRequest, RenewBotControlResponse]) -> RenewBotControlResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def release_bot_control(self, request: ReleaseBotControlRequest, ctx: RequestContext[ReleaseBotControlRequest, ReleaseBotControlResponse]) -> ReleaseBotControlResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
 
@@ -168,6 +183,16 @@ class BotLiveServiceASGIApplication(ConnectASGIApplication[BotLiveService]):
                     ),
                     function=svc.use_item,
                 ),
+                "/soulfire.v1.BotLiveService/ReleaseItem": Endpoint.unary(
+                    method=MethodInfo(
+                        name="ReleaseItem",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=ReleaseItemRequest,
+                        output=ReleaseItemResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.release_item,
+                ),
                 "/soulfire.v1.BotLiveService/AttackEntity": Endpoint.unary(
                     method=MethodInfo(
                         name="AttackEntity",
@@ -198,6 +223,16 @@ class BotLiveServiceASGIApplication(ConnectASGIApplication[BotLiveService]):
                     ),
                     function=svc.swing_arm,
                 ),
+                "/soulfire.v1.BotLiveService/Respawn": Endpoint.unary(
+                    method=MethodInfo(
+                        name="Respawn",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=RespawnRequest,
+                        output=RespawnResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.respawn,
+                ),
                 "/soulfire.v1.BotLiveService/GoTo": Endpoint.server_stream(
                     method=MethodInfo(
                         name="GoTo",
@@ -217,6 +252,36 @@ class BotLiveServiceASGIApplication(ConnectASGIApplication[BotLiveService]):
                         idempotency_level=IdempotencyLevel.UNKNOWN,
                     ),
                     function=svc.stop_pathfinding,
+                ),
+                "/soulfire.v1.BotLiveService/AcquireBotControl": Endpoint.unary(
+                    method=MethodInfo(
+                        name="AcquireBotControl",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=AcquireBotControlRequest,
+                        output=AcquireBotControlResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.acquire_bot_control,
+                ),
+                "/soulfire.v1.BotLiveService/RenewBotControl": Endpoint.unary(
+                    method=MethodInfo(
+                        name="RenewBotControl",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=RenewBotControlRequest,
+                        output=RenewBotControlResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.renew_bot_control,
+                ),
+                "/soulfire.v1.BotLiveService/ReleaseBotControl": Endpoint.unary(
+                    method=MethodInfo(
+                        name="ReleaseBotControl",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=ReleaseBotControlRequest,
+                        output=ReleaseBotControlResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.release_bot_control,
                 ),
             },
             interceptors=interceptors,
@@ -416,6 +481,26 @@ class BotLiveServiceClient(ConnectClient):
             timeout_ms=timeout_ms,
         )
 
+    async def release_item(
+        self,
+        request: ReleaseItemRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> ReleaseItemResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="ReleaseItem",
+                service_name="soulfire.v1.BotLiveService",
+                input=ReleaseItemRequest,
+                output=ReleaseItemResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
     async def attack_entity(
         self,
         request: AttackEntityRequest,
@@ -476,6 +561,26 @@ class BotLiveServiceClient(ConnectClient):
             timeout_ms=timeout_ms,
         )
 
+    async def respawn(
+        self,
+        request: RespawnRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> RespawnResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="Respawn",
+                service_name="soulfire.v1.BotLiveService",
+                input=RespawnRequest,
+                output=RespawnResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
     def go_to(
         self,
         request: GoToRequest,
@@ -516,6 +621,66 @@ class BotLiveServiceClient(ConnectClient):
             timeout_ms=timeout_ms,
         )
 
+    async def acquire_bot_control(
+        self,
+        request: AcquireBotControlRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> AcquireBotControlResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="AcquireBotControl",
+                service_name="soulfire.v1.BotLiveService",
+                input=AcquireBotControlRequest,
+                output=AcquireBotControlResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def renew_bot_control(
+        self,
+        request: RenewBotControlRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> RenewBotControlResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="RenewBotControl",
+                service_name="soulfire.v1.BotLiveService",
+                input=RenewBotControlRequest,
+                output=RenewBotControlResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def release_bot_control(
+        self,
+        request: ReleaseBotControlRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> ReleaseBotControlResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="ReleaseBotControl",
+                service_name="soulfire.v1.BotLiveService",
+                input=ReleaseBotControlRequest,
+                output=ReleaseBotControlResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
 class BotLiveServiceSync(Protocol):
     def watch_bot_events(self, request: WatchBotEventsRequest, ctx: RequestContext[WatchBotEventsRequest, BotEvent]) -> Iterator[BotEvent]:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
@@ -541,6 +706,9 @@ class BotLiveServiceSync(Protocol):
     def use_item(self, request: UseItemRequest, ctx: RequestContext[UseItemRequest, UseItemResponse]) -> UseItemResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
+    def release_item(self, request: ReleaseItemRequest, ctx: RequestContext[ReleaseItemRequest, ReleaseItemResponse]) -> ReleaseItemResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
     def attack_entity(self, request: AttackEntityRequest, ctx: RequestContext[AttackEntityRequest, AttackEntityResponse]) -> AttackEntityResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
@@ -550,10 +718,22 @@ class BotLiveServiceSync(Protocol):
     def swing_arm(self, request: SwingArmRequest, ctx: RequestContext[SwingArmRequest, SwingArmResponse]) -> SwingArmResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
+    def respawn(self, request: RespawnRequest, ctx: RequestContext[RespawnRequest, RespawnResponse]) -> RespawnResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
     def go_to(self, request: GoToRequest, ctx: RequestContext[GoToRequest, PathfindProgress]) -> Iterator[PathfindProgress]:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
     def stop_pathfinding(self, request: StopPathfindingRequest, ctx: RequestContext[StopPathfindingRequest, StopPathfindingResponse]) -> StopPathfindingResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    def acquire_bot_control(self, request: AcquireBotControlRequest, ctx: RequestContext[AcquireBotControlRequest, AcquireBotControlResponse]) -> AcquireBotControlResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    def renew_bot_control(self, request: RenewBotControlRequest, ctx: RequestContext[RenewBotControlRequest, RenewBotControlResponse]) -> RenewBotControlResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    def release_bot_control(self, request: ReleaseBotControlRequest, ctx: RequestContext[ReleaseBotControlRequest, ReleaseBotControlResponse]) -> ReleaseBotControlResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
 
@@ -648,6 +828,16 @@ class BotLiveServiceWSGIApplication(ConnectWSGIApplication):
                     ),
                     function=service.use_item,
                 ),
+                "/soulfire.v1.BotLiveService/ReleaseItem": EndpointSync.unary(
+                    method=MethodInfo(
+                        name="ReleaseItem",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=ReleaseItemRequest,
+                        output=ReleaseItemResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=service.release_item,
+                ),
                 "/soulfire.v1.BotLiveService/AttackEntity": EndpointSync.unary(
                     method=MethodInfo(
                         name="AttackEntity",
@@ -678,6 +868,16 @@ class BotLiveServiceWSGIApplication(ConnectWSGIApplication):
                     ),
                     function=service.swing_arm,
                 ),
+                "/soulfire.v1.BotLiveService/Respawn": EndpointSync.unary(
+                    method=MethodInfo(
+                        name="Respawn",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=RespawnRequest,
+                        output=RespawnResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=service.respawn,
+                ),
                 "/soulfire.v1.BotLiveService/GoTo": EndpointSync.server_stream(
                     method=MethodInfo(
                         name="GoTo",
@@ -697,6 +897,36 @@ class BotLiveServiceWSGIApplication(ConnectWSGIApplication):
                         idempotency_level=IdempotencyLevel.UNKNOWN,
                     ),
                     function=service.stop_pathfinding,
+                ),
+                "/soulfire.v1.BotLiveService/AcquireBotControl": EndpointSync.unary(
+                    method=MethodInfo(
+                        name="AcquireBotControl",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=AcquireBotControlRequest,
+                        output=AcquireBotControlResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=service.acquire_bot_control,
+                ),
+                "/soulfire.v1.BotLiveService/RenewBotControl": EndpointSync.unary(
+                    method=MethodInfo(
+                        name="RenewBotControl",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=RenewBotControlRequest,
+                        output=RenewBotControlResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=service.renew_bot_control,
+                ),
+                "/soulfire.v1.BotLiveService/ReleaseBotControl": EndpointSync.unary(
+                    method=MethodInfo(
+                        name="ReleaseBotControl",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=ReleaseBotControlRequest,
+                        output=ReleaseBotControlResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=service.release_bot_control,
                 ),
             },
             interceptors=interceptors,
@@ -888,6 +1118,25 @@ class BotLiveServiceClientSync(ConnectClientSync):
             headers=headers,
             timeout_ms=timeout_ms,
         )
+    def release_item(
+        self,
+        request: ReleaseItemRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> ReleaseItemResponse:
+        return self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="ReleaseItem",
+                service_name="soulfire.v1.BotLiveService",
+                input=ReleaseItemRequest,
+                output=ReleaseItemResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
     def attack_entity(
         self,
         request: AttackEntityRequest,
@@ -945,6 +1194,25 @@ class BotLiveServiceClientSync(ConnectClientSync):
             headers=headers,
             timeout_ms=timeout_ms,
         )
+    def respawn(
+        self,
+        request: RespawnRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> RespawnResponse:
+        return self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="Respawn",
+                service_name="soulfire.v1.BotLiveService",
+                input=RespawnRequest,
+                output=RespawnResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
     def go_to(
         self,
         request: GoToRequest,
@@ -978,6 +1246,63 @@ class BotLiveServiceClientSync(ConnectClientSync):
                 service_name="soulfire.v1.BotLiveService",
                 input=StopPathfindingRequest,
                 output=StopPathfindingResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+    def acquire_bot_control(
+        self,
+        request: AcquireBotControlRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> AcquireBotControlResponse:
+        return self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="AcquireBotControl",
+                service_name="soulfire.v1.BotLiveService",
+                input=AcquireBotControlRequest,
+                output=AcquireBotControlResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+    def renew_bot_control(
+        self,
+        request: RenewBotControlRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> RenewBotControlResponse:
+        return self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="RenewBotControl",
+                service_name="soulfire.v1.BotLiveService",
+                input=RenewBotControlRequest,
+                output=RenewBotControlResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+    def release_bot_control(
+        self,
+        request: ReleaseBotControlRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> ReleaseBotControlResponse:
+        return self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="ReleaseBotControl",
+                service_name="soulfire.v1.BotLiveService",
+                input=ReleaseBotControlRequest,
+                output=ReleaseBotControlResponse,
                 idempotency_level=IdempotencyLevel.UNKNOWN,
             ),
             headers=headers,

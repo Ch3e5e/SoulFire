@@ -19,20 +19,35 @@ package com.soulfiremc.server.grpc;
 
 import com.google.protobuf.Timestamp;
 import com.soulfiremc.grpc.generated.*;
+import com.soulfiremc.server.InstanceManager;
 import com.soulfiremc.server.SoulFireServer;
 import com.soulfiremc.server.adventure.SoulFireAdventure;
 import com.soulfiremc.server.api.SoulFireAPI;
+import com.soulfiremc.server.api.event.SoulFireEvent;
+import com.soulfiremc.server.api.event.bot.BotBlockUpdateEvent;
+import com.soulfiremc.server.api.event.bot.BotConnectedEvent;
+import com.soulfiremc.server.api.event.bot.BotConnectionInitEvent;
+import com.soulfiremc.server.api.event.bot.BotDamageEvent;
 import com.soulfiremc.server.api.event.bot.BotDisconnectedEvent;
+import com.soulfiremc.server.api.event.bot.BotOpenContainerEvent;
+import com.soulfiremc.server.api.event.bot.BotPostEntityTickEvent;
 import com.soulfiremc.server.api.event.bot.BotPostTickEvent;
 import com.soulfiremc.server.api.event.bot.ChatMessageReceiveEvent;
 import com.soulfiremc.server.bot.BotConnection;
+import com.soulfiremc.server.bot.BotControlLeaseManager;
+import com.soulfiremc.server.bot.CompletableControlTask;
+import com.soulfiremc.server.bot.ControlStopReason;
 import com.soulfiremc.server.bot.ControlTask;
 import com.soulfiremc.server.pathfinding.SFVec3i;
 import com.soulfiremc.server.pathfinding.execution.PathExecutor;
 import com.soulfiremc.server.pathfinding.goals.CloseToPosGoal;
+import com.soulfiremc.server.pathfinding.goals.DynamicGoalScorer;
 import com.soulfiremc.server.pathfinding.goals.GoalScorer;
 import com.soulfiremc.server.pathfinding.goals.PosGoal;
 import com.soulfiremc.server.pathfinding.goals.XZGoal;
+import com.soulfiremc.server.pathfinding.graph.constraint.NoBlockBreakingConstraint;
+import com.soulfiremc.server.pathfinding.graph.constraint.NoBlockPlacingConstraint;
+import com.soulfiremc.server.pathfinding.graph.constraint.PathConstraint;
 import com.soulfiremc.server.pathfinding.graph.constraint.PathConstraintImpl;
 import com.soulfiremc.server.user.PermissionContext;
 import io.grpc.Status;
@@ -57,17 +72,24 @@ import net.minecraft.world.level.block.state.properties.Property;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.Vec3;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.stream.StreamSupport;
 
 /// BotLiveService is the automation-first API for SoulFire bots. It provides the
@@ -80,11 +102,16 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
   private static final int MAX_FIND_BLOCKS_DISTANCE = 128;
   private static final int MAX_FIND_BLOCKS_COUNT = 256;
   private static final float MAX_ENTITY_RADIUS = 128.0F;
+  private static final float MAX_BLOCK_RADIUS = 64.0F;
   private static final long PATH_PROGRESS_INTERVAL_MS = 500L;
+  private static final long ENTITY_SCAN_INTERVAL_NANOS = TimeUnit.MILLISECONDS.toNanos(200);
+  private static final Duration DEFAULT_ACTION_TIMEOUT = Duration.ofSeconds(10);
+  private static final Duration DIG_ACTION_TIMEOUT = Duration.ofMinutes(1);
+  private static final Duration DEFAULT_PATH_TIMEOUT = Duration.ofMinutes(5);
+  private static final Duration MAX_PATH_TIMEOUT = Duration.ofHours(1);
 
   private final SoulFireServer soulFireServer;
-  private final ConcurrentHashMap<UUID, AtomicReference<CompletableFuture<Void>>> activePaths =
-    new ConcurrentHashMap<>();
+  private final ConcurrentHashMap<BotKey, PathAction> activePaths = new ConcurrentHashMap<>();
 
   private static <T> T callInBotContext(BotConnection botConnection, Callable<T> callable) throws Exception {
     return botConnection.runnableWrapper().wrap(callable).call();
@@ -102,6 +129,118 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
         .asRuntimeException();
     }
     return bot;
+  }
+
+  private static BotConnection requireControlledOnlineBot(
+    SoulFireServer soulFireServer,
+    UUID instanceId,
+    UUID botId
+  ) {
+    ServerRPCConstants.USER_CONTEXT_KEY.get()
+      .hasPermissionOrThrow(PermissionContext.instance(
+        InstancePermission.CONTROL_BOT_ACTIONS,
+        instanceId));
+    var instance = requireConfiguredBot(soulFireServer, instanceId, botId);
+    try {
+      instance.botControlLeaseManager().authorize(
+        botId,
+        ServerRPCConstants.BOT_CONTROL_TOKEN_CONTEXT_KEY.get());
+    } catch (BotControlLeaseManager.InvalidLeaseException e) {
+      throw Status.PERMISSION_DENIED
+        .withDescription(e.getMessage())
+        .asRuntimeException();
+    }
+    var bot = instance.botConnections().get(botId);
+    if (bot == null || bot.isDisconnected()) {
+      throw Status.FAILED_PRECONDITION
+        .withDescription("Bot '%s' is not online".formatted(botId))
+        .asRuntimeException();
+    }
+    return bot;
+  }
+
+  private static <T> void submitAction(
+    BotConnection bot,
+    ControlTask delegate,
+    Duration timeout,
+    Function<BotActionResult, T> responseFactory,
+    StreamObserver<T> responseObserver
+  ) {
+    var task = new CompletableControlTask(delegate);
+    var serverObserver = (ServerCallStreamObserver<T>) responseObserver;
+    serverObserver.setOnCancelHandler(() -> bot.botControl().cancel(task));
+    try {
+      callInBotContext(bot, () -> {
+        bot.botControl().replace(task);
+        return null;
+      });
+    } catch (Throwable t) {
+      responseObserver.onError(toGrpcError("Failed to submit bot action", t));
+      return;
+    }
+
+    task.completion()
+      .orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS)
+      .whenComplete((reason, error) -> {
+        if (serverObserver.isCancelled()) {
+          return;
+        }
+        if (unwrapAsyncError(error) instanceof TimeoutException) {
+          bot.botControl().cancel(task);
+        }
+        var result = buildActionResult(task, reason, error);
+        synchronized (serverObserver) {
+          if (serverObserver.isCancelled()) {
+            return;
+          }
+          serverObserver.onNext(responseFactory.apply(result));
+          serverObserver.onCompleted();
+        }
+      });
+  }
+
+  private static BotActionResult buildActionResult(
+    CompletableControlTask task,
+    @Nullable ControlStopReason reason,
+    @Nullable Throwable error
+  ) {
+    var builder = BotActionResult.newBuilder().setActionId(task.actionId().toString());
+    if (error != null) {
+      var cause = unwrapAsyncError(error);
+      return builder
+        .setStatus(BotActionStatus.BOT_ACTION_STATUS_FAILED)
+        .setError(Objects.requireNonNullElse(cause.getMessage(), cause.getClass().getSimpleName()))
+        .build();
+    }
+    return builder
+      .setStatus(switch (Objects.requireNonNull(reason)) {
+        case COMPLETED, CLAIMED -> BotActionStatus.BOT_ACTION_STATUS_COMPLETED;
+        case CANCELLED, REPLACED -> BotActionStatus.BOT_ACTION_STATUS_CANCELLED;
+        case FAILED -> BotActionStatus.BOT_ACTION_STATUS_FAILED;
+      })
+      .build();
+  }
+
+  private static @Nullable Throwable unwrapAsyncError(@Nullable Throwable error) {
+    var current = error;
+    while ((current instanceof CompletionException || current instanceof ExecutionException)
+      && current.getCause() != null) {
+      current = current.getCause();
+    }
+    return current;
+  }
+
+  private static RuntimeException toGrpcError(String message, Throwable throwable) {
+    var cause = Objects.requireNonNull(unwrapAsyncError(throwable));
+    if (cause instanceof io.grpc.StatusRuntimeException statusError) {
+      return statusError;
+    }
+    return Status.INTERNAL
+      .withDescription(message + ": " + Objects.requireNonNullElse(
+        cause.getMessage(),
+        cause.getClass().getSimpleName()))
+      .withCause(cause)
+      .asRuntimeException();
   }
 
   private static InteractionHand toMcHand(Hand hand) {
@@ -193,140 +332,492 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
     ServerRPCConstants.USER_CONTEXT_KEY.get()
       .hasPermissionOrThrow(PermissionContext.instance(InstancePermission.READ_BOT_INFO, instanceId));
 
-    var bot = requireOnlineBot(soulFireServer, instanceId, botId);
+    var instance = requireConfiguredBot(soulFireServer, instanceId, botId);
     var filter = request.getFilter();
     var serverObserver = (ServerCallStreamObserver<BotEvent>) responseObserver;
     var closed = new AtomicBoolean(false);
-
-    // Per-subscription state: last emitted snapshot fields so we can diff.
     var lastState = new AtomicReference<BotLiveState>(null);
-
-    // Emit the initial snapshot.
-    try {
-      var snapshot = callInBotContext(bot, () -> {
-        var mc = bot.minecraft();
-        var player = mc.player;
-        if (player == null) {
-          return null;
-        }
-        return BotServiceImpl.buildLiveStatePublic(mc, player, false);
-      });
-      if (snapshot != null) {
-        lastState.set(snapshot);
-        serverObserver.onNext(BotEvent.newBuilder().setSnapshot(snapshot).build());
-      }
-    } catch (Exception e) {
-      responseObserver.onError(Status.INTERNAL.withDescription(e.getMessage()).withCause(e).asRuntimeException());
-      return;
-    }
-
-    // Event listeners — created and registered only if the corresponding
-    // category is enabled in the filter.
-    Consumer<BotPostTickEvent> stateListener = null;
-    Consumer<ChatMessageReceiveEvent> chatListener = null;
-    Consumer<BotDisconnectedEvent> disconnectListener = null;
-
-    if (filter.getIncludeStateDeltas()) {
-      stateListener = event -> {
-        if (closed.get()) {
-          return;
-        }
-        if (event.connection() != bot) {
-          return;
-        }
-        try {
-          var next = callInBotContext(bot, () -> {
-            var mc = bot.minecraft();
-            var player = mc.player;
-            return player != null ? BotServiceImpl.buildLiveStatePublic(mc, player, false) : null;
-          });
-          if (next == null) {
-            return;
-          }
-          var prev = lastState.getAndSet(next);
-          var delta = computeDelta(prev, next);
-          if (delta != null) {
-            synchronized (serverObserver) {
-              if (!closed.get() && !serverObserver.isCancelled()) {
-                serverObserver.onNext(BotEvent.newBuilder().setStateDelta(delta).build());
-              }
-            }
-          }
-        } catch (Exception e) {
-          log.debug("Error computing state delta", e);
-        }
-      };
-      SoulFireAPI.registerListener(BotPostTickEvent.class, stateListener);
-    }
-
-    if (filter.getIncludeChat()) {
-      chatListener = event -> {
-        if (closed.get()) {
-          return;
-        }
-        if (event.connection() != bot) {
-          return;
-        }
-        var plain = event.parseToPlainText();
-        var json = GsonComponentSerializer.gson().serialize(event.message());
-        var nowSec = Instant.ofEpochMilli(event.timestamp()).getEpochSecond();
-        var chatBuilder = BotChatEvent.newBuilder()
-          .setSource(ChatSource.CHAT_SOURCE_SYSTEM)
-          .setPlainText(plain)
-          .setJsonComponent(json)
-          .setReceivedAt(Timestamp.newBuilder().setSeconds(nowSec).build());
-        synchronized (serverObserver) {
-          if (!closed.get() && !serverObserver.isCancelled()) {
-            serverObserver.onNext(BotEvent.newBuilder().setChat(chatBuilder.build()).build());
-          }
-        }
-      };
-      SoulFireAPI.registerListener(ChatMessageReceiveEvent.class, chatListener);
-    }
-
-    if (filter.getIncludeLifecycle()) {
-      disconnectListener = event -> {
-        if (closed.get()) {
-          return;
-        }
-        if (event.connection() != bot) {
-          return;
-        }
-        var reason = event.message() == null
-          ? ""
-          : SoulFireAdventure.PLAIN_MESSAGE_SERIALIZER.serialize(event.message());
-        var lifecycle = BotLifecycleEvent.newBuilder()
-          .setKind(BotLifecycleKind.BOT_LIFECYCLE_DISCONNECTED)
-          .setMessage(reason)
-          .build();
-        synchronized (serverObserver) {
-          if (!closed.get() && !serverObserver.isCancelled()) {
-            serverObserver.onNext(BotEvent.newBuilder().setLifecycle(lifecycle).build());
-          }
-        }
-      };
-      SoulFireAPI.registerListener(BotDisconnectedEvent.class, disconnectListener);
-    }
-
-    var finalStateListener = stateListener;
-    var finalChatListener = chatListener;
-    var finalDisconnectListener = disconnectListener;
-
-    serverObserver.setOnCancelHandler(() -> {
+    var lastInventory = new AtomicReference<BotInventoryStateResponse>(null);
+    var lastEntities = new AtomicReference<Map<Integer, NearbyEntity>>(Map.of());
+    var lastEntityScan = new AtomicLong();
+    var spawnedConnection = new AtomicReference<BotConnection>(null);
+    var dead = new AtomicReference<Boolean>(null);
+    var cleanupActions = new CopyOnWriteArrayList<Runnable>();
+    Runnable cleanup = () -> {
       if (!closed.compareAndSet(false, true)) {
         return;
       }
-      if (finalStateListener != null) {
-        SoulFireAPI.unregisterListener(BotPostTickEvent.class, finalStateListener);
+      cleanupActions.forEach(action -> {
+        try {
+          action.run();
+        } catch (Throwable t) {
+          log.debug("Failed to clean up bot event subscription", t);
+        }
+      });
+    };
+    serverObserver.setOnCancelHandler(cleanup);
+
+    emitBotEvent(serverObserver, closed, BotEvent.newBuilder()
+      .setStatus(instance.botStateManager().status(botId))
+      .build());
+
+    var current = instance.botConnections().get(botId);
+    if (current != null && !current.isDisconnected()) {
+      emitCurrentSnapshot(
+        current,
+        filter,
+        serverObserver,
+        closed,
+        lastState,
+        lastInventory,
+        spawnedConnection,
+        dead);
+      if (filter.getIncludeEntityEvents()) {
+        emitEntityChanges(
+          current,
+          filter,
+          serverObserver,
+          closed,
+          lastEntities,
+          true);
       }
-      if (finalChatListener != null) {
-        SoulFireAPI.unregisterListener(ChatMessageReceiveEvent.class, finalChatListener);
+    }
+
+    var removeStatusListener = instance.botStateManager().addStatusListener(event -> {
+      if (closed.get()) {
+        return;
       }
-      if (finalDisconnectListener != null) {
-        SoulFireAPI.unregisterListener(BotDisconnectedEvent.class, finalDisconnectListener);
+      if (event.removedBotId() != null && event.removedBotId().equals(botId)) {
+        synchronized (serverObserver) {
+          if (!closed.get() && !serverObserver.isCancelled()) {
+            serverObserver.onCompleted();
+          }
+        }
+        cleanup.run();
+        return;
+      }
+      if (event.status() != null && event.status().getProfileId().equals(botId.toString())) {
+        emitBotEvent(serverObserver, closed, BotEvent.newBuilder()
+          .setStatus(event.status())
+          .build());
       }
     });
+    cleanupActions.add(removeStatusListener);
+
+    Consumer<BotConnectionInitEvent> connectionInitListener = event -> {
+      if (!matches(event.connection(), instance, botId)) {
+        return;
+      }
+      lastState.set(null);
+      lastInventory.set(null);
+      lastEntities.set(Map.of());
+      spawnedConnection.set(null);
+      dead.set(null);
+      if (filter.getIncludeLifecycle()) {
+        emitLifecycle(
+          serverObserver,
+          closed,
+          BotLifecycleKind.BOT_LIFECYCLE_CONNECTING,
+          null);
+      }
+    };
+    register(cleanupActions, BotConnectionInitEvent.class, connectionInitListener);
+
+    Consumer<BotConnectedEvent> connectedListener = event -> {
+      if (filter.getIncludeLifecycle() && matches(event.connection(), instance, botId)) {
+        emitLifecycle(
+          serverObserver,
+          closed,
+          BotLifecycleKind.BOT_LIFECYCLE_CONNECTED,
+          null);
+      }
+    };
+    register(cleanupActions, BotConnectedEvent.class, connectedListener);
+
+    Consumer<BotPostTickEvent> stateListener = event -> {
+      var connection = event.connection();
+      if (!matches(connection, instance, botId)) {
+        return;
+      }
+      emitCurrentSnapshot(
+        connection,
+        filter,
+        serverObserver,
+        closed,
+        lastState,
+        lastInventory,
+        spawnedConnection,
+        dead);
+    };
+    register(cleanupActions, BotPostTickEvent.class, stateListener);
+
+    Consumer<BotDisconnectedEvent> disconnectListener = event -> {
+      if (!matches(event.connection(), instance, botId)) {
+        return;
+      }
+      if (filter.getIncludeLifecycle()) {
+        var reason = event.message() == null
+          ? null
+          : SoulFireAdventure.PLAIN_MESSAGE_SERIALIZER.serialize(event.message());
+        emitLifecycle(
+          serverObserver,
+          closed,
+          BotLifecycleKind.BOT_LIFECYCLE_DISCONNECTED,
+          reason);
+      }
+      lastState.set(null);
+      lastInventory.set(null);
+      lastEntities.set(Map.of());
+      spawnedConnection.set(null);
+      dead.set(null);
+    };
+    register(cleanupActions, BotDisconnectedEvent.class, disconnectListener);
+
+    if (filter.getIncludeChat()) {
+      Consumer<ChatMessageReceiveEvent> chatListener = event -> {
+        if (!matches(event.connection(), instance, botId)) {
+          return;
+        }
+        var received = Instant.ofEpochMilli(event.timestamp());
+        var chat = BotChatEvent.newBuilder()
+          .setSource(ChatSource.CHAT_SOURCE_UNKNOWN)
+          .setPlainText(event.parseToPlainText())
+          .setJsonComponent(GsonComponentSerializer.gson().serialize(event.message()))
+          .setReceivedAt(Timestamp.newBuilder()
+            .setSeconds(received.getEpochSecond())
+            .setNanos(received.getNano())
+            .build())
+          .build();
+        emitBotEvent(serverObserver, closed, BotEvent.newBuilder().setChat(chat).build());
+      };
+      register(cleanupActions, ChatMessageReceiveEvent.class, chatListener);
+    }
+
+    if (filter.getIncludeEntityEvents()) {
+      Consumer<BotPostEntityTickEvent> entityListener = event -> {
+        if (!matches(event.connection(), instance, botId)) {
+          return;
+        }
+        var now = System.nanoTime();
+        var previousScan = lastEntityScan.get();
+        if (now - previousScan < ENTITY_SCAN_INTERVAL_NANOS
+          || !lastEntityScan.compareAndSet(previousScan, now)) {
+          return;
+        }
+        emitEntityChanges(
+          event.connection(),
+          filter,
+          serverObserver,
+          closed,
+          lastEntities,
+          false);
+      };
+      register(cleanupActions, BotPostEntityTickEvent.class, entityListener);
+    }
+
+    if (filter.getIncludeBlockUpdates()) {
+      var radius = normalizedRadius(filter.getBlockRadius(), 16.0F, MAX_BLOCK_RADIUS);
+      Consumer<BotBlockUpdateEvent> blockListener = event -> {
+        if (!matches(event.connection(), instance, botId)
+          || !withinRadius(event.connection(), event.position(), radius)) {
+          return;
+        }
+        var dimension = currentDimension(event.connection());
+        var update = com.soulfiremc.grpc.generated.BotBlockUpdateEvent.newBuilder()
+          .setPosition(toProtoBlockPosition(event.position(), dimension))
+          .setOldBlockId(BuiltInRegistries.BLOCK.getKey(event.previousState().getBlock()).toString())
+          .setNewBlockId(BuiltInRegistries.BLOCK.getKey(event.state().getBlock()).toString())
+          .build();
+        emitBotEvent(serverObserver, closed, BotEvent.newBuilder()
+          .setBlockUpdate(update)
+          .build());
+      };
+      register(cleanupActions, BotBlockUpdateEvent.class, blockListener);
+    }
+
+    if (filter.getIncludeDamage()) {
+      Consumer<BotDamageEvent> damageListener = event -> {
+        if (!matches(event.connection(), instance, botId)) {
+          return;
+        }
+        var damage = com.soulfiremc.grpc.generated.BotDamageEvent.newBuilder()
+          .setPreviousHealth(event.previousHealth())
+          .setHealth(event.newHealth())
+          .setAmount(event.damageAmount())
+          .build();
+        emitBotEvent(serverObserver, closed, BotEvent.newBuilder().setDamage(damage).build());
+      };
+      register(cleanupActions, BotDamageEvent.class, damageListener);
+    }
+
+    if (filter.getIncludeInventory()) {
+      Consumer<BotOpenContainerEvent> containerListener = event -> {
+        if (matches(event.connection(), instance, botId)) {
+          emitCurrentInventory(
+            event.connection(),
+            serverObserver,
+            closed,
+            lastInventory);
+        }
+      };
+      register(cleanupActions, BotOpenContainerEvent.class, containerListener);
+    }
   }
+
+  private static InstanceManager requireConfiguredBot(
+    SoulFireServer soulFireServer,
+    UUID instanceId,
+    UUID botId
+  ) {
+    var instance = soulFireServer.getInstance(instanceId)
+      .orElseThrow(() -> Status.NOT_FOUND
+        .withDescription("Instance '%s' not found".formatted(instanceId))
+        .asRuntimeException());
+    if (!instance.settingsSource().accounts().containsKey(botId)) {
+      throw Status.NOT_FOUND
+        .withDescription("Bot '%s' is not configured".formatted(botId))
+        .asRuntimeException();
+    }
+    return instance;
+  }
+
+  private static boolean matches(BotConnection connection, InstanceManager instance, UUID botId) {
+    return connection.instanceManager() == instance
+      && connection.accountProfileId().equals(botId);
+  }
+
+  private static <E extends SoulFireEvent> void register(
+    List<Runnable> cleanupActions,
+    Class<E> eventType,
+    Consumer<E> listener
+  ) {
+    SoulFireAPI.registerListener(eventType, listener);
+    cleanupActions.add(() -> SoulFireAPI.unregisterListener(eventType, listener));
+  }
+
+  private static void emitBotEvent(
+    ServerCallStreamObserver<BotEvent> observer,
+    AtomicBoolean closed,
+    BotEvent event
+  ) {
+    synchronized (observer) {
+      if (!closed.get() && !observer.isCancelled()) {
+        observer.onNext(event);
+      }
+    }
+  }
+
+  private static void emitLifecycle(
+    ServerCallStreamObserver<BotEvent> observer,
+    AtomicBoolean closed,
+    BotLifecycleKind kind,
+    String message
+  ) {
+    var lifecycle = BotLifecycleEvent.newBuilder().setKind(kind);
+    if (message != null && !message.isBlank()) {
+      lifecycle.setMessage(message);
+    }
+    emitBotEvent(observer, closed, BotEvent.newBuilder()
+      .setLifecycle(lifecycle)
+      .build());
+  }
+
+  private static void emitCurrentSnapshot(
+    BotConnection connection,
+    BotEventFilter filter,
+    ServerCallStreamObserver<BotEvent> observer,
+    AtomicBoolean closed,
+    AtomicReference<BotLiveState> lastState,
+    AtomicReference<BotInventoryStateResponse> lastInventory,
+    AtomicReference<BotConnection> spawnedConnection,
+    AtomicReference<Boolean> dead
+  ) {
+    try {
+      var snapshot = callInBotContext(connection, () -> {
+        var minecraft = connection.minecraft();
+        var player = minecraft.player;
+        if (player == null) {
+          return null;
+        }
+        return new TickSnapshot(
+          BotServiceImpl.buildLiveStatePublic(minecraft, player, false),
+          filter.getIncludeInventory()
+            ? BotServiceImpl.buildInventoryStatePublic(minecraft, player, false)
+            : null,
+          player.isDeadOrDying());
+      });
+      if (snapshot == null) {
+        return;
+      }
+
+      var previousState = lastState.getAndSet(snapshot.state());
+      if (previousState == null) {
+        emitBotEvent(observer, closed, BotEvent.newBuilder()
+          .setSnapshot(snapshot.state())
+          .build());
+      } else if (filter.getIncludeStateDeltas()) {
+        var delta = computeDelta(previousState, snapshot.state());
+        if (delta != null) {
+          emitBotEvent(observer, closed, BotEvent.newBuilder()
+            .setStateDelta(delta)
+            .build());
+        }
+      }
+
+      if (filter.getIncludeLifecycle()
+        && spawnedConnection.getAndSet(connection) != connection) {
+        emitLifecycle(observer, closed, BotLifecycleKind.BOT_LIFECYCLE_SPAWNED, null);
+      }
+
+      var previousDead = dead.getAndSet(snapshot.dead());
+      if (filter.getIncludeLifecycle()
+        && previousDead != null
+        && previousDead != snapshot.dead()) {
+        emitLifecycle(
+          observer,
+          closed,
+          snapshot.dead()
+            ? BotLifecycleKind.BOT_LIFECYCLE_DIED
+            : BotLifecycleKind.BOT_LIFECYCLE_RESPAWNED,
+          null);
+      }
+
+      if (snapshot.inventory() != null) {
+        var previousInventory = lastInventory.getAndSet(snapshot.inventory());
+        if (!snapshot.inventory().equals(previousInventory)) {
+          emitInventory(observer, closed, snapshot.inventory());
+        }
+      }
+    } catch (Throwable t) {
+      log.debug("Failed to emit current bot snapshot", t);
+    }
+  }
+
+  private static void emitCurrentInventory(
+    BotConnection connection,
+    ServerCallStreamObserver<BotEvent> observer,
+    AtomicBoolean closed,
+    AtomicReference<BotInventoryStateResponse> lastInventory
+  ) {
+    try {
+      var inventory = callInBotContext(connection, () -> {
+        var minecraft = connection.minecraft();
+        var player = minecraft.player;
+        return player == null
+          ? null
+          : BotServiceImpl.buildInventoryStatePublic(minecraft, player, false);
+      });
+      if (inventory != null && !inventory.equals(lastInventory.getAndSet(inventory))) {
+        emitInventory(observer, closed, inventory);
+      }
+    } catch (Throwable t) {
+      log.debug("Failed to emit current bot inventory", t);
+    }
+  }
+
+  private static void emitInventory(
+    ServerCallStreamObserver<BotEvent> observer,
+    AtomicBoolean closed,
+    BotInventoryStateResponse inventory
+  ) {
+    emitBotEvent(observer, closed, BotEvent.newBuilder()
+      .setInventory(BotInventoryEvent.newBuilder().setState(inventory))
+      .build());
+  }
+
+  private static void emitEntityChanges(
+    BotConnection connection,
+    BotEventFilter filter,
+    ServerCallStreamObserver<BotEvent> observer,
+    AtomicBoolean closed,
+    AtomicReference<Map<Integer, NearbyEntity>> lastEntities,
+    boolean initial
+  ) {
+    try {
+      var radius = normalizedRadius(filter.getEntityRadius(), 32.0F, MAX_ENTITY_RADIUS);
+      var next = callInBotContext(connection, () -> observedEntities(connection, radius));
+      var previous = lastEntities.getAndSet(next);
+      for (var entry : next.entrySet()) {
+        var prior = previous.get(entry.getKey());
+        if (prior == null || !prior.equals(entry.getValue())) {
+          var kind = prior == null
+            ? EntityEventKind.ENTITY_EVENT_SPAWN
+            : EntityEventKind.ENTITY_EVENT_UPDATE;
+          emitEntityEvent(observer, closed, kind, entry.getValue());
+        }
+      }
+      if (!initial) {
+        for (var entry : previous.entrySet()) {
+          if (!next.containsKey(entry.getKey())) {
+            emitEntityEvent(
+              observer,
+              closed,
+              EntityEventKind.ENTITY_EVENT_DESPAWN,
+              entry.getValue());
+          }
+        }
+      }
+    } catch (Throwable t) {
+      log.debug("Failed to emit entity changes", t);
+    }
+  }
+
+  private static Map<Integer, NearbyEntity> observedEntities(
+    BotConnection connection,
+    float radius
+  ) {
+    var minecraft = connection.minecraft();
+    var player = minecraft.player;
+    var level = minecraft.level;
+    if (player == null || level == null) {
+      return Map.of();
+    }
+    var radiusSquared = radius * radius;
+    var dimension = level.dimension().identifier().toString();
+    var entities = new HashMap<Integer, NearbyEntity>();
+    for (var entity : level.entitiesForRendering()) {
+      if (entity == player || entity.distanceToSqr(player) > radiusSquared) {
+        continue;
+      }
+      entities.put(
+        entity.getId(),
+        buildNearbyEntity(entity, player.position(), dimension));
+    }
+    return Map.copyOf(entities);
+  }
+
+  private static void emitEntityEvent(
+    ServerCallStreamObserver<BotEvent> observer,
+    AtomicBoolean closed,
+    EntityEventKind kind,
+    NearbyEntity entity
+  ) {
+    emitBotEvent(observer, closed, BotEvent.newBuilder()
+      .setEntityEvent(BotEntityEvent.newBuilder()
+        .setKind(kind)
+        .setEntity(entity))
+      .build());
+  }
+
+  private static float normalizedRadius(float requested, float defaultRadius, float maxRadius) {
+    return Math.min(requested > 0.0F ? requested : defaultRadius, maxRadius);
+  }
+
+  private static boolean withinRadius(BotConnection connection, BlockPos position, float radius) {
+    var player = connection.minecraft().player;
+    return player != null && player.blockPosition().distSqr(position) <= radius * radius;
+  }
+
+  private static String currentDimension(BotConnection connection) {
+    var level = connection.minecraft().level;
+    return level == null ? "" : level.dimension().identifier().toString();
+  }
+
+  private record TickSnapshot(
+    BotLiveState state,
+    @Nullable BotInventoryStateResponse inventory,
+    boolean dead
+  ) {}
 
   private static BotStateDelta computeDelta(BotLiveState prev, BotLiveState next) {
     if (prev == null) {
@@ -359,22 +850,13 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
   public void sendChat(SendChatRequest request, StreamObserver<SendChatResponse> responseObserver) {
     var instanceId = UUID.fromString(request.getInstanceId());
     var botId = UUID.fromString(request.getBotId());
-    ServerRPCConstants.USER_CONTEXT_KEY.get()
-      .hasPermissionOrThrow(PermissionContext.instance(InstancePermission.UPDATE_BOT_CONFIG, instanceId));
-
-    try {
-      var bot = requireOnlineBot(soulFireServer, instanceId, botId);
-      var message = request.getMessage();
-      callInBotContext(bot, () -> {
-        bot.sendChatMessage(message);
-        return null;
-      });
-      responseObserver.onNext(SendChatResponse.getDefaultInstance());
-      responseObserver.onCompleted();
-    } catch (Throwable t) {
-      log.error("Error sending chat", t);
-      throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
-    }
+    var bot = requireControlledOnlineBot(soulFireServer, instanceId, botId);
+    submitAction(
+      bot,
+      ControlTask.once("SDK send chat", () -> bot.sendChatMessage(request.getMessage())),
+      DEFAULT_ACTION_TIMEOUT,
+      result -> SendChatResponse.newBuilder().setResult(result).build(),
+      responseObserver);
   }
 
   // =====================================================================
@@ -410,7 +892,7 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
       responseObserver.onCompleted();
     } catch (Throwable t) {
       log.error("Error getting block", t);
-      throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
+      throw toGrpcError("Failed to get block", t);
     }
   }
 
@@ -484,7 +966,7 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
       responseObserver.onCompleted();
     } catch (Throwable t) {
       log.error("Error finding blocks", t);
-      throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
+      throw toGrpcError("Failed to find blocks", t);
     }
   }
 
@@ -540,7 +1022,7 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
       responseObserver.onCompleted();
     } catch (Throwable t) {
       log.error("Error listing nearby entities", t);
-      throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
+      throw toGrpcError("Failed to list nearby entities", t);
     }
   }
 
@@ -552,45 +1034,13 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
   public void digBlock(DigBlockRequest request, StreamObserver<DigBlockResponse> responseObserver) {
     var instanceId = UUID.fromString(request.getInstanceId());
     var botId = UUID.fromString(request.getBotId());
-    ServerRPCConstants.USER_CONTEXT_KEY.get()
-      .hasPermissionOrThrow(PermissionContext.instance(InstancePermission.UPDATE_BOT_CONFIG, instanceId));
-
-    try {
-      var bot = requireOnlineBot(soulFireServer, instanceId, botId);
-      var pos = toMcBlockPos(request.getPosition());
-      var cancel = request.getCancel();
-
-      callInBotContext(bot, () -> {
-        if (bot.minecraft().gameMode == null || bot.minecraft().player == null) {
-          throw Status.FAILED_PRECONDITION
-            .withDescription("Bot player or game mode is not available")
-            .asRuntimeException();
-        }
-        bot.botControl().replace(ControlTask.once(() -> {
-          var gameMode = bot.minecraft().gameMode;
-          var player = bot.minecraft().player;
-          if (gameMode == null || player == null) {
-            return;
-          }
-          if (cancel) {
-            gameMode.stopDestroyBlock();
-            return;
-          }
-          // Pick a face facing the player. UP is a safe default for floors; use
-          // closest face derived from look direction if possible.
-          var face = nearestFaceTo(player.getEyePosition(), pos);
-          gameMode.startDestroyBlock(pos, face);
-          player.swing(InteractionHand.MAIN_HAND);
-        }));
-        return null;
-      });
-
-      responseObserver.onNext(DigBlockResponse.getDefaultInstance());
-      responseObserver.onCompleted();
-    } catch (Throwable t) {
-      log.error("Error digging block", t);
-      throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
-    }
+    var bot = requireControlledOnlineBot(soulFireServer, instanceId, botId);
+    submitAction(
+      bot,
+      new DigBlockTask(bot, toMcBlockPos(request.getPosition()), request.getCancel()),
+      DIG_ACTION_TIMEOUT,
+      result -> DigBlockResponse.newBuilder().setResult(result).build(),
+      responseObserver);
   }
 
   private static Direction nearestFaceTo(Vec3 eyePos, BlockPos target) {
@@ -610,6 +1060,99 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
     return dz >= 0 ? Direction.SOUTH : Direction.NORTH;
   }
 
+  private static void requireReach(LocalPlayer player, BlockPos position) {
+    if (player.getEyePosition().distanceToSqr(Vec3.atCenterOf(position)) > 36.0D) {
+      throw Status.OUT_OF_RANGE
+        .withDescription("Target block is outside the bot's interaction reach")
+        .asRuntimeException();
+    }
+  }
+
+  private static final class DigBlockTask implements ControlTask {
+    private final BotConnection bot;
+    private final BlockPos position;
+    private final boolean cancel;
+    private Direction face = Direction.UP;
+    private boolean started;
+    private boolean done;
+    private int ticks;
+
+    private DigBlockTask(BotConnection bot, BlockPos position, boolean cancel) {
+      this.bot = bot;
+      this.position = position;
+      this.cancel = cancel;
+    }
+
+    @Override
+    public void tick() {
+      var minecraft = bot.minecraft();
+      var gameMode = minecraft.gameMode;
+      var player = minecraft.player;
+      var level = minecraft.level;
+      if (gameMode == null || player == null || level == null) {
+        throw Status.FAILED_PRECONDITION
+          .withDescription("Bot player, level, or game mode is not available")
+          .asRuntimeException();
+      }
+      if (cancel) {
+        gameMode.stopDestroyBlock();
+        done = true;
+        return;
+      }
+      if (level.getBlockState(position).isAir()) {
+        done = true;
+        return;
+      }
+      requireReach(player, position);
+      if (!started) {
+        face = nearestFaceTo(player.getEyePosition(), position);
+        if (!gameMode.startDestroyBlock(position, face)) {
+          throw Status.FAILED_PRECONDITION
+            .withDescription("The target block cannot be broken")
+            .asRuntimeException();
+        }
+        player.swing(InteractionHand.MAIN_HAND);
+        started = true;
+        return;
+      }
+      if (!gameMode.continueDestroyBlock(position, face)) {
+        throw Status.FAILED_PRECONDITION
+          .withDescription("Block breaking was rejected")
+          .asRuntimeException();
+      }
+      player.swing(InteractionHand.MAIN_HAND);
+      ticks++;
+      if (level.getBlockState(position).isAir()) {
+        done = true;
+      } else if (ticks >= DIG_ACTION_TIMEOUT.toSeconds() * 20) {
+        throw Status.DEADLINE_EXCEEDED
+          .withDescription("Block breaking timed out")
+          .asRuntimeException();
+      }
+    }
+
+    @Override
+    public boolean isDone() {
+      return done;
+    }
+
+    @Override
+    public void onStopped(ControlStopReason reason, @Nullable Throwable cause) {
+      if (reason != ControlStopReason.COMPLETED) {
+        var gameMode = bot.minecraft().gameMode;
+        if (gameMode != null) {
+          gameMode.stopDestroyBlock();
+        }
+      }
+      done = true;
+    }
+
+    @Override
+    public String description() {
+      return "SDK dig block";
+    }
+  }
+
   // =====================================================================
   // PlaceBlock
   // =====================================================================
@@ -618,40 +1161,38 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
   public void placeBlock(PlaceBlockRequest request, StreamObserver<PlaceBlockResponse> responseObserver) {
     var instanceId = UUID.fromString(request.getInstanceId());
     var botId = UUID.fromString(request.getBotId());
-    ServerRPCConstants.USER_CONTEXT_KEY.get()
-      .hasPermissionOrThrow(PermissionContext.instance(InstancePermission.UPDATE_BOT_CONFIG, instanceId));
-
-    try {
-      var bot = requireOnlineBot(soulFireServer, instanceId, botId);
-      var against = toMcBlockPos(request.getAgainst());
-      var direction = toMcDirection(request.getFace());
-      var hand = toMcHand(request.getHand());
-
-      callInBotContext(bot, () -> {
-        bot.botControl().replace(ControlTask.once(() -> {
-          var gameMode = bot.minecraft().gameMode;
-          var player = bot.minecraft().player;
-          if (gameMode == null || player == null) {
-            return;
-          }
-          // Construct a synthetic BlockHitResult pointing at the face center.
-          var hitPos = Vec3.atCenterOf(against)
-            .add(direction.getStepX() * 0.5, direction.getStepY() * 0.5, direction.getStepZ() * 0.5);
-          var hit = new BlockHitResult(hitPos, direction, against, false);
-          if (gameMode.useItemOn(player, hand, hit) instanceof InteractionResult.Success success
-            && success.swingSource() == InteractionResult.SwingSource.CLIENT) {
-            player.swing(hand);
-          }
-        }));
-        return null;
-      });
-
-      responseObserver.onNext(PlaceBlockResponse.getDefaultInstance());
-      responseObserver.onCompleted();
-    } catch (Throwable t) {
-      log.error("Error placing block", t);
-      throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
-    }
+    var bot = requireControlledOnlineBot(soulFireServer, instanceId, botId);
+    var against = toMcBlockPos(request.getAgainst());
+    var direction = toMcDirection(request.getFace());
+    var hand = toMcHand(request.getHand());
+    submitAction(
+      bot,
+      ControlTask.once("SDK place block", () -> {
+        var gameMode = bot.minecraft().gameMode;
+        var player = bot.minecraft().player;
+        var level = bot.minecraft().level;
+        if (gameMode == null || player == null || level == null) {
+          throw Status.FAILED_PRECONDITION
+            .withDescription("Bot player, level, or game mode is not available")
+            .asRuntimeException();
+        }
+        requireReach(player, against);
+        var hitPos = Vec3.atCenterOf(against)
+          .add(direction.getStepX() * 0.5, direction.getStepY() * 0.5, direction.getStepZ() * 0.5);
+        var hit = new BlockHitResult(hitPos, direction, against, false);
+        var result = gameMode.useItemOn(player, hand, hit);
+        if (!(result instanceof InteractionResult.Success success)) {
+          throw Status.FAILED_PRECONDITION
+            .withDescription("The held item could not be used on the target block")
+            .asRuntimeException();
+        }
+        if (success.swingSource() == InteractionResult.SwingSource.CLIENT) {
+          player.swing(hand);
+        }
+      }),
+      DEFAULT_ACTION_TIMEOUT,
+      result -> PlaceBlockResponse.newBuilder().setResult(result).build(),
+      responseObserver);
   }
 
   // =====================================================================
@@ -662,34 +1203,58 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
   public void useItem(UseItemRequest request, StreamObserver<UseItemResponse> responseObserver) {
     var instanceId = UUID.fromString(request.getInstanceId());
     var botId = UUID.fromString(request.getBotId());
-    ServerRPCConstants.USER_CONTEXT_KEY.get()
-      .hasPermissionOrThrow(PermissionContext.instance(InstancePermission.UPDATE_BOT_CONFIG, instanceId));
+    var bot = requireControlledOnlineBot(soulFireServer, instanceId, botId);
+    var hand = toMcHand(request.getHand());
+    submitAction(
+      bot,
+      ControlTask.once("SDK use item", () -> {
+        var gameMode = bot.minecraft().gameMode;
+        var player = bot.minecraft().player;
+        if (gameMode == null || player == null) {
+          throw Status.FAILED_PRECONDITION
+            .withDescription("Bot player or game mode is not available")
+            .asRuntimeException();
+        }
+        var result = gameMode.useItem(player, hand);
+        if (!(result instanceof InteractionResult.Success success)) {
+          throw Status.FAILED_PRECONDITION
+            .withDescription("The held item could not be used")
+            .asRuntimeException();
+        }
+        if (success.swingSource() == InteractionResult.SwingSource.CLIENT) {
+          player.swing(hand);
+        }
+      }),
+      DEFAULT_ACTION_TIMEOUT,
+      result -> UseItemResponse.newBuilder().setResult(result).build(),
+      responseObserver);
+  }
 
-    try {
-      var bot = requireOnlineBot(soulFireServer, instanceId, botId);
-      var hand = toMcHand(request.getHand());
-
-      callInBotContext(bot, () -> {
-        bot.botControl().replace(ControlTask.once(() -> {
-          var gameMode = bot.minecraft().gameMode;
-          var player = bot.minecraft().player;
-          if (gameMode == null || player == null) {
-            return;
-          }
-          if (gameMode.useItem(player, hand) instanceof InteractionResult.Success success
-            && success.swingSource() == InteractionResult.SwingSource.CLIENT) {
-            player.swing(hand);
-          }
-        }));
-        return null;
-      });
-
-      responseObserver.onNext(UseItemResponse.getDefaultInstance());
-      responseObserver.onCompleted();
-    } catch (Throwable t) {
-      log.error("Error using item", t);
-      throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
-    }
+  @Override
+  public void releaseItem(ReleaseItemRequest request, StreamObserver<ReleaseItemResponse> responseObserver) {
+    var instanceId = UUID.fromString(request.getInstanceId());
+    var botId = UUID.fromString(request.getBotId());
+    var bot = requireControlledOnlineBot(soulFireServer, instanceId, botId);
+    submitAction(
+      bot,
+      ControlTask.once("SDK release item", () -> {
+        var gameMode = bot.minecraft().gameMode;
+        var player = bot.minecraft().player;
+        if (gameMode == null || player == null) {
+          throw Status.FAILED_PRECONDITION
+            .withDescription("Bot player or game mode is not available")
+            .asRuntimeException();
+        }
+        if (!player.isUsingItem()) {
+          throw Status.FAILED_PRECONDITION
+            .withDescription("The bot is not using an item")
+            .asRuntimeException();
+        }
+        gameMode.releaseUsingItem(player);
+      }),
+      DEFAULT_ACTION_TIMEOUT,
+      result -> ReleaseItemResponse.newBuilder().setResult(result).build(),
+      responseObserver);
   }
 
   // =====================================================================
@@ -700,38 +1265,41 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
   public void attackEntity(AttackEntityRequest request, StreamObserver<AttackEntityResponse> responseObserver) {
     var instanceId = UUID.fromString(request.getInstanceId());
     var botId = UUID.fromString(request.getBotId());
-    ServerRPCConstants.USER_CONTEXT_KEY.get()
-      .hasPermissionOrThrow(PermissionContext.instance(InstancePermission.UPDATE_BOT_CONFIG, instanceId));
-
-    try {
-      var bot = requireOnlineBot(soulFireServer, instanceId, botId);
-      var entityId = request.getEntityId();
-
-      callInBotContext(bot, () -> {
-        bot.botControl().replace(ControlTask.once(() -> {
-          var gameMode = bot.minecraft().gameMode;
-          var player = bot.minecraft().player;
-          var level = bot.minecraft().level;
-          if (gameMode == null || player == null || level == null) {
-            return;
-          }
-          var target = findEntityById(level, entityId);
-          if (target == null) {
-            log.debug("AttackEntity: entity id {} not found", entityId);
-            return;
-          }
+    var bot = requireControlledOnlineBot(soulFireServer, instanceId, botId);
+    submitAction(
+      bot,
+      ControlTask.once("SDK attack entity", () -> {
+        var gameMode = bot.minecraft().gameMode;
+        var player = bot.minecraft().player;
+        var level = bot.minecraft().level;
+        if (gameMode == null || player == null || level == null) {
+          throw Status.FAILED_PRECONDITION
+            .withDescription("Bot player, level, or game mode is not available")
+            .asRuntimeException();
+        }
+        var target = findEntityById(level, request.getEntityId());
+        if (target == null) {
+          throw Status.NOT_FOUND
+            .withDescription("Target entity is not observable")
+            .asRuntimeException();
+        }
+        if (target.distanceToSqr(player) > 36.0D) {
+          throw Status.OUT_OF_RANGE
+            .withDescription("Target entity is outside the bot's interaction reach")
+            .asRuntimeException();
+        }
+        var wasSprinting = player.isSprinting();
+        player.setSprinting(request.getSprinting());
+        try {
           gameMode.attack(player, target);
           player.swing(InteractionHand.MAIN_HAND);
-        }));
-        return null;
-      });
-
-      responseObserver.onNext(AttackEntityResponse.getDefaultInstance());
-      responseObserver.onCompleted();
-    } catch (Throwable t) {
-      log.error("Error attacking entity", t);
-      throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
-    }
+        } finally {
+          player.setSprinting(wasSprinting);
+        }
+      }),
+      DEFAULT_ACTION_TIMEOUT,
+      result -> AttackEntityResponse.newBuilder().setResult(result).build(),
+      responseObserver);
   }
 
   private static Entity findEntityById(ClientLevel level, int id) {
@@ -749,43 +1317,49 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
   public void interactEntity(InteractEntityRequest request, StreamObserver<InteractEntityResponse> responseObserver) {
     var instanceId = UUID.fromString(request.getInstanceId());
     var botId = UUID.fromString(request.getBotId());
-    ServerRPCConstants.USER_CONTEXT_KEY.get()
-      .hasPermissionOrThrow(PermissionContext.instance(InstancePermission.UPDATE_BOT_CONFIG, instanceId));
-
-    try {
-      var bot = requireOnlineBot(soulFireServer, instanceId, botId);
-      var entityId = request.getEntityId();
-      var hand = toMcHand(request.getHand());
-      // NOTE: the `sneaking` request field is currently advisory — Minecraft
-      // derives sneak state from the player's control state at execution time.
-
-      callInBotContext(bot, () -> {
-        bot.botControl().replace(ControlTask.once(() -> {
-          var gameMode = bot.minecraft().gameMode;
-          var player = bot.minecraft().player;
-          var level = bot.minecraft().level;
-          if (gameMode == null || player == null || level == null) {
-            return;
+    var bot = requireControlledOnlineBot(soulFireServer, instanceId, botId);
+    var hand = toMcHand(request.getHand());
+    submitAction(
+      bot,
+      ControlTask.once("SDK interact entity", () -> {
+        var gameMode = bot.minecraft().gameMode;
+        var player = bot.minecraft().player;
+        var level = bot.minecraft().level;
+        if (gameMode == null || player == null || level == null) {
+          throw Status.FAILED_PRECONDITION
+            .withDescription("Bot player, level, or game mode is not available")
+            .asRuntimeException();
+        }
+        var target = findEntityById(level, request.getEntityId());
+        if (target == null) {
+          throw Status.NOT_FOUND
+            .withDescription("Target entity is not observable")
+            .asRuntimeException();
+        }
+        if (target.distanceToSqr(player) > 36.0D) {
+          throw Status.OUT_OF_RANGE
+            .withDescription("Target entity is outside the bot's interaction reach")
+            .asRuntimeException();
+        }
+        var wasSneaking = player.isShiftKeyDown();
+        player.setShiftKeyDown(request.getSneaking());
+        try {
+          var result = gameMode.interact(player, target, new EntityHitResult(target), hand);
+          if (!(result instanceof InteractionResult.Success success)) {
+            throw Status.FAILED_PRECONDITION
+              .withDescription("The target entity rejected the interaction")
+              .asRuntimeException();
           }
-          var target = findEntityById(level, entityId);
-          if (target == null) {
-            log.debug("InteractEntity: entity id {} not found", entityId);
-            return;
-          }
-          if (gameMode.interact(player, target, new EntityHitResult(target), hand) instanceof InteractionResult.Success success
-            && success.swingSource() == InteractionResult.SwingSource.CLIENT) {
+          if (success.swingSource() == InteractionResult.SwingSource.CLIENT) {
             player.swing(hand);
           }
-        }));
-        return null;
-      });
-
-      responseObserver.onNext(InteractEntityResponse.getDefaultInstance());
-      responseObserver.onCompleted();
-    } catch (Throwable t) {
-      log.error("Error interacting with entity", t);
-      throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
-    }
+        } finally {
+          player.setShiftKeyDown(wasSneaking);
+        }
+      }),
+      DEFAULT_ACTION_TIMEOUT,
+      result -> InteractEntityResponse.newBuilder().setResult(result).build(),
+      responseObserver);
   }
 
   // =====================================================================
@@ -796,30 +1370,48 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
   public void swingArm(SwingArmRequest request, StreamObserver<SwingArmResponse> responseObserver) {
     var instanceId = UUID.fromString(request.getInstanceId());
     var botId = UUID.fromString(request.getBotId());
-    ServerRPCConstants.USER_CONTEXT_KEY.get()
-      .hasPermissionOrThrow(PermissionContext.instance(InstancePermission.UPDATE_BOT_CONFIG, instanceId));
+    var bot = requireControlledOnlineBot(soulFireServer, instanceId, botId);
+    var hand = toMcHand(request.getHand());
+    submitAction(
+      bot,
+      ControlTask.once("SDK swing arm", () -> {
+        var player = bot.minecraft().player;
+        if (player == null) {
+          throw Status.FAILED_PRECONDITION
+            .withDescription("Bot player is not available")
+            .asRuntimeException();
+        }
+        player.swing(hand);
+      }),
+      DEFAULT_ACTION_TIMEOUT,
+      result -> SwingArmResponse.newBuilder().setResult(result).build(),
+      responseObserver);
+  }
 
-    try {
-      var bot = requireOnlineBot(soulFireServer, instanceId, botId);
-      var hand = toMcHand(request.getHand());
-
-      callInBotContext(bot, () -> {
-        bot.botControl().replace(ControlTask.once(() -> {
-          var player = bot.minecraft().player;
-          if (player == null) {
-            return;
-          }
-          player.swing(hand);
-        }));
-        return null;
-      });
-
-      responseObserver.onNext(SwingArmResponse.getDefaultInstance());
-      responseObserver.onCompleted();
-    } catch (Throwable t) {
-      log.error("Error swinging arm", t);
-      throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
-    }
+  @Override
+  public void respawn(RespawnRequest request, StreamObserver<RespawnResponse> responseObserver) {
+    var instanceId = UUID.fromString(request.getInstanceId());
+    var botId = UUID.fromString(request.getBotId());
+    var bot = requireControlledOnlineBot(soulFireServer, instanceId, botId);
+    submitAction(
+      bot,
+      ControlTask.once("SDK respawn", () -> {
+        var player = bot.minecraft().player;
+        if (player == null) {
+          throw Status.FAILED_PRECONDITION
+            .withDescription("Bot player is not available")
+            .asRuntimeException();
+        }
+        if (!player.isDeadOrDying()) {
+          throw Status.FAILED_PRECONDITION
+            .withDescription("Bot is not dead")
+            .asRuntimeException();
+        }
+        player.respawn();
+      }),
+      DEFAULT_ACTION_TIMEOUT,
+      result -> RespawnResponse.newBuilder().setResult(result).build(),
+      responseObserver);
   }
 
   // =====================================================================
@@ -830,13 +1422,11 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
   public void goTo(GoToRequest request, StreamObserver<PathfindProgress> responseObserver) {
     var instanceId = UUID.fromString(request.getInstanceId());
     var botId = UUID.fromString(request.getBotId());
-    ServerRPCConstants.USER_CONTEXT_KEY.get()
-      .hasPermissionOrThrow(PermissionContext.instance(InstancePermission.UPDATE_BOT_CONFIG, instanceId));
-
-    var bot = requireOnlineBot(soulFireServer, instanceId, botId);
+    var bot = requireControlledOnlineBot(soulFireServer, instanceId, botId);
     var serverObserver = (ServerCallStreamObserver<PathfindProgress>) responseObserver;
+    var actionId = UUID.randomUUID();
+    var key = new BotKey(instanceId, botId);
 
-    // Resolve the goal.
     GoalScorer goalScorer;
     WorldPositionSupplier goalPositionSupplier;
     try {
@@ -844,26 +1434,14 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
       goalScorer = resolved.scorer();
       goalPositionSupplier = resolved.positionSupplier();
     } catch (Throwable t) {
-      responseObserver.onError(Status.INVALID_ARGUMENT
-        .withDescription(t.getMessage())
-        .withCause(t)
-        .asRuntimeException());
+      responseObserver.onError(toGrpcError("Failed to resolve pathfinding goal", t));
       return;
     }
 
-    // Cancel any prior path for this bot.
-    var priorRef = activePaths.get(botId);
-    if (priorRef != null) {
-      var priorFuture = priorRef.get();
-      if (priorFuture != null && !priorFuture.isDone()) {
-        priorFuture.cancel(true);
-      }
-    }
-
-    // Send PLANNING immediately.
     try {
       serverObserver.onNext(PathfindProgress.newBuilder()
         .setStatus(PathfindStatus.PATHFIND_STATUS_PLANNING)
+        .setActionId(actionId.toString())
         .build());
     } catch (Throwable t) {
       log.debug("Failed to emit PLANNING", t);
@@ -872,19 +1450,30 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
 
     CompletableFuture<Void> future;
     try {
-      future = callInBotContext(bot, () -> PathExecutor.executePathfinding(bot, goalScorer, new PathConstraintImpl(bot)));
+      var constraint = buildPathConstraint(bot, request.getOptions());
+      future = callInBotContext(
+        bot,
+        () -> PathExecutor.executePathfinding(bot, goalScorer, constraint));
     } catch (Throwable t) {
-      responseObserver.onError(Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException());
+      responseObserver.onError(toGrpcError("Failed to start pathfinding", t));
       return;
     }
 
-    var ref = activePaths.computeIfAbsent(botId, _ -> new AtomicReference<>());
-    ref.set(future);
+    var timedOut = new AtomicBoolean();
+    var action = new PathAction(actionId, future, timedOut);
+    var priorAction = activePaths.put(key, action);
+    if (priorAction != null && !priorAction.future().isDone()) {
+      priorAction.future().cancel(true);
+    }
 
-    // Send MOVING once on start.
-    emitProgress(bot, serverObserver, goalPositionSupplier, PathfindStatus.PATHFIND_STATUS_MOVING, null);
+    emitProgress(
+      actionId,
+      bot,
+      serverObserver,
+      goalPositionSupplier,
+      PathfindStatus.PATHFIND_STATUS_MOVING,
+      null);
 
-    // Schedule periodic MOVING updates until completion.
     var completed = new AtomicBoolean(false);
     Runnable schedule = new Runnable() {
       @Override
@@ -895,36 +1484,77 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
         if (future.isDone()) {
           return;
         }
-        emitProgress(bot, serverObserver, goalPositionSupplier, PathfindStatus.PATHFIND_STATUS_MOVING, null);
+        emitProgress(
+          actionId,
+          bot,
+          serverObserver,
+          goalPositionSupplier,
+          PathfindStatus.PATHFIND_STATUS_MOVING,
+          null);
         soulFireServer.scheduler().schedule(this, PATH_PROGRESS_INTERVAL_MS, TimeUnit.MILLISECONDS);
       }
     };
     soulFireServer.scheduler().schedule(schedule, PATH_PROGRESS_INTERVAL_MS, TimeUnit.MILLISECONDS);
+
+    var pathTimeout = normalizePathTimeout(request.getOptions().getTimeoutSeconds());
+    soulFireServer.scheduler().schedule(() -> {
+      if (!future.isDone()) {
+        timedOut.set(true);
+        future.cancel(true);
+      }
+    }, pathTimeout.toMillis(), TimeUnit.MILLISECONDS);
 
     serverObserver.setOnCancelHandler(() -> {
       completed.set(true);
       if (!future.isDone()) {
         future.cancel(true);
       }
-      activePaths.remove(botId, ref);
+      activePaths.remove(key, action);
     });
 
     future.whenComplete((_, error) -> {
       if (!completed.compareAndSet(false, true)) {
         return;
       }
-      activePaths.remove(botId, ref);
+      activePaths.remove(key, action);
       if (serverObserver.isCancelled()) {
         return;
       }
       try {
         if (error == null) {
-          emitProgress(bot, serverObserver, goalPositionSupplier, PathfindStatus.PATHFIND_STATUS_COMPLETED, null);
-        } else if (error instanceof CancellationException) {
-          emitProgress(bot, serverObserver, goalPositionSupplier, PathfindStatus.PATHFIND_STATUS_CANCELLED, "cancelled");
+          emitProgress(
+            actionId,
+            bot,
+            serverObserver,
+            goalPositionSupplier,
+            PathfindStatus.PATHFIND_STATUS_COMPLETED,
+            null);
+        } else if (timedOut.get()) {
+          emitProgress(
+            actionId,
+            bot,
+            serverObserver,
+            goalPositionSupplier,
+            PathfindStatus.PATHFIND_STATUS_FAILED,
+            "Pathfinding timed out after %s seconds".formatted(pathTimeout.toSeconds()));
+        } else if (unwrapAsyncError(error) instanceof CancellationException) {
+          emitProgress(
+            actionId,
+            bot,
+            serverObserver,
+            goalPositionSupplier,
+            PathfindStatus.PATHFIND_STATUS_CANCELLED,
+            "cancelled");
         } else {
-          var msg = error.getMessage() != null ? error.getMessage() : error.getClass().getSimpleName();
-          emitProgress(bot, serverObserver, goalPositionSupplier, PathfindStatus.PATHFIND_STATUS_FAILED, msg);
+          var cause = Objects.requireNonNull(unwrapAsyncError(error));
+          var msg = Objects.requireNonNullElse(cause.getMessage(), cause.getClass().getSimpleName());
+          emitProgress(
+            actionId,
+            bot,
+            serverObserver,
+            goalPositionSupplier,
+            PathfindStatus.PATHFIND_STATUS_FAILED,
+            msg);
         }
         serverObserver.onCompleted();
       } catch (Throwable t) {
@@ -933,7 +1563,30 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
     });
   }
 
-  private static void emitProgress(BotConnection bot,
+  private static PathConstraint buildPathConstraint(
+    BotConnection bot,
+    PathfindOptions options
+  ) {
+    PathConstraint constraint = new PathConstraintImpl(bot);
+    if (!options.getAllowMining()) {
+      constraint = new NoBlockBreakingConstraint(constraint);
+    }
+    if (!options.getAllowPlacing()) {
+      constraint = new NoBlockPlacingConstraint(constraint);
+    }
+    return constraint;
+  }
+
+  private static Duration normalizePathTimeout(int timeoutSeconds) {
+    if (timeoutSeconds <= 0) {
+      return DEFAULT_PATH_TIMEOUT;
+    }
+    var requested = Duration.ofSeconds(timeoutSeconds);
+    return requested.compareTo(MAX_PATH_TIMEOUT) > 0 ? MAX_PATH_TIMEOUT : requested;
+  }
+
+  private static void emitProgress(UUID actionId,
+                                   BotConnection bot,
                                    ServerCallStreamObserver<PathfindProgress> observer,
                                    WorldPositionSupplier goalPosSupplier,
                                    PathfindStatus status,
@@ -941,7 +1594,9 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
     if (observer.isCancelled()) {
       return;
     }
-    var progressBuilder = PathfindProgress.newBuilder().setStatus(status);
+    var progressBuilder = PathfindProgress.newBuilder()
+      .setStatus(status)
+      .setActionId(actionId.toString());
     try {
       var player = bot.minecraft().player;
       var level = bot.minecraft().level;
@@ -1003,8 +1658,6 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
       case ENTITY -> {
         var entityGoal = goal.getEntity();
         var id = entityGoal.getEntityId();
-        // Snapshot the entity's position at resolution time. Live follow is not
-        // yet implemented; clients can re-submit GoTo to retarget.
         var level = bot.minecraft().level;
         if (level == null) {
           throw Status.FAILED_PRECONDITION.withDescription("Level not loaded").asRuntimeException();
@@ -1014,10 +1667,18 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
           throw Status.NOT_FOUND.withDescription("Entity '%d' not observable".formatted(id)).asRuntimeException();
         }
         var entityPos = entity.position();
-        var vec = SFVec3i.fromDouble(entityPos);
         var radius = Math.max(1, Math.round(entityGoal.getRadius()));
+        DynamicGoalScorer scorer = () -> {
+          var live = bot.minecraft().level;
+          if (live == null) {
+            return new CloseToPosGoal(SFVec3i.fromDouble(entityPos), radius);
+          }
+          var found = findEntityById(live, id);
+          var position = found == null ? entityPos : found.position();
+          return new CloseToPosGoal(SFVec3i.fromDouble(position), radius);
+        };
         yield new ResolvedGoal(
-          new CloseToPosGoal(vec, radius),
+          scorer,
           b -> {
             var live = b.minecraft().level;
             if (live == null) {
@@ -1051,24 +1712,118 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
   public void stopPathfinding(StopPathfindingRequest request, StreamObserver<StopPathfindingResponse> responseObserver) {
     var instanceId = UUID.fromString(request.getInstanceId());
     var botId = UUID.fromString(request.getBotId());
-    ServerRPCConstants.USER_CONTEXT_KEY.get()
-      .hasPermissionOrThrow(PermissionContext.instance(InstancePermission.UPDATE_BOT_CONFIG, instanceId));
 
     try {
-      // Validate instance/bot existence for consistent error behavior.
-      requireOnlineBot(soulFireServer, instanceId, botId);
-      var ref = activePaths.get(botId);
-      if (ref != null) {
-        var future = ref.get();
-        if (future != null && !future.isDone()) {
-          future.cancel(true);
-        }
+      requireControlledOnlineBot(soulFireServer, instanceId, botId);
+      var action = activePaths.get(new BotKey(instanceId, botId));
+      if (action != null && !action.future().isDone()) {
+        action.future().cancel(true);
       }
       responseObserver.onNext(StopPathfindingResponse.getDefaultInstance());
       responseObserver.onCompleted();
     } catch (Throwable t) {
-      log.error("Error stopping pathfinding", t);
-      throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
+      responseObserver.onError(toGrpcError("Failed to stop pathfinding", t));
     }
   }
+
+  @Override
+  public void acquireBotControl(
+    AcquireBotControlRequest request,
+    StreamObserver<AcquireBotControlResponse> responseObserver
+  ) {
+    var instanceId = UUID.fromString(request.getInstanceId());
+    var botId = UUID.fromString(request.getBotId());
+    ServerRPCConstants.USER_CONTEXT_KEY.get()
+      .hasPermissionOrThrow(PermissionContext.instance(
+        InstancePermission.CONTROL_BOT_ACTIONS,
+        instanceId));
+    var instance = requireConfiguredBot(soulFireServer, instanceId, botId);
+    try {
+      var lease = instance.botControlLeaseManager().acquire(
+        botId,
+        ServerRPCConstants.USER_CONTEXT_KEY.get().getUniqueId(),
+        Duration.ofSeconds(request.getTtlSeconds()));
+      responseObserver.onNext(AcquireBotControlResponse.newBuilder()
+        .setLease(buildControlLease(lease))
+        .build());
+      responseObserver.onCompleted();
+    } catch (BotControlLeaseManager.LeaseUnavailableException e) {
+      responseObserver.onError(Status.ALREADY_EXISTS
+        .withDescription(e.getMessage())
+        .asRuntimeException());
+    }
+  }
+
+  @Override
+  public void renewBotControl(
+    RenewBotControlRequest request,
+    StreamObserver<RenewBotControlResponse> responseObserver
+  ) {
+    var instanceId = UUID.fromString(request.getInstanceId());
+    var botId = UUID.fromString(request.getBotId());
+    ServerRPCConstants.USER_CONTEXT_KEY.get()
+      .hasPermissionOrThrow(PermissionContext.instance(
+        InstancePermission.CONTROL_BOT_ACTIONS,
+        instanceId));
+    var instance = requireConfiguredBot(soulFireServer, instanceId, botId);
+    try {
+      var lease = instance.botControlLeaseManager().renew(
+        botId,
+        ServerRPCConstants.USER_CONTEXT_KEY.get().getUniqueId(),
+        request.getToken(),
+        Duration.ofSeconds(request.getTtlSeconds()));
+      responseObserver.onNext(RenewBotControlResponse.newBuilder()
+        .setLease(buildControlLease(lease))
+        .build());
+      responseObserver.onCompleted();
+    } catch (BotControlLeaseManager.InvalidLeaseException e) {
+      responseObserver.onError(Status.PERMISSION_DENIED
+        .withDescription(e.getMessage())
+        .asRuntimeException());
+    }
+  }
+
+  @Override
+  public void releaseBotControl(
+    ReleaseBotControlRequest request,
+    StreamObserver<ReleaseBotControlResponse> responseObserver
+  ) {
+    var instanceId = UUID.fromString(request.getInstanceId());
+    var botId = UUID.fromString(request.getBotId());
+    ServerRPCConstants.USER_CONTEXT_KEY.get()
+      .hasPermissionOrThrow(PermissionContext.instance(
+        InstancePermission.CONTROL_BOT_ACTIONS,
+        instanceId));
+    var instance = requireConfiguredBot(soulFireServer, instanceId, botId);
+    try {
+      instance.botControlLeaseManager().release(
+        botId,
+        ServerRPCConstants.USER_CONTEXT_KEY.get().getUniqueId(),
+        request.getToken());
+      responseObserver.onNext(ReleaseBotControlResponse.getDefaultInstance());
+      responseObserver.onCompleted();
+    } catch (BotControlLeaseManager.InvalidLeaseException e) {
+      responseObserver.onError(Status.PERMISSION_DENIED
+        .withDescription(e.getMessage())
+        .asRuntimeException());
+    }
+  }
+
+  private static BotControlLease buildControlLease(BotControlLeaseManager.Lease lease) {
+    return BotControlLease.newBuilder()
+      .setToken(lease.token())
+      .setExpiresAt(Timestamp.newBuilder()
+        .setSeconds(lease.expiresAt().getEpochSecond())
+        .setNanos(lease.expiresAt().getNano())
+        .build())
+      .build();
+  }
+
+  private record BotKey(UUID instanceId, UUID botId) {}
+
+  private record PathAction(
+    UUID actionId,
+    CompletableFuture<Void> future,
+    AtomicBoolean timedOut
+  ) {}
 }

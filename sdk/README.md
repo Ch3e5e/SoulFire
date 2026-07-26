@@ -23,8 +23,12 @@ The high-level clients support:
 
 - Starting, stopping, and restarting one bot, explicit bot IDs, or a count
 - Watching desired and runtime status as a server stream
-- Sending chat, querying the world, interacting, and pathfinding
-- Installing and managing a local SoulFire dedicated server
+- Sending chat, querying the world, interacting, managing inventory, and
+  pathfinding
+- Coordinating scripts through optional exclusive bot control leases
+- Composing collect, follow, combat, eating, and building behaviors
+- Provisioning instances, Minecraft accounts, and proxies
+- Installing, restarting, stopping, and inspecting a local dedicated server
 
 ## Generate the bindings
 
