@@ -20,6 +20,8 @@ package com.soulfiremc.server.renderer;
 import com.mojang.blaze3d.GpuFormat;
 import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.blaze3d.textures.GpuTexture;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.texture.TextureManager;
 import net.minecraft.resources.Identifier;
 import org.jetbrains.annotations.Nullable;
 
@@ -33,16 +35,43 @@ import java.util.Map;
 
 public final class RendererRuntimeTextureMirror {
   private static final Object LOCK = new Object();
+  private static final Object GLOBAL_SCOPE = new Object();
   private static final Map<GpuTexture, Identifier> TEXTURE_IDS = new IdentityHashMap<>();
-  private static final Map<Identifier, MirroredTexture> TEXTURES = new HashMap<>();
+  private static final Map<GpuTexture, MirroredTexture> TEXTURES = new IdentityHashMap<>();
+  private static final Map<Object, Map<Identifier, GpuTexture>> SCOPED_TEXTURES =
+    new IdentityHashMap<>();
+  private static final Map<Object, Object> FALLBACK_SCOPES = new IdentityHashMap<>();
 
   private RendererRuntimeTextureMirror() {}
 
   public static void register(Identifier location, @Nullable GpuTexture texture) {
-    register(location, texture, null);
+    register(GLOBAL_SCOPE, location, texture, null);
   }
 
   public static void register(Identifier location, @Nullable GpuTexture texture, @Nullable NativeImage initialPixels) {
+    register(GLOBAL_SCOPE, location, texture, initialPixels);
+  }
+
+  public static void register(
+    TextureManager textureManager,
+    Identifier location,
+    @Nullable GpuTexture texture) {
+    register(textureManager, location, texture, null);
+  }
+
+  public static void register(
+    TextureManager textureManager,
+    Identifier location,
+    @Nullable GpuTexture texture,
+    @Nullable NativeImage initialPixels) {
+    register((Object) textureManager, location, texture, initialPixels);
+  }
+
+  static void register(
+    Object scope,
+    Identifier location,
+    @Nullable GpuTexture texture,
+    @Nullable NativeImage initialPixels) {
     if (texture == null) {
       RenderDebugTrace.current().runtimeTextureMirrorSkipped("register", location + ":null-texture");
       return;
@@ -53,9 +82,15 @@ public final class RendererRuntimeTextureMirror {
     }
 
     synchronized (LOCK) {
-      TEXTURE_IDS.values().removeIf(location::equals);
+      var previous = SCOPED_TEXTURES
+        .computeIfAbsent(scope, _ -> new HashMap<>())
+        .put(location, texture);
       TEXTURE_IDS.put(texture, location);
-      var mirrored = TEXTURES.compute(location, (_, existing) -> existing != null && existing.matches(texture) ? existing : new MirroredTexture(texture));
+      var mirrored = TEXTURES.compute(
+        texture,
+        (_, existing) -> existing != null && existing.matches(texture)
+          ? existing
+          : new MirroredTexture(texture));
       if (initialPixels != null) {
         mirrored.write(
           initialPixels,
@@ -67,13 +102,52 @@ public final class RendererRuntimeTextureMirror {
           0
         );
       }
+      if (previous != null && previous != texture) {
+        removeIfUnreferenced(previous);
+      }
     }
   }
 
   public static void unregister(Identifier location) {
+    unregister(GLOBAL_SCOPE, location);
+  }
+
+  public static void unregister(TextureManager textureManager, Identifier location) {
+    unregister((Object) textureManager, location);
+  }
+
+  static void unregister(Object scope, Identifier location) {
     synchronized (LOCK) {
-      TEXTURE_IDS.values().removeIf(location::equals);
-      TEXTURES.remove(location);
+      var scopedTextures = SCOPED_TEXTURES.get(scope);
+      if (scopedTextures == null) {
+        return;
+      }
+
+      var removed = scopedTextures.remove(location);
+      if (scopedTextures.isEmpty()) {
+        SCOPED_TEXTURES.remove(scope);
+      }
+      if (removed != null) {
+        removeIfUnreferenced(removed);
+      }
+    }
+  }
+
+  public static void registerFallback(
+    TextureManager textureManager,
+    TextureManager fallbackTextureManager) {
+    synchronized (LOCK) {
+      FALLBACK_SCOPES.put(textureManager, fallbackTextureManager);
+    }
+  }
+
+  public static void unregisterAll(TextureManager textureManager) {
+    synchronized (LOCK) {
+      var removed = SCOPED_TEXTURES.remove(textureManager);
+      FALLBACK_SCOPES.remove(textureManager);
+      if (removed != null) {
+        removed.values().forEach(RendererRuntimeTextureMirror::removeIfUnreferenced);
+      }
     }
   }
 
@@ -282,8 +356,29 @@ public final class RendererRuntimeTextureMirror {
   @Nullable
   public static RendererAssets.TextureImage texture(Identifier location) {
     synchronized (LOCK) {
-      var mirrored = TEXTURES.get(location);
-      return mirrored != null ? textureImage(mirrored) : null;
+      var currentTextureManager = currentTextureManager();
+      var mirrored = currentTextureManager != null
+        ? mirroredTexture(currentTextureManager, location)
+        : null;
+      if (mirrored == null) {
+        mirrored = mirroredTexture(GLOBAL_SCOPE, location);
+      }
+      return textureImage(mirrored);
+    }
+  }
+
+  @Nullable
+  public static RendererAssets.TextureImage texture(
+    TextureManager textureManager,
+    Identifier location) {
+    return texture((Object) textureManager, location);
+  }
+
+  @Nullable
+  static RendererAssets.TextureImage texture(Object scope, Identifier location) {
+    synchronized (LOCK) {
+      var mirrored = mirroredTexture(scope, location);
+      return textureImage(mirrored);
     }
   }
 
@@ -293,7 +388,7 @@ public final class RendererRuntimeTextureMirror {
       for (var entry : TEXTURES.entrySet()) {
         var mirrored = entry.getValue();
         snapshots.add(new DebugTextureSnapshot(
-          entry.getKey(),
+          TEXTURE_IDS.get(entry.getKey()),
           mirrored.width,
           mirrored.height,
           mirrored.mipLevels,
@@ -310,12 +405,12 @@ public final class RendererRuntimeTextureMirror {
   @Nullable
   public static RendererAssets.TextureImage texture(GpuTexture texture) {
     synchronized (LOCK) {
-      var location = TEXTURE_IDS.get(texture);
-      if (location == null) {
+      var mirrored = mirroredTexture(texture);
+      if (mirrored == null) {
         RenderDebugTrace.current().runtimeTextureMirrorSkipped("lookup", "untracked-texture");
         return null;
       }
-      return texture(location);
+      return textureImage(mirrored);
     }
   }
 
@@ -332,7 +427,7 @@ public final class RendererRuntimeTextureMirror {
 
   @Nullable
   private static RendererAssets.TextureImage textureImage(MirroredTexture mirrored) {
-    if (!mirrored.hasUploadData()) {
+    if (mirrored == null || !mirrored.hasUploadData()) {
       return null;
     }
 
@@ -341,17 +436,51 @@ public final class RendererRuntimeTextureMirror {
 
   @Nullable
   private static MirroredTexture mirroredTexture(GpuTexture texture) {
-    var location = TEXTURE_IDS.get(texture);
-    if (location == null) {
-      return null;
-    }
-
-    var mirrored = TEXTURES.get(location);
+    var mirrored = TEXTURES.get(texture);
     if (mirrored == null || !mirrored.matches(texture)) {
+      if (!TEXTURE_IDS.containsKey(texture)) {
+        return null;
+      }
       mirrored = new MirroredTexture(texture);
-      TEXTURES.put(location, mirrored);
+      TEXTURES.put(texture, mirrored);
     }
     return mirrored;
+  }
+
+  @Nullable
+  private static MirroredTexture mirroredTexture(Object initialScope, Identifier location) {
+    var scope = initialScope;
+    var visited = new IdentityHashMap<Object, Boolean>();
+    while (scope != null && visited.put(scope, Boolean.TRUE) == null) {
+      var scopedTextures = SCOPED_TEXTURES.get(scope);
+      var texture = scopedTextures != null ? scopedTextures.get(location) : null;
+      if (texture != null) {
+        return mirroredTexture(texture);
+      }
+      scope = FALLBACK_SCOPES.get(scope);
+    }
+    return null;
+  }
+
+  @Nullable
+  private static TextureManager currentTextureManager() {
+    try {
+      var minecraft = Minecraft.getInstance();
+      return minecraft != null ? minecraft.getTextureManager() : null;
+    } catch (Throwable _) {
+      return null;
+    }
+  }
+
+  private static void removeIfUnreferenced(GpuTexture texture) {
+    for (var scopedTextures : SCOPED_TEXTURES.values()) {
+      if (scopedTextures.containsValue(texture)) {
+        return;
+      }
+    }
+
+    TEXTURE_IDS.remove(texture);
+    TEXTURES.remove(texture);
   }
 
   private static boolean isBaseLayer(int mipLevel, int depthOrLayer) {

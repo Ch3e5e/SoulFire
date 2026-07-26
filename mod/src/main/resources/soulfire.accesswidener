@@ -12,10 +12,36 @@ accessible method net/minecraft/client/Camera setPosition (DDD)V
 accessible field net/minecraft/client/Minecraft gameThread Ljava/lang/Thread;
 accessible field net/minecraft/client/Minecraft packetProcessor Lnet/minecraft/network/PacketProcessor;
 accessible field net/minecraft/util/thread/BlockableEventLoop pendingRunnables Ljava/util/Queue;
+accessible field net/minecraft/client/Minecraft profileFuture Ljava/util/concurrent/CompletableFuture;
+accessible field net/minecraft/client/Minecraft textureManager Lnet/minecraft/client/renderer/texture/TextureManager;
+accessible field net/minecraft/client/Minecraft textInputManager Lcom/mojang/blaze3d/platform/TextInputManager;
+accessible field net/minecraft/client/Minecraft levelExtractor Lnet/minecraft/client/renderer/extract/LevelExtractor;
+accessible field net/minecraft/client/Minecraft entityRenderDispatcher Lnet/minecraft/client/renderer/entity/EntityRenderDispatcher;
+accessible field net/minecraft/client/Minecraft blockEntityRenderDispatcher Lnet/minecraft/client/renderer/blockentity/BlockEntityRenderDispatcher;
+accessible field net/minecraft/client/Minecraft gameRenderer Lnet/minecraft/client/renderer/GameRenderer;
+accessible field net/minecraft/client/Minecraft mapRenderer Lnet/minecraft/client/renderer/MapRenderer;
+accessible field net/minecraft/client/Minecraft particleEngine Lnet/minecraft/client/particle/ParticleEngine;
+accessible field net/minecraft/client/Minecraft mapTextureManager Lnet/minecraft/client/resources/MapTextureManager;
 accessible field net/minecraft/client/Minecraft gui Lnet/minecraft/client/gui/Gui;
+accessible field net/minecraft/client/Minecraft options Lnet/minecraft/client/Options;
+accessible field net/minecraft/client/Minecraft mouseHandler Lnet/minecraft/client/MouseHandler;
+accessible field net/minecraft/client/Minecraft keyboardHandler Lnet/minecraft/client/KeyboardHandler;
+accessible field net/minecraft/client/Minecraft proxy Ljava/net/Proxy;
+accessible field net/minecraft/client/Minecraft userApiService Lcom/mojang/authlib/minecraft/UserApiService;
+accessible field net/minecraft/client/Minecraft userPropertiesFuture Ljava/util/concurrent/CompletableFuture;
 accessible field net/minecraft/client/Minecraft playerSocialManager Lnet/minecraft/client/gui/screens/social/PlayerSocialManager;
+accessible field net/minecraft/client/Minecraft remoteFriendListUpdateHandler Lnet/minecraft/client/gui/screens/social/RemoteFriendListUpdateHandler;
 accessible field net/minecraft/client/Minecraft profileKeyPairManager Lnet/minecraft/client/multiplayer/ProfileKeyPairManager;
 accessible field net/minecraft/client/Minecraft reportingContext Lnet/minecraft/client/multiplayer/chat/report/ReportingContext;
+accessible field net/minecraft/client/Minecraft framerateLimitTracker Lcom/mojang/blaze3d/platform/FramerateLimitTracker;
+accessible field net/minecraft/client/Minecraft fpsPieProfiler Lnet/minecraft/util/profiling/ContinuousProfiler;
+accessible field net/minecraft/client/Minecraft fpsPieRenderTicks I
+accessible field net/minecraft/client/Minecraft narrator Lnet/minecraft/client/GameNarrator;
+accessible field net/minecraft/client/Minecraft tutorial Lnet/minecraft/client/tutorial/Tutorial;
+accessible field net/minecraft/client/Minecraft musicManager Lnet/minecraft/client/sounds/MusicManager;
+accessible field net/minecraft/client/Minecraft telemetryManager Lnet/minecraft/client/telemetry/ClientTelemetryManager;
+accessible field net/minecraft/client/Minecraft perTickGizmos Lnet/minecraft/gizmos/SimpleGizmoCollector;
+accessible field net/minecraft/client/Minecraft drainedLatestTickGizmos Ljava/util/List;
 accessible field net/minecraft/client/Minecraft running Z
 accessible field net/minecraft/client/Minecraft user Lnet/minecraft/client/User;
 accessible field net/minecraft/client/Minecraft deltaTracker Lnet/minecraft/client/DeltaTracker$Timer;
@@ -27,10 +53,35 @@ accessible field net/minecraft/network/PacketProcessor runningThread Ljava/lang/
 
 mutable field net/minecraft/client/Minecraft packetProcessor Lnet/minecraft/network/PacketProcessor;
 mutable field net/minecraft/util/thread/BlockableEventLoop pendingRunnables Ljava/util/Queue;
+mutable field net/minecraft/client/Minecraft profileFuture Ljava/util/concurrent/CompletableFuture;
+mutable field net/minecraft/client/Minecraft textureManager Lnet/minecraft/client/renderer/texture/TextureManager;
+mutable field net/minecraft/client/Minecraft textInputManager Lcom/mojang/blaze3d/platform/TextInputManager;
+mutable field net/minecraft/client/Minecraft levelExtractor Lnet/minecraft/client/renderer/extract/LevelExtractor;
+mutable field net/minecraft/client/Minecraft entityRenderDispatcher Lnet/minecraft/client/renderer/entity/EntityRenderDispatcher;
+mutable field net/minecraft/client/Minecraft blockEntityRenderDispatcher Lnet/minecraft/client/renderer/blockentity/BlockEntityRenderDispatcher;
+mutable field net/minecraft/client/Minecraft gameRenderer Lnet/minecraft/client/renderer/GameRenderer;
+mutable field net/minecraft/client/Minecraft mapRenderer Lnet/minecraft/client/renderer/MapRenderer;
+mutable field net/minecraft/client/Minecraft particleEngine Lnet/minecraft/client/particle/ParticleEngine;
+mutable field net/minecraft/client/Minecraft mapTextureManager Lnet/minecraft/client/resources/MapTextureManager;
 mutable field net/minecraft/client/Minecraft gui Lnet/minecraft/client/gui/Gui;
+mutable field net/minecraft/client/Minecraft options Lnet/minecraft/client/Options;
+mutable field net/minecraft/client/Minecraft mouseHandler Lnet/minecraft/client/MouseHandler;
+mutable field net/minecraft/client/Minecraft keyboardHandler Lnet/minecraft/client/KeyboardHandler;
+mutable field net/minecraft/client/Minecraft proxy Ljava/net/Proxy;
+mutable field net/minecraft/client/Minecraft userApiService Lcom/mojang/authlib/minecraft/UserApiService;
+mutable field net/minecraft/client/Minecraft userPropertiesFuture Ljava/util/concurrent/CompletableFuture;
 mutable field net/minecraft/client/Minecraft playerSocialManager Lnet/minecraft/client/gui/screens/social/PlayerSocialManager;
+mutable field net/minecraft/client/Minecraft remoteFriendListUpdateHandler Lnet/minecraft/client/gui/screens/social/RemoteFriendListUpdateHandler;
 mutable field net/minecraft/client/Minecraft profileKeyPairManager Lnet/minecraft/client/multiplayer/ProfileKeyPairManager;
 mutable field net/minecraft/client/Minecraft reportingContext Lnet/minecraft/client/multiplayer/chat/report/ReportingContext;
+mutable field net/minecraft/client/Minecraft framerateLimitTracker Lcom/mojang/blaze3d/platform/FramerateLimitTracker;
+mutable field net/minecraft/client/Minecraft fpsPieProfiler Lnet/minecraft/util/profiling/ContinuousProfiler;
+mutable field net/minecraft/client/Minecraft narrator Lnet/minecraft/client/GameNarrator;
+mutable field net/minecraft/client/Minecraft tutorial Lnet/minecraft/client/tutorial/Tutorial;
+mutable field net/minecraft/client/Minecraft musicManager Lnet/minecraft/client/sounds/MusicManager;
+mutable field net/minecraft/client/Minecraft telemetryManager Lnet/minecraft/client/telemetry/ClientTelemetryManager;
+mutable field net/minecraft/client/Minecraft perTickGizmos Lnet/minecraft/gizmos/SimpleGizmoCollector;
+mutable field net/minecraft/client/Minecraft drainedLatestTickGizmos Ljava/util/List;
 mutable field net/minecraft/client/Minecraft running Z
 mutable field net/minecraft/client/Minecraft user Lnet/minecraft/client/User;
 mutable field net/minecraft/client/Minecraft deltaTracker Lnet/minecraft/client/DeltaTracker$Timer;
@@ -39,6 +90,51 @@ mutable field net/minecraft/client/Minecraft downloadedPackSource Lnet/minecraft
 mutable field net/minecraft/client/Minecraft skinManager Lnet/minecraft/client/resources/SkinManager;
 mutable field net/minecraft/client/Minecraft playerSkinRenderCache Lnet/minecraft/client/renderer/PlayerSkinRenderCache;
 mutable field net/minecraft/network/PacketProcessor runningThread Ljava/lang/Thread;
+
+accessible field net/minecraft/client/renderer/GameRenderer minecraft Lnet/minecraft/client/Minecraft;
+accessible field net/minecraft/client/renderer/GameRenderer gameRenderState Lnet/minecraft/client/renderer/state/GameRenderState;
+accessible field net/minecraft/client/renderer/GameRenderer random Lnet/minecraft/util/RandomSource;
+accessible field net/minecraft/client/renderer/GameRenderer itemInHandRenderer Lnet/minecraft/client/renderer/ItemInHandRenderer;
+accessible field net/minecraft/client/renderer/GameRenderer screenEffectRenderer Lnet/minecraft/client/renderer/ScreenEffectRenderer;
+accessible field net/minecraft/client/renderer/GameRenderer handAndScreenSubmitNodeStorage Lnet/minecraft/client/renderer/SubmitNodeStorage;
+accessible field net/minecraft/client/renderer/GameRenderer mainCamera Lnet/minecraft/client/Camera;
+
+mutable field net/minecraft/client/renderer/GameRenderer minecraft Lnet/minecraft/client/Minecraft;
+mutable field net/minecraft/client/renderer/GameRenderer gameRenderState Lnet/minecraft/client/renderer/state/GameRenderState;
+mutable field net/minecraft/client/renderer/GameRenderer random Lnet/minecraft/util/RandomSource;
+mutable field net/minecraft/client/renderer/GameRenderer itemInHandRenderer Lnet/minecraft/client/renderer/ItemInHandRenderer;
+mutable field net/minecraft/client/renderer/GameRenderer screenEffectRenderer Lnet/minecraft/client/renderer/ScreenEffectRenderer;
+mutable field net/minecraft/client/renderer/GameRenderer handAndScreenSubmitNodeStorage Lnet/minecraft/client/renderer/SubmitNodeStorage;
+mutable field net/minecraft/client/renderer/GameRenderer mainCamera Lnet/minecraft/client/Camera;
+
+accessible field net/minecraft/client/renderer/entity/EntityRenderDispatcher itemInHandRenderer Lnet/minecraft/client/renderer/ItemInHandRenderer;
+accessible field net/minecraft/client/renderer/entity/EntityRenderDispatcher textureManager Lnet/minecraft/client/renderer/texture/TextureManager;
+accessible field net/minecraft/client/renderer/entity/EntityRenderDispatcher mapRenderer Lnet/minecraft/client/renderer/MapRenderer;
+accessible field net/minecraft/client/renderer/entity/EntityRenderDispatcher playerSkinRenderCache Lnet/minecraft/client/renderer/PlayerSkinRenderCache;
+
+mutable field net/minecraft/client/renderer/entity/EntityRenderDispatcher itemInHandRenderer Lnet/minecraft/client/renderer/ItemInHandRenderer;
+mutable field net/minecraft/client/renderer/entity/EntityRenderDispatcher textureManager Lnet/minecraft/client/renderer/texture/TextureManager;
+mutable field net/minecraft/client/renderer/entity/EntityRenderDispatcher mapRenderer Lnet/minecraft/client/renderer/MapRenderer;
+mutable field net/minecraft/client/renderer/entity/EntityRenderDispatcher playerSkinRenderCache Lnet/minecraft/client/renderer/PlayerSkinRenderCache;
+
+accessible field net/minecraft/client/renderer/blockentity/BlockEntityRenderDispatcher cameraPos Lnet/minecraft/world/phys/Vec3;
+accessible field net/minecraft/client/renderer/blockentity/BlockEntityRenderDispatcher entityRenderer Lnet/minecraft/client/renderer/entity/EntityRenderDispatcher;
+accessible field net/minecraft/client/renderer/blockentity/BlockEntityRenderDispatcher playerSkinRenderCache Lnet/minecraft/client/renderer/PlayerSkinRenderCache;
+
+mutable field net/minecraft/client/renderer/blockentity/BlockEntityRenderDispatcher cameraPos Lnet/minecraft/world/phys/Vec3;
+mutable field net/minecraft/client/renderer/blockentity/BlockEntityRenderDispatcher entityRenderer Lnet/minecraft/client/renderer/entity/EntityRenderDispatcher;
+mutable field net/minecraft/client/renderer/blockentity/BlockEntityRenderDispatcher playerSkinRenderCache Lnet/minecraft/client/renderer/PlayerSkinRenderCache;
+
+accessible field net/minecraft/client/renderer/texture/TextureManager byPath Ljava/util/Map;
+accessible field net/minecraft/client/renderer/texture/TextureManager tickableTextures Ljava/util/Set;
+
+mutable field net/minecraft/client/renderer/texture/TextureManager byPath Ljava/util/Map;
+mutable field net/minecraft/client/renderer/texture/TextureManager tickableTextures Ljava/util/Set;
+
+accessible field net/minecraft/client/particle/ParticleEngine resourceManager Lnet/minecraft/client/particle/ParticleResources;
+
+accessible field net/minecraft/client/Options minecraft Lnet/minecraft/client/Minecraft;
+mutable field net/minecraft/client/Options minecraft Lnet/minecraft/client/Minecraft;
 
 accessible class net/minecraft/client/resources/server/ServerPackManager$ServerPackData
 accessible class net/minecraft/client/resources/server/ServerPackManager$ActivationStatus

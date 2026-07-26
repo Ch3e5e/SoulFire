@@ -526,6 +526,46 @@ class RendererAssetsRuntimeTextureTest {
     }
   }
 
+  @Test
+  void isolatesRuntimeTextureIdsBetweenTextureManagers() {
+    var location = Identifier.withDefaultNamespace("map/1");
+    var firstTextureManager = new Object();
+    var secondTextureManager = new Object();
+    var firstTexture = new FakeGpuTexture(GpuFormat.RGBA8_UNORM, 1, 1);
+    var secondTexture = new FakeGpuTexture(GpuFormat.RGBA8_UNORM, 1, 1);
+
+    try (
+      var firstPixels = new NativeImage(1, 1, false);
+      var secondPixels = new NativeImage(1, 1, false)) {
+      firstPixels.setPixel(0, 0, 0xFFFF0000);
+      secondPixels.setPixel(0, 0, 0xFF0000FF);
+      RendererRuntimeTextureMirror.register(
+        firstTextureManager,
+        location,
+        firstTexture,
+        firstPixels);
+      RendererRuntimeTextureMirror.register(
+        secondTextureManager,
+        location,
+        secondTexture,
+        secondPixels);
+
+      assertEquals(
+        0xFFFF0000,
+        RendererRuntimeTextureMirror.texture(firstTextureManager, location)
+          .toBufferedImage()
+          .getRGB(0, 0));
+      assertEquals(
+        0xFF0000FF,
+        RendererRuntimeTextureMirror.texture(secondTextureManager, location)
+          .toBufferedImage()
+          .getRGB(0, 0));
+    } finally {
+      RendererRuntimeTextureMirror.unregister(firstTextureManager, location);
+      RendererRuntimeTextureMirror.unregister(secondTextureManager, location);
+    }
+  }
+
   private RendererAssets.TextureImage textureWithAlpha(int alpha) {
     var image = new BufferedImage(2, 1, BufferedImage.TYPE_INT_ARGB);
     image.setRGB(0, 0, 0xFFFFFFFF);

@@ -19,12 +19,17 @@ package com.soulfiremc.server.bot;
 
 import com.google.common.collect.Queues;
 import com.google.gson.JsonElement;
+import com.mojang.authlib.exceptions.AuthenticationException;
 import com.mojang.authlib.minecraft.UserApiService;
+import com.mojang.authlib.minecraft.UserApiService.UserProperties;
 import com.mojang.authlib.yggdrasil.FriendsService;
 import com.mojang.authlib.yggdrasil.YggdrasilAuthenticationService;
 import com.mojang.authlib.yggdrasil.response.FriendData;
 import com.mojang.authlib.yggdrasil.response.PresenceResponse;
+import com.mojang.blaze3d.platform.FramerateLimitTracker;
+import com.mojang.blaze3d.platform.TextInputManager;
 import com.soulfiremc.mod.access.IMinecraft;
+import com.soulfiremc.mod.access.ITextureManager;
 import com.soulfiremc.mod.util.SFConstants;
 import com.soulfiremc.mod.util.SFModHelpers;
 import com.soulfiremc.server.InstanceManager;
@@ -56,9 +61,13 @@ import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
+import net.minecraft.client.Camera;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.FramerateLimiter;
+import net.minecraft.client.GameNarrator;
+import net.minecraft.client.KeyboardHandler;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.MouseHandler;
 import net.minecraft.client.ResourceLoadStateTracker;
 import net.minecraft.client.User;
 import net.minecraft.client.gui.Gui;
@@ -77,18 +86,37 @@ import net.minecraft.client.multiplayer.ServerStatusPinger;
 import net.minecraft.client.multiplayer.chat.report.ReportEnvironment;
 import net.minecraft.client.multiplayer.chat.report.ReportingContext;
 import net.minecraft.client.multiplayer.resolver.ServerAddress;
+import net.minecraft.client.particle.ParticleEngine;
 import net.minecraft.client.player.LocalPlayerResolver;
+import net.minecraft.client.renderer.GameRenderer;
+import net.minecraft.client.renderer.ItemInHandRenderer;
+import net.minecraft.client.renderer.MapRenderer;
 import net.minecraft.client.renderer.PlayerSkinRenderCache;
-import net.minecraft.client.renderer.state.gui.GuiRenderState;
+import net.minecraft.client.renderer.ScreenEffectRenderer;
+import net.minecraft.client.renderer.SubmitNodeStorage;
+import net.minecraft.client.renderer.extract.LevelExtractor;
+import net.minecraft.client.renderer.state.GameRenderState;
 import net.minecraft.client.renderer.texture.SkinTextureDownloader;
+import net.minecraft.client.resources.MapTextureManager;
 import net.minecraft.client.resources.SkinManager;
 import net.minecraft.client.resources.server.DownloadedPackSource;
+import net.minecraft.client.sounds.MusicManager;
+import net.minecraft.client.telemetry.ClientTelemetryManager;
+import net.minecraft.client.tutorial.Tutorial;
+import net.minecraft.gizmos.SimpleGizmoCollector;
 import net.minecraft.network.PacketProcessor;
 import net.minecraft.server.network.EventLoopGroupHolder;
+import net.minecraft.util.RandomSource;
+import net.minecraft.util.Util;
+import net.minecraft.util.profiling.ContinuousProfiler;
+import net.minecraft.world.phys.Vec3;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.net.Proxy;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -202,8 +230,8 @@ public final class BotConnection {
     //noinspection DataFlowIssue
     newInstance.packetProcessor = new PacketProcessor(null); // Null until we spawn game thread
     newInstance.pendingRunnables = Queues.newConcurrentLinkedQueue();
-    newInstance.gui = new Gui(newInstance, new Hud(newInstance), new GuiRenderState());
     newInstance.running = true;
+    newInstance.proxy = javaProxy;
     newInstance.user = new User(
       minecraftAccount.lastKnownName(),
       minecraftAccount.profileId(),
@@ -211,15 +239,14 @@ public final class BotConnection {
       Optional.empty(),
       Optional.empty()
     );
+    newInstance.userApiService = userApiService;
+    newInstance.userPropertiesFuture = fetchUserProperties(userApiService);
+    newInstance.profileFuture = CompletableFuture.completedFuture(null);
+    initializeBotOptions(newInstance);
+    initializeBotTextureManager(newInstance);
     var friendsService = authSession.friendsService();
-    newInstance.playerSocialManager = new PlayerSocialManager(
-      newInstance,
-      userApiService,
-      friendsService,
-      new RemoteFriendListUpdateHandler(friendsService, newInstance));
     newInstance.profileKeyPairManager =
       ProfileKeyPairManager.create(userApiService, newInstance.user, newInstance.gameDirectory.toPath());
-    newInstance.gui.chatListener().setMessageDelay(newInstance.options.chatDelay().get());
     newInstance.reportingContext = ReportingContext.create(ReportEnvironment.local(), userApiService);
     newInstance.deltaTracker = new DeltaTracker.Timer(20.0F, 0L, newInstance::getTickTargetMillis);
     newInstance.reloadStateTracker = new ResourceLoadStateTracker();
@@ -239,9 +266,127 @@ public final class BotConnection {
     var localProfileResolver = new LocalPlayerResolver(newInstance, newInstance.services().profileResolver());
     newInstance.playerSkinRenderCache = new PlayerSkinRenderCache(newInstance.getTextureManager(), newInstance.getSkinManager(), localProfileResolver);
 
+    try (var ignored = SFHelpers.smartThreadLocalCloseable(SFConstants.MINECRAFT_INSTANCE, newInstance)) {
+      initializeBotClientComponents(newInstance);
+    }
+
+    var remoteFriendListUpdateHandler = new RemoteFriendListUpdateHandler(friendsService, newInstance);
+    newInstance.remoteFriendListUpdateHandler = remoteFriendListUpdateHandler;
+    newInstance.playerSocialManager = new PlayerSocialManager(
+      newInstance,
+      userApiService,
+      friendsService,
+      remoteFriendListUpdateHandler);
+    if (newInstance.playerSocialManager.isFriendListEnabled()) {
+      remoteFriendListUpdateHandler.start();
+    }
+    newInstance.gui.chatListener().setMessageDelay(newInstance.options.chatDelay().get());
+    shutdownHooks.add(remoteFriendListUpdateHandler::close);
+
     ((IMinecraft) newInstance).soulfire$setConnection(this);
 
     return newInstance;
+  }
+
+  private static CompletableFuture<UserProperties> fetchUserProperties(UserApiService userApiService) {
+    return CompletableFuture.supplyAsync(() -> {
+      try {
+        return userApiService.fetchProperties();
+      } catch (AuthenticationException e) {
+        log.debug("Failed to fetch account properties", e);
+        return UserApiService.OFFLINE_PROPERTIES;
+      }
+    }, Util.nonCriticalIoPool());
+  }
+
+  private static void initializeBotOptions(Minecraft minecraft) {
+    var options = SFModHelpers.deepCopy(minecraft.options);
+    options.minecraft = minecraft;
+    minecraft.options = options;
+  }
+
+  private static void initializeBotTextureManager(Minecraft minecraft) {
+    var sharedTextureManager = minecraft.getTextureManager();
+    var textureManager = SFModHelpers.deepCopy(sharedTextureManager);
+    textureManager.byPath = new HashMap<>(sharedTextureManager.byPath);
+    textureManager.tickableTextures = new HashSet<>();
+    ((ITextureManager) textureManager).soulfire$initializeBotCopy(sharedTextureManager);
+    minecraft.textureManager = textureManager;
+  }
+
+  private void initializeBotClientComponents(Minecraft minecraft) {
+    minecraft.textInputManager = new TextInputManager(minecraft.getWindow());
+    minecraft.mouseHandler = new MouseHandler(minecraft);
+    minecraft.keyboardHandler = new KeyboardHandler(minecraft);
+    minecraft.narrator = new GameNarrator(minecraft);
+    minecraft.tutorial = new Tutorial(minecraft, minecraft.options);
+    minecraft.musicManager = new MusicManager(minecraft);
+    minecraft.telemetryManager = new ClientTelemetryManager(
+      minecraft,
+      minecraft.userApiService,
+      minecraft.user);
+    minecraft.framerateLimitTracker = new FramerateLimitTracker(minecraft.options, minecraft);
+    minecraft.fpsPieProfiler = new ContinuousProfiler(
+      Util.timeSource(),
+      () -> minecraft.fpsPieRenderTicks,
+      minecraft.framerateLimitTracker::isHeavilyThrottled);
+    minecraft.perTickGizmos = new SimpleGizmoCollector();
+    minecraft.drainedLatestTickGizmos = new ArrayList<>();
+
+    var particleResources = minecraft.particleEngine.resourceManager;
+    minecraft.particleEngine = new ParticleEngine(null, particleResources);
+
+    minecraft.mapTextureManager = new MapTextureManager(minecraft.getTextureManager());
+    minecraft.mapRenderer = new MapRenderer(
+      minecraft.getAtlasManager(),
+      minecraft.mapTextureManager);
+
+    var entityRenderDispatcher = SFModHelpers.deepCopy(minecraft.getEntityRenderDispatcher());
+    entityRenderDispatcher.camera = null;
+    entityRenderDispatcher.crosshairPickEntity = null;
+    entityRenderDispatcher.textureManager = minecraft.getTextureManager();
+    entityRenderDispatcher.mapRenderer = minecraft.getMapRenderer();
+    entityRenderDispatcher.playerSkinRenderCache = minecraft.playerSkinRenderCache();
+    var itemInHandRenderer = new ItemInHandRenderer(
+      minecraft,
+      entityRenderDispatcher,
+      minecraft.getItemModelResolver());
+    entityRenderDispatcher.itemInHandRenderer = itemInHandRenderer;
+    minecraft.entityRenderDispatcher = entityRenderDispatcher;
+
+    var gameRenderer = SFModHelpers.deepCopy(minecraft.gameRenderer);
+    gameRenderer.minecraft = minecraft;
+    gameRenderer.gameRenderState = new GameRenderState();
+    gameRenderer.random = RandomSource.create();
+    gameRenderer.itemInHandRenderer = itemInHandRenderer;
+    gameRenderer.screenEffectRenderer = new ScreenEffectRenderer(minecraft, minecraft.getAtlasManager());
+    gameRenderer.handAndScreenSubmitNodeStorage = new SubmitNodeStorage();
+    gameRenderer.mainCamera = new Camera();
+    minecraft.gameRenderer = gameRenderer;
+
+    var blockEntityRenderDispatcher = SFModHelpers.deepCopy(minecraft.getBlockEntityRenderDispatcher());
+    blockEntityRenderDispatcher.cameraPos = Vec3.ZERO;
+    blockEntityRenderDispatcher.entityRenderer = entityRenderDispatcher;
+    blockEntityRenderDispatcher.playerSkinRenderCache = minecraft.playerSkinRenderCache();
+    minecraft.blockEntityRenderDispatcher = blockEntityRenderDispatcher;
+
+    entityRenderDispatcher.onResourceManagerReload(minecraft.getResourceManager());
+    blockEntityRenderDispatcher.onResourceManagerReload(minecraft.getResourceManager());
+
+    minecraft.levelExtractor = new LevelExtractor(
+      minecraft,
+      gameRenderer.gameRenderState().levelRenderState,
+      minecraft.levelRenderer);
+    minecraft.gui = new Gui(
+      minecraft,
+      new Hud(minecraft),
+      gameRenderer.gameRenderState().guiRenderState);
+
+    shutdownHooks.add(minecraft.tutorial::stop);
+    shutdownHooks.add(minecraft.particleEngine::clearParticles);
+    shutdownHooks.add(minecraft.mapTextureManager::close);
+    shutdownHooks.add(minecraft.getTextureManager()::close);
+    shutdownHooks.add(minecraft.telemetryManager::close);
   }
 
   private AuthSession createAuthSession(MinecraftAccount minecraftAccount, Proxy javaProxy) {
