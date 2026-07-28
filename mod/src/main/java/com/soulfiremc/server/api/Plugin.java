@@ -18,31 +18,28 @@
 package com.soulfiremc.server.api;
 
 import lombok.Getter;
-import lombok.extern.slf4j.Slf4j;
 
-/// This interface is for any plugin that hooks into the server.
-@Slf4j
+/// Base type for plugins that extend the SoulFire server.
 @Getter
 public abstract sealed class Plugin permits ExternalPlugin, InternalPlugin {
   private final PluginInfo pluginInfo;
 
   protected Plugin(PluginInfo pluginInfo) {
     this.pluginInfo = pluginInfo;
-
-    register();
   }
 
-  protected void register() {
-    if (!isAvailable()) {
-      return;
-    }
-
-    SoulFireAPI.registerListenersOfClass(getClass());
-    SoulFireAPI.registerListenersOfObject(this);
-    SoulFireAPI.registerServerExtension(this);
-  }
-
+  /// Whether this plugin can load in the current runtime.
   public boolean isAvailable() {
     return true;
   }
+
+  /// Declares permissions, RPC services, SDK metadata, and other static
+  /// contributions during the controlled registration phase.
+  protected void onLoad(PluginContext context) {}
+
+  /// Starts work that needs access to a fully initialized server.
+  protected void onEnable(ServerContext context) {}
+
+  /// Stops runtime work and releases resources owned by this plugin.
+  protected void onDisable() {}
 }

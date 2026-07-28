@@ -63,6 +63,7 @@ class InstancePermission(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     CONTROL_BOTS: _ClassVar[InstancePermission]
     EXECUTE_SCRIPTS: _ClassVar[InstancePermission]
     CONTROL_BOT_ACTIONS: _ClassVar[InstancePermission]
+    RAW_PROTOCOL: _ClassVar[InstancePermission]
 
 class UserRole(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -116,11 +117,36 @@ UPDATE_BOT_CONFIG: InstancePermission
 CONTROL_BOTS: InstancePermission
 EXECUTE_SCRIPTS: InstancePermission
 CONTROL_BOT_ACTIONS: InstancePermission
+RAW_PROTOCOL: InstancePermission
 ADMIN: UserRole
 USER: UserRole
 SERVER: SettingsPageEntryScopeType
 INSTANCE: SettingsPageEntryScopeType
 BOT: SettingsPageEntryScopeType
+
+class BlockPosition(_message.Message):
+    __slots__ = ("x", "y", "z", "dimension")
+    X_FIELD_NUMBER: _ClassVar[int]
+    Y_FIELD_NUMBER: _ClassVar[int]
+    Z_FIELD_NUMBER: _ClassVar[int]
+    DIMENSION_FIELD_NUMBER: _ClassVar[int]
+    x: int
+    y: int
+    z: int
+    dimension: str
+    def __init__(self, x: _Optional[int] = ..., y: _Optional[int] = ..., z: _Optional[int] = ..., dimension: _Optional[str] = ...) -> None: ...
+
+class WorldPosition(_message.Message):
+    __slots__ = ("x", "y", "z", "dimension")
+    X_FIELD_NUMBER: _ClassVar[int]
+    Y_FIELD_NUMBER: _ClassVar[int]
+    Z_FIELD_NUMBER: _ClassVar[int]
+    DIMENSION_FIELD_NUMBER: _ClassVar[int]
+    x: float
+    y: float
+    z: float
+    dimension: str
+    def __init__(self, x: _Optional[float] = ..., y: _Optional[float] = ..., z: _Optional[float] = ..., dimension: _Optional[str] = ...) -> None: ...
 
 class ProxyProto(_message.Message):
     __slots__ = ("type", "address", "username", "password")

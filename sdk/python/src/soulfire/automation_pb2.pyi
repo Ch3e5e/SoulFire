@@ -62,6 +62,29 @@ class AutomationBeatPhase(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     AUTOMATION_BEAT_PHASE_ACTIVATE_PORTAL: _ClassVar[AutomationBeatPhase]
     AUTOMATION_BEAT_PHASE_END_FIGHT: _ClassVar[AutomationBeatPhase]
     AUTOMATION_BEAT_PHASE_COMPLETE: _ClassVar[AutomationBeatPhase]
+
+class AutomationEventKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    AUTOMATION_EVENT_KIND_UNSPECIFIED: _ClassVar[AutomationEventKind]
+    AUTOMATION_EVENT_KIND_SNAPSHOT: _ClassVar[AutomationEventKind]
+    AUTOMATION_EVENT_KIND_BOT_CONNECTED: _ClassVar[AutomationEventKind]
+    AUTOMATION_EVENT_KIND_BOT_DISCONNECTED: _ClassVar[AutomationEventKind]
+    AUTOMATION_EVENT_KIND_GOAL_CHANGED: _ClassVar[AutomationEventKind]
+    AUTOMATION_EVENT_KIND_PHASE_CHANGED: _ClassVar[AutomationEventKind]
+    AUTOMATION_EVENT_KIND_ACTION_CHANGED: _ClassVar[AutomationEventKind]
+    AUTOMATION_EVENT_KIND_PROGRESS: _ClassVar[AutomationEventKind]
+    AUTOMATION_EVENT_KIND_PAUSED: _ClassVar[AutomationEventKind]
+    AUTOMATION_EVENT_KIND_RESUMED: _ClassVar[AutomationEventKind]
+    AUTOMATION_EVENT_KIND_DEATH: _ClassVar[AutomationEventKind]
+    AUTOMATION_EVENT_KIND_STALLED: _ClassVar[AutomationEventKind]
+    AUTOMATION_EVENT_KIND_RECOVERY: _ClassVar[AutomationEventKind]
+    AUTOMATION_EVENT_KIND_OBJECTIVE_CHANGED: _ClassVar[AutomationEventKind]
+    AUTOMATION_EVENT_KIND_TEAM_STATE_CHANGED: _ClassVar[AutomationEventKind]
+    AUTOMATION_EVENT_KIND_CLAIMS_CHANGED: _ClassVar[AutomationEventKind]
+    AUTOMATION_EVENT_KIND_SHARED_MEMORY_CHANGED: _ClassVar[AutomationEventKind]
+    AUTOMATION_EVENT_KIND_COMPLETED: _ClassVar[AutomationEventKind]
+    AUTOMATION_EVENT_KIND_FAILED: _ClassVar[AutomationEventKind]
+    AUTOMATION_EVENT_KIND_HEARTBEAT: _ClassVar[AutomationEventKind]
 AUTOMATION_PRESET_UNSPECIFIED: AutomationPreset
 AUTOMATION_PRESET_BALANCED_TEAM: AutomationPreset
 AUTOMATION_PRESET_INDEPENDENT_RUNNERS: AutomationPreset
@@ -94,6 +117,26 @@ AUTOMATION_BEAT_PHASE_STRONGHOLD_SEARCH: AutomationBeatPhase
 AUTOMATION_BEAT_PHASE_ACTIVATE_PORTAL: AutomationBeatPhase
 AUTOMATION_BEAT_PHASE_END_FIGHT: AutomationBeatPhase
 AUTOMATION_BEAT_PHASE_COMPLETE: AutomationBeatPhase
+AUTOMATION_EVENT_KIND_UNSPECIFIED: AutomationEventKind
+AUTOMATION_EVENT_KIND_SNAPSHOT: AutomationEventKind
+AUTOMATION_EVENT_KIND_BOT_CONNECTED: AutomationEventKind
+AUTOMATION_EVENT_KIND_BOT_DISCONNECTED: AutomationEventKind
+AUTOMATION_EVENT_KIND_GOAL_CHANGED: AutomationEventKind
+AUTOMATION_EVENT_KIND_PHASE_CHANGED: AutomationEventKind
+AUTOMATION_EVENT_KIND_ACTION_CHANGED: AutomationEventKind
+AUTOMATION_EVENT_KIND_PROGRESS: AutomationEventKind
+AUTOMATION_EVENT_KIND_PAUSED: AutomationEventKind
+AUTOMATION_EVENT_KIND_RESUMED: AutomationEventKind
+AUTOMATION_EVENT_KIND_DEATH: AutomationEventKind
+AUTOMATION_EVENT_KIND_STALLED: AutomationEventKind
+AUTOMATION_EVENT_KIND_RECOVERY: AutomationEventKind
+AUTOMATION_EVENT_KIND_OBJECTIVE_CHANGED: AutomationEventKind
+AUTOMATION_EVENT_KIND_TEAM_STATE_CHANGED: AutomationEventKind
+AUTOMATION_EVENT_KIND_CLAIMS_CHANGED: AutomationEventKind
+AUTOMATION_EVENT_KIND_SHARED_MEMORY_CHANGED: AutomationEventKind
+AUTOMATION_EVENT_KIND_COMPLETED: AutomationEventKind
+AUTOMATION_EVENT_KIND_FAILED: AutomationEventKind
+AUTOMATION_EVENT_KIND_HEARTBEAT: AutomationEventKind
 
 class AutomationPosition(_message.Message):
     __slots__ = ("x", "y", "z")
@@ -428,6 +471,48 @@ class AutomationMemoryState(_message.Message):
     dropped_items: _containers.RepeatedCompositeFieldContainer[AutomationMemoryDroppedItem]
     unreachable_positions: _containers.RepeatedCompositeFieldContainer[AutomationMemoryUnreachablePosition]
     def __init__(self, instance_id: _Optional[str] = ..., bot_id: _Optional[str] = ..., account_name: _Optional[str] = ..., tick: _Optional[int] = ..., remembered_block_count: _Optional[int] = ..., remembered_container_count: _Optional[int] = ..., remembered_entity_count: _Optional[int] = ..., remembered_dropped_item_count: _Optional[int] = ..., unreachable_position_count: _Optional[int] = ..., blocks: _Optional[_Iterable[_Union[AutomationMemoryBlock, _Mapping]]] = ..., containers: _Optional[_Iterable[_Union[AutomationMemoryContainer, _Mapping]]] = ..., entities: _Optional[_Iterable[_Union[AutomationMemoryEntity, _Mapping]]] = ..., dropped_items: _Optional[_Iterable[_Union[AutomationMemoryDroppedItem, _Mapping]]] = ..., unreachable_positions: _Optional[_Iterable[_Union[AutomationMemoryUnreachablePosition, _Mapping]]] = ...) -> None: ...
+
+class WatchAutomationEventsRequest(_message.Message):
+    __slots__ = ("instance_id", "bot_ids", "include_coordination", "max_coordination_entries", "poll_interval_ms", "heartbeat_interval_seconds", "include_progress")
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    BOT_IDS_FIELD_NUMBER: _ClassVar[int]
+    INCLUDE_COORDINATION_FIELD_NUMBER: _ClassVar[int]
+    MAX_COORDINATION_ENTRIES_FIELD_NUMBER: _ClassVar[int]
+    POLL_INTERVAL_MS_FIELD_NUMBER: _ClassVar[int]
+    HEARTBEAT_INTERVAL_SECONDS_FIELD_NUMBER: _ClassVar[int]
+    INCLUDE_PROGRESS_FIELD_NUMBER: _ClassVar[int]
+    instance_id: str
+    bot_ids: _containers.RepeatedScalarFieldContainer[str]
+    include_coordination: bool
+    max_coordination_entries: int
+    poll_interval_ms: int
+    heartbeat_interval_seconds: int
+    include_progress: bool
+    def __init__(self, instance_id: _Optional[str] = ..., bot_ids: _Optional[_Iterable[str]] = ..., include_coordination: bool = ..., max_coordination_entries: _Optional[int] = ..., poll_interval_ms: _Optional[int] = ..., heartbeat_interval_seconds: _Optional[int] = ..., include_progress: bool = ...) -> None: ...
+
+class AutomationEvent(_message.Message):
+    __slots__ = ("sequence", "observed_at", "kind", "bot_id", "account_name", "summary", "team_state", "bot_state", "coordination_state", "dropped_before")
+    SEQUENCE_FIELD_NUMBER: _ClassVar[int]
+    OBSERVED_AT_FIELD_NUMBER: _ClassVar[int]
+    KIND_FIELD_NUMBER: _ClassVar[int]
+    BOT_ID_FIELD_NUMBER: _ClassVar[int]
+    ACCOUNT_NAME_FIELD_NUMBER: _ClassVar[int]
+    SUMMARY_FIELD_NUMBER: _ClassVar[int]
+    TEAM_STATE_FIELD_NUMBER: _ClassVar[int]
+    BOT_STATE_FIELD_NUMBER: _ClassVar[int]
+    COORDINATION_STATE_FIELD_NUMBER: _ClassVar[int]
+    DROPPED_BEFORE_FIELD_NUMBER: _ClassVar[int]
+    sequence: int
+    observed_at: _timestamp_pb2.Timestamp
+    kind: AutomationEventKind
+    bot_id: str
+    account_name: str
+    summary: str
+    team_state: AutomationTeamState
+    bot_state: AutomationBotState
+    coordination_state: AutomationCoordinationState
+    dropped_before: int
+    def __init__(self, sequence: _Optional[int] = ..., observed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., kind: _Optional[_Union[AutomationEventKind, str]] = ..., bot_id: _Optional[str] = ..., account_name: _Optional[str] = ..., summary: _Optional[str] = ..., team_state: _Optional[_Union[AutomationTeamState, _Mapping]] = ..., bot_state: _Optional[_Union[AutomationBotState, _Mapping]] = ..., coordination_state: _Optional[_Union[AutomationCoordinationState, _Mapping]] = ..., dropped_before: _Optional[int] = ...) -> None: ...
 
 class GetAutomationTeamStateRequest(_message.Message):
     __slots__ = ("instance_id",)

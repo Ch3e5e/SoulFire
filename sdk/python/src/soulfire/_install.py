@@ -19,15 +19,26 @@ import time
 import urllib.parse
 import urllib.request
 import zipfile
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import TypedDict, cast
 
 ROOT_USER_UUID = "00000000-0000-0000-0000-000000000000"
 RELEASES_API = "https://api.github.com/repos/soulfiremc-com/SoulFire/releases"
 DEFAULT_STARTUP_TIMEOUT = 120.0
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+class _ReleaseMetadata(TypedDict):
+    tag_name: str
+    assets: tuple[dict[str, object], ...]
+
+
+class _ReleaseAsset(TypedDict):
+    browser_download_url: str
+    digest: str
+    name: str
 
 
 @dataclass(frozen=True)
@@ -177,7 +188,7 @@ def _spawn_server(
     )
 
 
-def _resolve_release(version: str | None) -> dict[str, Any]:
+def _resolve_release(version: str | None) -> _ReleaseMetadata:
     requested_version = version.strip() if version is not None else None
     if version is not None and not requested_version:
         raise ValueError("SoulFire version must not be empty")
@@ -187,16 +198,23 @@ def _resolve_release(version: str | None) -> dict[str, Any]:
         if requested_version is None
         else f"{RELEASES_API}/tags/{urllib.parse.quote(requested_version, safe='')}"
     )
-    release = _read_json(endpoint, user_agent="soulfire-python")
-    if not isinstance(release.get("tag_name"), str) or not isinstance(release.get("assets"), list):
+    release = _object_mapping(_read_json(endpoint, user_agent="soulfire-python"))
+    tag_name = release.get("tag_name")
+    raw_assets = release.get("assets")
+    if not isinstance(tag_name, str) or not isinstance(raw_assets, list):
         raise RuntimeError("SoulFire release metadata was incomplete")
-    return release
+    assets = tuple(
+        _object_mapping(cast(object, asset))
+        for asset in cast(list[object], raw_assets)
+        if isinstance(asset, dict)
+    )
+    return {"tag_name": tag_name, "assets": assets}
 
 
 def _resolve_dedicated_asset(
-    release: dict[str, Any],
+    release: _ReleaseMetadata,
     requested_version: str | None,
-) -> dict[str, str]:
+) -> _ReleaseAsset:
     expected_name = (
         f"SoulFireDedicated-{requested_version.strip()}.jar"
         if requested_version is not None
@@ -204,11 +222,7 @@ def _resolve_dedicated_asset(
     )
     assets = release["assets"]
     asset = next(
-        (
-            candidate
-            for candidate in assets
-            if isinstance(candidate, dict) and candidate.get("name") == expected_name
-        ),
+        (candidate for candidate in assets if candidate.get("name") == expected_name),
         None,
     )
     if asset is None:
@@ -216,8 +230,7 @@ def _resolve_dedicated_asset(
             (
                 candidate
                 for candidate in assets
-                if isinstance(candidate, dict)
-                and re.fullmatch(
+                if re.fullmatch(
                     r"SoulFireDedicated-.+\.jar",
                     str(candidate.get("name", "")),
                 )
@@ -225,14 +238,29 @@ def _resolve_dedicated_asset(
             None,
         )
 
-    required_fields = ("browser_download_url", "digest", "name")
-    if not isinstance(asset, dict) or not all(
-        isinstance(asset.get(field), str) and asset[field] for field in required_fields
+    if asset is None:
+        raise RuntimeError(
+            f"SoulFire release {release['tag_name']} has no verified dedicated server JAR"
+        )
+    browser_download_url = asset.get("browser_download_url")
+    digest = asset.get("digest")
+    name = asset.get("name")
+    if (
+        not isinstance(browser_download_url, str)
+        or not browser_download_url
+        or not isinstance(digest, str)
+        or not digest
+        or not isinstance(name, str)
+        or not name
     ):
         raise RuntimeError(
             f"SoulFire release {release['tag_name']} has no verified dedicated server JAR"
         )
-    return {field: asset[field] for field in required_fields}
+    return {
+        "browser_download_url": browser_download_url,
+        "digest": digest,
+        "name": name,
+    }
 
 
 def _ensure_jvm(jvm_directory: Path) -> Path:
@@ -245,17 +273,26 @@ def _ensure_jvm(jvm_directory: Path) -> Path:
         f"?architecture={_detect_architecture()}"
         f"&image_type=jre&os={_detect_os()}&vendor=eclipse"
     )
-    releases = _read_json(metadata_url, user_agent="soulfire-python")
+    raw_releases = _read_json(metadata_url, user_agent="soulfire-python")
     try:
-        release = releases[0]
-        package = release["binary"]["package"]
+        if not isinstance(raw_releases, list) or not raw_releases:
+            raise TypeError
+        release = _object_mapping(cast(list[object], raw_releases)[0])
+        binary = _object_mapping(release["binary"])
+        package = _object_mapping(binary["package"])
         checksum = package["checksum"]
         download_url = package["link"]
         release_name = release["release_name"]
-    except (IndexError, KeyError, TypeError) as error:
+    except (KeyError, TypeError) as error:
         raise RuntimeError("JVM metadata was incomplete") from error
-    metadata_values = (checksum, download_url, release_name)
-    if not all(isinstance(value, str) and value for value in metadata_values):
+    if (
+        not isinstance(checksum, str)
+        or not checksum
+        or not isinstance(download_url, str)
+        or not download_url
+        or not isinstance(release_name, str)
+        or not release_name
+    ):
         raise RuntimeError("JVM metadata was incomplete")
 
     jvm_directory.parent.mkdir(parents=True, exist_ok=True)
@@ -316,7 +353,7 @@ def _download_file(url: str, destination: Path, checksum: str) -> None:
         raise RuntimeError("Downloaded file checksum verification failed")
 
 
-def _read_json(url: str, *, user_agent: str) -> Any:
+def _read_json(url: str, *, user_agent: str) -> object:
     request = urllib.request.Request(
         url,
         headers={
@@ -327,7 +364,7 @@ def _read_json(url: str, *, user_agent: str) -> Any:
     )
     try:
         with urllib.request.urlopen(request) as response:
-            return json.load(response)
+            return cast(object, json.load(response))
     except OSError as error:
         raise RuntimeError(f"Failed to fetch metadata from {url}") from error
 
@@ -374,16 +411,17 @@ def _wait_for_server_ready(
     on_log: Callable[[str], None] | None,
     startup_timeout: float,
 ) -> None:
-    if not isinstance(startup_timeout, (int, float)) or startup_timeout <= 0:
+    if startup_timeout <= 0:
         raise ValueError("startup_timeout must be positive")
-    if process.stdout is None:
+    stdout = process.stdout
+    if stdout is None:
         raise RuntimeError("SoulFire process output is unavailable")
 
     result: queue.Queue[tuple[str, int | None]] = queue.Queue(maxsize=1)
 
     def read_output() -> None:
         ready = False
-        for raw_line in process.stdout:
+        for raw_line in stdout:
             line = ANSI_ESCAPE.sub("", raw_line).strip()
             if not line:
                 continue
@@ -439,7 +477,7 @@ def _create_root_api_token(secret_key: bytes) -> str:
     return f"{unsigned_token}.{signature.decode()}"
 
 
-def _base64url_json(value: dict[str, Any]) -> str:
+def _base64url_json(value: Mapping[str, object]) -> str:
     serialized = json.dumps(value, separators=(",", ":")).encode()
     return base64.urlsafe_b64encode(serialized).rstrip(b"=").decode()
 
@@ -510,5 +548,14 @@ def _find_available_port() -> int:
 
 
 def _validate_port(port: int) -> None:
-    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65_535:
+    if isinstance(port, bool) or not 1 <= port <= 65_535:
         raise ValueError("port must be an integer between 1 and 65535")
+
+
+def _object_mapping(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise TypeError("Expected a JSON object with string keys")
+    mapping = cast(dict[object, object], value)
+    if not all(isinstance(key, str) for key in mapping):
+        raise TypeError("Expected a JSON object with string keys")
+    return cast(dict[str, object], mapping)

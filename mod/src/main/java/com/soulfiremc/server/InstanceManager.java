@@ -21,6 +21,7 @@ import com.google.gson.JsonElement;
 import com.soulfiremc.mod.util.SFConstants;
 import com.soulfiremc.server.account.MCAuthService;
 import com.soulfiremc.server.account.MinecraftAccount;
+import com.soulfiremc.server.api.PluginSettingsPageRegistration;
 import com.soulfiremc.server.api.SoulFireAPI;
 import com.soulfiremc.server.api.event.bot.BotConnectionRemovedEvent;
 import com.soulfiremc.server.api.event.lifecycle.InstanceSettingsRegistryInitEvent;
@@ -141,6 +142,10 @@ public final class InstanceManager {
         .addInternalPage(AutomationSettings.class, "automation", "Automation Settings", "bot-message-square")
         .addInternalPage(PathfindingSettings.class, "pathfinding", "Pathfinding Settings", "route");
 
+      SoulFireAPI.pluginApis().applySettingsPages(
+        PluginSettingsPageRegistration.Scope.INSTANCE,
+        registry
+      );
       SoulFireAPI.postEvent(new InstanceSettingsRegistryInitEvent(this, registry));
 
       return registry;

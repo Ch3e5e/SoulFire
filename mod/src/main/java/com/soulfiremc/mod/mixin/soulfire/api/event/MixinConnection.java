@@ -19,6 +19,7 @@ package com.soulfiremc.mod.mixin.soulfire.api.event;
 
 import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.soulfiremc.mod.access.IConnectionChannel;
 import com.soulfiremc.mod.util.SFConstants;
 import com.soulfiremc.server.api.SoulFireAPI;
 import com.soulfiremc.server.api.event.DummyPacket;
@@ -40,9 +41,14 @@ import org.spongepowered.asm.mixin.injection.ModifyVariable;
 import java.util.ArrayList;
 
 @Mixin(Connection.class)
-public class MixinConnection {
+public class MixinConnection implements IConnectionChannel {
   @Shadow
   private Channel channel;
+
+  @Override
+  public Channel soulFire$getChannel() {
+    return channel;
+  }
 
   @SuppressWarnings("unchecked")
   @ModifyVariable(method = "genericsFtw", at = @At("HEAD"), argsOnly = true)

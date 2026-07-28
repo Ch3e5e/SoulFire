@@ -18,6 +18,10 @@
 package com.soulfiremc.server.grpc;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.api.FieldBehavior;
+import com.google.api.FieldBehaviorProto;
+import com.google.protobuf.Descriptors;
+import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.MessageOrBuilder;
 import com.google.protobuf.NullValue;
@@ -28,10 +32,25 @@ import com.linecorp.armeria.server.ai.mcp.ArmeriaStreamableServerTransportProvid
 import com.soulfiremc.builddata.BuildData;
 import com.soulfiremc.grpc.generated.*;
 import com.soulfiremc.server.SoulFireServer;
+import com.soulfiremc.server.api.PluginRpcRegistration;
+import com.soulfiremc.server.api.SoulFireAPI;
 import com.soulfiremc.server.user.SoulFireUser;
 import com.soulfiremc.server.util.RPCConstants;
+import com.soulfiremc.server.util.structs.GsonInstance;
+import io.grpc.CallOptions;
+import io.grpc.ClientCall;
+import io.grpc.ClientInterceptors;
 import io.grpc.Context;
+import io.grpc.Contexts;
+import io.grpc.ManagedChannel;
+import io.grpc.Metadata;
+import io.grpc.ServerInterceptor;
+import io.grpc.ServerInterceptors;
 import io.grpc.StatusRuntimeException;
+import io.grpc.inprocess.InProcessChannelBuilder;
+import io.grpc.inprocess.InProcessServerBuilder;
+import io.grpc.stub.ClientCalls;
+import io.grpc.stub.MetadataUtils;
 import io.grpc.stub.StreamObserver;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.json.jackson3.JacksonMcpJsonMapper;
@@ -41,9 +60,13 @@ import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.spec.McpSchema;
 import lombok.extern.slf4j.Slf4j;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.SignalType;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 
@@ -56,8 +79,13 @@ import java.util.function.Consumer;
 @Slf4j
 public final class MCPService {
   private static final String USER_CONTEXT_KEY = "sf-user";
+  private static final Metadata.Key<String> PLUGIN_MCP_USER =
+    Metadata.Key.of("x-soulfire-plugin-mcp-user", Metadata.ASCII_STRING_MARSHALLER);
 
   private final ArmeriaStreamableServerTransportProvider transportProvider;
+  private final io.grpc.Server pluginMcpServer;
+  private final ManagedChannel pluginMcpChannel;
+  private final Map<String, SoulFireUser> pluginMcpUsers = new ConcurrentHashMap<>();
 
   public ArmeriaStreamableServerTransportProvider getTransportProvider() {
     return transportProvider;
@@ -1072,6 +1100,35 @@ public final class MCPService {
         return MCPService.<GetRegistryDataResponse>grpc(o -> scriptService.getRegistryData(builder.build(), o));
       })));
 
+    var pluginServerName = InProcessServerBuilder.generateName();
+    var pluginServerBuilder = InProcessServerBuilder
+      .forName(pluginServerName)
+      .directExecutor();
+    var pluginRegistrations = SoulFireAPI.pluginApis().rpcServices();
+    for (var registration : pluginRegistrations) {
+      var permissionChecked = ServerInterceptors.intercept(
+        registration.service(),
+        new PluginRpcPermissionInterceptor(soulFireServer, registration)
+      );
+      pluginServerBuilder.addService(ServerInterceptors.intercept(
+        permissionChecked,
+        pluginMcpUserInterceptor()
+      ));
+    }
+    try {
+      pluginMcpServer = pluginServerBuilder.build().start();
+    } catch (IOException e) {
+      throw new UncheckedIOException("Unable to start the internal plugin MCP transport", e);
+    }
+    pluginMcpChannel = InProcessChannelBuilder
+      .forName(pluginServerName)
+      .directExecutor()
+      .build();
+
+    for (var registration : pluginRegistrations) {
+      addPluginTools(tools, registration);
+    }
+
     // Build the MCP server
     McpServer.async(transportProvider)
       .serverInfo("SoulFire", BuildData.VERSION)
@@ -1091,6 +1148,278 @@ public final class MCPService {
         """)
       .tools(tools)
       .build();
+  }
+
+  public void shutdown() {
+    pluginMcpChannel.shutdownNow();
+    pluginMcpServer.shutdownNow();
+  }
+
+  private ServerInterceptor pluginMcpUserInterceptor() {
+    return new ServerInterceptor() {
+      @Override
+      public <ReqT, RespT> io.grpc.ServerCall.Listener<ReqT> interceptCall(
+        io.grpc.ServerCall<ReqT, RespT> call,
+        Metadata headers,
+        io.grpc.ServerCallHandler<ReqT, RespT> next
+      ) {
+        var userToken = headers.get(PLUGIN_MCP_USER);
+        SoulFireUser user = userToken == null ? null : pluginMcpUsers.get(userToken);
+        if (user == null) {
+          call.close(
+            io.grpc.Status.UNAUTHENTICATED.withDescription("Plugin MCP user context is missing"),
+            new Metadata()
+          );
+          return new io.grpc.ServerCall.Listener<>() {};
+        }
+        return Contexts.interceptCall(
+          Context.current().withValue(ServerRPCConstants.USER_CONTEXT_KEY, user),
+          call,
+          headers,
+          next
+        );
+      }
+    };
+  }
+
+  private void addPluginTools(
+    List<McpServerFeatures.AsyncToolSpecification> tools,
+    PluginRpcRegistration registration
+  ) {
+    for (var method : registration.descriptor().getMethods()) {
+      var docs = method.getOptions().hasExtension(ApiDocsProto.apiMethod)
+        ? method.getOptions().getExtension(ApiDocsProto.apiMethod)
+        : ApiMethodDocs.getDefaultInstance();
+      if (!docs.getExposeToMcp()) {
+        continue;
+      }
+
+      var fullMethodName = io.grpc.MethodDescriptor.generateFullMethodName(
+        registration.descriptor().getFullName(),
+        method.getName()
+      );
+      var grpcMethod = registration.service().getMethods().stream()
+        .map(io.grpc.ServerMethodDefinition::getMethodDescriptor)
+        .filter(candidate -> candidate.getFullMethodName().equals(fullMethodName))
+        .findFirst()
+        .orElseThrow(() -> new IllegalStateException(
+          "Registered plugin RPC is missing its gRPC method: " + fullMethodName
+        ));
+      var properties = new LinkedHashMap<String, Object>();
+      var required = new ArrayList<String>();
+      for (var field : method.getInputType().getFields()) {
+        properties.put(field.getJsonName(), pluginMcpFieldSchema(field, new HashSet<>()));
+        if (field.getOptions().getExtension(FieldBehaviorProto.fieldBehavior)
+          .contains(FieldBehavior.REQUIRED)) {
+          required.add(field.getJsonName());
+        }
+      }
+      if (docs.getMcpRequiresConfirmation()) {
+        properties.put(
+          "confirm",
+          prop("boolean", "Confirm this mutating or destructive plugin action.")
+        );
+        required.add("confirm");
+      }
+
+      var toolName = "plugin_%s_%s_%s".formatted(
+        registration.owner().id().replace('-', '_'),
+        snakeCase(registration.descriptor().getName()),
+        snakeCase(method.getName())
+      );
+      var displayName = docs.getDisplayName().isBlank()
+        ? method.getName()
+        : docs.getDisplayName();
+      var description = docs.getDescription().isBlank()
+        ? displayName
+        : "%s %s".formatted(displayName, docs.getDescription());
+      tools.add(tool(
+        toolName,
+        description,
+        properties,
+        required,
+        authed((exchange, args) -> invokePluginTool(
+          (SoulFireUser) exchange.transportContext().get(USER_CONTEXT_KEY),
+          method,
+          grpcMethod,
+          docs.getMcpRequiresConfirmation(),
+          args
+        ))
+      ));
+    }
+  }
+
+  private Mono<McpSchema.CallToolResult> invokePluginTool(
+    SoulFireUser user,
+    Descriptors.MethodDescriptor method,
+    io.grpc.MethodDescriptor<?, ?> grpcMethod,
+    boolean requiresConfirmation,
+    Map<String, Object> arguments
+  ) {
+    if (requiresConfirmation && !Boolean.TRUE.equals(arguments.get("confirm"))) {
+      return Mono.just(errorResult("This plugin action requires confirm=true."));
+    }
+
+    var requestArguments = new LinkedHashMap<>(arguments);
+    requestArguments.remove("confirm");
+    var request = DynamicMessage.newBuilder(method.getInputType());
+    try {
+      JsonFormat.parser().merge(GsonInstance.GSON.toJson(requestArguments), request);
+    } catch (InvalidProtocolBufferException e) {
+      return Mono.just(errorResult("Invalid plugin tool arguments: " + e.getMessage()));
+    }
+
+    var userToken = UUID.randomUUID().toString();
+    pluginMcpUsers.put(userToken, user);
+    var metadata = new Metadata();
+    metadata.put(PLUGIN_MCP_USER, userToken);
+    var channel = ClientInterceptors.intercept(
+      pluginMcpChannel,
+      MetadataUtils.newAttachHeadersInterceptor(metadata)
+    );
+
+    return invokePluginUnary(channel, grpcMethod, request.build())
+      .doFinally(_ -> pluginMcpUsers.remove(userToken));
+  }
+
+  @SuppressWarnings({"rawtypes", "unchecked"})
+  private static Mono<McpSchema.CallToolResult> invokePluginUnary(
+    io.grpc.Channel channel,
+    io.grpc.MethodDescriptor<?, ?> grpcMethod,
+    DynamicMessage request
+  ) {
+    return Mono.create(sink -> {
+      ClientCall call = channel.newCall((io.grpc.MethodDescriptor) grpcMethod, CallOptions.DEFAULT);
+      var responseSent = new java.util.concurrent.atomic.AtomicBoolean();
+      sink.onCancel(() -> call.cancel("MCP plugin call cancelled", null));
+      ClientCalls.asyncUnaryCall(call, request, new StreamObserver<MessageOrBuilder>() {
+        @Override
+        public void onNext(MessageOrBuilder value) {
+          if (!responseSent.compareAndSet(false, true)) {
+            return;
+          }
+          try {
+            var json = JsonFormat.printer().includingDefaultValueFields().print(value);
+            sink.success(new McpSchema.CallToolResult(
+              List.of(new McpSchema.TextContent(json)),
+              false,
+              null,
+              Map.of()
+            ));
+          } catch (InvalidProtocolBufferException e) {
+            sink.success(errorResult(e.getMessage()));
+          }
+        }
+
+        @Override
+        public void onError(Throwable throwable) {
+          if (responseSent.compareAndSet(false, true)) {
+            var message = throwable instanceof StatusRuntimeException status
+              ? status.getStatus().getCode() + ": " + status.getStatus().getDescription()
+              : throwable.getMessage();
+            sink.success(errorResult(message));
+          }
+        }
+
+        @Override
+        public void onCompleted() {
+          if (responseSent.compareAndSet(false, true)) {
+            sink.success(errorResult("Plugin RPC completed without a response."));
+          }
+        }
+      });
+    });
+  }
+
+  private static Map<String, Object> pluginMcpFieldSchema(
+    Descriptors.FieldDescriptor field,
+    Set<String> visiting
+  ) {
+    Map<String, Object> valueSchema;
+    if (field.isMapField()) {
+      var mapValue = field.getMessageType().findFieldByName("value");
+      valueSchema = new LinkedHashMap<>();
+      valueSchema.put("type", "object");
+      valueSchema.put("additionalProperties", pluginMcpScalarSchema(mapValue, visiting));
+    } else {
+      valueSchema = pluginMcpScalarSchema(field, visiting);
+    }
+
+    if (field.isRepeated() && !field.isMapField()) {
+      return Map.of(
+        "type", "array",
+        "items", valueSchema
+      );
+    }
+    return valueSchema;
+  }
+
+  private static Map<String, Object> pluginMcpScalarSchema(
+    Descriptors.FieldDescriptor field,
+    Set<String> visiting
+  ) {
+    var schema = new LinkedHashMap<String, Object>();
+    switch (field.getJavaType()) {
+      case BOOLEAN -> schema.put("type", "boolean");
+      case INT, LONG -> schema.put("type", "integer");
+      case FLOAT, DOUBLE -> schema.put("type", "number");
+      case STRING -> schema.put("type", "string");
+      case BYTE_STRING -> {
+        schema.put("type", "string");
+        schema.put("contentEncoding", "base64");
+      }
+      case ENUM -> {
+        schema.put("type", "string");
+        schema.put(
+          "enum",
+          field.getEnumType().getValues().stream()
+            .map(Descriptors.EnumValueDescriptor::getName)
+            .toList()
+        );
+      }
+      case MESSAGE -> {
+        var descriptor = field.getMessageType();
+        if (!visiting.add(descriptor.getFullName())) {
+          schema.put("type", "object");
+          break;
+        }
+        var properties = new LinkedHashMap<String, Object>();
+        var required = new ArrayList<String>();
+        for (var child : descriptor.getFields()) {
+          properties.put(child.getJsonName(), pluginMcpFieldSchema(child, visiting));
+          if (child.getOptions().getExtension(FieldBehaviorProto.fieldBehavior)
+            .contains(FieldBehavior.REQUIRED)) {
+            required.add(child.getJsonName());
+          }
+        }
+        schema.put("type", "object");
+        schema.put("properties", properties);
+        if (!required.isEmpty()) {
+          schema.put("required", required);
+        }
+        visiting.remove(descriptor.getFullName());
+      }
+    }
+
+    if (field.getOptions().hasExtension(ApiDocsProto.apiField)) {
+      var format = field.getOptions().getExtension(ApiDocsProto.apiField).getFormat();
+      if (!format.isBlank()) {
+        schema.put("format", format);
+      }
+    }
+    return schema;
+  }
+
+  private static String snakeCase(String value) {
+    var result = new StringBuilder(value.length() + 8);
+    for (var index = 0; index < value.length(); index++) {
+      var character = value.charAt(index);
+      if (Character.isUpperCase(character) && index > 0) {
+        result.append('_');
+      }
+      result.append(Character.toLowerCase(character));
+    }
+    return result.toString();
   }
 
   // === Helper Methods ===

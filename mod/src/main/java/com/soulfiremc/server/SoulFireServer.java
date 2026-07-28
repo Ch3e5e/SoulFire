@@ -20,6 +20,7 @@ package com.soulfiremc.server;
 import com.google.gson.JsonElement;
 import com.soulfiremc.builddata.BuildData;
 import com.soulfiremc.mod.util.SFConstants;
+import com.soulfiremc.server.api.PluginSettingsPageRegistration;
 import com.soulfiremc.server.api.SoulFireAPI;
 import com.soulfiremc.server.api.event.lifecycle.ServerSettingsRegistryInitEvent;
 import com.soulfiremc.server.api.event.session.InstanceInitEvent;
@@ -36,6 +37,7 @@ import com.soulfiremc.server.settings.lib.*;
 import com.soulfiremc.server.settings.server.DevSettings;
 import com.soulfiremc.server.settings.server.ServerSettings;
 import com.soulfiremc.server.spark.SFSparkPlugin;
+import com.soulfiremc.server.task.BotTaskManager;
 import com.soulfiremc.server.user.*;
 import com.soulfiremc.server.util.KeyHelper;
 import com.soulfiremc.server.util.SFHelpers;
@@ -105,6 +107,7 @@ public final class SoulFireServer {
   private final ServerSettingsDelegate settingsSource;
   private final RPCServer rpcServer;
   private final AuthSystem authSystem;
+  private final BotTaskManager botTaskManager;
   private final SettingsPageRegistry settingsPageRegistry;
   private final ServerCommandManager serverCommandManager;
   private final ServerMetricsCollector serverMetricsCollector;
@@ -156,6 +159,7 @@ public final class SoulFireServer {
     var serverCommandManagerFuture = scheduler.supplyAsync(() -> new ServerCommandManager(this));
     var databaseContextFuture = scheduler.supplyAsync(DatabaseManager::select);
     var authSystemFuture = databaseContextFuture.thenApplyAsync(databaseContext -> new AuthSystem(this, databaseContext.dsl()), scheduler);
+    this.botTaskManager = new BotTaskManager(this);
     var rpcServerFuture = scheduler.supplyAsync(() -> new RPCServer(host, port, this));
 
     var configDirectory = SFPathConstants.getConfigDirectory();
@@ -181,6 +185,10 @@ public final class SoulFireServer {
         .addInternalPage(ServerSettings.class, "server", "Server Settings", "server")
         .addInternalPage(DevSettings.class, "dev", "Developer Settings", "code");
 
+      SoulFireAPI.pluginApis().applySettingsPages(
+        PluginSettingsPageRegistration.Scope.SERVER,
+        registry
+      );
       SoulFireAPI.postEvent(new ServerSettingsRegistryInitEvent(this, registry));
 
       return registry;
@@ -209,6 +217,8 @@ public final class SoulFireServer {
 
     // Via is ready, we can now set up all config stuff
     setupLogging();
+
+    SoulFireAPI.enablePlugins(this);
 
     log.info("Loading instances...");
     loadInstances();
@@ -309,8 +319,14 @@ public final class SoulFireServer {
       log.error("Failed to stop RPC server", e);
     }
 
+    // Stop accepting or recovering durable bot work before connections close.
+    botTaskManager.close();
+
     // Shutdown the sessions if there is any
     shutdownInstances().join();
+
+    // Stop plugin runtime work while server facilities are still available
+    SoulFireAPI.disablePlugins();
 
     // Shutdown scheduled tasks
     scheduler.shutdown();

@@ -1,0 +1,100 @@
+syntax = "proto3";
+
+option java_package = "com.soulfiremc.grpc.generated";
+option java_multiple_files = true;
+
+package soulfire.v1;
+
+import "soulfire/api_docs.proto";
+import "soulfire/common.proto";
+import "soulfire/plugin_api.proto";
+import "google/api/annotations.proto";
+import "google/api/field_behavior.proto";
+
+// A version of SoulFire's stable SDK protocol contract.
+message SdkApiVersion {
+  uint32 major = 1 [(google.api.field_behavior) = REQUIRED];
+  uint32 minor = 2 [(google.api.field_behavior) = REQUIRED];
+  uint32 patch = 3 [(google.api.field_behavior) = REQUIRED];
+}
+
+// A plugin and version range required by an SDK application.
+message RequiredPlugin {
+  string plugin_id = 1 [(google.api.field_behavior) = REQUIRED];
+  // Semantic-version range understood by the SDK. The server returns the
+  // installed version so the SDK can apply its language-native range parser.
+  optional string version_range = 2;
+}
+
+// Information supplied by an SDK while negotiating a connection.
+message SdkHandshakeRequest {
+  string sdk_name = 1 [(google.api.field_behavior) = REQUIRED];
+  string sdk_version = 2 [(google.api.field_behavior) = REQUIRED];
+  SdkApiVersion minimum_api_version = 3 [(google.api.field_behavior) = REQUIRED];
+  SdkApiVersion maximum_api_version = 4 [(google.api.field_behavior) = REQUIRED];
+  repeated string required_capabilities = 5;
+  repeated RequiredPlugin required_plugins = 6;
+}
+
+// A transport accepted by the running SoulFire API server.
+enum SdkTransport {
+  SDK_TRANSPORT_UNSPECIFIED = 0;
+  SDK_TRANSPORT_GRPC = 1;
+  SDK_TRANSPORT_GRPC_WEB = 2;
+  SDK_TRANSPORT_UNFRAMED_JSON = 3;
+  SDK_TRANSPORT_HTTP_JSON_TRANSCODING = 4;
+}
+
+// A named feature offered by the server.
+message SdkCapability {
+  // Stable dotted identifier, for example bot.events.v1.
+  string id = 1 [(google.api.field_behavior) = REQUIRED];
+  // Capability-specific revision. Clients should primarily branch on id.
+  uint32 revision = 2 [(google.api.field_behavior) = REQUIRED];
+}
+
+// A named server limit that SDKs can use for validation and batching.
+message SdkLimit {
+  string id = 1 [(google.api.field_behavior) = REQUIRED];
+  uint64 value = 2 [(google.api.field_behavior) = REQUIRED];
+}
+
+// The authenticated identity attached to the negotiated connection.
+message SdkIdentity {
+  string id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string username = 2 [(google.api.field_behavior) = REQUIRED];
+  string email = 3 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "email"];
+  UserRole role = 4 [(google.api.field_behavior) = REQUIRED];
+  repeated string granted_global_permissions = 5 [(google.api.field_behavior) = REQUIRED];
+}
+
+// Server metadata and negotiated features returned before an SDK is ready.
+message SdkHandshakeResponse {
+  string server_id = 1 [(google.api.field_behavior) = REQUIRED];
+  string soulfire_version = 2 [(google.api.field_behavior) = REQUIRED];
+  string commit_hash = 3 [(google.api.field_behavior) = REQUIRED];
+  string branch_name = 4 [(google.api.field_behavior) = REQUIRED];
+  SdkApiVersion api_version = 5 [(google.api.field_behavior) = REQUIRED];
+  string native_minecraft_version = 6 [(google.api.field_behavior) = REQUIRED];
+  repeated string supported_minecraft_versions = 7 [(google.api.field_behavior) = REQUIRED];
+  repeated SdkTransport transports = 8 [(google.api.field_behavior) = REQUIRED];
+  repeated SdkCapability capabilities = 9 [(google.api.field_behavior) = REQUIRED];
+  repeated PluginApiDescriptor plugins = 10 [(google.api.field_behavior) = REQUIRED];
+  repeated SdkLimit limits = 11 [(google.api.field_behavior) = REQUIRED];
+  SdkIdentity identity = 12 [(google.api.field_behavior) = REQUIRED];
+}
+
+// Negotiates the stable protocol contract before an SDK exposes a ready client.
+service SdkService {
+  rpc Handshake(SdkHandshakeRequest) returns (SdkHandshakeResponse) {
+    option (google.api.http) = {
+      post: "/v1/sdk:handshake"
+      body: "*"
+    };
+    option (soulfire.v1.api_method) = {
+      display_name: "Negotiate SDK connection"
+      permissions: "READ_CLIENT_DATA"
+      scope: "client.self"
+    };
+  }
+}

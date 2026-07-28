@@ -24,6 +24,6 @@ public enum ControlPriority {
   CRITICAL;
 
   public boolean canPreempt(ControlPriority other) {
-    return ordinal() >= other.ordinal();
+    return ordinal() > other.ordinal();
   }
 }

@@ -18,7 +18,7 @@ from connectrpc.protocol import ProtocolType
 from connectrpc.server import ConnectASGIApplication, ConnectWSGIApplication, Endpoint, EndpointSync
 from pyqwest import Client, SyncClient
 
-from .bot_pb2 import BotClickDialogButtonRequest, BotClickDialogButtonResponse, BotCloseContainerRequest, BotCloseContainerResponse, BotCloseDialogRequest, BotCloseDialogResponse, BotContainerButtonClickRequest, BotContainerButtonClickResponse, BotGetDialogRequest, BotGetDialogResponse, BotInfoRequest, BotInfoResponse, BotInventoryClickRequest, BotInventoryClickResponse, BotInventoryStateRequest, BotInventoryStateResponse, BotListRequest, BotListResponse, BotMouseClickRequest, BotMouseClickResponse, BotOpenInventoryRequest, BotOpenInventoryResponse, BotRenderPovRequest, BotRenderPovResponse, BotResetMovementRequest, BotResetMovementResponse, BotSetContainerTextRequest, BotSetContainerTextResponse, BotSetHotbarSlotRequest, BotSetHotbarSlotResponse, BotSetMovementStateRequest, BotSetMovementStateResponse, BotSetRotationRequest, BotSetRotationResponse, BotSubmitDialogRequest, BotSubmitDialogResponse, BotUpdateConfigEntryRequest, BotUpdateConfigEntryResponse, RestartBotsRequest, RestartBotsResponse, SetBotsDesiredStateRequest, SetBotsDesiredStateResponse, WatchBotStatusesRequest, WatchBotStatusesResponse
+from .bot_pb2 import BotClickDialogButtonRequest, BotClickDialogButtonResponse, BotCloseContainerRequest, BotCloseContainerResponse, BotCloseDialogRequest, BotCloseDialogResponse, BotContainerButtonClickRequest, BotContainerButtonClickResponse, BotGetDialogRequest, BotGetDialogResponse, BotInfoRequest, BotInfoResponse, BotInventoryClickRequest, BotInventoryClickResponse, BotInventoryStateRequest, BotInventoryStateResponse, BotListRequest, BotListResponse, BotMouseClickRequest, BotMouseClickResponse, BotOpenInventoryRequest, BotOpenInventoryResponse, BotPovFrame, BotRenderPovRequest, BotRenderPovResponse, BotResetMovementRequest, BotResetMovementResponse, BotSetContainerTextRequest, BotSetContainerTextResponse, BotSetHotbarSlotRequest, BotSetHotbarSlotResponse, BotSetMovementStateRequest, BotSetMovementStateResponse, BotSetRotationRequest, BotSetRotationResponse, BotSubmitDialogRequest, BotSubmitDialogResponse, BotUpdateConfigEntryRequest, BotUpdateConfigEntryResponse, BotWatchPovRequest, BotWorldMapRequest, BotWorldMapResponse, RestartBotsRequest, RestartBotsResponse, SetBotsDesiredStateRequest, SetBotsDesiredStateResponse, WatchBotStatusesRequest, WatchBotStatusesResponse
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator, Iterable, Iterator, Mapping
@@ -54,6 +54,12 @@ class BotService(Protocol):
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
     async def render_bot_pov(self, request: BotRenderPovRequest, ctx: RequestContext[BotRenderPovRequest, BotRenderPovResponse]) -> BotRenderPovResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    def watch_bot_pov(self, request: BotWatchPovRequest, ctx: RequestContext[BotWatchPovRequest, BotPovFrame]) -> AsyncIterator[BotPovFrame]:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def get_bot_world_map(self, request: BotWorldMapRequest, ctx: RequestContext[BotWorldMapRequest, BotWorldMapResponse]) -> BotWorldMapResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
     async def click_inventory_slot(self, request: BotInventoryClickRequest, ctx: RequestContext[BotInventoryClickRequest, BotInventoryClickResponse]) -> BotInventoryClickResponse:
@@ -184,6 +190,26 @@ class BotServiceASGIApplication(ConnectASGIApplication[BotService]):
                         idempotency_level=IdempotencyLevel.UNKNOWN,
                     ),
                     function=svc.render_bot_pov,
+                ),
+                "/soulfire.v1.BotService/WatchBotPov": Endpoint.server_stream(
+                    method=MethodInfo(
+                        name="WatchBotPov",
+                        service_name="soulfire.v1.BotService",
+                        input=BotWatchPovRequest,
+                        output=BotPovFrame,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.watch_bot_pov,
+                ),
+                "/soulfire.v1.BotService/GetBotWorldMap": Endpoint.unary(
+                    method=MethodInfo(
+                        name="GetBotWorldMap",
+                        service_name="soulfire.v1.BotService",
+                        input=BotWorldMapRequest,
+                        output=BotWorldMapResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.get_bot_world_map,
                 ),
                 "/soulfire.v1.BotService/ClickInventorySlot": Endpoint.unary(
                     method=MethodInfo(
@@ -513,6 +539,46 @@ class BotServiceClient(ConnectClient):
             timeout_ms=timeout_ms,
         )
 
+    def watch_bot_pov(
+        self,
+        request: BotWatchPovRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> AsyncIterator[BotPovFrame]:
+        return self.execute_server_stream(
+            request=request,
+            method=MethodInfo(
+                name="WatchBotPov",
+                service_name="soulfire.v1.BotService",
+                input=BotWatchPovRequest,
+                output=BotPovFrame,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def get_bot_world_map(
+        self,
+        request: BotWorldMapRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> BotWorldMapResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="GetBotWorldMap",
+                service_name="soulfire.v1.BotService",
+                input=BotWorldMapRequest,
+                output=BotWorldMapResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
     async def click_inventory_slot(
         self,
         request: BotInventoryClickRequest,
@@ -835,6 +901,12 @@ class BotServiceSync(Protocol):
     def render_bot_pov(self, request: BotRenderPovRequest, ctx: RequestContext[BotRenderPovRequest, BotRenderPovResponse]) -> BotRenderPovResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
+    def watch_bot_pov(self, request: BotWatchPovRequest, ctx: RequestContext[BotWatchPovRequest, BotPovFrame]) -> Iterator[BotPovFrame]:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    def get_bot_world_map(self, request: BotWorldMapRequest, ctx: RequestContext[BotWorldMapRequest, BotWorldMapResponse]) -> BotWorldMapResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
     def click_inventory_slot(self, request: BotInventoryClickRequest, ctx: RequestContext[BotInventoryClickRequest, BotInventoryClickResponse]) -> BotInventoryClickResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
@@ -961,6 +1033,26 @@ class BotServiceWSGIApplication(ConnectWSGIApplication):
                         idempotency_level=IdempotencyLevel.UNKNOWN,
                     ),
                     function=service.render_bot_pov,
+                ),
+                "/soulfire.v1.BotService/WatchBotPov": EndpointSync.server_stream(
+                    method=MethodInfo(
+                        name="WatchBotPov",
+                        service_name="soulfire.v1.BotService",
+                        input=BotWatchPovRequest,
+                        output=BotPovFrame,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=service.watch_bot_pov,
+                ),
+                "/soulfire.v1.BotService/GetBotWorldMap": EndpointSync.unary(
+                    method=MethodInfo(
+                        name="GetBotWorldMap",
+                        service_name="soulfire.v1.BotService",
+                        input=BotWorldMapRequest,
+                        output=BotWorldMapResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=service.get_bot_world_map,
                 ),
                 "/soulfire.v1.BotService/ClickInventorySlot": EndpointSync.unary(
                     method=MethodInfo(
@@ -1278,6 +1370,44 @@ class BotServiceClientSync(ConnectClientSync):
                 service_name="soulfire.v1.BotService",
                 input=BotRenderPovRequest,
                 output=BotRenderPovResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+    def watch_bot_pov(
+        self,
+        request: BotWatchPovRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> Iterator[BotPovFrame]:
+        return self.execute_server_stream(
+            request=request,
+            method=MethodInfo(
+                name="WatchBotPov",
+                service_name="soulfire.v1.BotService",
+                input=BotWatchPovRequest,
+                output=BotPovFrame,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+    def get_bot_world_map(
+        self,
+        request: BotWorldMapRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> BotWorldMapResponse:
+        return self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="GetBotWorldMap",
+                service_name="soulfire.v1.BotService",
+                input=BotWorldMapRequest,
+                output=BotWorldMapResponse,
                 idempotency_level=IdempotencyLevel.UNKNOWN,
             ),
             headers=headers,

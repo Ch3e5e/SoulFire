@@ -27,8 +27,10 @@ import net.minecraft.world.inventory.ChestMenu;
 import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.inventory.CraftingMenu;
 import net.minecraft.world.inventory.InventoryMenu;
+import net.minecraft.world.item.ItemStack;
 
 import java.util.OptionalInt;
+import java.util.function.Predicate;
 import java.util.stream.IntStream;
 
 public final class AutomationInventory {
@@ -45,6 +47,16 @@ public final class AutomationInventory {
   }
 
   public static OptionalInt findInventorySlot(BotConnection bot, String requirementKey) {
+    return findInventorySlot(
+      bot,
+      stack -> AutomationRequirements.matches(requirementKey, stack)
+    );
+  }
+
+  public static OptionalInt findInventorySlot(
+    BotConnection bot,
+    Predicate<ItemStack> selector
+  ) {
     var player = bot.minecraft().player;
     if (player == null) {
       return OptionalInt.empty();
@@ -53,22 +65,36 @@ public final class AutomationInventory {
     return SFInventoryHelpers.findMatchingSlotForAction(
       player.getInventory(),
       player.inventoryMenu,
-      stack -> AutomationRequirements.matches(requirementKey, stack)
+      selector
     );
   }
 
   public static boolean ensureHolding(BotConnection bot, String requirementKey) {
+    return ensureHolding(
+      bot,
+      stack -> AutomationRequirements.matches(requirementKey, stack)
+    );
+  }
+
+  public static boolean ensureHolding(
+    BotConnection bot,
+    Predicate<ItemStack> selector
+  ) {
     var player = bot.minecraft().player;
     var gameMode = bot.minecraft().gameMode;
     if (player == null || gameMode == null) {
       return false;
     }
 
-    if (AutomationRequirements.matches(requirementKey, player.getMainHandItem())) {
+    if (selector.test(player.getMainHandItem())) {
       return true;
     }
 
-    var slot = findInventorySlot(bot, requirementKey);
+    var slot = SFInventoryHelpers.findMatchingSlotForAction(
+      player.getInventory(),
+      player.inventoryMenu,
+      selector
+    );
     if (slot.isEmpty()) {
       return false;
     }
@@ -90,7 +116,7 @@ public final class AutomationInventory {
       click(player.inventoryMenu, inventorySlot, 0, ContainerInput.PICKUP, player, gameMode);
     }
     player.closeContainer();
-    return AutomationRequirements.matches(requirementKey, player.getMainHandItem());
+    return selector.test(player.getMainHandItem());
   }
 
   public static OptionalInt findPlayerInventorySlot(AbstractContainerMenu menu, String requirementKey) {

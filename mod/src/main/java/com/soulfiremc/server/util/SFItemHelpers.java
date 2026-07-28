@@ -19,7 +19,10 @@ package com.soulfiremc.server.util;
 
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.effect.MobEffectCategory;
+import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.component.ItemAttributeModifiers;
 import net.minecraft.world.item.consume_effects.ApplyStatusEffectsConsumeEffect;
 import net.minecraft.world.level.block.FallingBlock;
 
@@ -54,5 +57,38 @@ public final class SFItemHelpers {
 
       return true;
     }).orElse(false);
+  }
+
+  public static Optional<MeleeWeaponStats> meleeWeaponStats(
+    ItemStack itemStack
+  ) {
+    var modifiers = Optional.ofNullable(
+      itemStack.get(DataComponents.ATTRIBUTE_MODIFIERS)
+    ).orElse(ItemAttributeModifiers.EMPTY);
+    var damage = modifiers.compute(
+      Attributes.ATTACK_DAMAGE,
+      1,
+      EquipmentSlot.MAINHAND
+    );
+    if (damage <= 1) {
+      return Optional.empty();
+    }
+    var speed = modifiers.compute(
+      Attributes.ATTACK_SPEED,
+      4,
+      EquipmentSlot.MAINHAND
+    );
+    return Optional.of(new MeleeWeaponStats(
+      damage,
+      speed,
+      damage * 10 + Math.max(0, speed)
+    ));
+  }
+
+  public record MeleeWeaponStats(
+    double attackDamage,
+    double attackSpeed,
+    double score
+  ) {
   }
 }

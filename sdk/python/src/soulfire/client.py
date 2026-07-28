@@ -4,19 +4,39 @@ import asyncio
 import os
 import random
 from collections.abc import AsyncIterator, Callable, Iterable, Iterator
-from types import TracebackType
-from typing import Any, TypeVar
+from types import MappingProxyType, TracebackType
+from typing import Any, cast
 
-from connectrpc.interceptor import Interceptor, InterceptorSync
+from connectrpc.client import ConnectClient, ConnectClientSync
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
+from connectrpc.interceptor import (
+    BidiStreamInterceptor,
+    BidiStreamInterceptorSync,
+    ClientStreamInterceptor,
+    ClientStreamInterceptorSync,
+    Interceptor,
+    InterceptorSync,
+    MetadataInterceptor,
+    MetadataInterceptorSync,
+    ServerStreamInterceptor,
+    ServerStreamInterceptorSync,
+    UnaryInterceptor,
+    UnaryInterceptorSync,
+)
 from connectrpc.protocol import ProtocolType
 from google.protobuf import json_format
 from google.protobuf.struct_pb2 import Value
 
 from ._auth import BearerAuthInterceptor, BearerAuthInterceptorSync, TokenProvider
 from ._install import LocalServerHandle, LocalSoulFireServer
-from .bot import SoulFireBot, SoulFireBotSync
+from .admin import AsyncSoulFireAdmin, SoulFireAdmin
+from .automation import AsyncSoulFireAutomation, SoulFireAutomation
+from .automation_connect import AutomationServiceClient, AutomationServiceClientSync
+from .bot import AsyncSoulFireBot, SoulFireBot
 from .bot_connect import BotServiceClient, BotServiceClientSync
 from .bot_live_connect import BotLiveServiceClient, BotLiveServiceClientSync
+from .bot_live_pb2 import BotEventFilter
 from .bot_pb2 import (
     BOT_DESIRED_STATE_RUNNING,
     BOT_DESIRED_STATE_STOPPED,
@@ -28,8 +48,37 @@ from .bot_pb2 import (
     WatchBotStatusesRequest,
     WatchBotStatusesResponse,
 )
-from .common_pb2 import MinecraftAccountProto, ProxyProto
+from .chat_connect import ChatServiceClient, ChatServiceClientSync
+from .client_connect import ClientServiceClient, ClientServiceClientSync
+from .command_connect import CommandServiceClient, CommandServiceClientSync
+from .common_pb2 import (
+    AccountTypeCredentials,
+    AccountTypeDeviceCode,
+    MinecraftAccountProto,
+    ProxyProto,
+)
+from .connection import (
+    SDK_API_VERSION,
+    SDK_VERSION,
+    CapabilitySet,
+    ConnectionMetadata,
+    RequiredPlugin,
+    ServerMetadata,
+    SoulFireCompatibilityError,
+)
+from .download_connect import DownloadServiceClient, DownloadServiceClientSync
+from .errors import RpcErrorInterceptor, RpcErrorInterceptorSync
+from .fleet import AsyncSoulFireFleet, SoulFireFleet
 from .instance_connect import InstanceServiceClient, InstanceServiceClientSync
+from .instance_live_connect import (
+    InstanceLiveServiceClient,
+    InstanceLiveServiceClientSync,
+)
+from .instance_live_pb2 import (
+    InstanceEvent,
+    InstanceEventFilter,
+    WatchInstanceEventsRequest,
+)
 from .instance_pb2 import (
     InstanceAddAccountsBatchRequest,
     InstanceAddProxiesBatchRequest,
@@ -44,8 +93,10 @@ from .instance_pb2 import (
     InstanceUpdateConfigEntryRequest,
     InstanceUpdateMetaRequest,
 )
+from .inventory_connect import InventoryServiceClient, InventoryServiceClientSync
 from .login_connect import LoginServiceClient, LoginServiceClientSync
 from .login_pb2 import EmailCodeRequest, LoginRequest, NextAuthFlowResponse
+from .logs_connect import LogsServiceClient, LogsServiceClientSync
 from .mc_auth_connect import MCAuthServiceClient, MCAuthServiceClientSync
 from .mc_auth_pb2 import (
     CredentialsAuthRequest,
@@ -55,8 +106,43 @@ from .mc_auth_pb2 import (
     RefreshRequest,
     RefreshResponse,
 )
+from .metrics_connect import MetricsServiceClient, MetricsServiceClientSync
+from .pathfinding_connect import (
+    PathfinderServiceClient,
+    PathfinderServiceClientSync,
+)
+from .plugin_api_connect import PluginApiServiceClient, PluginApiServiceClientSync
+from .plugin_stats_connect import (
+    PluginStatsServiceClient,
+    PluginStatsServiceClientSync,
+)
+from .plugins import AsyncPluginCatalog, PluginCatalog
+from .protocol_connect import BotProtocolServiceClient, BotProtocolServiceClientSync
+from .recipe_connect import RecipeServiceClient, RecipeServiceClientSync
+from .registry_connect import RegistryServiceClient, RegistryServiceClientSync
+from .script_connect import ScriptServiceClient, ScriptServiceClientSync
+from .sdk_connect import SdkServiceClient, SdkServiceClientSync
+from .sdk_pb2 import RequiredPlugin as RequiredPluginMessage
+from .sdk_pb2 import SdkHandshakeRequest, SdkIdentity
+from .server_connect import ServerServiceClient, ServerServiceClientSync
+from .task_connect import BotTaskServiceClient, BotTaskServiceClientSync
+from .user_connect import UserServiceClient, UserServiceClientSync
+from .world_connect import WorldServiceClient, WorldServiceClientSync
 
-ClientT = TypeVar("ClientT")
+type AsyncClientInterceptor = (
+    UnaryInterceptor
+    | ClientStreamInterceptor
+    | ServerStreamInterceptor
+    | BidiStreamInterceptor
+    | MetadataInterceptor[Any]
+)
+type SyncClientInterceptor = (
+    UnaryInterceptorSync
+    | ClientStreamInterceptorSync
+    | ServerStreamInterceptorSync
+    | BidiStreamInterceptorSync
+    | MetadataInterceptorSync[Any]
+)
 
 
 def normalize_base_url(base_url: str) -> str:
@@ -66,29 +152,64 @@ def normalize_base_url(base_url: str) -> str:
     return normalized
 
 
-class SoulFire:
+class AsyncSoulFire:
     def __init__(
         self,
         base_url: str,
         *,
         token: TokenProvider | None = None,
         timeout_ms: int | None = None,
-        interceptors: Iterable[Interceptor] = (),
+        interceptors: Iterable[AsyncClientInterceptor] = (),
+        required_capabilities: Iterable[str] = (),
+        required_plugins: Iterable[RequiredPlugin] = (),
     ) -> None:
         self._token = token
         self._address = normalize_base_url(base_url)
         self._timeout_ms = timeout_ms
         self._interceptors = (
             BearerAuthInterceptor(lambda: self._token),
+            RpcErrorInterceptor(),
             *interceptors,
         )
         self._clients: list[Any] = []
         self._local_server_handle: LocalServerHandle | None = None
+        self._required_capabilities = tuple(required_capabilities)
+        self._required_plugins = tuple(required_plugins)
+        self._connection: ConnectionMetadata | None = None
+        self._plugins: AsyncPluginCatalog | None = None
         self.bot_service = self.service(BotServiceClient)
         self.bot_live = self.service(BotLiveServiceClient)
+        self.bot_tasks = self.service(BotTaskServiceClient)
+        self.pathfinder_service = self.service(PathfinderServiceClient)
+        self.chat_service = self.service(ChatServiceClient)
+        self.inventory_service = self.service(InventoryServiceClient)
+        self.recipe_service = self.service(RecipeServiceClient)
+        self.registry_service = self.service(RegistryServiceClient)
+        self.world_service = self.service(WorldServiceClient)
+        self.protocol_service = self.service(BotProtocolServiceClient)
+        self.automation_service = self.service(AutomationServiceClient)
+        self.client_service = self.service(ClientServiceClient)
+        self.command_service = self.service(CommandServiceClient)
+        self.download_service = self.service(DownloadServiceClient)
+        self.logs_service = self.service(LogsServiceClient)
+        self.metrics_service = self.service(MetricsServiceClient)
+        self.plugin_stats_service = self.service(PluginStatsServiceClient)
+        self.script_service = self.service(ScriptServiceClient)
+        self.server_service = self.service(ServerServiceClient)
+        self.user_service = self.service(UserServiceClient)
         self.instance_service = self.service(InstanceServiceClient)
+        self.instance_live = self.service(InstanceLiveServiceClient)
         self.login_service = self.service(LoginServiceClient)
         self.mc_auth_service = self.service(MCAuthServiceClient)
+        self._sdk_service = self.service(SdkServiceClient)
+        self._plugin_api_service = self.service(PluginApiServiceClient)
+        self._reflective_plugin_client = ConnectClient(
+            self._address,
+            protocol=ProtocolType.GRPC_WEB,
+            timeout_ms=self._timeout_ms,
+            interceptors=cast(Iterable[Interceptor], self._interceptors),
+        )
+        self._clients.append(self._reflective_plugin_client)
 
     @classmethod
     def connect(
@@ -97,8 +218,30 @@ class SoulFire:
         *,
         token: TokenProvider | None = None,
         timeout_ms: int | None = None,
-        interceptors: Iterable[Interceptor] = (),
-    ) -> SoulFire:
+        interceptors: Iterable[AsyncClientInterceptor] = (),
+        required_capabilities: Iterable[str] = (),
+        required_plugins: Iterable[RequiredPlugin] = (),
+    ) -> AsyncSoulFireConnection:
+        return AsyncSoulFireConnection(
+            cls(
+                base_url,
+                token=token,
+                timeout_ms=timeout_ms,
+                interceptors=interceptors,
+                required_capabilities=required_capabilities,
+                required_plugins=required_plugins,
+            )
+        )
+
+    @classmethod
+    def unauthenticated(
+        cls,
+        base_url: str,
+        *,
+        token: TokenProvider | None = None,
+        timeout_ms: int | None = None,
+        interceptors: Iterable[AsyncClientInterceptor] = (),
+    ) -> AsyncSoulFire:
         return cls(
             base_url,
             token=token,
@@ -117,8 +260,8 @@ class SoulFire:
         startup_timeout: float = 120.0,
         on_log: Callable[[str], None] | None = None,
         timeout_ms: int | None = None,
-        interceptors: Iterable[Interceptor] = (),
-    ) -> SoulFire:
+        interceptors: Iterable[AsyncClientInterceptor] = (),
+    ) -> AsyncSoulFire:
         from ._install import install_local_server
 
         local_server = await asyncio.to_thread(
@@ -131,12 +274,13 @@ class SoulFire:
             on_log=on_log,
         )
         try:
-            client = cls.connect(
+            client = cls(
                 local_server.info.base_url,
                 token=local_server.token,
                 timeout_ms=timeout_ms,
                 interceptors=interceptors,
             )
+            await client.negotiate()
         except BaseException:
             await asyncio.to_thread(local_server.close)
             raise
@@ -150,6 +294,43 @@ class SoulFire:
     def local_server(self) -> LocalSoulFireServer | None:
         handle = self._local_server_handle
         return None if handle is None else handle.info
+
+    @property
+    def server(self) -> ServerMetadata:
+        return self._require_connection().server
+
+    @property
+    def identity(self) -> SdkIdentity:
+        return self._require_connection().identity
+
+    @property
+    def capabilities(self) -> CapabilitySet:
+        return self._require_connection().capabilities
+
+    @property
+    def limits(self) -> MappingProxyType[str, int]:
+        return self._require_connection().limits
+
+    @property
+    def plugins(self) -> AsyncPluginCatalog:
+        if self._plugins is None:
+            raise RuntimeError("SoulFire connection has not completed its SDK handshake")
+        return self._plugins
+
+    @property
+    def admin(self) -> AsyncSoulFireAdmin:
+        return AsyncSoulFireAdmin(
+            client=self.client_service,
+            server=self.server_service,
+            users=self.user_service,
+            logs=self.logs_service,
+            metrics=self.metrics_service,
+            commands=self.command_service,
+            downloads=self.download_service,
+            plugin_stats=self.plugin_stats_service,
+            scripts=self.script_service,
+            instances=self.instance_service,
+        )
 
     @property
     def local_server_logs(self) -> tuple[str, ...]:
@@ -169,7 +350,7 @@ class SoulFire:
         handle = self._require_local_server()
         await asyncio.to_thread(handle.stop)
 
-    def service(self, client_type: Callable[..., ClientT]) -> ClientT:
+    def service[ClientT](self, client_type: Callable[..., ClientT]) -> ClientT:
         client = client_type(
             self._address,
             protocol=ProtocolType.GRPC_WEB,
@@ -179,13 +360,24 @@ class SoulFire:
         self._clients.append(client)
         return client
 
-    def instance(self, instance_id: str) -> SoulFireInstance:
-        return SoulFireInstance(
+    def instance(self, instance_id: str) -> AsyncSoulFireInstance:
+        return AsyncSoulFireInstance(
             instance_id,
             self.bot_service,
             self.bot_live,
             self.instance_service,
             self.mc_auth_service,
+            self.bot_tasks,
+            self.pathfinder_service,
+            self.chat_service,
+            self.inventory_service,
+            self.recipe_service,
+            self.registry_service,
+            self.world_service,
+            self.protocol_service,
+            self.automation_service,
+            None if self._connection is None else self._connection.capabilities,
+            self.instance_live,
         )
 
     async def instances(
@@ -207,7 +399,7 @@ class SoulFire:
         *,
         headers: dict[str, str] | None = None,
         timeout_ms: int | None = None,
-    ) -> SoulFireInstance:
+    ) -> AsyncSoulFireInstance:
         response = await self.instance_service.create_instance(
             InstanceCreateRequest(friendlyName=friendly_name),
             headers=headers,
@@ -243,6 +435,7 @@ class SoulFire:
         )
         if response.WhichOneof("next") == "success":
             self.set_token(response.success.token)
+            await self.negotiate()
         return response
 
     async def close(self) -> None:
@@ -256,7 +449,7 @@ class SoulFire:
             if local_server is not None:
                 await asyncio.to_thread(local_server.close)
 
-    async def __aenter__(self) -> SoulFire:
+    async def __aenter__(self) -> AsyncSoulFire:
         return self
 
     async def __aexit__(
@@ -272,8 +465,83 @@ class SoulFire:
             raise RuntimeError("This client does not manage a local SoulFire server")
         return self._local_server_handle
 
+    def _require_connection(self) -> ConnectionMetadata:
+        if self._connection is None:
+            raise RuntimeError("SoulFire connection has not completed its SDK handshake")
+        return self._connection
 
-class SoulFireInstance:
+    async def negotiate(self) -> None:
+        try:
+            response = await self._sdk_service.handshake(self._handshake_request())
+        except ConnectError as error:
+            if error.code == Code.FAILED_PRECONDITION:
+                raise SoulFireCompatibilityError(str(error)) from error
+            raise
+        self._connection = ConnectionMetadata.from_response(response)
+        self._plugins = AsyncPluginCatalog(
+            self._plugin_api_service,
+            self.service,
+            self._connection.plugins,
+            self._reflective_plugin_client,
+        )
+
+    def _handshake_request(self) -> SdkHandshakeRequest:
+        return SdkHandshakeRequest(
+            sdk_name="soulfire",
+            sdk_version=SDK_VERSION,
+            minimum_api_version=SDK_API_VERSION,
+            maximum_api_version=SDK_API_VERSION,
+            required_capabilities=self._required_capabilities,
+            required_plugins=[
+                RequiredPluginMessage(
+                    plugin_id=plugin.plugin_id,
+                    **(
+                        {}
+                        if plugin.version_range is None
+                        else {"version_range": plugin.version_range}
+                    ),
+                )
+                for plugin in self._required_plugins
+            ],
+        )
+
+
+class AsyncSoulFireConnection:
+    __slots__ = ("_client", "_task")
+
+    def __init__(self, client: AsyncSoulFire) -> None:
+        self._client = client
+        self._task: asyncio.Task[AsyncSoulFire] | None = None
+
+    def __await__(self):
+        return self._ready().__await__()
+
+    async def __aenter__(self) -> AsyncSoulFire:
+        return await self._ready()
+
+    async def __aexit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        _exc_value: BaseException | None,
+        _traceback: TracebackType | None,
+    ) -> None:
+        await self._client.close()
+
+    async def _ready(self) -> AsyncSoulFire:
+        if self._task is None:
+            self._task = asyncio.create_task(self._connect())
+        return await self._task
+
+    async def _connect(self) -> AsyncSoulFire:
+        try:
+            await self._client.negotiate()
+        except BaseException:
+            await self._client.close()
+            raise
+        return self._client
+
+
+class AsyncSoulFireInstance:
     def __init__(
         self,
         instance_id: str,
@@ -281,15 +549,60 @@ class SoulFireInstance:
         bot_live: BotLiveServiceClient,
         instance_service: InstanceServiceClient,
         mc_auth_service: MCAuthServiceClient | None = None,
+        bot_tasks: BotTaskServiceClient | None = None,
+        pathfinder_service: PathfinderServiceClient | None = None,
+        chat_service: ChatServiceClient | None = None,
+        inventory_service: InventoryServiceClient | None = None,
+        recipe_service: RecipeServiceClient | None = None,
+        registry_service: RegistryServiceClient | None = None,
+        world_service: WorldServiceClient | None = None,
+        protocol_service: BotProtocolServiceClient | None = None,
+        automation_service: AutomationServiceClient | None = None,
+        capabilities: CapabilitySet | None = None,
+        instance_live: InstanceLiveServiceClient | None = None,
     ) -> None:
         self.id = instance_id
         self._bot_service = bot_service
         self._bot_live = bot_live
         self._instance_service = instance_service
         self._mc_auth_service = mc_auth_service
+        self._bot_tasks = bot_tasks
+        self._pathfinder_service = pathfinder_service
+        self._chat_service = chat_service
+        self._inventory_service = inventory_service
+        self._recipe_service = recipe_service
+        self._registry_service = registry_service
+        self._world_service = world_service
+        self._protocol_service = protocol_service
+        self._automation_service = automation_service
+        self._capabilities = capabilities
+        self._instance_live = instance_live
 
-    def bot(self, bot_id: str) -> SoulFireBot:
-        return SoulFireBot(self.id, bot_id, self._bot_service, self._bot_live)
+    @property
+    def automation(self) -> AsyncSoulFireAutomation:
+        if self._automation_service is None:
+            raise RuntimeError("The automation service is unavailable")
+        return AsyncSoulFireAutomation(self.id, self._automation_service)
+
+    @property
+    def fleet(self) -> AsyncSoulFireFleet:
+        return AsyncSoulFireFleet(self, self._capabilities)
+
+    def bot(self, bot_id: str) -> AsyncSoulFireBot:
+        return AsyncSoulFireBot(
+            self.id,
+            bot_id,
+            self._bot_service,
+            self._bot_live,
+            self._bot_tasks,
+            self._pathfinder_service,
+            self._chat_service,
+            self._inventory_service,
+            self._recipe_service,
+            self._registry_service,
+            self._world_service,
+            self._protocol_service,
+        )
 
     async def info(
         self,
@@ -411,7 +724,7 @@ class SoulFireInstance:
 
     def login_credentials(
         self,
-        service: int,
+        service: AccountTypeCredentials,
         payload: Iterable[str],
         *,
         headers: dict[str, str] | None = None,
@@ -429,7 +742,7 @@ class SoulFireInstance:
 
     def login_device_code(
         self,
-        service: int,
+        service: AccountTypeDeviceCode,
         *,
         headers: dict[str, str] | None = None,
         timeout_ms: int | None = None,
@@ -479,6 +792,31 @@ class SoulFireInstance:
     ) -> AsyncIterator[WatchBotStatusesResponse]:
         return self._bot_service.watch_bot_statuses(
             WatchBotStatusesRequest(instance_id=self.id),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    def events(
+        self,
+        filter: InstanceEventFilter | None = None,
+        *,
+        bot_ids: Iterable[str] = (),
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> AsyncIterator[InstanceEvent]:
+        """Watch one multiplexed event stream for bots in this instance."""
+        if self._instance_live is None:
+            raise RuntimeError("The instance live service is unavailable")
+        event_filter = filter or _default_instance_event_filter()
+        if filter is None:
+            event_filter.bot_ids.extend(dict.fromkeys(bot_ids))
+        elif tuple(bot_ids):
+            raise ValueError("Pass bot_ids in filter or as bot_ids, not both")
+        return self._instance_live.watch_instance_events(
+            WatchInstanceEventsRequest(
+                instance_id=self.id,
+                filter=event_filter,
+            ),
             headers=headers,
             timeout_ms=timeout_ms,
         )
@@ -601,29 +939,64 @@ class SoulFireInstance:
         return _has_shuffle_accounts(response.info.config.settings)
 
 
-class SoulFireSync:
+class SoulFire:
     def __init__(
         self,
         base_url: str,
         *,
         token: TokenProvider | None = None,
         timeout_ms: int | None = None,
-        interceptors: Iterable[InterceptorSync] = (),
+        interceptors: Iterable[SyncClientInterceptor] = (),
+        required_capabilities: Iterable[str] = (),
+        required_plugins: Iterable[RequiredPlugin] = (),
     ) -> None:
         self._token = token
         self._address = normalize_base_url(base_url)
         self._timeout_ms = timeout_ms
         self._interceptors = (
             BearerAuthInterceptorSync(lambda: self._token),
+            RpcErrorInterceptorSync(),
             *interceptors,
         )
         self._clients: list[Any] = []
         self._local_server_handle: LocalServerHandle | None = None
+        self._required_capabilities = tuple(required_capabilities)
+        self._required_plugins = tuple(required_plugins)
+        self._connection: ConnectionMetadata | None = None
+        self._plugins: PluginCatalog | None = None
         self.bot_service = self.service(BotServiceClientSync)
         self.bot_live = self.service(BotLiveServiceClientSync)
+        self.bot_tasks = self.service(BotTaskServiceClientSync)
+        self.pathfinder_service = self.service(PathfinderServiceClientSync)
+        self.chat_service = self.service(ChatServiceClientSync)
+        self.inventory_service = self.service(InventoryServiceClientSync)
+        self.recipe_service = self.service(RecipeServiceClientSync)
+        self.registry_service = self.service(RegistryServiceClientSync)
+        self.world_service = self.service(WorldServiceClientSync)
+        self.protocol_service = self.service(BotProtocolServiceClientSync)
+        self.automation_service = self.service(AutomationServiceClientSync)
+        self.client_service = self.service(ClientServiceClientSync)
+        self.command_service = self.service(CommandServiceClientSync)
+        self.download_service = self.service(DownloadServiceClientSync)
+        self.logs_service = self.service(LogsServiceClientSync)
+        self.metrics_service = self.service(MetricsServiceClientSync)
+        self.plugin_stats_service = self.service(PluginStatsServiceClientSync)
+        self.script_service = self.service(ScriptServiceClientSync)
+        self.server_service = self.service(ServerServiceClientSync)
+        self.user_service = self.service(UserServiceClientSync)
         self.instance_service = self.service(InstanceServiceClientSync)
+        self.instance_live = self.service(InstanceLiveServiceClientSync)
         self.login_service = self.service(LoginServiceClientSync)
         self.mc_auth_service = self.service(MCAuthServiceClientSync)
+        self._sdk_service = self.service(SdkServiceClientSync)
+        self._plugin_api_service = self.service(PluginApiServiceClientSync)
+        self._reflective_plugin_client = ConnectClientSync(
+            self._address,
+            protocol=ProtocolType.GRPC_WEB,
+            timeout_ms=self._timeout_ms,
+            interceptors=cast(Iterable[InterceptorSync], self._interceptors),
+        )
+        self._clients.append(self._reflective_plugin_client)
 
     @classmethod
     def connect(
@@ -632,8 +1005,34 @@ class SoulFireSync:
         *,
         token: TokenProvider | None = None,
         timeout_ms: int | None = None,
-        interceptors: Iterable[InterceptorSync] = (),
-    ) -> SoulFireSync:
+        interceptors: Iterable[SyncClientInterceptor] = (),
+        required_capabilities: Iterable[str] = (),
+        required_plugins: Iterable[RequiredPlugin] = (),
+    ) -> SoulFire:
+        client = cls(
+            base_url,
+            token=token,
+            timeout_ms=timeout_ms,
+            interceptors=interceptors,
+            required_capabilities=required_capabilities,
+            required_plugins=required_plugins,
+        )
+        try:
+            client.negotiate()
+        except BaseException:
+            client.close()
+            raise
+        return client
+
+    @classmethod
+    def unauthenticated(
+        cls,
+        base_url: str,
+        *,
+        token: TokenProvider | None = None,
+        timeout_ms: int | None = None,
+        interceptors: Iterable[SyncClientInterceptor] = (),
+    ) -> SoulFire:
         return cls(
             base_url,
             token=token,
@@ -652,8 +1051,8 @@ class SoulFireSync:
         startup_timeout: float = 120.0,
         on_log: Callable[[str], None] | None = None,
         timeout_ms: int | None = None,
-        interceptors: Iterable[InterceptorSync] = (),
-    ) -> SoulFireSync:
+        interceptors: Iterable[SyncClientInterceptor] = (),
+    ) -> SoulFire:
         from ._install import install_local_server
 
         local_server = install_local_server(
@@ -686,6 +1085,43 @@ class SoulFireSync:
         return None if handle is None else handle.info
 
     @property
+    def server(self) -> ServerMetadata:
+        return self._require_connection().server
+
+    @property
+    def identity(self) -> SdkIdentity:
+        return self._require_connection().identity
+
+    @property
+    def capabilities(self) -> CapabilitySet:
+        return self._require_connection().capabilities
+
+    @property
+    def limits(self) -> MappingProxyType[str, int]:
+        return self._require_connection().limits
+
+    @property
+    def plugins(self) -> PluginCatalog:
+        if self._plugins is None:
+            raise RuntimeError("SoulFire connection has not completed its SDK handshake")
+        return self._plugins
+
+    @property
+    def admin(self) -> SoulFireAdmin:
+        return SoulFireAdmin(
+            client=self.client_service,
+            server=self.server_service,
+            users=self.user_service,
+            logs=self.logs_service,
+            metrics=self.metrics_service,
+            commands=self.command_service,
+            downloads=self.download_service,
+            plugin_stats=self.plugin_stats_service,
+            scripts=self.script_service,
+            instances=self.instance_service,
+        )
+
+    @property
     def local_server_logs(self) -> tuple[str, ...]:
         handle = self._local_server_handle
         return () if handle is None else handle.logs
@@ -701,7 +1137,7 @@ class SoulFireSync:
     def stop_local_server(self) -> None:
         self._require_local_server().stop()
 
-    def service(self, client_type: Callable[..., ClientT]) -> ClientT:
+    def service[ClientT](self, client_type: Callable[..., ClientT]) -> ClientT:
         client = client_type(
             self._address,
             protocol=ProtocolType.GRPC_WEB,
@@ -711,13 +1147,24 @@ class SoulFireSync:
         self._clients.append(client)
         return client
 
-    def instance(self, instance_id: str) -> SoulFireInstanceSync:
-        return SoulFireInstanceSync(
+    def instance(self, instance_id: str) -> SoulFireInstance:
+        return SoulFireInstance(
             instance_id,
             self.bot_service,
             self.bot_live,
             self.instance_service,
             self.mc_auth_service,
+            self.bot_tasks,
+            self.pathfinder_service,
+            self.chat_service,
+            self.inventory_service,
+            self.recipe_service,
+            self.registry_service,
+            self.world_service,
+            self.protocol_service,
+            self.automation_service,
+            None if self._connection is None else self._connection.capabilities,
+            self.instance_live,
         )
 
     def instances(
@@ -739,7 +1186,7 @@ class SoulFireSync:
         *,
         headers: dict[str, str] | None = None,
         timeout_ms: int | None = None,
-    ) -> SoulFireInstanceSync:
+    ) -> SoulFireInstance:
         response = self.instance_service.create_instance(
             InstanceCreateRequest(friendlyName=friendly_name),
             headers=headers,
@@ -775,6 +1222,7 @@ class SoulFireSync:
         )
         if response.WhichOneof("next") == "success":
             self.set_token(response.success.token)
+            self.negotiate()
         return response
 
     def close(self) -> None:
@@ -788,7 +1236,7 @@ class SoulFireSync:
             if local_server is not None:
                 local_server.close()
 
-    def __enter__(self) -> SoulFireSync:
+    def __enter__(self) -> SoulFire:
         return self
 
     def __exit__(
@@ -804,8 +1252,48 @@ class SoulFireSync:
             raise RuntimeError("This client does not manage a local SoulFire server")
         return self._local_server_handle
 
+    def _require_connection(self) -> ConnectionMetadata:
+        if self._connection is None:
+            raise RuntimeError("SoulFire connection has not completed its SDK handshake")
+        return self._connection
 
-class SoulFireInstanceSync:
+    def negotiate(self) -> None:
+        try:
+            response = self._sdk_service.handshake(self._handshake_request())
+        except ConnectError as error:
+            if error.code == Code.FAILED_PRECONDITION:
+                raise SoulFireCompatibilityError(str(error)) from error
+            raise
+        self._connection = ConnectionMetadata.from_response(response)
+        self._plugins = PluginCatalog(
+            self._plugin_api_service,
+            self.service,
+            self._connection.plugins,
+            self._reflective_plugin_client,
+        )
+
+    def _handshake_request(self) -> SdkHandshakeRequest:
+        return SdkHandshakeRequest(
+            sdk_name="soulfire",
+            sdk_version=SDK_VERSION,
+            minimum_api_version=SDK_API_VERSION,
+            maximum_api_version=SDK_API_VERSION,
+            required_capabilities=self._required_capabilities,
+            required_plugins=[
+                RequiredPluginMessage(
+                    plugin_id=plugin.plugin_id,
+                    **(
+                        {}
+                        if plugin.version_range is None
+                        else {"version_range": plugin.version_range}
+                    ),
+                )
+                for plugin in self._required_plugins
+            ],
+        )
+
+
+class SoulFireInstance:
     def __init__(
         self,
         instance_id: str,
@@ -813,15 +1301,60 @@ class SoulFireInstanceSync:
         bot_live: BotLiveServiceClientSync,
         instance_service: InstanceServiceClientSync,
         mc_auth_service: MCAuthServiceClientSync | None = None,
+        bot_tasks: BotTaskServiceClientSync | None = None,
+        pathfinder_service: PathfinderServiceClientSync | None = None,
+        chat_service: ChatServiceClientSync | None = None,
+        inventory_service: InventoryServiceClientSync | None = None,
+        recipe_service: RecipeServiceClientSync | None = None,
+        registry_service: RegistryServiceClientSync | None = None,
+        world_service: WorldServiceClientSync | None = None,
+        protocol_service: BotProtocolServiceClientSync | None = None,
+        automation_service: AutomationServiceClientSync | None = None,
+        capabilities: CapabilitySet | None = None,
+        instance_live: InstanceLiveServiceClientSync | None = None,
     ) -> None:
         self.id = instance_id
         self._bot_service = bot_service
         self._bot_live = bot_live
         self._instance_service = instance_service
         self._mc_auth_service = mc_auth_service
+        self._bot_tasks = bot_tasks
+        self._pathfinder_service = pathfinder_service
+        self._chat_service = chat_service
+        self._inventory_service = inventory_service
+        self._recipe_service = recipe_service
+        self._registry_service = registry_service
+        self._world_service = world_service
+        self._protocol_service = protocol_service
+        self._automation_service = automation_service
+        self._capabilities = capabilities
+        self._instance_live = instance_live
 
-    def bot(self, bot_id: str) -> SoulFireBotSync:
-        return SoulFireBotSync(self.id, bot_id, self._bot_service, self._bot_live)
+    @property
+    def automation(self) -> SoulFireAutomation:
+        if self._automation_service is None:
+            raise RuntimeError("The automation service is unavailable")
+        return SoulFireAutomation(self.id, self._automation_service)
+
+    @property
+    def fleet(self) -> SoulFireFleet:
+        return SoulFireFleet(self, self._capabilities)
+
+    def bot(self, bot_id: str) -> SoulFireBot:
+        return SoulFireBot(
+            self.id,
+            bot_id,
+            self._bot_service,
+            self._bot_live,
+            self._bot_tasks,
+            self._pathfinder_service,
+            self._chat_service,
+            self._inventory_service,
+            self._recipe_service,
+            self._registry_service,
+            self._world_service,
+            self._protocol_service,
+        )
 
     def info(
         self,
@@ -943,7 +1476,7 @@ class SoulFireInstanceSync:
 
     def login_credentials(
         self,
-        service: int,
+        service: AccountTypeCredentials,
         payload: Iterable[str],
         *,
         headers: dict[str, str] | None = None,
@@ -961,7 +1494,7 @@ class SoulFireInstanceSync:
 
     def login_device_code(
         self,
-        service: int,
+        service: AccountTypeDeviceCode,
         *,
         headers: dict[str, str] | None = None,
         timeout_ms: int | None = None,
@@ -1011,6 +1544,31 @@ class SoulFireInstanceSync:
     ) -> Iterator[WatchBotStatusesResponse]:
         return self._bot_service.watch_bot_statuses(
             WatchBotStatusesRequest(instance_id=self.id),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    def events(
+        self,
+        filter: InstanceEventFilter | None = None,
+        *,
+        bot_ids: Iterable[str] = (),
+        headers: dict[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> Iterator[InstanceEvent]:
+        """Watch one multiplexed event stream for bots in this instance."""
+        if self._instance_live is None:
+            raise RuntimeError("The instance live service is unavailable")
+        event_filter = filter or _default_instance_event_filter()
+        if filter is None:
+            event_filter.bot_ids.extend(dict.fromkeys(bot_ids))
+        elif tuple(bot_ids):
+            raise ValueError("Pass bot_ids in filter or as bot_ids, not both")
+        return self._instance_live.watch_instance_events(
+            WatchInstanceEventsRequest(
+                instance_id=self.id,
+                filter=event_filter,
+            ),
             headers=headers,
             timeout_ms=timeout_ms,
         )
@@ -1139,6 +1697,26 @@ def _explicit_bot_ids(bot_ids: Iterable[str] | None, count: int | None) -> list[
     if bot_ids is None:
         return None
     return list(dict.fromkeys(bot_ids))
+
+
+def _default_instance_event_filter() -> InstanceEventFilter:
+    return InstanceEventFilter(
+        bot_events=BotEventFilter(
+            include_block_updates=True,
+            include_boss_bars=True,
+            include_chat=True,
+            include_damage=True,
+            include_entity_events=True,
+            include_environment=True,
+            include_inventory=True,
+            include_lifecycle=True,
+            include_player_list=True,
+            include_resource_packs=True,
+            include_scoreboard=True,
+            include_state_deltas=True,
+            include_titles=True,
+        )
+    )
 
 
 def _normalize_count(count: int) -> int:

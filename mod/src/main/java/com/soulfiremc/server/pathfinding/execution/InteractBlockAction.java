@@ -21,6 +21,7 @@ import com.soulfiremc.server.bot.BotConnection;
 import com.soulfiremc.server.pathfinding.SFVec3i;
 import com.soulfiremc.server.pathfinding.graph.BlockFace;
 import com.soulfiremc.server.util.SFBlockHelpers;
+import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import net.minecraft.world.InteractionHand;
@@ -30,6 +31,7 @@ import net.minecraft.world.level.ClipContext;
 @Slf4j
 @RequiredArgsConstructor
 public final class InteractBlockAction implements WorldAction {
+  @Getter
   private final SFVec3i blockPosition;
   private final BlockFace interactFace;
   private final boolean desiredOpen;

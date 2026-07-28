@@ -513,6 +513,96 @@ message BotRenderPovTextSubmission {
   string outline_color = 8;
 }
 
+// Request to continuously render a bot's point of view.
+message BotWatchPovRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  int32 width = 3;
+  int32 height = 4;
+  optional int32 max_distance = 5;
+  optional double fov = 6;
+  optional double camera_x = 7;
+  optional double camera_y = 8;
+  optional double camera_z = 9;
+  optional float y_rot = 10;
+  optional float x_rot = 11;
+  optional bool include_hud = 12;
+  optional bool include_hands = 13;
+  bool include_debug_trace = 14;
+
+  // Target interval between frames. Defaults to 1000 ms and is clamped to
+  // 100-60000 ms. Frames are dropped while the transport is not ready.
+  int32 interval_ms = 15;
+}
+
+// A rendered frame from a POV stream.
+message BotPovFrame {
+  uint64 sequence = 1 [(google.api.field_behavior) = REQUIRED];
+  google.protobuf.Timestamp captured_at = 2 [(google.api.field_behavior) = REQUIRED];
+  BotRenderPovResponse render = 3 [(google.api.field_behavior) = REQUIRED];
+
+  // Number of scheduled frames skipped since the previous delivered frame
+  // because the client or transport could not accept more data.
+  uint64 dropped_before = 4 [(google.api.field_behavior) = REQUIRED];
+}
+
+// Request for bounded, top-down world data suitable for map viewers.
+message BotWorldMapRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+
+  // Center coordinates. Each defaults to the bot's current block position.
+  optional int32 center_x = 3;
+  optional int32 center_z = 4;
+
+  // Radius in blocks. Defaults to 64 and is clamped to 1-256.
+  int32 radius = 5;
+
+  // Distance between sampled columns. Defaults to 1 and is clamped to 1-16.
+  int32 sample_step = 6;
+
+  // Include nearby entity overlays in the returned snapshot.
+  bool include_entities = 7;
+}
+
+// One sampled surface column in a top-down world map.
+message BotWorldMapColumn {
+  int32 x = 1 [(google.api.field_behavior) = REQUIRED];
+  int32 z = 2 [(google.api.field_behavior) = REQUIRED];
+  bool loaded = 3 [(google.api.field_behavior) = REQUIRED];
+  optional int32 surface_y = 4;
+  optional string block_id = 5;
+  optional string biome_id = 6;
+  int32 sky_light = 7 [(google.api.field_behavior) = REQUIRED];
+  int32 block_light = 8 [(google.api.field_behavior) = REQUIRED];
+}
+
+// Entity overlay for a top-down world map.
+message BotWorldMapEntity {
+  string entity_id = 1 [(google.api.field_behavior) = REQUIRED];
+  string entity_type = 2 [(google.api.field_behavior) = REQUIRED];
+  string display_name = 3 [(google.api.field_behavior) = REQUIRED];
+  double x = 4 [(google.api.field_behavior) = REQUIRED];
+  double y = 5 [(google.api.field_behavior) = REQUIRED];
+  double z = 6 [(google.api.field_behavior) = REQUIRED];
+  float yaw = 7 [(google.api.field_behavior) = REQUIRED];
+}
+
+// A bounded, rectangular top-down world sample.
+message BotWorldMapResponse {
+  string dimension = 1 [(google.api.field_behavior) = REQUIRED];
+  int32 center_x = 2 [(google.api.field_behavior) = REQUIRED];
+  int32 center_z = 3 [(google.api.field_behavior) = REQUIRED];
+  int32 radius = 4 [(google.api.field_behavior) = REQUIRED];
+  int32 sample_step = 5 [(google.api.field_behavior) = REQUIRED];
+  int32 min_y = 6 [(google.api.field_behavior) = REQUIRED];
+  int32 max_y = 7 [(google.api.field_behavior) = REQUIRED];
+  int64 world_revision = 8 [(google.api.field_behavior) = REQUIRED];
+  google.protobuf.Timestamp sampled_at = 9 [(google.api.field_behavior) = REQUIRED];
+  repeated BotWorldMapColumn columns = 10;
+  repeated BotWorldMapEntity entities = 11;
+}
+
 // ============================================================================
 // Inventory Management Messages
 // ============================================================================
@@ -1624,6 +1714,33 @@ service BotService {
     option (google.api.http) = { get: "/v1/instances/{instance_id}/bots/{bot_id}/pov:render" };
     option (soulfire.v1.api_method) = {
       display_name: "Render bot POV"
+      permissions: "READ_BOT_INFO"
+      scope: "instance.bot"
+      preconditions: "Bot must be online."
+      preconditions: "Player and level state must be available."
+      execution: "Immediate"
+    };
+  }
+
+  // Streams rendered POV frames. Slow consumers receive the newest available
+  // frame and an explicit dropped-frame count instead of an unbounded backlog.
+  rpc WatchBotPov (BotWatchPovRequest) returns (stream BotPovFrame) {
+    option (google.api.http) = { get: "/v1/instances/{instance_id}/bots/{bot_id}/pov:watch" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Watch bot POV"
+      permissions: "READ_BOT_INFO"
+      scope: "instance.bot"
+      preconditions: "Bot must be online."
+      preconditions: "Player and level state must be available."
+      execution: "Streaming"
+    };
+  }
+
+  // Samples loaded terrain and optional entity overlays for top-down viewers.
+  rpc GetBotWorldMap (BotWorldMapRequest) returns (BotWorldMapResponse) {
+    option (google.api.http) = { get: "/v1/instances/{instance_id}/bots/{bot_id}/world-map" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Get bot world map"
       permissions: "READ_BOT_INFO"
       scope: "instance.bot"
       preconditions: "Bot must be online."

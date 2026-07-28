@@ -50,6 +50,7 @@ grpc-proto = { module = "io.grpc:grpc-protobuf", version.ref = "grpc" }
 grpc-services = { module = "io.grpc:grpc-services", version.ref = "grpc" }
 grpc-stub = { module = "io.grpc:grpc-stub", version.ref = "grpc" }
 grpc-netty = { module = "io.grpc:grpc-netty", version.ref = "grpc" }
+grpc-inprocess = { module = "io.grpc:grpc-inprocess", version.ref = "grpc" }
 protobuf-bom = { module = "com.google.protobuf:protobuf-bom", version.ref = "protobuf" }
 protobuf-util = { module = "com.google.protobuf:protobuf-java-util", version.ref = "protobuf" }
 netty-bom = "io.netty:netty-bom:4.2.16.Final"
@@ -93,7 +94,7 @@ evalex = "com.ezylang:EvalEx:3.7.0"
 [bundles]
 bom = ["netty-bom", "armeria-bom", "protobuf-bom", "kotlin-bom"]
 log4j = ["log4j-api", "log4j-core", "log4j-slf4j2-impl", "log4j-iostreams", "log4j-jul"]
-grpc = ["grpc-proto", "grpc-services", "grpc-stub", "grpc-netty", "protobuf-util"]
+grpc = ["grpc-proto", "grpc-services", "grpc-stub", "grpc-netty", "grpc-inprocess", "protobuf-util"]
 ansi4j = ["ansi4j-core-api", "ansi4j-core-impl"]
 armeria = ["armeria", "armeria-grpc", "armeria-grpc-protocol", "armeria-prometheus1", "armeria-tomcat10", "armeria-ai-mcp"]
 reactor-netty = ["reactor-netty-core", "reactor-netty-http"]

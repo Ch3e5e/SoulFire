@@ -5,7 +5,7 @@
 import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
 import { file_soulfire_api_docs } from "./api_docs_pb.js";
-import type { BotChatEvent, BotLifecycleEvent } from "./bot_live_pb.js";
+import type { BotChatEvent, BotEvent, BotEventFilter, BotLifecycleEvent } from "./bot_live_pb.js";
 import { file_soulfire_bot_live } from "./bot_live_pb.js";
 import { file_google_api_field_behavior } from "../google/api/field_behavior_pb.js";
 import type { Message } from "@bufbuild/protobuf";
@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file soulfire/instance_live.proto.
  */
 export const file_soulfire_instance_live: GenFile = /*@__PURE__*/
-  fileDesc("Chxzb3VsZmlyZS9pbnN0YW5jZV9saXZlLnByb3RvEgtzb3VsZmlyZS52MSJGChNJbnN0YW5jZUV2ZW50RmlsdGVyEhQKDGluY2x1ZGVfY2hhdBgBIAEoCBIZChFpbmNsdWRlX2xpZmVjeWNsZRgCIAEoCCJ3ChpXYXRjaEluc3RhbmNlRXZlbnRzUmVxdWVzdBIiCgtpbnN0YW5jZV9pZBgBIAEoCUIN4EEC0vMYBgoEdXVpZBI1CgZmaWx0ZXIYAiABKAsyIC5zb3VsZmlyZS52MS5JbnN0YW5jZUV2ZW50RmlsdGVyQgPgQQIisQEKDUluc3RhbmNlRXZlbnQSJQoOYm90X3Byb2ZpbGVfaWQYASABKAlCDeBBAtLzGAYKBHV1aWQSEAoIYm90X25hbWUYAiABKAkSKQoEY2hhdBgDIAEoCzIZLnNvdWxmaXJlLnYxLkJvdENoYXRFdmVudEgAEjMKCWxpZmVjeWNsZRgEIAEoCzIeLnNvdWxmaXJlLnYxLkJvdExpZmVjeWNsZUV2ZW50SABCBwoFZXZlbnQyoQIKE0luc3RhbmNlTGl2ZVNlcnZpY2USiQIKE1dhdGNoSW5zdGFuY2VFdmVudHMSJy5zb3VsZmlyZS52MS5XYXRjaEluc3RhbmNlRXZlbnRzUmVxdWVzdBoaLnNvdWxmaXJlLnYxLkluc3RhbmNlRXZlbnQiqgHK8xilAQoVV2F0Y2ggaW5zdGFuY2UgZXZlbnRzGg1SRUFEX0JPVF9JTkZPIghpbnN0YW5jZTIzT3BlbnMgYSBsaXZlIGV2ZW50IHN0cmVhbSB1bnRpbCB0aGUgY2xpZW50IGNhbmNlbHMuOj5BbGxvY2F0ZXMgc2VydmVyLXNpZGUgc3Vic2NyaXB0aW9uIHJlc291cmNlcyBmb3IgdGhlIGluc3RhbmNlLjABQiEKHWNvbS5zb3VsZmlyZW1jLmdycGMuZ2VuZXJhdGVkUAFiBnByb3RvMw", [file_soulfire_api_docs, file_soulfire_bot_live, file_google_api_field_behavior]);
+  fileDesc("Chxzb3VsZmlyZS9pbnN0YW5jZV9saXZlLnByb3RvEgtzb3VsZmlyZS52MSKoAQoTSW5zdGFuY2VFdmVudEZpbHRlchIUCgxpbmNsdWRlX2NoYXQYASABKAgSGQoRaW5jbHVkZV9saWZlY3ljbGUYAiABKAgSNAoKYm90X2V2ZW50cxgDIAEoCzIbLnNvdWxmaXJlLnYxLkJvdEV2ZW50RmlsdGVySACIAQESGwoHYm90X2lkcxgEIAMoCUIK0vMYBgoEdXVpZEINCgtfYm90X2V2ZW50cyJ3ChpXYXRjaEluc3RhbmNlRXZlbnRzUmVxdWVzdBIiCgtpbnN0YW5jZV9pZBgBIAEoCUIN4EEC0vMYBgoEdXVpZBI1CgZmaWx0ZXIYAiABKAsyIC5zb3VsZmlyZS52MS5JbnN0YW5jZUV2ZW50RmlsdGVyQgPgQQIi3QEKDUluc3RhbmNlRXZlbnQSJQoOYm90X3Byb2ZpbGVfaWQYASABKAlCDeBBAtLzGAYKBHV1aWQSEAoIYm90X25hbWUYAiABKAkSKQoEY2hhdBgDIAEoCzIZLnNvdWxmaXJlLnYxLkJvdENoYXRFdmVudEgAEjMKCWxpZmVjeWNsZRgEIAEoCzIeLnNvdWxmaXJlLnYxLkJvdExpZmVjeWNsZUV2ZW50SAASKgoJYm90X2V2ZW50GAUgASgLMhUuc291bGZpcmUudjEuQm90RXZlbnRIAEIHCgVldmVudDKhAgoTSW5zdGFuY2VMaXZlU2VydmljZRKJAgoTV2F0Y2hJbnN0YW5jZUV2ZW50cxInLnNvdWxmaXJlLnYxLldhdGNoSW5zdGFuY2VFdmVudHNSZXF1ZXN0Ghouc291bGZpcmUudjEuSW5zdGFuY2VFdmVudCKqAcrzGKUBChVXYXRjaCBpbnN0YW5jZSBldmVudHMaDVJFQURfQk9UX0lORk8iCGluc3RhbmNlMjNPcGVucyBhIGxpdmUgZXZlbnQgc3RyZWFtIHVudGlsIHRoZSBjbGllbnQgY2FuY2Vscy46PkFsbG9jYXRlcyBzZXJ2ZXItc2lkZSBzdWJzY3JpcHRpb24gcmVzb3VyY2VzIGZvciB0aGUgaW5zdGFuY2UuMAFCIQodY29tLnNvdWxmaXJlbWMuZ3JwYy5nZW5lcmF0ZWRQAWIGcHJvdG8z", [file_soulfire_api_docs, file_soulfire_bot_live, file_google_api_field_behavior]);
 
 /**
  * Selects which categories of events the instance stream should deliver.
@@ -36,6 +36,21 @@ export type InstanceEventFilter = Message<"soulfire.v1.InstanceEventFilter"> & {
    * @generated from field: bool include_lifecycle = 2;
    */
   includeLifecycle: boolean;
+
+  /**
+   * Full bot event filter. When present, this supersedes the two legacy
+   * category flags above and can request any BotEvent category.
+   *
+   * @generated from field: optional soulfire.v1.BotEventFilter bot_events = 3;
+   */
+  botEvents?: BotEventFilter | undefined;
+
+  /**
+   * Optional profile UUID allowlist. Empty selects every configured bot.
+   *
+   * @generated from field: repeated string bot_ids = 4;
+   */
+  botIds: string[];
 };
 
 /**
@@ -113,6 +128,15 @@ export type InstanceEvent = Message<"soulfire.v1.InstanceEvent"> & {
      */
     value: BotLifecycleEvent;
     case: "lifecycle";
+  } | {
+    /**
+     * Any bot event not represented by the legacy fields above. Chat and
+     * lifecycle continue to use their original variants for wire compatibility.
+     *
+     * @generated from field: soulfire.v1.BotEvent bot_event = 5;
+     */
+    value: BotEvent;
+    case: "botEvent";
   } | { case: undefined; value?: undefined };
 };
 
@@ -132,9 +156,9 @@ export const InstanceEventSchema: GenMessage<InstanceEvent> = /*@__PURE__*/
 export const InstanceLiveService: GenService<{
   /**
    * Subscribes to a single multiplexed event stream covering every bot in the
-   * instance. The stream stays open until the client cancels. Unlike
-   * WatchBotEvents it does not emit an initial snapshot; it only forwards
-   * events as they happen.
+   * instance. The stream stays open until the client cancels. Each selected
+   * bot contributes its current status and live snapshots before incremental
+   * events begin.
    *
    * @generated from rpc soulfire.v1.InstanceLiveService.WatchInstanceEvents
    */

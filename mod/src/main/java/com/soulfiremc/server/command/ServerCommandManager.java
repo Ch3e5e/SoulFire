@@ -87,6 +87,7 @@ public final class ServerCommandManager {
     InstanceCommand.register(dispatcher);
     RepeatCommand.register(dispatcher);
 
+    SoulFireAPI.pluginApis().applyCommands(dispatcher);
     SoulFireAPI.postEvent(new CommandManagerInitEvent(soulFireServer, this));
   }
 

@@ -6,6 +6,8 @@
   "mixins": [
     "headless.sound.MixinNarrator",
     "soulfire.api.MixinConnection",
+    "soulfire.api.MixinPacketDecoder",
+    "soulfire.api.MixinPacketEncoder",
     "soulfire.api.MixinPacketListener$ListenerAndPacket",
     "soulfire.api.MixinPlayer",
     "soulfire.api.event.MixinConnection",
@@ -18,6 +20,8 @@
     "soulfire.botfixes.MixinYggdrasilMinecraftSessionService",
     "soulfire.debug.MixinCrashReport",
     "soulfire.debug.MixinUtil",
+    "soulfire.AnimalLoveStateMixin",
+    "soulfire.FishingHookAccessor",
     "soulfire.lifecycle.MixinMain",
     "soulfire.optimization.MixinDataFixers",
     "soulfire.optimization.MixinFontCacheReload",

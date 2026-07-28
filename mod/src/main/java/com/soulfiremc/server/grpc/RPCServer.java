@@ -36,6 +36,8 @@ import com.linecorp.armeria.server.metric.MetricCollectingService;
 import com.linecorp.armeria.server.prometheus.PrometheusExpositionService;
 import com.linecorp.armeria.server.tomcat.TomcatService;
 import com.soulfiremc.server.SoulFireServer;
+import com.soulfiremc.server.api.SoulFireAPI;
+import io.grpc.ServerInterceptors;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.protobuf.services.ProtoReflectionServiceV1;
@@ -96,7 +98,7 @@ public final class RPCServer {
           GrpcHeaderNames.GRPC_STATUS,
           GrpcHeaderNames.GRPC_MESSAGE,
           GrpcHeaderNames.ARMERIA_GRPC_THROWABLEPROTO_BIN);
-    var grpcService =
+    var grpcServiceBuilder =
       GrpcService.builder()
         .autoCompression(true)
         .intercept(List.of(
@@ -106,20 +108,37 @@ public final class RPCServer {
         .addService(new AutomationServiceImpl(soulFireServer))
         .addService(new BotServiceImpl(soulFireServer))
         .addService(new BotLiveServiceImpl(soulFireServer))
+        .addService(new BotProtocolServiceImpl(soulFireServer))
+        .addService(new BotTaskServiceImpl(soulFireServer))
+        .addService(new ChatServiceImpl(soulFireServer))
         .addService(new ClientServiceImpl(soulFireServer))
         .addService(new CommandServiceImpl(soulFireServer))
         .addService(new DownloadServiceImpl())
         .addService(new InstanceServiceImpl(soulFireServer))
         .addService(new InstanceLiveServiceImpl(soulFireServer))
+        .addService(new InventoryServiceImpl(soulFireServer))
         .addService(new LoginServiceImpl(soulFireServer))
         .addService(new LogServiceImpl(soulFireServer))
         .addService(new MCAuthServiceImpl(soulFireServer))
         .addService(new MetricsServiceImpl(soulFireServer))
+        .addService(new PathfinderServiceImpl(soulFireServer))
+        .addService(new PluginApiServiceImpl(SoulFireAPI.pluginApis()))
         .addService(new PluginStatsServiceImpl(soulFireServer))
         .addService(new ProxyCheckServiceImpl(soulFireServer))
+        .addService(new RecipeServiceImpl(soulFireServer))
+        .addService(new RegistryServiceImpl(soulFireServer))
         .addService(new ServerServiceImpl(soulFireServer))
+        .addService(new SdkServiceImpl(soulFireServer))
         .addService(new UserServiceImpl(soulFireServer))
-        .addService(scriptService)
+        .addService(new WorldServiceImpl(soulFireServer))
+        .addService(scriptService);
+    SoulFireAPI.pluginApis().rpcServices().forEach(registration ->
+      grpcServiceBuilder.addService(ServerInterceptors.intercept(
+        registration.service(),
+        new PluginRpcPermissionInterceptor(soulFireServer, registration)
+      )));
+    var grpcService =
+      grpcServiceBuilder
         // Allow collecting info about callable methods.
         .addService(ProtoReflectionServiceV1.newInstance())
         .maxRequestMessageLength(Integer.MAX_VALUE)
@@ -230,6 +249,7 @@ public final class RPCServer {
 
   public void shutdown() throws InterruptedException {
     server.stop().join();
+    mcpService.shutdown();
 
     if (prometheusServer != null) {
       prometheusServer.stop().join();

@@ -7,11 +7,13 @@ on:
       - "buf.gen.yaml"
       - "buf.lock"
       - "buf.yaml"
+      - "docs/mineflayer-parity.json"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - "proto/**"
       - "scripts/format-generated-sdks.mjs"
+      - "scripts/validate-mineflayer-parity.mjs"
       - "sdk/**"
   pull_request:
     paths:
@@ -19,11 +21,13 @@ on:
       - "buf.gen.yaml"
       - "buf.lock"
       - "buf.yaml"
+      - "docs/mineflayer-parity.json"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - "proto/**"
       - "scripts/format-generated-sdks.mjs"
+      - "scripts/validate-mineflayer-parity.mjs"
       - "sdk/**"
 
 permissions:
@@ -37,6 +41,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - name: Set up pnpm
         uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
@@ -48,7 +53,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
         with:
-          python-version: "3.10"
+          python-version: "3.14"
           cache: pip
           cache-dependency-path: sdk/python/pyproject.toml
       - name: Install TypeScript dependencies
@@ -59,18 +64,175 @@ jobs:
         run: git diff --exit-code -- sdk/typescript/src/generated sdk/python/src/soulfire
       - name: Lint Protobuf definitions
         run: pnpm sdk:lint-proto
+      - name: Validate Mineflayer parity audit
+        run: node scripts/validate-mineflayer-parity.mjs
+      - name: Check Protobuf compatibility
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: pnpm exec buf breaking --against ".git#branch=origin/${BASE_REF},subdir=proto/src/main/proto"
       - name: Check TypeScript SDK
         run: pnpm --filter @soulfiremc/sdk check
+      - name: Import Node.js entry points
+        run: |
+          node -e 'const sdk = await import("./sdk/typescript/dist/node.js"); if (typeof sdk.SoulFire.connect !== "function") throw new Error("Effect Node.js entry point is invalid")'
+          node -e 'const sdk = await import("./sdk/typescript/dist/node-promise.js"); if (typeof sdk.SoulFire.connect !== "function") throw new Error("Promise Node.js entry point is invalid")'
+      - name: Verify npm package contents
+        working-directory: sdk/typescript
+        run: |
+          package_dir="$(mktemp -d)"
+          pnpm pack --pack-destination "$package_dir"
+          package_archive="$(find "$package_dir" -name '*.tgz' -print -quit)"
+          tar -tf "$package_archive" | grep -q 'package/dist/index.js'
+          tar -tf "$package_archive" | grep -q 'package/dist/browser.js'
+          tar -tf "$package_archive" | grep -q 'package/dist/bun.js'
+          tar -tf "$package_archive" | grep -q 'package/dist/bun-promise.js'
+          tar -tf "$package_archive" | grep -q 'package/dist/node.js'
+          tar -tf "$package_archive" | grep -q 'package/dist/node-promise.js'
+          tar -tf "$package_archive" | grep -q 'package/dist/platform.js'
+          tar -tf "$package_archive" | grep -q 'package/dist/cli.js'
+          tar -tf "$package_archive" | grep -q 'package/dist/plugin-generator.js'
       - name: Verify JSR package
         working-directory: sdk/typescript
         run: npx --yes jsr@0.14.3 publish --dry-run
       - name: Install Python SDK dependencies
         run: python -m pip install --disable-pip-version-check -e 'sdk/python[dev]'
+      - name: Verify plugin SDK generator
+        run: |
+          fixture_root="$(mktemp -d)"
+          pnpm exec buf build \
+            --as-file-descriptor-set \
+            --path proto/src/main/proto/soulfire/plugin/example/v1/example.proto \
+            -o "$fixture_root/example.binpb"
+          node sdk/typescript/dist/cli.js generate \
+            --descriptor "$fixture_root/example.binpb" \
+            --plugin example \
+            --language typescript \
+            --package @soulfiremc/example-fixture \
+            --output "$fixture_root/typescript"
+          node sdk/typescript/dist/cli.js generate \
+            --descriptor "$fixture_root/example.binpb" \
+            --plugin example \
+            --language python \
+            --package soulfire-example-fixture \
+            --output "$fixture_root/python"
+          pnpm --dir "$fixture_root/typescript" add \
+            --save-dev "@soulfiremc/sdk@file:$GITHUB_WORKSPACE/sdk/typescript"
+          pnpm --dir "$fixture_root/typescript" check
+          python -m ruff check "$fixture_root/python"
+          python -m ruff format --check "$fixture_root/python"
+          python -m pyright -p "$fixture_root/python"
+          (
+            cd "$fixture_root/python"
+            python -m hatchling build
+          )
       - name: Check Python SDK
         run: |
           python -m ruff check sdk/python
           python -m ruff format --check sdk/python
+          python -m pyright -p sdk/python
           python -m pytest sdk/python
       - name: Build Python SDK
         working-directory: sdk/python
         run: python -m hatchling build
+      - name: Verify Python package contents
+        working-directory: sdk/python
+        run: |
+          wheel="$(find dist -name '*.whl' -print -quit)"
+          unzip -l "$wheel" | grep -q 'soulfire/py.typed'
+          unzip -p "$wheel" '*/METADATA' | grep -q '^Requires-Python: >=3.14$'
+
+  bun:
+    name: Bun runtime
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: pnpm
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: latest
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build SDK
+        run: pnpm --filter @soulfiremc/sdk build
+      - name: Import Bun entry points
+        run: |
+          bun -e 'const sdk = await import("./sdk/typescript/dist/bun.js"); if (typeof sdk.SoulFire.connect !== "function") throw new Error("Effect Bun entry point is invalid")'
+          bun -e 'const sdk = await import("./sdk/typescript/dist/bun-promise.js"); if (typeof sdk.SoulFire.connect !== "function") throw new Error("Promise Bun entry point is invalid")'
+
+  deno:
+    name: Deno runtime
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: pnpm
+      - name: Set up Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: latest
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build SDK
+        run: pnpm --filter @soulfiremc/sdk build
+      - name: Check browser entry point
+        run: deno check --node-modules-dir=manual sdk/typescript/dist/browser.js
+
+  python-next:
+    name: Python 3.15 prerelease
+    continue-on-error: true
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up next Python
+        uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
+        with:
+          python-version: "3.15-dev"
+          allow-prereleases: true
+      - name: Install Python SDK dependencies
+        run: python -m pip install --disable-pip-version-check -e 'sdk/python[dev]'
+      - name: Run Python tests
+        run: python -m pytest sdk/python
+
+  python-free-threaded:
+    name: Python 3.14 free-threaded
+    continue-on-error: true
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up free-threaded Python
+        uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
+        with:
+          python-version: "3.14t"
+      - name: Install Python SDK dependencies
+        run: python -m pip install --disable-pip-version-check -e 'sdk/python[dev]'
+      - name: Run Python tests
+        run: python -m pytest sdk/python

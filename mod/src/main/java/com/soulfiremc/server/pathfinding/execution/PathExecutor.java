@@ -19,6 +19,7 @@ package com.soulfiremc.server.pathfinding.execution;
 
 import com.soulfiremc.server.bot.BotConnection;
 import com.soulfiremc.server.bot.ControlPriority;
+import com.soulfiremc.server.bot.ControlResource;
 import com.soulfiremc.server.bot.ControlStopReason;
 import com.soulfiremc.server.bot.ControlTask;
 import com.soulfiremc.server.pathfinding.NodeState;
@@ -36,12 +37,19 @@ import lombok.extern.slf4j.Slf4j;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Queue;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
 @Slf4j
 public final class PathExecutor implements ControlTask {
+  private static final Set<ControlResource> RESOURCES = Set.of(
+    ControlResource.MOVEMENT,
+    ControlResource.ROTATION,
+    ControlResource.MAIN_HAND,
+    ControlResource.INVENTORY
+  );
   private static final int MAX_ERROR_DISTANCE = 20;
   private final Queue<WorldAction> worldActionQueue = new LinkedBlockingQueue<>();
   private final BotConnection connection;
@@ -51,6 +59,11 @@ public final class PathExecutor implements ControlTask {
   private int totalMovements;
   private int ticks;
   private int movementNumber = 1;
+
+  @Override
+  public Set<ControlResource> resources() {
+    return RESOURCES;
+  }
 
   private PathExecutor(
     BotConnection connection,
@@ -81,16 +94,45 @@ public final class PathExecutor implements ControlTask {
   }
 
   public static CompletableFuture<Void> executePathfinding(BotConnection bot, GoalScorer goalScorer, PathConstraint pathConstraint) {
-    var pathCompletionFuture = new CompletableFuture<Void>();
-
-    // Cancel the path if the bot is disconnected
-    bot.shutdownHooks().add(() -> pathCompletionFuture.cancel(true));
-
-    var pathExecutor = new PathExecutor(bot, new LiveRouteFinder(bot, goalScorer, pathConstraint), pathCompletionFuture);
+    var pathExecutor = createPathfinding(bot, goalScorer, pathConstraint);
     bot.botControl().replace(pathExecutor);
-    pathExecutor.submitForPathCalculation(true);
+    return pathExecutor.completion();
+  }
 
+  public static PathExecutor createPathfinding(
+    BotConnection bot,
+    GoalScorer goalScorer,
+    PathConstraint pathConstraint
+  ) {
+    var completion = new CompletableFuture<Void>();
+    bot.shutdownHooks().add(() -> completion.cancel(true));
+    return new PathExecutor(
+      bot,
+      new LiveRouteFinder(bot, goalScorer, pathConstraint),
+      completion
+    );
+  }
+
+  public static CompletableFuture<PlannedRoute> plan(
+    BotConnection bot,
+    GoalScorer goalScorer,
+    PathConstraint pathConstraint
+  ) {
+    var finder = new LiveRouteFinder(bot, goalScorer, pathConstraint);
+    return bot.scheduler().supplyAsync(finder::findPath);
+  }
+
+  public CompletableFuture<Void> completion() {
     return pathCompletionFuture;
+  }
+
+  public Progress progress() {
+    return new Progress(awaitingPath, movementNumber, totalMovements);
+  }
+
+  @Override
+  public void onStarted() {
+    submitForPathCalculation(true);
   }
 
   @Override
@@ -278,8 +320,12 @@ public final class PathExecutor implements ControlTask {
     submitForPathCalculation(false);
   }
 
-  private record LiveRouteFinder(BotConnection bot, GoalScorer goalScorer, PathConstraint pathConstraint) {
-    public LiveRouteFinderResult findPath() {
+  private record LiveRouteFinder(
+    BotConnection bot,
+    GoalScorer goalScorer,
+    PathConstraint pathConstraint
+  ) {
+    public PlannedRoute findPath() {
       var clientEntity = bot.minecraft().player;
       var level = bot.minecraft().player.level();
       var inventory =
@@ -301,10 +347,15 @@ public final class PathExecutor implements ControlTask {
       var routeSearchResult = routeSearchResultFuture.join();
       log.info("Route search result: {}", routeSearchResult);
 
-      return new LiveRouteFinderResult(routeSearchResult, start);
+      return new PlannedRoute(routeSearchResult, start);
     }
+  }
 
-    private record LiveRouteFinderResult(RouteFinder.RouteSearchResult routeSearchResult, SFVec3i start) {
-    }
+  public record PlannedRoute(
+    RouteFinder.RouteSearchResult routeSearchResult,
+    SFVec3i start
+  ) {}
+
+  public record Progress(boolean planning, int currentMovement, int totalMovements) {
   }
 }

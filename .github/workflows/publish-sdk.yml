@@ -53,14 +53,16 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
         with:
-          python-version: "3.10"
+          python-version: "3.14"
       - name: Verify release version
         env:
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
           node -e 'const version = require("./sdk/typescript/package.json").version; if (version !== process.env.RELEASE_VERSION) throw new Error(`TypeScript SDK version ${version} does not match ${process.env.RELEASE_VERSION}`)'
           node -e 'const version = require("./sdk/typescript/jsr.json").version; if (version !== process.env.RELEASE_VERSION) throw new Error(`JSR SDK version ${version} does not match ${process.env.RELEASE_VERSION}`)'
+          node -e 'const fs = require("node:fs"); const text = fs.readFileSync("sdk/typescript/src/connection.ts", "utf8"); const version = text.match(/SDK_VERSION = "([^"]+)"/)?.[1]; if (version !== process.env.RELEASE_VERSION) throw new Error(`TypeScript handshake version ${version} does not match ${process.env.RELEASE_VERSION}`)'
           python -c 'import os, pathlib, re; text = pathlib.Path("sdk/python/pyproject.toml").read_text(); match = re.search(r"(?m)^version = \"([^\"]+)\"$", text); version = match.group(1) if match else None; expected = os.environ["RELEASE_VERSION"]; assert version == expected, f"Python SDK version {version} does not match {expected}"'
+          python -c 'import os, pathlib, re; text = pathlib.Path("sdk/python/src/soulfire/connection.py").read_text(); match = re.search(r"(?m)^SDK_VERSION: Final = \"([^\"]+)\"$", text); version = match.group(1) if match else None; expected = os.environ["RELEASE_VERSION"]; assert version == expected, f"Python handshake version {version} does not match {expected}"'
       - name: Install TypeScript dependencies
         run: pnpm install --frozen-lockfile
       - name: Generate SDK bindings
@@ -69,8 +71,29 @@ jobs:
         run: git diff --exit-code -- sdk/typescript/src/generated sdk/python/src/soulfire
       - name: Lint Protobuf definitions
         run: pnpm sdk:lint-proto
+      - name: Validate Mineflayer parity audit
+        run: node scripts/validate-mineflayer-parity.mjs
       - name: Check TypeScript SDK
         run: pnpm --filter @soulfiremc/sdk check
+      - name: Import Node.js entry points
+        run: |
+          node -e 'const sdk = await import("./sdk/typescript/dist/node.js"); if (typeof sdk.SoulFire.connect !== "function") throw new Error("Effect Node.js entry point is invalid")'
+          node -e 'const sdk = await import("./sdk/typescript/dist/node-promise.js"); if (typeof sdk.SoulFire.connect !== "function") throw new Error("Promise Node.js entry point is invalid")'
+      - name: Verify npm package contents
+        working-directory: sdk/typescript
+        run: |
+          package_dir="$(mktemp -d)"
+          pnpm pack --pack-destination "$package_dir"
+          package_archive="$(find "$package_dir" -name '*.tgz' -print -quit)"
+          tar -tf "$package_archive" | grep -q 'package/dist/index.js'
+          tar -tf "$package_archive" | grep -q 'package/dist/browser.js'
+          tar -tf "$package_archive" | grep -q 'package/dist/bun.js'
+          tar -tf "$package_archive" | grep -q 'package/dist/bun-promise.js'
+          tar -tf "$package_archive" | grep -q 'package/dist/node.js'
+          tar -tf "$package_archive" | grep -q 'package/dist/node-promise.js'
+          tar -tf "$package_archive" | grep -q 'package/dist/platform.js'
+          tar -tf "$package_archive" | grep -q 'package/dist/cli.js'
+          tar -tf "$package_archive" | grep -q 'package/dist/plugin-generator.js'
       - name: Verify JSR package
         if: inputs.publish_jsr
         working-directory: sdk/typescript
@@ -81,6 +104,7 @@ jobs:
         run: |
           python -m ruff check sdk/python
           python -m ruff format --check sdk/python
+          python -m pyright -p sdk/python
           python -m pytest sdk/python
       - name: Build npm package
         if: inputs.publish_npm

@@ -18,7 +18,7 @@ from connectrpc.protocol import ProtocolType
 from connectrpc.server import ConnectASGIApplication, ConnectWSGIApplication, Endpoint, EndpointSync
 from pyqwest import Client, SyncClient
 
-from .user_pb2 import GenerateUserAPITokenRequest, GenerateUserAPITokenResponse, InvalidateSessionsRequest, InvalidateSessionsResponse, UpdateUserRequest, UpdateUserResponse, UserCreateRequest, UserCreateResponse, UserDeleteRequest, UserDeleteResponse, UserInfoRequest, UserInfoResponse, UserListRequest, UserListResponse
+from .user_pb2 import DeleteUserPluginPermissionGrantRequest, DeleteUserPluginPermissionGrantResponse, GenerateUserAPITokenRequest, GenerateUserAPITokenResponse, InvalidateSessionsRequest, InvalidateSessionsResponse, ListUserPluginPermissionGrantsRequest, ListUserPluginPermissionGrantsResponse, SetUserPluginPermissionGrantRequest, UpdateUserRequest, UpdateUserResponse, UserCreateRequest, UserCreateResponse, UserDeleteRequest, UserDeleteResponse, UserInfoRequest, UserInfoResponse, UserListRequest, UserListResponse, UserPluginPermissionGrant
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Iterable, Mapping
@@ -54,6 +54,15 @@ class UserService(Protocol):
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
     async def generate_user_api_token(self, request: GenerateUserAPITokenRequest, ctx: RequestContext[GenerateUserAPITokenRequest, GenerateUserAPITokenResponse]) -> GenerateUserAPITokenResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def list_user_plugin_permission_grants(self, request: ListUserPluginPermissionGrantsRequest, ctx: RequestContext[ListUserPluginPermissionGrantsRequest, ListUserPluginPermissionGrantsResponse]) -> ListUserPluginPermissionGrantsResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def set_user_plugin_permission_grant(self, request: SetUserPluginPermissionGrantRequest, ctx: RequestContext[SetUserPluginPermissionGrantRequest, UserPluginPermissionGrant]) -> UserPluginPermissionGrant:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def delete_user_plugin_permission_grant(self, request: DeleteUserPluginPermissionGrantRequest, ctx: RequestContext[DeleteUserPluginPermissionGrantRequest, DeleteUserPluginPermissionGrantResponse]) -> DeleteUserPluginPermissionGrantResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
 
@@ -139,6 +148,36 @@ class UserServiceASGIApplication(ConnectASGIApplication[UserService]):
                         idempotency_level=IdempotencyLevel.UNKNOWN,
                     ),
                     function=svc.generate_user_api_token,
+                ),
+                "/soulfire.v1.UserService/ListUserPluginPermissionGrants": Endpoint.unary(
+                    method=MethodInfo(
+                        name="ListUserPluginPermissionGrants",
+                        service_name="soulfire.v1.UserService",
+                        input=ListUserPluginPermissionGrantsRequest,
+                        output=ListUserPluginPermissionGrantsResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.list_user_plugin_permission_grants,
+                ),
+                "/soulfire.v1.UserService/SetUserPluginPermissionGrant": Endpoint.unary(
+                    method=MethodInfo(
+                        name="SetUserPluginPermissionGrant",
+                        service_name="soulfire.v1.UserService",
+                        input=SetUserPluginPermissionGrantRequest,
+                        output=UserPluginPermissionGrant,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.set_user_plugin_permission_grant,
+                ),
+                "/soulfire.v1.UserService/DeleteUserPluginPermissionGrant": Endpoint.unary(
+                    method=MethodInfo(
+                        name="DeleteUserPluginPermissionGrant",
+                        service_name="soulfire.v1.UserService",
+                        input=DeleteUserPluginPermissionGrantRequest,
+                        output=DeleteUserPluginPermissionGrantResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.delete_user_plugin_permission_grant,
                 ),
             },
             interceptors=interceptors,
@@ -318,6 +357,66 @@ class UserServiceClient(ConnectClient):
             timeout_ms=timeout_ms,
         )
 
+    async def list_user_plugin_permission_grants(
+        self,
+        request: ListUserPluginPermissionGrantsRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> ListUserPluginPermissionGrantsResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="ListUserPluginPermissionGrants",
+                service_name="soulfire.v1.UserService",
+                input=ListUserPluginPermissionGrantsRequest,
+                output=ListUserPluginPermissionGrantsResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def set_user_plugin_permission_grant(
+        self,
+        request: SetUserPluginPermissionGrantRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> UserPluginPermissionGrant:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="SetUserPluginPermissionGrant",
+                service_name="soulfire.v1.UserService",
+                input=SetUserPluginPermissionGrantRequest,
+                output=UserPluginPermissionGrant,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def delete_user_plugin_permission_grant(
+        self,
+        request: DeleteUserPluginPermissionGrantRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> DeleteUserPluginPermissionGrantResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="DeleteUserPluginPermissionGrant",
+                service_name="soulfire.v1.UserService",
+                input=DeleteUserPluginPermissionGrantRequest,
+                output=DeleteUserPluginPermissionGrantResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
 class UserServiceSync(Protocol):
     def create_user(self, request: UserCreateRequest, ctx: RequestContext[UserCreateRequest, UserCreateResponse]) -> UserCreateResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
@@ -338,6 +437,15 @@ class UserServiceSync(Protocol):
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
     def generate_user_api_token(self, request: GenerateUserAPITokenRequest, ctx: RequestContext[GenerateUserAPITokenRequest, GenerateUserAPITokenResponse]) -> GenerateUserAPITokenResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    def list_user_plugin_permission_grants(self, request: ListUserPluginPermissionGrantsRequest, ctx: RequestContext[ListUserPluginPermissionGrantsRequest, ListUserPluginPermissionGrantsResponse]) -> ListUserPluginPermissionGrantsResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    def set_user_plugin_permission_grant(self, request: SetUserPluginPermissionGrantRequest, ctx: RequestContext[SetUserPluginPermissionGrantRequest, UserPluginPermissionGrant]) -> UserPluginPermissionGrant:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    def delete_user_plugin_permission_grant(self, request: DeleteUserPluginPermissionGrantRequest, ctx: RequestContext[DeleteUserPluginPermissionGrantRequest, DeleteUserPluginPermissionGrantResponse]) -> DeleteUserPluginPermissionGrantResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
 
@@ -421,6 +529,36 @@ class UserServiceWSGIApplication(ConnectWSGIApplication):
                         idempotency_level=IdempotencyLevel.UNKNOWN,
                     ),
                     function=service.generate_user_api_token,
+                ),
+                "/soulfire.v1.UserService/ListUserPluginPermissionGrants": EndpointSync.unary(
+                    method=MethodInfo(
+                        name="ListUserPluginPermissionGrants",
+                        service_name="soulfire.v1.UserService",
+                        input=ListUserPluginPermissionGrantsRequest,
+                        output=ListUserPluginPermissionGrantsResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=service.list_user_plugin_permission_grants,
+                ),
+                "/soulfire.v1.UserService/SetUserPluginPermissionGrant": EndpointSync.unary(
+                    method=MethodInfo(
+                        name="SetUserPluginPermissionGrant",
+                        service_name="soulfire.v1.UserService",
+                        input=SetUserPluginPermissionGrantRequest,
+                        output=UserPluginPermissionGrant,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=service.set_user_plugin_permission_grant,
+                ),
+                "/soulfire.v1.UserService/DeleteUserPluginPermissionGrant": EndpointSync.unary(
+                    method=MethodInfo(
+                        name="DeleteUserPluginPermissionGrant",
+                        service_name="soulfire.v1.UserService",
+                        input=DeleteUserPluginPermissionGrantRequest,
+                        output=DeleteUserPluginPermissionGrantResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=service.delete_user_plugin_permission_grant,
                 ),
             },
             interceptors=interceptors,
@@ -588,6 +726,63 @@ class UserServiceClientSync(ConnectClientSync):
                 service_name="soulfire.v1.UserService",
                 input=GenerateUserAPITokenRequest,
                 output=GenerateUserAPITokenResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+    def list_user_plugin_permission_grants(
+        self,
+        request: ListUserPluginPermissionGrantsRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> ListUserPluginPermissionGrantsResponse:
+        return self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="ListUserPluginPermissionGrants",
+                service_name="soulfire.v1.UserService",
+                input=ListUserPluginPermissionGrantsRequest,
+                output=ListUserPluginPermissionGrantsResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+    def set_user_plugin_permission_grant(
+        self,
+        request: SetUserPluginPermissionGrantRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> UserPluginPermissionGrant:
+        return self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="SetUserPluginPermissionGrant",
+                service_name="soulfire.v1.UserService",
+                input=SetUserPluginPermissionGrantRequest,
+                output=UserPluginPermissionGrant,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+    def delete_user_plugin_permission_grant(
+        self,
+        request: DeleteUserPluginPermissionGrantRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> DeleteUserPluginPermissionGrantResponse:
+        return self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="DeleteUserPluginPermissionGrant",
+                service_name="soulfire.v1.UserService",
+                input=DeleteUserPluginPermissionGrantRequest,
+                output=DeleteUserPluginPermissionGrantResponse,
                 idempotency_level=IdempotencyLevel.UNKNOWN,
             ),
             headers=headers,

@@ -31,6 +31,7 @@ import com.soulfiremc.server.user.PermissionContext;
 import com.soulfiremc.server.util.structs.GsonInstance;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
+import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -38,14 +39,66 @@ import net.minecraft.core.registries.BuiltInRegistries;
 
 import java.util.*;
 import java.util.concurrent.Callable;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Slf4j
 @RequiredArgsConstructor
 public final class AutomationServiceImpl extends AutomationServiceGrpc.AutomationServiceImplBase {
+  private static final int DEFAULT_AUTOMATION_POLL_MS = 500;
+  private static final int MIN_AUTOMATION_POLL_MS = 100;
+  private static final int MAX_AUTOMATION_POLL_MS = 5_000;
+  private static final int DEFAULT_AUTOMATION_HEARTBEAT_SECONDS = 15;
+  private static final int MIN_AUTOMATION_HEARTBEAT_SECONDS = 1;
+  private static final int MAX_AUTOMATION_HEARTBEAT_SECONDS = 300;
+
   private final SoulFireServer soulFireServer;
 
   private static <T> T callInBotContext(BotConnection botConnection, Callable<T> callable) throws Exception {
     return botConnection.runnableWrapper().wrap(callable).call();
+  }
+
+  @Override
+  public void watchAutomationEvents(WatchAutomationEventsRequest request,
+                                    StreamObserver<AutomationEvent> responseObserver) {
+    var instanceId = parseUuid(request.getInstanceId(), "instance_id");
+    ServerRPCConstants.USER_CONTEXT_KEY.get()
+      .hasPermissionOrThrow(PermissionContext.instance(InstancePermission.READ_BOT_INFO, instanceId));
+
+    var selectedBotIds = new LinkedHashSet<UUID>();
+    for (var botId : request.getBotIdsList()) {
+      selectedBotIds.add(parseUuid(botId, "bot_id"));
+    }
+    requireInstance(instanceId);
+
+    var observer = (ServerCallStreamObserver<AutomationEvent>) responseObserver;
+    var closed = new AtomicBoolean(false);
+    var previous = new AtomicReference<AutomationEventSnapshot>();
+    var sequence = new AtomicLong();
+    var dropped = new AtomicLong();
+    var lastDeliveryNanos = new AtomicLong(System.nanoTime());
+    var pollIntervalMs = normalizedPollIntervalMs(request.getPollIntervalMs());
+    var heartbeatNanos = TimeUnit.SECONDS.toNanos(
+      normalizedHeartbeatSeconds(request.getHeartbeatIntervalSeconds()));
+    var maxEntries = resolveMaxEntries(request.getMaxCoordinationEntries());
+
+    observer.setOnCancelHandler(() -> closed.set(true));
+    scheduleAutomationPoll(
+      instanceId,
+      Set.copyOf(selectedBotIds),
+      request.getIncludeCoordination(),
+      request.getIncludeProgress(),
+      maxEntries,
+      pollIntervalMs,
+      heartbeatNanos,
+      observer,
+      closed,
+      previous,
+      sequence,
+      dropped,
+      lastDeliveryNanos);
   }
 
   @Override
@@ -613,6 +666,381 @@ public final class AutomationServiceImpl extends AutomationServiceGrpc.Automatio
     }
   }
 
+  private void scheduleAutomationPoll(UUID instanceId,
+                                      Set<UUID> selectedBotIds,
+                                      boolean includeCoordination,
+                                      boolean includeProgress,
+                                      int maxEntries,
+                                      int pollIntervalMs,
+                                      long heartbeatNanos,
+                                      ServerCallStreamObserver<AutomationEvent> observer,
+                                      AtomicBoolean closed,
+                                      AtomicReference<AutomationEventSnapshot> previous,
+                                      AtomicLong sequence,
+                                      AtomicLong dropped,
+                                      AtomicLong lastDeliveryNanos) {
+    soulFireServer.scheduler().schedule(new Runnable() {
+      @Override
+      public void run() {
+        if (closed.get() || observer.isCancelled()) {
+          return;
+        }
+
+        try {
+          var instance = soulFireServer.getInstance(instanceId).orElse(null);
+          if (instance == null) {
+            closeAutomationStream(
+              observer,
+              closed,
+              Status.NOT_FOUND
+                .withDescription("Instance '%s' no longer exists".formatted(instanceId))
+                .asRuntimeException());
+            return;
+          }
+
+          var current = buildEventSnapshot(
+            instance,
+            selectedBotIds,
+            includeCoordination,
+            maxEntries);
+          var old = previous.get();
+          if (old == null) {
+            var initial = AutomationEvent.newBuilder()
+              .setKind(AutomationEventKind.AUTOMATION_EVENT_KIND_SNAPSHOT)
+              .setSummary("initial automation snapshot")
+              .setTeamState(current.teamState());
+            if (current.coordinationState() != null) {
+              initial.setCoordinationState(current.coordinationState());
+            }
+            if (emitAutomationEvent(
+              observer,
+              closed,
+              sequence,
+              dropped,
+              lastDeliveryNanos,
+              initial)) {
+              previous.set(current);
+            }
+          } else {
+            var events = automationChanges(old, current, includeProgress);
+            for (var event : events) {
+              emitAutomationEvent(
+                observer,
+                closed,
+                sequence,
+                dropped,
+                lastDeliveryNanos,
+                event);
+            }
+            previous.set(current);
+          }
+
+          if (
+            System.nanoTime() - lastDeliveryNanos.get() >= heartbeatNanos
+            && !closed.get()
+          ) {
+            emitAutomationEvent(
+              observer,
+              closed,
+              sequence,
+              dropped,
+              lastDeliveryNanos,
+              AutomationEvent.newBuilder()
+                .setKind(AutomationEventKind.AUTOMATION_EVENT_KIND_HEARTBEAT)
+                .setSummary("automation stream heartbeat"));
+          }
+        } catch (Throwable t) {
+          if (!closed.get()) {
+            log.debug("Automation event poll failed for instance {}", instanceId, t);
+          }
+        } finally {
+          if (!closed.get() && !observer.isCancelled()) {
+            soulFireServer.scheduler().schedule(this, pollIntervalMs, TimeUnit.MILLISECONDS);
+          }
+        }
+      }
+    }, 0, TimeUnit.MILLISECONDS);
+  }
+
+  private AutomationEventSnapshot buildEventSnapshot(InstanceManager instance,
+                                                      Set<UUID> selectedBotIds,
+                                                      boolean includeCoordination,
+                                                      int maxEntries) throws Exception {
+    var teamState = buildTeamState(instance);
+    if (!selectedBotIds.isEmpty()) {
+      var selectedBots = teamState.getBotsList().stream()
+        .filter(bot -> selectedBotIds.contains(UUID.fromString(bot.getBotId())))
+        .toList();
+      teamState = teamState.toBuilder()
+        .clearBots()
+        .addAllBots(selectedBots)
+        .setActiveBots((int) selectedBots.stream()
+          .filter(bot -> bot.getGoalMode() != AutomationGoalMode.AUTOMATION_GOAL_MODE_IDLE)
+          .count())
+        .build();
+    }
+
+    var bots = new LinkedHashMap<String, AutomationBotState>();
+    for (var bot : teamState.getBotsList()) {
+      bots.put(bot.getBotId(), bot);
+    }
+    return new AutomationEventSnapshot(
+      teamState,
+      Collections.unmodifiableMap(bots),
+      includeCoordination ? buildCoordinationState(instance, maxEntries) : null);
+  }
+
+  private static List<AutomationEvent.Builder> automationChanges(AutomationEventSnapshot previous,
+                                                                 AutomationEventSnapshot current,
+                                                                 boolean includeProgress) {
+    var events = new ArrayList<AutomationEvent.Builder>();
+    var oldTeam = previous.teamState();
+    var newTeam = current.teamState();
+
+    if (oldTeam.getObjective() != newTeam.getObjective()) {
+      events.add(AutomationEvent.newBuilder()
+        .setKind(AutomationEventKind.AUTOMATION_EVENT_KIND_OBJECTIVE_CHANGED)
+        .setSummary("team objective changed to " + enumId(newTeam.getObjective().name()))
+        .setTeamState(newTeam));
+    } else if (!teamFingerprint(oldTeam).equals(teamFingerprint(newTeam))) {
+      events.add(AutomationEvent.newBuilder()
+        .setKind(AutomationEventKind.AUTOMATION_EVENT_KIND_TEAM_STATE_CHANGED)
+        .setSummary("team automation state changed")
+        .setTeamState(newTeam));
+    }
+
+    for (var newBot : current.bots().values()) {
+      var oldBot = previous.bots().get(newBot.getBotId());
+      if (oldBot == null) {
+        events.add(botEvent(
+          AutomationEventKind.AUTOMATION_EVENT_KIND_BOT_CONNECTED,
+          newBot,
+          "bot joined the automation team"));
+        continue;
+      }
+      appendBotChanges(events, oldBot, newBot, includeProgress);
+    }
+    for (var oldBot : previous.bots().values()) {
+      if (!current.bots().containsKey(oldBot.getBotId())) {
+        events.add(botEvent(
+          AutomationEventKind.AUTOMATION_EVENT_KIND_BOT_DISCONNECTED,
+          oldBot,
+          "bot left the automation team"));
+      }
+    }
+
+    var oldCoordination = previous.coordinationState();
+    var newCoordination = current.coordinationState();
+    if (oldCoordination != null && newCoordination != null) {
+      if (!oldCoordination.getClaimsList().equals(newCoordination.getClaimsList())) {
+        events.add(AutomationEvent.newBuilder()
+          .setKind(AutomationEventKind.AUTOMATION_EVENT_KIND_CLAIMS_CHANGED)
+          .setSummary("shared automation claims changed")
+          .setCoordinationState(newCoordination));
+      }
+      if (!sharedMemoryFingerprint(oldCoordination).equals(sharedMemoryFingerprint(newCoordination))) {
+        events.add(AutomationEvent.newBuilder()
+          .setKind(AutomationEventKind.AUTOMATION_EVENT_KIND_SHARED_MEMORY_CHANGED)
+          .setSummary("shared automation memory changed")
+          .setCoordinationState(newCoordination));
+      }
+    } else if (newCoordination != null) {
+      events.add(AutomationEvent.newBuilder()
+        .setKind(AutomationEventKind.AUTOMATION_EVENT_KIND_SHARED_MEMORY_CHANGED)
+        .setSummary("shared automation state became available")
+        .setCoordinationState(newCoordination));
+    }
+    return events;
+  }
+
+  private static void appendBotChanges(List<AutomationEvent.Builder> events,
+                                       AutomationBotState previous,
+                                       AutomationBotState current,
+                                       boolean includeProgress) {
+    var eventCount = events.size();
+    if (previous.getGoalMode() != current.getGoalMode()) {
+      var kind = AutomationEventKind.AUTOMATION_EVENT_KIND_GOAL_CHANGED;
+      var summary = "automation goal changed to " + enumId(current.getGoalMode().name());
+      if (
+        current.getGoalMode() == AutomationGoalMode.AUTOMATION_GOAL_MODE_IDLE
+        && current.getStatusSummary().toLowerCase(Locale.ROOT).contains("completed")
+      ) {
+        kind = AutomationEventKind.AUTOMATION_EVENT_KIND_COMPLETED;
+        summary = current.getStatusSummary();
+      } else if (looksFailed(current.getStatusSummary())) {
+        kind = AutomationEventKind.AUTOMATION_EVENT_KIND_FAILED;
+        summary = current.getStatusSummary();
+      }
+      events.add(botEvent(kind, current, summary));
+    }
+    if (
+      previous.hasBeatPhase() != current.hasBeatPhase()
+      || previous.getBeatPhase() != current.getBeatPhase()
+    ) {
+      var completed = current.hasBeatPhase()
+        && current.getBeatPhase() == AutomationBeatPhase.AUTOMATION_BEAT_PHASE_COMPLETE;
+      events.add(botEvent(
+        completed
+          ? AutomationEventKind.AUTOMATION_EVENT_KIND_COMPLETED
+          : AutomationEventKind.AUTOMATION_EVENT_KIND_PHASE_CHANGED,
+        current,
+        completed
+          ? "beat-the-game automation completed"
+          : "automation phase changed to " + enumId(current.getBeatPhase().name())));
+    }
+    if (
+      previous.hasCurrentAction() != current.hasCurrentAction()
+      || !previous.getCurrentAction().equals(current.getCurrentAction())
+    ) {
+      events.add(botEvent(
+        AutomationEventKind.AUTOMATION_EVENT_KIND_ACTION_CHANGED,
+        current,
+        current.hasCurrentAction()
+          ? "automation action changed to " + current.getCurrentAction()
+          : "automation action cleared"));
+    }
+    if (previous.getPaused() != current.getPaused()) {
+      events.add(botEvent(
+        current.getPaused()
+          ? AutomationEventKind.AUTOMATION_EVENT_KIND_PAUSED
+          : AutomationEventKind.AUTOMATION_EVENT_KIND_RESUMED,
+        current,
+        current.getPaused() ? "automation paused" : "automation resumed"));
+    }
+    if (current.getDeathCount() > previous.getDeathCount()) {
+      events.add(botEvent(
+        AutomationEventKind.AUTOMATION_EVENT_KIND_DEATH,
+        current,
+        "automation bot death count increased to " + current.getDeathCount()));
+    }
+    if (current.getTimeoutCount() > previous.getTimeoutCount()) {
+      events.add(botEvent(
+        AutomationEventKind.AUTOMATION_EVENT_KIND_STALLED,
+        current,
+        "automation action stalled or timed out"));
+    }
+    if (current.getRecoveryCount() > previous.getRecoveryCount()) {
+      events.add(botEvent(
+        AutomationEventKind.AUTOMATION_EVENT_KIND_RECOVERY,
+        current,
+        current.hasLastRecoveryReason()
+          ? current.getLastRecoveryReason()
+          : "automation recovered and replanned"));
+    }
+    if (previous.getTeamObjective() != current.getTeamObjective()) {
+      events.add(botEvent(
+        AutomationEventKind.AUTOMATION_EVENT_KIND_OBJECTIVE_CHANGED,
+        current,
+        "bot objective changed to " + enumId(current.getTeamObjective().name())));
+    }
+    if (
+      includeProgress
+      && events.size() == eventCount
+      && !progressFingerprint(previous).equals(progressFingerprint(current))
+    ) {
+      events.add(botEvent(
+        looksFailed(current.getStatusSummary())
+          ? AutomationEventKind.AUTOMATION_EVENT_KIND_FAILED
+          : AutomationEventKind.AUTOMATION_EVENT_KIND_PROGRESS,
+        current,
+        current.getStatusSummary()));
+    }
+  }
+
+  private static AutomationEvent.Builder botEvent(AutomationEventKind kind,
+                                                  AutomationBotState state,
+                                                  String summary) {
+    return AutomationEvent.newBuilder()
+      .setKind(kind)
+      .setBotId(state.getBotId())
+      .setAccountName(state.getAccountName())
+      .setSummary(summary)
+      .setBotState(state);
+  }
+
+  private static boolean emitAutomationEvent(ServerCallStreamObserver<AutomationEvent> observer,
+                                             AtomicBoolean closed,
+                                             AtomicLong sequence,
+                                             AtomicLong dropped,
+                                             AtomicLong lastDeliveryNanos,
+                                             AutomationEvent.Builder event) {
+    synchronized (observer) {
+      if (closed.get() || observer.isCancelled()) {
+        return false;
+      }
+      if (!observer.isReady()) {
+        dropped.incrementAndGet();
+        return false;
+      }
+      try {
+        observer.onNext(event
+          .setSequence(sequence.incrementAndGet())
+          .setObservedAt(Timestamps.fromMillis(System.currentTimeMillis()))
+          .setDroppedBefore(dropped.getAndSet(0L))
+          .build());
+        lastDeliveryNanos.set(System.nanoTime());
+        return true;
+      } catch (Throwable t) {
+        closed.set(true);
+        return false;
+      }
+    }
+  }
+
+  private static void closeAutomationStream(ServerCallStreamObserver<AutomationEvent> observer,
+                                            AtomicBoolean closed,
+                                            Throwable error) {
+    if (!closed.compareAndSet(false, true)) {
+      return;
+    }
+    synchronized (observer) {
+      if (!observer.isCancelled()) {
+        observer.onError(error);
+      }
+    }
+  }
+
+  private static TeamFingerprint teamFingerprint(AutomationTeamState state) {
+    return new TeamFingerprint(
+      state.getSettings(),
+      state.getObjective(),
+      state.getActiveBots(),
+      List.copyOf(state.getQuotasList()));
+  }
+
+  private static SharedMemoryFingerprint sharedMemoryFingerprint(AutomationCoordinationState state) {
+    return new SharedMemoryFingerprint(
+      state.getObjective(),
+      state.getActiveBots(),
+      state.getSharedBlockCount(),
+      state.getEyeSampleCount(),
+      List.copyOf(state.getSharedCountsList()),
+      List.copyOf(state.getSharedBlocksList()),
+      List.copyOf(state.getEyeSamplesList()));
+  }
+
+  private static ProgressFingerprint progressFingerprint(AutomationBotState state) {
+    return new ProgressFingerprint(
+      state.getStatusSummary(),
+      state.hasTarget() ? state.getTarget() : null,
+      List.copyOf(state.getQueuedTargetsList()),
+      state.hasDimension() ? state.getDimension() : null,
+      state.hasPosition() ? state.getPosition() : null,
+      state.hasLastProgressAt() ? state.getLastProgressAt() : null);
+  }
+
+  private static boolean looksFailed(String status) {
+    var normalized = status.toLowerCase(Locale.ROOT);
+    return normalized.contains("failed")
+      || normalized.contains("failure")
+      || normalized.contains("fatal error");
+  }
+
+  private static String enumId(String name) {
+    var marker = name.lastIndexOf('_');
+    return (marker >= 0 ? name.substring(marker + 1) : name).toLowerCase(Locale.ROOT);
+  }
+
   private void runBotAction(String instanceIdRaw,
                             List<String> botIds,
                             InstancePermission permission,
@@ -1123,6 +1551,22 @@ public final class AutomationServiceImpl extends AutomationServiceGrpc.Automatio
     return rawMaxEntries <= 0 ? 8 : Math.min(rawMaxEntries, 64);
   }
 
+  private static int normalizedPollIntervalMs(int requested) {
+    if (requested == 0) {
+      return DEFAULT_AUTOMATION_POLL_MS;
+    }
+    return Math.max(MIN_AUTOMATION_POLL_MS, Math.min(requested, MAX_AUTOMATION_POLL_MS));
+  }
+
+  private static int normalizedHeartbeatSeconds(int requested) {
+    if (requested == 0) {
+      return DEFAULT_AUTOMATION_HEARTBEAT_SECONDS;
+    }
+    return Math.max(
+      MIN_AUTOMATION_HEARTBEAT_SECONDS,
+      Math.min(requested, MAX_AUTOMATION_HEARTBEAT_SECONDS));
+  }
+
   private static String normalizeTarget(String rawTarget) {
     try {
       return AutomationRequirements.normalize(rawTarget);
@@ -1269,6 +1713,34 @@ public final class AutomationServiceImpl extends AutomationServiceGrpc.Automatio
       return statusRuntimeException;
     }
     return Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
+  }
+
+  private record AutomationEventSnapshot(AutomationTeamState teamState,
+                                         Map<String, AutomationBotState> bots,
+                                         AutomationCoordinationState coordinationState) {
+  }
+
+  private record TeamFingerprint(AutomationInstanceSettings settings,
+                                 AutomationTeamObjective objective,
+                                 int activeBots,
+                                 List<AutomationResourceQuota> quotas) {
+  }
+
+  private record SharedMemoryFingerprint(AutomationTeamObjective objective,
+                                         int activeBots,
+                                         int sharedBlockCount,
+                                         int eyeSampleCount,
+                                         List<AutomationSharedRequirementCount> sharedCounts,
+                                         List<AutomationCoordinationSharedBlock> sharedBlocks,
+                                         List<AutomationCoordinationEyeSample> eyeSamples) {
+  }
+
+  private record ProgressFingerprint(String status,
+                                     AutomationRequirementTarget target,
+                                     List<AutomationRequirementTarget> queuedTargets,
+                                     String dimension,
+                                     AutomationPosition position,
+                                     com.google.protobuf.Timestamp lastProgressAt) {
   }
 
   private record TargetedConnectedBots(List<BotConnection> validBots,

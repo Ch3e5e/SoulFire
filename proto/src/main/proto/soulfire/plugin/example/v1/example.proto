@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+option java_package = "com.soulfiremc.grpc.generated.plugin.example.v1";
+option java_multiple_files = true;
+
+package soulfire.plugin.example.v1;
+
+import "soulfire/api_docs.proto";
+import "google/api/annotations.proto";
+import "google/api/field_behavior.proto";
+
+message EchoRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string message = 2 [(google.api.field_behavior) = REQUIRED];
+}
+
+message EchoResponse {
+  string message = 1 [(google.api.field_behavior) = REQUIRED];
+}
+
+message WatchTicksRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  uint32 count = 2 [(google.api.field_behavior) = REQUIRED];
+}
+
+message Tick {
+  uint32 sequence = 1 [(google.api.field_behavior) = REQUIRED];
+}
+
+// Opt-in example used to demonstrate the complete plugin RPC toolchain.
+service ExamplePluginService {
+  rpc Echo(EchoRequest) returns (EchoResponse) {
+    option (google.api.http) = {
+      post: "/v1/plugins/example:echo"
+      body: "*"
+    };
+    option (soulfire.v1.api_method) = {
+      display_name: "Echo a plugin message"
+      description: "Echo a message through the example SoulFire plugin."
+      permissions: "plugin.example.read"
+      scope: "instance"
+      expose_to_mcp: true
+    };
+  }
+
+  rpc WatchTicks(WatchTicksRequest) returns (stream Tick) {
+    option (google.api.http) = { get: "/v1/plugins/example/ticks" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Watch example ticks"
+      permissions: "plugin.example.read"
+      scope: "instance"
+      execution: "Finite server stream."
+    };
+  }
+}

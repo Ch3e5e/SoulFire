@@ -1,0 +1,959 @@
+syntax = "proto3";
+
+option java_package = "com.soulfiremc.grpc.generated";
+option java_multiple_files = true;
+
+package soulfire.v1;
+
+import "google/api/annotations.proto";
+import "google/api/field_behavior.proto";
+import "google/protobuf/any.proto";
+import "google/protobuf/timestamp.proto";
+import "soulfire/api_docs.proto";
+import "soulfire/bot_live.proto";
+import "soulfire/common.proto";
+import "soulfire/domain.proto";
+import "soulfire/inventory.proto";
+import "soulfire/world.proto";
+
+// A resource whose mutation must be coordinated between bot tasks.
+enum BotTaskResource {
+  BOT_TASK_RESOURCE_UNSPECIFIED = 0;
+  BOT_TASK_RESOURCE_MOVEMENT = 1;
+  BOT_TASK_RESOURCE_ROTATION = 2;
+  BOT_TASK_RESOURCE_MAIN_HAND = 3;
+  BOT_TASK_RESOURCE_OFF_HAND = 4;
+  BOT_TASK_RESOURCE_INVENTORY = 5;
+  BOT_TASK_RESOURCE_CONTAINER = 6;
+  BOT_TASK_RESOURCE_CHAT = 7;
+  BOT_TASK_RESOURCE_VEHICLE = 8;
+  BOT_TASK_RESOURCE_CAMERA = 9;
+  BOT_TASK_RESOURCE_AUTOMATION = 10;
+}
+
+enum BotTaskStatus {
+  BOT_TASK_STATUS_UNSPECIFIED = 0;
+  BOT_TASK_STATUS_QUEUED = 1;
+  BOT_TASK_STATUS_WAITING_FOR_RESOURCES = 2;
+  BOT_TASK_STATUS_RUNNING = 3;
+  BOT_TASK_STATUS_SUSPENDED = 4;
+  BOT_TASK_STATUS_RECOVERING = 5;
+  BOT_TASK_STATUS_COMPLETED = 6;
+  BOT_TASK_STATUS_CANCELLED = 7;
+  BOT_TASK_STATUS_FAILED = 8;
+  BOT_TASK_STATUS_TIMED_OUT = 9;
+}
+
+enum BotTaskConflictPolicy {
+  BOT_TASK_CONFLICT_POLICY_UNSPECIFIED = 0;
+  BOT_TASK_CONFLICT_POLICY_REJECT = 1;
+  BOT_TASK_CONFLICT_POLICY_QUEUE = 2;
+  BOT_TASK_CONFLICT_POLICY_REPLACE = 3;
+  BOT_TASK_CONFLICT_POLICY_SUSPEND_LOWER_PRIORITY = 4;
+}
+
+enum BotTaskReconnectPolicy {
+  BOT_TASK_RECONNECT_POLICY_UNSPECIFIED = 0;
+  BOT_TASK_RECONNECT_POLICY_FAIL = 1;
+  BOT_TASK_RECONNECT_POLICY_PAUSE_AND_RESUME = 2;
+  BOT_TASK_RECONNECT_POLICY_CONTINUE = 3;
+}
+
+enum BotTaskDisconnectPolicy {
+  BOT_TASK_DISCONNECT_POLICY_UNSPECIFIED = 0;
+  // The task is detached from the RPC that created it and remains active.
+  BOT_TASK_DISCONNECT_POLICY_CONTINUE = 1;
+  // The task is cancelled when its RunBotTask stream is cancelled or lost.
+  // This policy is rejected by the unary StartBotTask RPC.
+  BOT_TASK_DISCONNECT_POLICY_CANCEL_WITH_CALL = 2;
+}
+
+enum BotTaskPriority {
+  BOT_TASK_PRIORITY_UNSPECIFIED = 0;
+  BOT_TASK_PRIORITY_LOW = 1;
+  BOT_TASK_PRIORITY_NORMAL = 2;
+  BOT_TASK_PRIORITY_HIGH = 3;
+  BOT_TASK_PRIORITY_CRITICAL = 4;
+}
+
+message BotTaskProgress {
+  double fraction = 1;
+  uint64 current = 2;
+  optional uint64 total = 3;
+  string message = 4;
+  google.protobuf.Any detail = 5;
+}
+
+message BotTaskFailure {
+  string code = 1 [(google.api.field_behavior) = REQUIRED];
+  string message = 2 [(google.api.field_behavior) = REQUIRED];
+  bool retryable = 3;
+  google.protobuf.Any detail = 4;
+}
+
+message BotTask {
+  string task_id = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (soulfire.v1.api_field).format = "uuid"
+  ];
+  string instance_id = 2 [
+    (google.api.field_behavior) = REQUIRED,
+    (soulfire.v1.api_field).format = "uuid"
+  ];
+  string bot_id = 3 [
+    (google.api.field_behavior) = REQUIRED,
+    (soulfire.v1.api_field).format = "uuid"
+  ];
+  string task_type = 4 [(google.api.field_behavior) = REQUIRED];
+  string owner_id = 5 [
+    (google.api.field_behavior) = REQUIRED,
+    (soulfire.v1.api_field).format = "uuid"
+  ];
+  string owner_name = 6 [(google.api.field_behavior) = REQUIRED];
+  BotTaskStatus status = 7 [(google.api.field_behavior) = REQUIRED];
+  BotTaskProgress progress = 8;
+  string summary = 9;
+  BotTaskFailure failure = 10;
+  google.protobuf.Timestamp created_at = 11 [(google.api.field_behavior) = REQUIRED];
+  google.protobuf.Timestamp started_at = 12;
+  google.protobuf.Timestamp updated_at = 13 [(google.api.field_behavior) = REQUIRED];
+  google.protobuf.Timestamp completed_at = 14;
+  google.protobuf.Timestamp deadline = 15;
+  repeated BotTaskResource claimed_resources = 16;
+  optional string parent_task_id = 17 [(soulfire.v1.api_field).format = "uuid"];
+  repeated string child_task_ids = 18;
+  optional string causation_id = 19;
+  optional string idempotency_key = 20;
+  BotTaskReconnectPolicy reconnect_policy = 21;
+  BotTaskDisconnectPolicy disconnect_policy = 22;
+  BotTaskConflictPolicy conflict_policy = 23;
+  BotTaskPriority priority = 24;
+  google.protobuf.Any input = 25 [(google.api.field_behavior) = REQUIRED];
+  google.protobuf.Any result = 26;
+  uint64 revision = 27 [(google.api.field_behavior) = REQUIRED];
+}
+
+message StartBotTaskRequest {
+  string instance_id = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (soulfire.v1.api_field).format = "uuid"
+  ];
+  string bot_id = 2 [
+    (google.api.field_behavior) = REQUIRED,
+    (soulfire.v1.api_field).format = "uuid"
+  ];
+  google.protobuf.Any input = 3 [(google.api.field_behavior) = REQUIRED];
+  BotTaskConflictPolicy conflict_policy = 4;
+  BotTaskReconnectPolicy reconnect_policy = 5;
+  BotTaskDisconnectPolicy disconnect_policy = 6;
+  BotTaskPriority priority = 7;
+  google.protobuf.Timestamp deadline = 8;
+  optional string parent_task_id = 9 [(soulfire.v1.api_field).format = "uuid"];
+  optional string causation_id = 10;
+  optional string idempotency_key = 11;
+}
+
+message GetBotTaskRequest {
+  string task_id = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (soulfire.v1.api_field).format = "uuid"
+  ];
+}
+
+message ListBotTasksRequest {
+  optional string instance_id = 1 [(soulfire.v1.api_field).format = "uuid"];
+  optional string bot_id = 2 [(soulfire.v1.api_field).format = "uuid"];
+  repeated BotTaskStatus statuses = 3;
+  uint32 page_size = 4;
+  string page_token = 5;
+  bool include_terminal = 6;
+}
+
+message ListBotTasksResponse {
+  repeated BotTask tasks = 1;
+  string next_page_token = 2;
+}
+
+message WatchBotTaskRequest {
+  string task_id = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (soulfire.v1.api_field).format = "uuid"
+  ];
+  uint64 after_revision = 2;
+  bool follow = 3;
+}
+
+message WatchBotTasksRequest {
+  optional string instance_id = 1 [(soulfire.v1.api_field).format = "uuid"];
+  optional string bot_id = 2 [(soulfire.v1.api_field).format = "uuid"];
+  repeated BotTaskStatus statuses = 3;
+  uint64 after_sequence = 4;
+  bool include_snapshot = 5;
+}
+
+message BotTaskEvent {
+  uint64 sequence = 1 [(google.api.field_behavior) = REQUIRED];
+  google.protobuf.Timestamp observed_at = 2 [(google.api.field_behavior) = REQUIRED];
+  BotTask task = 3 [(google.api.field_behavior) = REQUIRED];
+}
+
+message CancelBotTaskRequest {
+  string task_id = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (soulfire.v1.api_field).format = "uuid"
+  ];
+  string reason = 2;
+}
+
+// Core task input for persistent path execution.
+message GoToTask {
+  PathfindGoal goal = 1 [(google.api.field_behavior) = REQUIRED];
+  PathfindOptions options = 2;
+}
+
+// Core task result for persistent path execution.
+message GoToTaskResult {
+  WorldPosition final_position = 1;
+}
+
+// Core task input for continuously following a live entity.
+message FollowEntityTask {
+  PathfindGoal.EntityGoal target = 1 [(google.api.field_behavior) = REQUIRED];
+  PathfindOptions options = 2;
+  // How long the entity may remain unobservable before the task completes.
+  // Zero selects the server default.
+  uint32 target_unavailable_timeout_seconds = 3;
+}
+
+enum FollowEntityCompletionReason {
+  FOLLOW_ENTITY_COMPLETION_REASON_UNSPECIFIED = 0;
+  FOLLOW_ENTITY_COMPLETION_REASON_TARGET_UNAVAILABLE = 1;
+}
+
+message FollowEntityTaskResult {
+  WorldPosition final_position = 1;
+  FollowEntityCompletionReason reason = 2;
+}
+
+// Core task input for chasing and attacking one connection-scoped entity.
+message AttackEntityTask {
+  EntityReference target = 1 [(google.api.field_behavior) = REQUIRED];
+  PathfindOptions options = 2;
+  float attack_range = 3;
+  bool sprinting = 4;
+  // Zero attacks until the target is defeated.
+  uint32 maximum_attacks = 5;
+  // How long the target may remain unobservable before the task completes.
+  // Zero selects the server default.
+  uint32 target_unavailable_timeout_seconds = 6;
+  // Defaults to true. Selects the strongest matching melee weapon.
+  optional bool select_best_weapon = 7;
+  // Restricts automatic weapon selection.
+  optional ItemSelector weapon = 8;
+  // Restores the selected hotbar slot when the task stops.
+  bool restore_selected_slot = 9;
+}
+
+enum AttackEntityCompletionReason {
+  ATTACK_ENTITY_COMPLETION_REASON_UNSPECIFIED = 0;
+  ATTACK_ENTITY_COMPLETION_REASON_TARGET_DEFEATED = 1;
+  ATTACK_ENTITY_COMPLETION_REASON_TARGET_UNAVAILABLE = 2;
+  ATTACK_ENTITY_COMPLETION_REASON_ATTACK_LIMIT_REACHED = 3;
+}
+
+message AttackEntityTaskResult {
+  WorldPosition final_position = 1;
+  AttackEntityCompletionReason reason = 2;
+  uint32 attacks = 3;
+  bool target_alive = 4;
+}
+
+// Finds the nearest matching entity, attacks it, and optionally keeps hunting.
+message AttackNearestTask {
+  EntitySelector selector = 1 [(google.api.field_behavior) = REQUIRED];
+  // Search radius around the bot. Zero selects the server default.
+  float radius = 2;
+  PathfindOptions options = 3;
+  float attack_range = 4;
+  bool sprinting = 5;
+  // Zero allows an unlimited number of attacks.
+  uint32 maximum_attacks = 6;
+  // Zero allows an unlimited number of defeated targets.
+  uint32 maximum_targets = 7;
+  // Zero waits indefinitely when no target matches.
+  uint32 no_target_timeout_seconds = 8;
+  // Completes immediately when no matching target is observable.
+  bool complete_when_no_target = 9;
+  optional bool select_best_weapon = 10;
+  optional ItemSelector weapon = 11;
+  bool restore_selected_slot = 12;
+}
+
+enum AttackNearestCompletionReason {
+  ATTACK_NEAREST_COMPLETION_REASON_UNSPECIFIED = 0;
+  ATTACK_NEAREST_COMPLETION_REASON_TARGET_LIMIT_REACHED = 1;
+  ATTACK_NEAREST_COMPLETION_REASON_ATTACK_LIMIT_REACHED = 2;
+  ATTACK_NEAREST_COMPLETION_REASON_NO_TARGET = 3;
+}
+
+message AttackNearestTaskResult {
+  WorldPosition final_position = 1;
+  AttackNearestCompletionReason reason = 2;
+  uint32 attacks = 3;
+  uint32 targets_defeated = 4;
+}
+
+// Maintains ranged spacing, leads the target, compensates for projectile
+// gravity, and fires a bow or crossbow.
+message RangedAttackTask {
+  EntityReference target = 1 [(google.api.field_behavior) = REQUIRED];
+  PathfindOptions options = 2;
+  // Zero selects the server default.
+  float minimum_range = 3;
+  // Zero selects the server default.
+  float maximum_range = 4;
+  // Zero fires until the target is defeated.
+  uint32 maximum_shots = 5;
+  // Zero selects the server default.
+  uint32 target_unavailable_timeout_seconds = 6;
+  // Restricts automatic bow or crossbow selection.
+  optional ItemSelector weapon = 7;
+  // Bow draw duration. Crossbows use their item-specific charge duration.
+  uint32 bow_draw_ticks = 8;
+  bool lead_target = 9;
+  bool compensate_gravity = 10;
+  bool strafe = 11;
+  bool restore_selected_slot = 12;
+}
+
+enum RangedAttackCompletionReason {
+  RANGED_ATTACK_COMPLETION_REASON_UNSPECIFIED = 0;
+  RANGED_ATTACK_COMPLETION_REASON_TARGET_DEFEATED = 1;
+  RANGED_ATTACK_COMPLETION_REASON_TARGET_UNAVAILABLE = 2;
+  RANGED_ATTACK_COMPLETION_REASON_SHOT_LIMIT_REACHED = 3;
+  RANGED_ATTACK_COMPLETION_REASON_NO_WEAPON = 4;
+  RANGED_ATTACK_COMPLETION_REASON_NO_AMMUNITION = 5;
+}
+
+message RangedAttackTaskResult {
+  WorldPosition final_position = 1;
+  RangedAttackCompletionReason reason = 2;
+  uint32 shots_released = 3;
+  bool target_alive = 4;
+}
+
+// Moves away from the nearest matching threat until the configured distance is safe.
+message FleeTask {
+  EntitySelector threats = 1 [(google.api.field_behavior) = REQUIRED];
+  // Starts escaping when a threat is within this distance.
+  float trigger_radius = 2;
+  // Minimum distance from the selected threat before an escape completes.
+  float safe_distance = 3;
+  PathfindOptions options = 4;
+  // Number of continuously safe seconds before completion.
+  uint32 safe_seconds = 5;
+  // Keeps monitoring when false.
+  bool complete_when_safe = 6;
+  // Zero allows unlimited escape cycles.
+  uint32 maximum_escapes = 7;
+}
+
+enum FleeCompletionReason {
+  FLEE_COMPLETION_REASON_UNSPECIFIED = 0;
+  FLEE_COMPLETION_REASON_SAFE = 1;
+  FLEE_COMPLETION_REASON_ESCAPE_LIMIT_REACHED = 2;
+}
+
+message FleeTaskResult {
+  WorldPosition final_position = 1;
+  FleeCompletionReason reason = 2;
+  uint32 escapes = 3;
+}
+
+// Defends a fixed position or live entity from matching threats.
+message GuardTask {
+  oneof subject {
+    BlockPosition position = 1;
+    EntityReference entity = 2;
+  }
+  EntitySelector threats = 3 [(google.api.field_behavior) = REQUIRED];
+  // Threat search radius around the protected subject.
+  float guard_radius = 4;
+  // Stops chasing when the bot or target exceeds this distance from the subject.
+  float maximum_pursuit_distance = 5;
+  // Distance from the subject at which the return path completes.
+  float return_radius = 6;
+  PathfindOptions options = 7;
+  float attack_range = 8;
+  bool sprinting = 9;
+  uint32 maximum_attacks = 10;
+  uint32 maximum_targets = 11;
+  // Completes after the area stays clear for this many seconds.
+  bool complete_when_clear = 12;
+  uint32 clear_seconds = 13;
+  optional bool select_best_weapon = 14;
+  optional ItemSelector weapon = 15;
+  bool restore_selected_slot = 16;
+}
+
+enum GuardCompletionReason {
+  GUARD_COMPLETION_REASON_UNSPECIFIED = 0;
+  GUARD_COMPLETION_REASON_AREA_CLEAR = 1;
+  GUARD_COMPLETION_REASON_TARGET_LIMIT_REACHED = 2;
+  GUARD_COMPLETION_REASON_ATTACK_LIMIT_REACHED = 3;
+  GUARD_COMPLETION_REASON_SUBJECT_UNAVAILABLE = 4;
+}
+
+message GuardTaskResult {
+  WorldPosition final_position = 1;
+  GuardCompletionReason reason = 2;
+  uint32 attacks = 3;
+  uint32 targets_defeated = 4;
+}
+
+// Finds, approaches, and enters a bed. A supplied position pins the task to
+// one bed; otherwise the nearest loaded bed is selected.
+message SleepTask {
+  optional BlockPosition bed = 1;
+  // Search radius used when bed is omitted. Zero selects the server default.
+  uint32 search_radius = 2;
+  PathfindOptions options = 3;
+  // Keeps retrying while sleep is unavailable, such as during daytime.
+  bool wait_until_possible = 4;
+  // Delay between rejected sleep attempts. Zero selects the server default.
+  uint32 retry_interval_ticks = 5;
+}
+
+enum SleepCompletionReason {
+  SLEEP_COMPLETION_REASON_UNSPECIFIED = 0;
+  SLEEP_COMPLETION_REASON_SLEEPING = 1;
+  SLEEP_COMPLETION_REASON_ALREADY_SLEEPING = 2;
+  SLEEP_COMPLETION_REASON_NO_BED_FOUND = 3;
+}
+
+message SleepTaskResult {
+  BlockPosition bed = 1;
+  SleepCompletionReason reason = 2;
+}
+
+// Casts, detects bites on the game thread, reels in, and repeats.
+message FishTask {
+  // Zero keeps fishing until cancellation.
+  uint32 maximum_catches = 1;
+  // Restricts which fishing rod may be selected.
+  optional ItemSelector rod = 2;
+  // Zero selects the server default.
+  uint32 cast_timeout_ticks = 3;
+  // Zero selects the server default.
+  uint32 bite_timeout_ticks = 4;
+  bool complete_when_no_rod = 5;
+  bool restore_selected_slot = 6;
+}
+
+enum FishCompletionReason {
+  FISH_COMPLETION_REASON_UNSPECIFIED = 0;
+  FISH_COMPLETION_REASON_CATCH_LIMIT_REACHED = 1;
+  FISH_COMPLETION_REASON_NO_ROD = 2;
+}
+
+message FishTaskResult {
+  FishCompletionReason reason = 1;
+  uint32 catches = 2;
+  uint32 failed_casts = 3;
+}
+
+// Harvests mature crops in a bounded area and replants crops that require it.
+// An omitted center follows the bot between scans.
+message FarmTask {
+  // Empty selects every crop strategy supported by the server.
+  repeated string crop_ids = 1;
+  optional BlockPosition center = 2;
+  // Zero selects the server default.
+  uint32 radius = 3;
+  // Zero keeps farming until cancellation.
+  uint32 maximum_harvests = 4;
+  bool replant = 5;
+  // Completes instead of waiting for another crop to mature.
+  bool complete_when_no_mature_crops = 6;
+  PathfindOptions options = 7;
+  // Delay between scans when no mature crop is available.
+  // Zero selects the server default.
+  uint32 rescan_interval_ticks = 8;
+  bool restore_selected_slot = 9;
+}
+
+enum FarmCompletionReason {
+  FARM_COMPLETION_REASON_UNSPECIFIED = 0;
+  FARM_COMPLETION_REASON_HARVEST_LIMIT_REACHED = 1;
+  FARM_COMPLETION_REASON_NO_MATURE_CROPS = 2;
+  FARM_COMPLETION_REASON_NO_REPLANT_ITEM = 3;
+}
+
+message FarmTaskResult {
+  FarmCompletionReason reason = 1;
+  uint32 crops_harvested = 2;
+  uint32 crops_replanted = 3;
+  uint32 failed_harvests = 4;
+  WorldPosition final_position = 5;
+}
+
+// Feeds compatible adult animals and confirms the server love-mode event for
+// both parents.
+message BreedTask {
+  // Empty selects every observable Animal subtype.
+  EntitySelector animals = 1;
+  // Empty accepts any item recognized as food by both selected animals.
+  optional ItemSelector food = 2;
+  optional BlockPosition center = 3;
+  // Zero selects the server default.
+  uint32 radius = 4;
+  // Zero keeps breeding pairs until cancellation.
+  uint32 maximum_pairs = 5;
+  bool complete_when_no_pair = 6;
+  bool complete_when_no_food = 7;
+  PathfindOptions options = 8;
+  // Delay between scans when no compatible pair is available.
+  // Zero selects the server default.
+  uint32 rescan_interval_ticks = 9;
+  // Zero selects the server default.
+  uint32 breeding_timeout_ticks = 10;
+  bool restore_selected_slot = 11;
+}
+
+enum BreedCompletionReason {
+  BREED_COMPLETION_REASON_UNSPECIFIED = 0;
+  BREED_COMPLETION_REASON_PAIR_LIMIT_REACHED = 1;
+  BREED_COMPLETION_REASON_NO_COMPATIBLE_PAIR = 2;
+  BREED_COMPLETION_REASON_NO_FOOD = 3;
+}
+
+message BreedTaskResult {
+  BreedCompletionReason reason = 1;
+  uint32 pairs_started = 2;
+  uint32 animals_fed = 3;
+  uint32 failed_pairs = 4;
+  WorldPosition final_position = 5;
+}
+
+// Visits coordinated frontier cells around an origin.
+message ExploreTask {
+  // Omitted origin uses the bot position when the task starts.
+  optional BlockPosition origin = 1;
+  // Maximum horizontal distance from the origin. Zero selects the server
+  // default.
+  uint32 radius = 2;
+  // Distance between frontier cells. Zero selects the server default.
+  uint32 waypoint_spacing = 3;
+  // Zero explores every frontier cell or runs until cancellation.
+  uint32 maximum_waypoints = 4;
+  PathfindOptions options = 5;
+  // Returns to the origin after a bounded waypoint limit.
+  bool return_to_origin = 6;
+  // Shared purpose groups frontier claims across bots.
+  string purpose = 7;
+}
+
+enum ExploreCompletionReason {
+  EXPLORE_COMPLETION_REASON_UNSPECIFIED = 0;
+  EXPLORE_COMPLETION_REASON_WAYPOINT_LIMIT_REACHED = 1;
+  EXPLORE_COMPLETION_REASON_AREA_EXHAUSTED = 2;
+  EXPLORE_COMPLETION_REASON_RETURNED_TO_ORIGIN = 3;
+}
+
+message ExploreTaskResult {
+  ExploreCompletionReason reason = 1;
+  uint32 waypoints_visited = 2;
+  uint32 failed_routes = 3;
+  double horizontal_distance_traveled = 4;
+  WorldPosition final_position = 5;
+}
+
+enum ContainerTransferDirection {
+  CONTAINER_TRANSFER_DIRECTION_UNSPECIFIED = 0;
+  CONTAINER_TRANSFER_DIRECTION_DEPOSIT = 1;
+  CONTAINER_TRANSFER_DIRECTION_WITHDRAW = 2;
+}
+
+message ContainerTransferOperation {
+  ItemSelector selector = 1 [(google.api.field_behavior) = REQUIRED];
+  uint32 count = 2 [(google.api.field_behavior) = REQUIRED];
+  // Transfers as much as possible instead of failing when the source count or
+  // destination capacity is smaller than count.
+  bool allow_partial = 3;
+}
+
+// Navigates to a block container, opens it, and performs semantic transfers.
+message ContainerTransferTask {
+  BlockPosition container = 1 [(google.api.field_behavior) = REQUIRED];
+  ContainerTransferDirection direction = 2 [(google.api.field_behavior) = REQUIRED];
+  repeated ContainerTransferOperation operations = 3 [(google.api.field_behavior) = REQUIRED];
+  PathfindOptions options = 4;
+  // Closes the menu after a successful transfer. Failed or cancelled tasks
+  // always close a menu they opened.
+  bool close_container = 5;
+}
+
+enum ContainerTransferCompletionReason {
+  CONTAINER_TRANSFER_COMPLETION_REASON_UNSPECIFIED = 0;
+  CONTAINER_TRANSFER_COMPLETION_REASON_COMPLETED = 1;
+  CONTAINER_TRANSFER_COMPLETION_REASON_PARTIAL = 2;
+}
+
+message ContainerTransferOutcome {
+  ItemSelector selector = 1;
+  uint32 requested = 2;
+  uint32 transferred = 3;
+}
+
+message ContainerTransferTaskResult {
+  ContainerTransferCompletionReason reason = 1;
+  repeated ContainerTransferOutcome outcomes = 2;
+  uint32 total_transferred = 3;
+  uint64 container_revision = 4;
+  WorldPosition final_position = 5;
+}
+
+// Core task input for resource-aware automatic eating.
+message AutoEatTask {
+  // Empty selects any safe edible food.
+  repeated string food_item_ids = 1;
+  // Zero selects the server default of 14.
+  uint32 food_level = 2;
+  // Zero selects the server default.
+  uint32 check_interval_ticks = 3;
+  // Zero keeps the task active until cancelled.
+  uint32 maximum_meals = 4;
+  bool complete_when_no_food = 5;
+  bool restore_selected_slot = 6;
+}
+
+enum AutoEatCompletionReason {
+  AUTO_EAT_COMPLETION_REASON_UNSPECIFIED = 0;
+  AUTO_EAT_COMPLETION_REASON_MEAL_LIMIT_REACHED = 1;
+  AUTO_EAT_COMPLETION_REASON_NO_FOOD = 2;
+}
+
+message AutoEatTaskResult {
+  AutoEatCompletionReason reason = 1;
+  uint32 meals_eaten = 2;
+  uint32 final_food_level = 3;
+}
+
+// Core task input for automatically respawning after death.
+message AutoRespawnTask {
+  // Delay between observing death and requesting a respawn.
+  uint32 respawn_delay_ticks = 1;
+  // Zero keeps the task active until cancelled.
+  uint32 maximum_respawns = 2;
+}
+
+enum AutoRespawnCompletionReason {
+  AUTO_RESPAWN_COMPLETION_REASON_UNSPECIFIED = 0;
+  AUTO_RESPAWN_COMPLETION_REASON_RESPAWN_LIMIT_REACHED = 1;
+}
+
+message AutoRespawnTaskResult {
+  AutoRespawnCompletionReason reason = 1;
+  uint32 respawns = 2;
+}
+
+// Core task input for keeping a totem in the offhand.
+message AutoTotemTask {
+  // Zero selects the server default.
+  uint32 check_interval_ticks = 1;
+  // Zero keeps the task active until cancelled.
+  uint32 maximum_equips = 2;
+  bool complete_when_no_totem = 3;
+  // When false, a non-totem offhand item is left untouched.
+  bool replace_occupied_offhand = 4;
+}
+
+enum AutoTotemCompletionReason {
+  AUTO_TOTEM_COMPLETION_REASON_UNSPECIFIED = 0;
+  AUTO_TOTEM_COMPLETION_REASON_EQUIP_LIMIT_REACHED = 1;
+  AUTO_TOTEM_COMPLETION_REASON_NO_TOTEM = 2;
+}
+
+message AutoTotemTaskResult {
+  AutoTotemCompletionReason reason = 1;
+  uint32 equips = 2;
+}
+
+// Core task input for keeping the strongest available armor equipped.
+message AutoArmorTask {
+  // Zero selects the server default.
+  uint32 check_interval_ticks = 1;
+  // Zero keeps the task active until cancelled.
+  uint32 maximum_equips = 2;
+  bool complete_when_no_upgrade = 3;
+}
+
+enum AutoArmorCompletionReason {
+  AUTO_ARMOR_COMPLETION_REASON_UNSPECIFIED = 0;
+  AUTO_ARMOR_COMPLETION_REASON_EQUIP_LIMIT_REACHED = 1;
+  AUTO_ARMOR_COMPLETION_REASON_NO_UPGRADE = 2;
+}
+
+message AutoArmorTaskResult {
+  AutoArmorCompletionReason reason = 1;
+  uint32 equips = 2;
+}
+
+// Core task input for finding and mining matching blocks.
+message CollectBlocksTask {
+  repeated string block_ids = 1;
+  repeated string tags = 2;
+  // Zero selects one block.
+  uint32 count = 3;
+  // Zero selects the server default.
+  uint32 search_radius = 4;
+  PathfindOptions options = 5;
+}
+
+enum CollectBlocksCompletionReason {
+  COLLECT_BLOCKS_COMPLETION_REASON_UNSPECIFIED = 0;
+  COLLECT_BLOCKS_COMPLETION_REASON_TARGET_REACHED = 1;
+  COLLECT_BLOCKS_COMPLETION_REASON_NO_MATCHING_BLOCKS = 2;
+}
+
+message CollectBlocksTaskResult {
+  CollectBlocksCompletionReason reason = 1;
+  uint32 blocks_broken = 2;
+  WorldPosition final_position = 3;
+}
+
+// Clears every diggable block in an inclusive cuboid.
+message ExcavateTask {
+  BlockPosition corner_a = 1 [(google.api.field_behavior) = REQUIRED];
+  BlockPosition corner_b = 2 [(google.api.field_behavior) = REQUIRED];
+  PathfindOptions options = 3;
+  // Zero clears the whole cuboid. A positive limit bounds the task.
+  uint32 maximum_blocks = 4;
+}
+
+enum ExcavateCompletionReason {
+  EXCAVATE_COMPLETION_REASON_UNSPECIFIED = 0;
+  EXCAVATE_COMPLETION_REASON_AREA_CLEARED = 1;
+  EXCAVATE_COMPLETION_REASON_BLOCK_LIMIT_REACHED = 2;
+  EXCAVATE_COMPLETION_REASON_NO_REACHABLE_BLOCKS = 3;
+}
+
+message ExcavateTaskResult {
+  ExcavateCompletionReason reason = 1;
+  uint32 blocks_broken = 2;
+  uint32 blocks_skipped = 3;
+  uint32 unreachable_blocks = 4;
+  WorldPosition final_position = 5;
+}
+
+message BuildOffset {
+  sint32 x = 1;
+  sint32 y = 2;
+  sint32 z = 3;
+}
+
+message BuildBlock {
+  BuildOffset offset = 1 [(google.api.field_behavior) = REQUIRED];
+  string block_id = 2 [(google.api.field_behavior) = REQUIRED];
+  map<string, string> properties = 3;
+}
+
+message BuildMaterialSubstitution {
+  string source_block_id = 1 [(google.api.field_behavior) = REQUIRED];
+  repeated string replacement_block_ids = 2 [(google.api.field_behavior) = REQUIRED];
+}
+
+enum BuildRotation {
+  BUILD_ROTATION_UNSPECIFIED = 0;
+  BUILD_ROTATION_NONE = 1;
+  BUILD_ROTATION_CLOCKWISE_90 = 2;
+  BUILD_ROTATION_HALF = 3;
+  BUILD_ROTATION_COUNTERCLOCKWISE_90 = 4;
+}
+
+enum BuildMirror {
+  BUILD_MIRROR_UNSPECIFIED = 0;
+  BUILD_MIRROR_NONE = 1;
+  BUILD_MIRROR_X = 2;
+  BUILD_MIRROR_Z = 3;
+}
+
+// Builds an inline schematic relative to origin.
+message BuildTask {
+  BlockPosition origin = 1 [(google.api.field_behavior) = REQUIRED];
+  repeated BuildBlock blocks = 2 [(google.api.field_behavior) = REQUIRED];
+  BuildRotation rotation = 3;
+  BuildMirror mirror = 4;
+  repeated BuildMaterialSubstitution substitutions = 5;
+  PathfindOptions options = 6;
+  bool break_incorrect_blocks = 7;
+  bool restore_selected_slot = 8;
+  // Deterministically assigns blocks by transformed placement index.
+  uint32 partition_index = 9;
+  // One means no partitioning. Zero also selects one.
+  uint32 partition_count = 10;
+}
+
+enum BuildBlockStatus {
+  BUILD_BLOCK_STATUS_UNSPECIFIED = 0;
+  BUILD_BLOCK_STATUS_PLACED = 1;
+  BUILD_BLOCK_STATUS_ALREADY_CORRECT = 2;
+  BUILD_BLOCK_STATUS_MISSING_MATERIAL = 3;
+  BUILD_BLOCK_STATUS_UNREACHABLE = 4;
+  BUILD_BLOCK_STATUS_UNSUPPORTED = 5;
+  BUILD_BLOCK_STATUS_STATE_MISMATCH = 6;
+  BUILD_BLOCK_STATUS_INCORRECT_BLOCK = 7;
+}
+
+message BuildBlockOutcome {
+  BlockPosition position = 1;
+  string requested_block_id = 2;
+  string placed_block_id = 3;
+  BuildBlockStatus status = 4;
+  string message = 5;
+}
+
+enum BuildCompletionReason {
+  BUILD_COMPLETION_REASON_UNSPECIFIED = 0;
+  BUILD_COMPLETION_REASON_COMPLETED = 1;
+  BUILD_COMPLETION_REASON_PARTIAL = 2;
+}
+
+message BuildTaskResult {
+  BuildCompletionReason reason = 1;
+  uint32 blocks_placed = 2;
+  uint32 blocks_already_correct = 3;
+  uint32 incorrect_blocks_broken = 4;
+  uint32 blocks_failed = 5;
+  repeated BuildBlockOutcome outcomes = 6;
+  WorldPosition final_position = 7;
+}
+
+message LoadoutRequirement {
+  ItemSelector selector = 1 [(google.api.field_behavior) = REQUIRED];
+  uint32 minimum_count = 2 [(google.api.field_behavior) = REQUIRED];
+  uint32 target_count = 3 [(google.api.field_behavior) = REQUIRED];
+  // Zero disables excess deposits.
+  uint32 maximum_count = 4;
+}
+
+// Restocks and deposits against a block container until cancelled or bounded.
+message MaintainLoadoutTask {
+  BlockPosition container = 1 [(google.api.field_behavior) = REQUIRED];
+  repeated LoadoutRequirement requirements = 2 [(google.api.field_behavior) = REQUIRED];
+  PathfindOptions options = 3;
+  // Zero selects the server default.
+  uint32 check_interval_ticks = 4;
+  // Zero keeps monitoring until cancelled.
+  uint32 maximum_rebalances = 5;
+  bool complete_when_satisfied = 6;
+  bool close_container = 7;
+}
+
+message LoadoutRequirementResult {
+  ItemSelector selector = 1;
+  uint32 final_count = 2;
+  uint32 withdrawn = 3;
+  uint32 deposited = 4;
+  bool satisfied = 5;
+}
+
+enum MaintainLoadoutCompletionReason {
+  MAINTAIN_LOADOUT_COMPLETION_REASON_UNSPECIFIED = 0;
+  MAINTAIN_LOADOUT_COMPLETION_REASON_SATISFIED = 1;
+  MAINTAIN_LOADOUT_COMPLETION_REASON_REBALANCE_LIMIT_REACHED = 2;
+  MAINTAIN_LOADOUT_COMPLETION_REASON_CONTAINER_EXHAUSTED = 3;
+}
+
+message MaintainLoadoutTaskResult {
+  MaintainLoadoutCompletionReason reason = 1;
+  uint32 rebalances = 2;
+  uint32 total_withdrawn = 3;
+  uint32 total_deposited = 4;
+  repeated LoadoutRequirementResult requirements = 5;
+  WorldPosition final_position = 6;
+}
+
+// A provider-independent task service used by both core and plugin tasks.
+service BotTaskService {
+  rpc StartBotTask (StartBotTaskRequest) returns (BotTask) {
+    option (google.api.http) = {
+      post: "/v1/instances/{instance_id}/bots/{bot_id}/tasks"
+      body: "*"
+    };
+    option (soulfire.v1.api_method) = {
+      display_name: "Start bot task"
+      permissions: "CONTROL_BOT_ACTIONS"
+      scope: "instance.bot"
+      execution: "Creates a durable task and schedules it according to its resource policy."
+      side_effects: "May drive the bot or mutate the connected Minecraft world."
+    };
+  }
+
+  // Starts a task and keeps ownership attached to this streaming RPC.
+  //
+  // CANCEL_WITH_CALL tasks are cancelled when the stream is cancelled.
+  // CONTINUE tasks remain active and can be reattached with WatchBotTask.
+  rpc RunBotTask (StartBotTaskRequest) returns (stream BotTaskEvent) {
+    option (soulfire.v1.api_method) = {
+      display_name: "Run bot task"
+      permissions: "CONTROL_BOT_ACTIONS"
+      scope: "instance.bot"
+      execution: "Creates a task and streams every state transition through completion."
+      side_effects: "May drive the bot or mutate the connected Minecraft world."
+    };
+  }
+
+  rpc GetBotTask (GetBotTaskRequest) returns (BotTask) {
+    option (google.api.http) = {
+      get: "/v1/tasks/{task_id}"
+    };
+    option (soulfire.v1.api_method) = {
+      display_name: "Get bot task"
+      permissions: "READ_BOT_INFO"
+      scope: "task"
+    };
+  }
+
+  rpc ListBotTasks (ListBotTasksRequest) returns (ListBotTasksResponse) {
+    option (google.api.http) = {
+      get: "/v1/tasks"
+    };
+    option (soulfire.v1.api_method) = {
+      display_name: "List bot tasks"
+      permissions: "READ_BOT_INFO"
+      scope: "instance"
+    };
+  }
+
+  rpc WatchBotTask (WatchBotTaskRequest) returns (stream BotTaskEvent) {
+    option (soulfire.v1.api_method) = {
+      display_name: "Watch bot task"
+      permissions: "READ_BOT_INFO"
+      scope: "task"
+      execution: "Streams task revisions until cancellation or terminal completion."
+    };
+  }
+
+  rpc WatchBotTasks (WatchBotTasksRequest) returns (stream BotTaskEvent) {
+    option (soulfire.v1.api_method) = {
+      display_name: "Watch bot tasks"
+      permissions: "READ_BOT_INFO"
+      scope: "instance"
+      execution: "Streams matching task revisions until cancellation."
+    };
+  }
+
+  rpc CancelBotTask (CancelBotTaskRequest) returns (BotTask) {
+    option (google.api.http) = {
+      post: "/v1/tasks/{task_id}:cancel"
+      body: "*"
+    };
+    option (soulfire.v1.api_method) = {
+      display_name: "Cancel bot task"
+      permissions: "CONTROL_BOT_ACTIONS"
+      scope: "task"
+      side_effects: "Stops the task and releases its claimed bot resources."
+    };
+  }
+}

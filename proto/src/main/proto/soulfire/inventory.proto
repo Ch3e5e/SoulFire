@@ -1,0 +1,325 @@
+syntax = "proto3";
+
+option java_package = "com.soulfiremc.grpc.generated";
+option java_multiple_files = true;
+
+package soulfire.v1;
+
+import "google/api/annotations.proto";
+import "google/api/field_behavior.proto";
+import "soulfire/api_docs.proto";
+import "soulfire/bot.proto";
+import "soulfire/bot_live.proto";
+import "soulfire/common.proto";
+import "soulfire/domain.proto";
+
+message ItemSelector {
+  repeated string item_ids = 1;
+  repeated string tags = 2;
+  optional string fingerprint = 3;
+  optional string name_contains = 4;
+  repeated string enchantment_ids = 5;
+  optional int32 minimum_count = 6;
+  optional int32 minimum_remaining_durability = 7;
+}
+
+enum InventoryArea {
+  INVENTORY_AREA_UNSPECIFIED = 0;
+  INVENTORY_AREA_CONTAINER = 1;
+  INVENTORY_AREA_MAIN = 2;
+  INVENTORY_AREA_HOTBAR = 3;
+  INVENTORY_AREA_ARMOR = 4;
+  INVENTORY_AREA_OFFHAND = 5;
+  INVENTORY_AREA_CRAFTING = 6;
+  INVENTORY_AREA_CURSOR = 7;
+  // Main inventory and hotbar together. Intended for semantic transfers.
+  INVENTORY_AREA_PLAYER = 8;
+}
+
+message InventorySlotSnapshot {
+  int32 slot = 1;
+  InventoryArea area = 2;
+  optional ItemStackSnapshot item = 3;
+  bool may_place = 4;
+  bool may_pickup = 5;
+}
+
+message ContainerSnapshot {
+  int32 container_id = 1;
+  int32 state_id = 2;
+  uint64 revision = 3;
+  string container_type = 4;
+  TextComponent title = 5;
+  ContainerLayout layout = 6;
+  repeated InventorySlotSnapshot slots = 7;
+  optional ItemStackSnapshot carried = 8;
+  int32 selected_hotbar_slot = 9;
+}
+
+message InventoryScope {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+}
+
+message GetContainerSnapshotRequest {
+  InventoryScope scope = 1;
+}
+
+message GetContainerSnapshotResponse {
+  ContainerSnapshot container = 1;
+}
+
+message CountItemsRequest {
+  InventoryScope scope = 1;
+  ItemSelector selector = 2;
+  repeated InventoryArea areas = 3;
+}
+
+message CountItemsResponse {
+  int64 count = 1;
+}
+
+message FindInventorySlotsRequest {
+  InventoryScope scope = 1;
+  ItemSelector selector = 2;
+  repeated InventoryArea areas = 3;
+}
+
+message FindInventorySlotsResponse {
+  repeated InventorySlotSnapshot slots = 1;
+  uint64 revision = 2;
+}
+
+enum InventoryRecommendationKind {
+  INVENTORY_RECOMMENDATION_KIND_UNSPECIFIED = 0;
+  INVENTORY_RECOMMENDATION_KIND_TOOL = 1;
+  INVENTORY_RECOMMENDATION_KIND_MELEE_WEAPON = 2;
+  INVENTORY_RECOMMENDATION_KIND_ARMOR = 3;
+  INVENTORY_RECOMMENDATION_KIND_FOOD = 4;
+  INVENTORY_RECOMMENDATION_KIND_SCAFFOLD = 5;
+}
+
+message InventoryItemScoreFactor {
+  string name = 1;
+  double contribution = 2;
+  string detail = 3;
+}
+
+message InventoryItemRecommendation {
+  InventorySlotSnapshot slot = 1;
+  double score = 2;
+  repeated InventoryItemScoreFactor factors = 3;
+}
+
+message RankInventoryItemsRequest {
+  InventoryScope scope = 1;
+  InventoryRecommendationKind kind = 2;
+  optional ItemSelector selector = 3;
+  repeated InventoryArea areas = 4;
+  // Required when kind is TOOL.
+  optional BlockPosition target_block = 5;
+  // Required when kind is ARMOR, such as "head", "chest", "legs", or "feet".
+  optional string equipment_slot = 6;
+  // Defaults to 10 and may not exceed 100.
+  uint32 limit = 7;
+  // Adds a small preference for already selectable hotbar items.
+  bool prefer_hotbar = 8;
+  // Adds a score bonus for each matching enchantment.
+  repeated string preferred_enchantment_ids = 9;
+  // Removes candidates carrying any listed enchantment.
+  repeated string excluded_enchantment_ids = 10;
+  // Prefers a higher remaining durability ratio for damageable items.
+  bool prefer_high_durability = 11;
+}
+
+message RankInventoryItemsResponse {
+  repeated InventoryItemRecommendation recommendations = 1;
+  uint64 revision = 2;
+}
+
+message MoveInventoryItemRequest {
+  InventoryScope scope = 1;
+  int32 source_slot = 2;
+  int32 destination_slot = 3;
+  optional int32 count = 4;
+  uint64 expected_revision = 5;
+  optional string idempotency_key = 6;
+}
+
+message TransferItemsRequest {
+  InventoryScope scope = 1;
+  ItemSelector selector = 2;
+  int32 count = 3;
+  InventoryArea from = 4;
+  InventoryArea to = 5;
+  uint64 expected_revision = 6;
+  optional string idempotency_key = 7;
+}
+
+message TossItemsRequest {
+  InventoryScope scope = 1;
+  ItemSelector selector = 2;
+  int32 count = 3;
+  uint64 expected_revision = 4;
+  optional string idempotency_key = 5;
+}
+
+message SelectHotbarItemRequest {
+  InventoryScope scope = 1;
+  oneof selection {
+    int32 hotbar_slot = 2;
+    ItemSelector selector = 3;
+  }
+  uint64 expected_revision = 4;
+  optional string idempotency_key = 5;
+}
+
+message EquipItemRequest {
+  InventoryScope scope = 1;
+  ItemSelector selector = 2;
+  string equipment_slot = 3;
+  uint64 expected_revision = 4;
+  optional string idempotency_key = 5;
+}
+
+message UnequipItemRequest {
+  InventoryScope scope = 1;
+  // One of mainhand, offhand, head, chest, legs, or feet.
+  string equipment_slot = 2;
+  // Optional preferred destination. MAIN, HOTBAR, and PLAYER are supported.
+  // PLAYER selects the first available main-inventory or hotbar slot.
+  optional InventoryArea destination_area = 3;
+  uint64 expected_revision = 4;
+  optional string idempotency_key = 5;
+}
+
+message InventoryMutationResponse {
+  string action_id = 1 [(soulfire.v1.api_field).format = "uuid"];
+  ContainerSnapshot container = 2;
+}
+
+message OpenBlockContainerRequest {
+  InventoryScope scope = 1;
+  BlockPosition position = 2;
+  optional string idempotency_key = 3;
+}
+
+message CloseSemanticContainerRequest {
+  InventoryScope scope = 1;
+  int32 container_id = 2;
+  optional string idempotency_key = 3;
+}
+
+service InventoryService {
+  rpc GetContainerSnapshot (GetContainerSnapshotRequest) returns (GetContainerSnapshotResponse) {
+    option (google.api.http) = { post: "/v1/inventory:snapshot" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Get container snapshot"
+      permissions: "READ_BOT_INFO"
+      scope: "instance.bot"
+    };
+  }
+
+  rpc CountItems (CountItemsRequest) returns (CountItemsResponse) {
+    option (google.api.http) = { post: "/v1/inventory:count" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Count inventory items"
+      permissions: "READ_BOT_INFO"
+      scope: "instance.bot"
+    };
+  }
+
+  rpc FindInventorySlots (FindInventorySlotsRequest) returns (FindInventorySlotsResponse) {
+    option (google.api.http) = { post: "/v1/inventory:find" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Find inventory slots"
+      permissions: "READ_BOT_INFO"
+      scope: "instance.bot"
+    };
+  }
+
+  rpc RankInventoryItems (RankInventoryItemsRequest) returns (RankInventoryItemsResponse) {
+    option (google.api.http) = { post: "/v1/inventory:rank" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Rank inventory items"
+      permissions: "READ_BOT_INFO"
+      scope: "instance.bot"
+    };
+  }
+
+  rpc MoveInventoryItem (MoveInventoryItemRequest) returns (InventoryMutationResponse) {
+    option (google.api.http) = { post: "/v1/inventory:move" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Move inventory item"
+      permissions: "CONTROL_BOT_ACTIONS"
+      scope: "instance.bot"
+      side_effects: "Mutates the bot's current inventory or container."
+    };
+  }
+
+  rpc TransferItems (TransferItemsRequest) returns (InventoryMutationResponse) {
+    option (google.api.http) = { post: "/v1/inventory:transfer" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Transfer items"
+      permissions: "CONTROL_BOT_ACTIONS"
+      scope: "instance.bot"
+      side_effects: "Moves matching stacks between the container and player inventory."
+    };
+  }
+
+  rpc TossItems (TossItemsRequest) returns (InventoryMutationResponse) {
+    option (google.api.http) = { post: "/v1/inventory:toss" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Toss inventory items"
+      permissions: "CONTROL_BOT_ACTIONS"
+      scope: "instance.bot"
+      side_effects: "Drops matching items into the Minecraft world."
+    };
+  }
+
+  rpc SelectHotbarItem (SelectHotbarItemRequest) returns (InventoryMutationResponse) {
+    option (google.api.http) = { post: "/v1/inventory/hotbar:select" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Select hotbar item"
+      permissions: "CONTROL_BOT_ACTIONS"
+      scope: "instance.bot"
+    };
+  }
+
+  rpc EquipItem (EquipItemRequest) returns (InventoryMutationResponse) {
+    option (google.api.http) = { post: "/v1/inventory:equip" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Equip item"
+      permissions: "CONTROL_BOT_ACTIONS"
+      scope: "instance.bot"
+    };
+  }
+
+  rpc UnequipItem (UnequipItemRequest) returns (InventoryMutationResponse) {
+    option (google.api.http) = { post: "/v1/inventory:unequip" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Unequip item"
+      permissions: "CONTROL_BOT_ACTIONS"
+      scope: "instance.bot"
+      side_effects: "Moves equipped gear into the player inventory."
+    };
+  }
+
+  rpc OpenBlockContainer (OpenBlockContainerRequest) returns (InventoryMutationResponse) {
+    option (google.api.http) = { post: "/v1/inventory/container:open" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Open block container"
+      permissions: "CONTROL_BOT_ACTIONS"
+      scope: "instance.bot"
+    };
+  }
+
+  rpc CloseSemanticContainer (CloseSemanticContainerRequest) returns (InventoryMutationResponse) {
+    option (google.api.http) = { post: "/v1/inventory/container:close" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Close container"
+      permissions: "CONTROL_BOT_ACTIONS"
+      scope: "instance.bot"
+    };
+  }
+}

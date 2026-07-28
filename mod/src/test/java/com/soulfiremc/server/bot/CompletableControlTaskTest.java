@@ -19,6 +19,7 @@ package com.soulfiremc.server.bot;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -51,5 +52,19 @@ final class CompletableControlTaskTest {
     assertTrue(control.cancel(task));
     assertEquals(0, runs.get());
     assertEquals(ControlStopReason.CANCELLED, task.completion().join());
+  }
+
+  @Test
+  void preservesTheDelegatesResourceClaims() {
+    var delegate = ControlTask.once(
+      "chat",
+      Set.of(ControlResource.CHAT),
+      () -> {
+      }
+    );
+
+    var task = new CompletableControlTask(delegate);
+
+    assertEquals(Set.of(ControlResource.CHAT), task.resources());
   }
 }

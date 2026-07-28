@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TypeAlias
 
 from connectrpc.request import RequestContext
 
-TokenProvider: TypeAlias = str | Callable[[], str | None]
+type TokenProvider = str | Callable[[], str | None]
 
 
 def resolve_token(token: TokenProvider | None) -> str | None:
@@ -18,7 +17,7 @@ class BearerAuthInterceptor:
     def __init__(self, token_provider: Callable[[], TokenProvider | None]) -> None:
         self._token_provider = token_provider
 
-    async def on_start(self, ctx: RequestContext) -> None:
+    async def on_start(self, ctx: RequestContext[object, object]) -> None:
         token = resolve_token(self._token_provider())
         if token:
             ctx.request_headers["Authorization"] = f"Bearer {token}"
@@ -26,7 +25,7 @@ class BearerAuthInterceptor:
     async def on_end(
         self,
         _token: None,
-        _ctx: RequestContext,
+        _ctx: RequestContext[object, object],
         _error: Exception | None,
     ) -> None:
         return None
@@ -36,7 +35,7 @@ class BearerAuthInterceptorSync:
     def __init__(self, token_provider: Callable[[], TokenProvider | None]) -> None:
         self._token_provider = token_provider
 
-    def on_start_sync(self, ctx: RequestContext) -> None:
+    def on_start_sync(self, ctx: RequestContext[object, object]) -> None:
         token = resolve_token(self._token_provider())
         if token:
             ctx.request_headers["Authorization"] = f"Bearer {token}"
@@ -44,7 +43,7 @@ class BearerAuthInterceptorSync:
     def on_end_sync(
         self,
         _token: None,
-        _ctx: RequestContext,
+        _ctx: RequestContext[object, object],
         _error: Exception | None,
     ) -> None:
         return None

@@ -24,12 +24,13 @@ _sym_db = _symbol_database.Default()
 
 from soulfire import common_pb2 as soulfire_dot_common__pb2
 from soulfire import api_docs_pb2 as soulfire_dot_api__docs__pb2
+from soulfire import plugin_api_pb2 as soulfire_dot_plugin__api__pb2
 from google.api import annotations_pb2 as google_dot_api_dot_annotations__pb2
 from google.api import field_behavior_pb2 as google_dot_api_dot_field__behavior__pb2
 from google.protobuf import timestamp_pb2 as google_dot_protobuf_dot_timestamp__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x13soulfire/user.proto\x12\x0bsoulfire.v1\x1a\x15soulfire/common.proto\x1a\x17soulfire/api_docs.proto\x1a\x1cgoogle/api/annotations.proto\x1a\x1fgoogle/api/field_behavior.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x8a\x01\n\x11UserCreateRequest\x12\x1f\n\x08username\x18\x01 \x01(\tB\x03\xe0\x41\x02R\x08username\x12.\n\x04role\x18\x02 \x01(\x0e\x32\x15.soulfire.v1.UserRoleB\x03\xe0\x41\x02R\x04role\x12$\n\x05\x65mail\x18\x03 \x01(\tB\x0e\xe0\x41\x02\xd2\xf3\x18\x07\n\x05\x65mailR\x05\x65mail\"3\n\x12UserCreateResponse\x12\x1d\n\x02id\x18\x01 \x01(\tB\r\xe0\x41\x02\xd2\xf3\x18\x06\n\x04uuidR\x02id\"2\n\x11UserDeleteRequest\x12\x1d\n\x02id\x18\x01 \x01(\tB\r\xe0\x41\x02\xd2\xf3\x18\x06\n\x04uuidR\x02id\"\x14\n\x12UserDeleteResponse\"\x11\n\x0fUserListRequest\"\x8f\x04\n\x10UserListResponse\x12@\n\x05users\x18\x01 \x03(\x0b\x32\".soulfire.v1.UserListResponse.UserB\x06\xe0\x41\x02\xe0\x41\x06R\x05users\x1a\xb8\x03\n\x04User\x12\x1d\n\x02id\x18\x01 \x01(\tB\r\xe0\x41\x02\xd2\xf3\x18\x06\n\x04uuidR\x02id\x12\x1f\n\x08username\x18\x02 \x01(\tB\x03\xe0\x41\x02R\x08username\x12.\n\x04role\x18\x03 \x01(\x0e\x32\x15.soulfire.v1.UserRoleB\x03\xe0\x41\x02R\x04role\x12$\n\x05\x65mail\x18\x04 \x01(\tB\x0e\xe0\x41\x02\xd2\xf3\x18\x07\n\x05\x65mailR\x05\x65mail\x12>\n\ncreated_at\x18\x05 \x01(\x0b\x32\x1a.google.protobuf.TimestampB\x03\xe0\x41\x02R\tcreatedAt\x12>\n\nupdated_at\x18\x06 \x01(\x0b\x32\x1a.google.protobuf.TimestampB\x03\xe0\x41\x02R\tupdatedAt\x12\x43\n\rlast_login_at\x18\x07 \x01(\x0b\x32\x1a.google.protobuf.TimestampH\x00R\x0blastLoginAt\x88\x01\x01\x12\x43\n\rmin_issued_at\x18\x08 \x01(\x0b\x32\x1a.google.protobuf.TimestampB\x03\xe0\x41\x02R\x0bminIssuedAtB\x10\n\x0e_last_login_at\"0\n\x0fUserInfoRequest\x12\x1d\n\x02id\x18\x01 \x01(\tB\r\xe0\x41\x02\xd2\xf3\x18\x06\n\x04uuidR\x02id\"\xa5\x03\n\x10UserInfoResponse\x12\x1f\n\x08username\x18\x01 \x01(\tB\x03\xe0\x41\x02R\x08username\x12.\n\x04role\x18\x02 \x01(\x0e\x32\x15.soulfire.v1.UserRoleB\x03\xe0\x41\x02R\x04role\x12$\n\x05\x65mail\x18\x03 \x01(\tB\x0e\xe0\x41\x02\xd2\xf3\x18\x07\n\x05\x65mailR\x05\x65mail\x12>\n\ncreated_at\x18\x04 \x01(\x0b\x32\x1a.google.protobuf.TimestampB\x03\xe0\x41\x02R\tcreatedAt\x12>\n\nupdated_at\x18\x05 \x01(\x0b\x32\x1a.google.protobuf.TimestampB\x03\xe0\x41\x02R\tupdatedAt\x12\x43\n\rlast_login_at\x18\x06 \x01(\x0b\x32\x1a.google.protobuf.TimestampH\x00R\x0blastLoginAt\x88\x01\x01\x12\x43\n\rmin_issued_at\x18\x07 \x01(\x0b\x32\x1a.google.protobuf.TimestampB\x03\xe0\x41\x02R\x0bminIssuedAtB\x10\n\x0e_last_login_at\":\n\x19InvalidateSessionsRequest\x12\x1d\n\x02id\x18\x01 \x01(\tB\r\xe0\x41\x02\xd2\xf3\x18\x06\n\x04uuidR\x02id\"\x1c\n\x1aInvalidateSessionsResponse\"\xa9\x01\n\x11UpdateUserRequest\x12\x1d\n\x02id\x18\x01 \x01(\tB\r\xe0\x41\x02\xd2\xf3\x18\x06\n\x04uuidR\x02id\x12\x1f\n\x08username\x18\x02 \x01(\tB\x03\xe0\x41\x02R\x08username\x12.\n\x04role\x18\x03 \x01(\x0e\x32\x15.soulfire.v1.UserRoleB\x03\xe0\x41\x02R\x04role\x12$\n\x05\x65mail\x18\x04 \x01(\tB\x0e\xe0\x41\x02\xd2\xf3\x18\x07\n\x05\x65mailR\x05\x65mail\"\x14\n\x12UpdateUserResponse\"<\n\x1bGenerateUserAPITokenRequest\x12\x1d\n\x02id\x18\x01 \x01(\tB\r\xe0\x41\x02\xd2\xf3\x18\x06\n\x04uuidR\x02id\"9\n\x1cGenerateUserAPITokenResponse\x12\x19\n\x05token\x18\x01 \x01(\tB\x03\xe0\x41\x02R\x05token2\xe0\n\n\x0bUserService\x12\xab\x01\n\nCreateUser\x12\x1e.soulfire.v1.UserCreateRequest\x1a\x1f.soulfire.v1.UserCreateResponse\"\\\xca\xf3\x18\x44\n\x0b\x43reate user\x1a\x0b\x43REATE_USER\"\x0bserver.user:\x1b\x43reates a new user account.\x82\xd3\xe4\x93\x02\x0e\"\t/v1/users:\x01*\x12\xba\x01\n\nDeleteUser\x12\x1e.soulfire.v1.UserDeleteRequest\x1a\x1f.soulfire.v1.UserDeleteResponse\"k\xca\xf3\x18Q\n\x0b\x44\x65lete user\x1a\x0b\x44\x45LETE_USER\"\x0bserver.user:(Deletes the user and related owned data.\x82\xd3\xe4\x93\x02\x10*\x0e/v1/users/{id}\x12\x83\x01\n\tListUsers\x12\x1c.soulfire.v1.UserListRequest\x1a\x1d.soulfire.v1.UserListResponse\"9\xca\xf3\x18$\n\nList users\x1a\tREAD_USER\"\x0bserver.user\x82\xd3\xe4\x93\x02\x0b\x12\t/v1/users\x12\x88\x01\n\x0bGetUserInfo\x12\x1c.soulfire.v1.UserInfoRequest\x1a\x1d.soulfire.v1.UserInfoResponse\"<\xca\xf3\x18\"\n\x08Get user\x1a\tREAD_USER\"\x0bserver.user\x82\xd3\xe4\x93\x02\x10\x12\x0e/v1/users/{id}\x12\x89\x02\n\x12InvalidateSessions\x12&.soulfire.v1.InvalidateSessionsRequest\x1a\'.soulfire.v1.InvalidateSessionsResponse\"\xa1\x01\xca\xf3\x18s\n\x18Invalidate user sessions\x1a\x13INVALIDATE_SESSIONS\"\x0bserver.user:5Revokes previously issued tokens for the target user.\x82\xd3\xe4\x93\x02$\"\"/v1/users/{id}/sessions:invalidate\x12\xc4\x01\n\nUpdateUser\x12\x1e.soulfire.v1.UpdateUserRequest\x1a\x1f.soulfire.v1.UpdateUserResponse\"u\xca\xf3\x18X\n\x0bUpdate user\x1a\x0bUPDATE_USER\"\x0bserver.user:/Persists the updated username, role, and email.\x82\xd3\xe4\x93\x02\x13\x32\x0e/v1/users/{id}:\x01*\x12\x81\x02\n\x14GenerateUserAPIToken\x12(.soulfire.v1.GenerateUserAPITokenRequest\x1a).soulfire.v1.GenerateUserAPITokenResponse\"\x93\x01\xca\xf3\x18\x65\n\x17Generate user API token\x1a\x12GENERATE_API_TOKEN\"\x0bserver.user:)Issues a new API JWT for the target user.\x82\xd3\xe4\x93\x02$\"\"/v1/users/{id}/tokens/api:generateB!\n\x1d\x63om.soulfiremc.grpc.generatedP\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x13soulfire/user.proto\x12\x0bsoulfire.v1\x1a\x15soulfire/common.proto\x1a\x17soulfire/api_docs.proto\x1a\x19soulfire/plugin_api.proto\x1a\x1cgoogle/api/annotations.proto\x1a\x1fgoogle/api/field_behavior.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x8a\x01\n\x11UserCreateRequest\x12\x1f\n\x08username\x18\x01 \x01(\tB\x03\xe0\x41\x02R\x08username\x12.\n\x04role\x18\x02 \x01(\x0e\x32\x15.soulfire.v1.UserRoleB\x03\xe0\x41\x02R\x04role\x12$\n\x05\x65mail\x18\x03 \x01(\tB\x0e\xe0\x41\x02\xd2\xf3\x18\x07\n\x05\x65mailR\x05\x65mail\"3\n\x12UserCreateResponse\x12\x1d\n\x02id\x18\x01 \x01(\tB\r\xe0\x41\x02\xd2\xf3\x18\x06\n\x04uuidR\x02id\"2\n\x11UserDeleteRequest\x12\x1d\n\x02id\x18\x01 \x01(\tB\r\xe0\x41\x02\xd2\xf3\x18\x06\n\x04uuidR\x02id\"\x14\n\x12UserDeleteResponse\"\x11\n\x0fUserListRequest\"\x8f\x04\n\x10UserListResponse\x12@\n\x05users\x18\x01 \x03(\x0b\x32\".soulfire.v1.UserListResponse.UserB\x06\xe0\x41\x02\xe0\x41\x06R\x05users\x1a\xb8\x03\n\x04User\x12\x1d\n\x02id\x18\x01 \x01(\tB\r\xe0\x41\x02\xd2\xf3\x18\x06\n\x04uuidR\x02id\x12\x1f\n\x08username\x18\x02 \x01(\tB\x03\xe0\x41\x02R\x08username\x12.\n\x04role\x18\x03 \x01(\x0e\x32\x15.soulfire.v1.UserRoleB\x03\xe0\x41\x02R\x04role\x12$\n\x05\x65mail\x18\x04 \x01(\tB\x0e\xe0\x41\x02\xd2\xf3\x18\x07\n\x05\x65mailR\x05\x65mail\x12>\n\ncreated_at\x18\x05 \x01(\x0b\x32\x1a.google.protobuf.TimestampB\x03\xe0\x41\x02R\tcreatedAt\x12>\n\nupdated_at\x18\x06 \x01(\x0b\x32\x1a.google.protobuf.TimestampB\x03\xe0\x41\x02R\tupdatedAt\x12\x43\n\rlast_login_at\x18\x07 \x01(\x0b\x32\x1a.google.protobuf.TimestampH\x00R\x0blastLoginAt\x88\x01\x01\x12\x43\n\rmin_issued_at\x18\x08 \x01(\x0b\x32\x1a.google.protobuf.TimestampB\x03\xe0\x41\x02R\x0bminIssuedAtB\x10\n\x0e_last_login_at\"0\n\x0fUserInfoRequest\x12\x1d\n\x02id\x18\x01 \x01(\tB\r\xe0\x41\x02\xd2\xf3\x18\x06\n\x04uuidR\x02id\"\xa5\x03\n\x10UserInfoResponse\x12\x1f\n\x08username\x18\x01 \x01(\tB\x03\xe0\x41\x02R\x08username\x12.\n\x04role\x18\x02 \x01(\x0e\x32\x15.soulfire.v1.UserRoleB\x03\xe0\x41\x02R\x04role\x12$\n\x05\x65mail\x18\x03 \x01(\tB\x0e\xe0\x41\x02\xd2\xf3\x18\x07\n\x05\x65mailR\x05\x65mail\x12>\n\ncreated_at\x18\x04 \x01(\x0b\x32\x1a.google.protobuf.TimestampB\x03\xe0\x41\x02R\tcreatedAt\x12>\n\nupdated_at\x18\x05 \x01(\x0b\x32\x1a.google.protobuf.TimestampB\x03\xe0\x41\x02R\tupdatedAt\x12\x43\n\rlast_login_at\x18\x06 \x01(\x0b\x32\x1a.google.protobuf.TimestampH\x00R\x0blastLoginAt\x88\x01\x01\x12\x43\n\rmin_issued_at\x18\x07 \x01(\x0b\x32\x1a.google.protobuf.TimestampB\x03\xe0\x41\x02R\x0bminIssuedAtB\x10\n\x0e_last_login_at\":\n\x19InvalidateSessionsRequest\x12\x1d\n\x02id\x18\x01 \x01(\tB\r\xe0\x41\x02\xd2\xf3\x18\x06\n\x04uuidR\x02id\"\x1c\n\x1aInvalidateSessionsResponse\"\xa9\x01\n\x11UpdateUserRequest\x12\x1d\n\x02id\x18\x01 \x01(\tB\r\xe0\x41\x02\xd2\xf3\x18\x06\n\x04uuidR\x02id\x12\x1f\n\x08username\x18\x02 \x01(\tB\x03\xe0\x41\x02R\x08username\x12.\n\x04role\x18\x03 \x01(\x0e\x32\x15.soulfire.v1.UserRoleB\x03\xe0\x41\x02R\x04role\x12$\n\x05\x65mail\x18\x04 \x01(\tB\x0e\xe0\x41\x02\xd2\xf3\x18\x07\n\x05\x65mailR\x05\x65mail\"\x14\n\x12UpdateUserResponse\"<\n\x1bGenerateUserAPITokenRequest\x12\x1d\n\x02id\x18\x01 \x01(\tB\r\xe0\x41\x02\xd2\xf3\x18\x06\n\x04uuidR\x02id\"9\n\x1cGenerateUserAPITokenResponse\x12\x19\n\x05token\x18\x01 \x01(\tB\x03\xe0\x41\x02R\x05token\"\xaa\x03\n\x19UserPluginPermissionGrant\x12&\n\x07user_id\x18\x01 \x01(\tB\r\xe0\x41\x02\xd2\xf3\x18\x06\n\x04uuidR\x06userId\x12(\n\rpermission_id\x18\x02 \x01(\tB\x03\xe0\x41\x02R\x0cpermissionId\x12=\n\x05scope\x18\x03 \x01(\x0e\x32\".soulfire.v1.PluginPermissionScopeB\x03\xe0\x41\x02R\x05scope\x12\x30\n\x0bresource_id\x18\x04 \x01(\tB\n\xd2\xf3\x18\x06\n\x04uuidH\x00R\nresourceId\x88\x01\x01\x12\x1d\n\x07granted\x18\x05 \x01(\x08\x42\x03\xe0\x41\x02R\x07granted\x12\x1b\n\x06\x61\x63tive\x18\x06 \x01(\x08\x42\x03\xe0\x41\x02R\x06\x61\x63tive\x12>\n\ncreated_at\x18\x07 \x01(\x0b\x32\x1a.google.protobuf.TimestampB\x03\xe0\x41\x02R\tcreatedAt\x12>\n\nupdated_at\x18\x08 \x01(\x0b\x32\x1a.google.protobuf.TimestampB\x03\xe0\x41\x02R\tupdatedAtB\x0e\n\x0c_resource_id\"O\n%ListUserPluginPermissionGrantsRequest\x12&\n\x07user_id\x18\x01 \x01(\tB\r\xe0\x41\x02\xd2\xf3\x18\x06\n\x04uuidR\x06userId\"m\n&ListUserPluginPermissionGrantsResponse\x12\x43\n\x06grants\x18\x01 \x03(\x0b\x32&.soulfire.v1.UserPluginPermissionGrantB\x03\xe0\x41\x02R\x06grants\"\x97\x02\n#SetUserPluginPermissionGrantRequest\x12&\n\x07user_id\x18\x01 \x01(\tB\r\xe0\x41\x02\xd2\xf3\x18\x06\n\x04uuidR\x06userId\x12(\n\rpermission_id\x18\x02 \x01(\tB\x03\xe0\x41\x02R\x0cpermissionId\x12=\n\x05scope\x18\x03 \x01(\x0e\x32\".soulfire.v1.PluginPermissionScopeB\x03\xe0\x41\x02R\x05scope\x12\x30\n\x0bresource_id\x18\x04 \x01(\tB\n\xd2\xf3\x18\x06\n\x04uuidH\x00R\nresourceId\x88\x01\x01\x12\x1d\n\x07granted\x18\x05 \x01(\x08\x42\x03\xe0\x41\x02R\x07grantedB\x0e\n\x0c_resource_id\"\xfb\x01\n&DeleteUserPluginPermissionGrantRequest\x12&\n\x07user_id\x18\x01 \x01(\tB\r\xe0\x41\x02\xd2\xf3\x18\x06\n\x04uuidR\x06userId\x12(\n\rpermission_id\x18\x02 \x01(\tB\x03\xe0\x41\x02R\x0cpermissionId\x12=\n\x05scope\x18\x03 \x01(\x0e\x32\".soulfire.v1.PluginPermissionScopeB\x03\xe0\x41\x02R\x05scope\x12\x30\n\x0bresource_id\x18\x04 \x01(\tB\n\xd2\xf3\x18\x06\n\x04uuidH\x00R\nresourceId\x88\x01\x01\x42\x0e\n\x0c_resource_id\")\n\'DeleteUserPluginPermissionGrantResponse2\xd4\x11\n\x0bUserService\x12\xab\x01\n\nCreateUser\x12\x1e.soulfire.v1.UserCreateRequest\x1a\x1f.soulfire.v1.UserCreateResponse\"\\\xca\xf3\x18\x44\n\x0b\x43reate user\x1a\x0b\x43REATE_USER\"\x0bserver.user:\x1b\x43reates a new user account.\x82\xd3\xe4\x93\x02\x0e\"\t/v1/users:\x01*\x12\xba\x01\n\nDeleteUser\x12\x1e.soulfire.v1.UserDeleteRequest\x1a\x1f.soulfire.v1.UserDeleteResponse\"k\xca\xf3\x18Q\n\x0b\x44\x65lete user\x1a\x0b\x44\x45LETE_USER\"\x0bserver.user:(Deletes the user and related owned data.\x82\xd3\xe4\x93\x02\x10*\x0e/v1/users/{id}\x12\x83\x01\n\tListUsers\x12\x1c.soulfire.v1.UserListRequest\x1a\x1d.soulfire.v1.UserListResponse\"9\xca\xf3\x18$\n\nList users\x1a\tREAD_USER\"\x0bserver.user\x82\xd3\xe4\x93\x02\x0b\x12\t/v1/users\x12\x88\x01\n\x0bGetUserInfo\x12\x1c.soulfire.v1.UserInfoRequest\x1a\x1d.soulfire.v1.UserInfoResponse\"<\xca\xf3\x18\"\n\x08Get user\x1a\tREAD_USER\"\x0bserver.user\x82\xd3\xe4\x93\x02\x10\x12\x0e/v1/users/{id}\x12\x89\x02\n\x12InvalidateSessions\x12&.soulfire.v1.InvalidateSessionsRequest\x1a\'.soulfire.v1.InvalidateSessionsResponse\"\xa1\x01\xca\xf3\x18s\n\x18Invalidate user sessions\x1a\x13INVALIDATE_SESSIONS\"\x0bserver.user:5Revokes previously issued tokens for the target user.\x82\xd3\xe4\x93\x02$\"\"/v1/users/{id}/sessions:invalidate\x12\xc4\x01\n\nUpdateUser\x12\x1e.soulfire.v1.UpdateUserRequest\x1a\x1f.soulfire.v1.UpdateUserResponse\"u\xca\xf3\x18X\n\x0bUpdate user\x1a\x0bUPDATE_USER\"\x0bserver.user:/Persists the updated username, role, and email.\x82\xd3\xe4\x93\x02\x13\x32\x0e/v1/users/{id}:\x01*\x12\x81\x02\n\x14GenerateUserAPIToken\x12(.soulfire.v1.GenerateUserAPITokenRequest\x1a).soulfire.v1.GenerateUserAPITokenResponse\"\x93\x01\xca\xf3\x18\x65\n\x17Generate user API token\x1a\x12GENERATE_API_TOKEN\"\x0bserver.user:)Issues a new API JWT for the target user.\x82\xd3\xe4\x93\x02$\"\"/v1/users/{id}/tokens/api:generate\x12\xf9\x01\n\x1eListUserPluginPermissionGrants\x12\x32.soulfire.v1.ListUserPluginPermissionGrantsRequest\x1a\x33.soulfire.v1.ListUserPluginPermissionGrantsResponse\"n\xca\xf3\x18<\n\"List user plugin permission grants\x1a\tREAD_USER\"\x0bserver.user\x82\xd3\xe4\x93\x02(\x12&/v1/users/{user_id}/plugin-permissions\x12\xac\x02\n\x1cSetUserPluginPermissionGrant\x12\x30.soulfire.v1.SetUserPluginPermissionGrantRequest\x1a&.soulfire.v1.UserPluginPermissionGrant\"\xb1\x01\xca\xf3\x18l\n Set user plugin permission grant\x1a\x0bUPDATE_USER\"\x0bserver.user:.Changes a user\'s effective plugin permissions.\x82\xd3\xe4\x93\x02;\x1a\x36/v1/users/{user_id}/plugin-permissions/{permission_id}:\x01*\x12\xc6\x02\n\x1f\x44\x65leteUserPluginPermissionGrant\x12\x33.soulfire.v1.DeleteUserPluginPermissionGrantRequest\x1a\x34.soulfire.v1.DeleteUserPluginPermissionGrantResponse\"\xb7\x01\xca\xf3\x18u\n#Delete user plugin permission grant\x1a\x0bUPDATE_USER\"\x0bserver.user:4Restores a plugin permission\'s default grant policy.\x82\xd3\xe4\x93\x02\x38*6/v1/users/{user_id}/plugin-permissions/{permission_id}B!\n\x1d\x63om.soulfiremc.grpc.generatedP\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -91,6 +92,44 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_GENERATEUSERAPITOKENREQUEST'].fields_by_name['id']._serialized_options = b'\340A\002\322\363\030\006\n\004uuid'
   _globals['_GENERATEUSERAPITOKENRESPONSE'].fields_by_name['token']._loaded_options = None
   _globals['_GENERATEUSERAPITOKENRESPONSE'].fields_by_name['token']._serialized_options = b'\340A\002'
+  _globals['_USERPLUGINPERMISSIONGRANT'].fields_by_name['user_id']._loaded_options = None
+  _globals['_USERPLUGINPERMISSIONGRANT'].fields_by_name['user_id']._serialized_options = b'\340A\002\322\363\030\006\n\004uuid'
+  _globals['_USERPLUGINPERMISSIONGRANT'].fields_by_name['permission_id']._loaded_options = None
+  _globals['_USERPLUGINPERMISSIONGRANT'].fields_by_name['permission_id']._serialized_options = b'\340A\002'
+  _globals['_USERPLUGINPERMISSIONGRANT'].fields_by_name['scope']._loaded_options = None
+  _globals['_USERPLUGINPERMISSIONGRANT'].fields_by_name['scope']._serialized_options = b'\340A\002'
+  _globals['_USERPLUGINPERMISSIONGRANT'].fields_by_name['resource_id']._loaded_options = None
+  _globals['_USERPLUGINPERMISSIONGRANT'].fields_by_name['resource_id']._serialized_options = b'\322\363\030\006\n\004uuid'
+  _globals['_USERPLUGINPERMISSIONGRANT'].fields_by_name['granted']._loaded_options = None
+  _globals['_USERPLUGINPERMISSIONGRANT'].fields_by_name['granted']._serialized_options = b'\340A\002'
+  _globals['_USERPLUGINPERMISSIONGRANT'].fields_by_name['active']._loaded_options = None
+  _globals['_USERPLUGINPERMISSIONGRANT'].fields_by_name['active']._serialized_options = b'\340A\002'
+  _globals['_USERPLUGINPERMISSIONGRANT'].fields_by_name['created_at']._loaded_options = None
+  _globals['_USERPLUGINPERMISSIONGRANT'].fields_by_name['created_at']._serialized_options = b'\340A\002'
+  _globals['_USERPLUGINPERMISSIONGRANT'].fields_by_name['updated_at']._loaded_options = None
+  _globals['_USERPLUGINPERMISSIONGRANT'].fields_by_name['updated_at']._serialized_options = b'\340A\002'
+  _globals['_LISTUSERPLUGINPERMISSIONGRANTSREQUEST'].fields_by_name['user_id']._loaded_options = None
+  _globals['_LISTUSERPLUGINPERMISSIONGRANTSREQUEST'].fields_by_name['user_id']._serialized_options = b'\340A\002\322\363\030\006\n\004uuid'
+  _globals['_LISTUSERPLUGINPERMISSIONGRANTSRESPONSE'].fields_by_name['grants']._loaded_options = None
+  _globals['_LISTUSERPLUGINPERMISSIONGRANTSRESPONSE'].fields_by_name['grants']._serialized_options = b'\340A\002'
+  _globals['_SETUSERPLUGINPERMISSIONGRANTREQUEST'].fields_by_name['user_id']._loaded_options = None
+  _globals['_SETUSERPLUGINPERMISSIONGRANTREQUEST'].fields_by_name['user_id']._serialized_options = b'\340A\002\322\363\030\006\n\004uuid'
+  _globals['_SETUSERPLUGINPERMISSIONGRANTREQUEST'].fields_by_name['permission_id']._loaded_options = None
+  _globals['_SETUSERPLUGINPERMISSIONGRANTREQUEST'].fields_by_name['permission_id']._serialized_options = b'\340A\002'
+  _globals['_SETUSERPLUGINPERMISSIONGRANTREQUEST'].fields_by_name['scope']._loaded_options = None
+  _globals['_SETUSERPLUGINPERMISSIONGRANTREQUEST'].fields_by_name['scope']._serialized_options = b'\340A\002'
+  _globals['_SETUSERPLUGINPERMISSIONGRANTREQUEST'].fields_by_name['resource_id']._loaded_options = None
+  _globals['_SETUSERPLUGINPERMISSIONGRANTREQUEST'].fields_by_name['resource_id']._serialized_options = b'\322\363\030\006\n\004uuid'
+  _globals['_SETUSERPLUGINPERMISSIONGRANTREQUEST'].fields_by_name['granted']._loaded_options = None
+  _globals['_SETUSERPLUGINPERMISSIONGRANTREQUEST'].fields_by_name['granted']._serialized_options = b'\340A\002'
+  _globals['_DELETEUSERPLUGINPERMISSIONGRANTREQUEST'].fields_by_name['user_id']._loaded_options = None
+  _globals['_DELETEUSERPLUGINPERMISSIONGRANTREQUEST'].fields_by_name['user_id']._serialized_options = b'\340A\002\322\363\030\006\n\004uuid'
+  _globals['_DELETEUSERPLUGINPERMISSIONGRANTREQUEST'].fields_by_name['permission_id']._loaded_options = None
+  _globals['_DELETEUSERPLUGINPERMISSIONGRANTREQUEST'].fields_by_name['permission_id']._serialized_options = b'\340A\002'
+  _globals['_DELETEUSERPLUGINPERMISSIONGRANTREQUEST'].fields_by_name['scope']._loaded_options = None
+  _globals['_DELETEUSERPLUGINPERMISSIONGRANTREQUEST'].fields_by_name['scope']._serialized_options = b'\340A\002'
+  _globals['_DELETEUSERPLUGINPERMISSIONGRANTREQUEST'].fields_by_name['resource_id']._loaded_options = None
+  _globals['_DELETEUSERPLUGINPERMISSIONGRANTREQUEST'].fields_by_name['resource_id']._serialized_options = b'\322\363\030\006\n\004uuid'
   _globals['_USERSERVICE'].methods_by_name['CreateUser']._loaded_options = None
   _globals['_USERSERVICE'].methods_by_name['CreateUser']._serialized_options = b'\312\363\030D\n\013Create user\032\013CREATE_USER\"\013server.user:\033Creates a new user account.\202\323\344\223\002\016\"\t/v1/users:\001*'
   _globals['_USERSERVICE'].methods_by_name['DeleteUser']._loaded_options = None
@@ -105,36 +144,54 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_USERSERVICE'].methods_by_name['UpdateUser']._serialized_options = b'\312\363\030X\n\013Update user\032\013UPDATE_USER\"\013server.user:/Persists the updated username, role, and email.\202\323\344\223\002\0232\016/v1/users/{id}:\001*'
   _globals['_USERSERVICE'].methods_by_name['GenerateUserAPIToken']._loaded_options = None
   _globals['_USERSERVICE'].methods_by_name['GenerateUserAPIToken']._serialized_options = b'\312\363\030e\n\027Generate user API token\032\022GENERATE_API_TOKEN\"\013server.user:)Issues a new API JWT for the target user.\202\323\344\223\002$\"\"/v1/users/{id}/tokens/api:generate'
-  _globals['_USERCREATEREQUEST']._serialized_start=181
-  _globals['_USERCREATEREQUEST']._serialized_end=319
-  _globals['_USERCREATERESPONSE']._serialized_start=321
-  _globals['_USERCREATERESPONSE']._serialized_end=372
-  _globals['_USERDELETEREQUEST']._serialized_start=374
-  _globals['_USERDELETEREQUEST']._serialized_end=424
-  _globals['_USERDELETERESPONSE']._serialized_start=426
-  _globals['_USERDELETERESPONSE']._serialized_end=446
-  _globals['_USERLISTREQUEST']._serialized_start=448
-  _globals['_USERLISTREQUEST']._serialized_end=465
-  _globals['_USERLISTRESPONSE']._serialized_start=468
-  _globals['_USERLISTRESPONSE']._serialized_end=995
-  _globals['_USERLISTRESPONSE_USER']._serialized_start=555
-  _globals['_USERLISTRESPONSE_USER']._serialized_end=995
-  _globals['_USERINFOREQUEST']._serialized_start=997
-  _globals['_USERINFOREQUEST']._serialized_end=1045
-  _globals['_USERINFORESPONSE']._serialized_start=1048
-  _globals['_USERINFORESPONSE']._serialized_end=1469
-  _globals['_INVALIDATESESSIONSREQUEST']._serialized_start=1471
-  _globals['_INVALIDATESESSIONSREQUEST']._serialized_end=1529
-  _globals['_INVALIDATESESSIONSRESPONSE']._serialized_start=1531
-  _globals['_INVALIDATESESSIONSRESPONSE']._serialized_end=1559
-  _globals['_UPDATEUSERREQUEST']._serialized_start=1562
-  _globals['_UPDATEUSERREQUEST']._serialized_end=1731
-  _globals['_UPDATEUSERRESPONSE']._serialized_start=1733
-  _globals['_UPDATEUSERRESPONSE']._serialized_end=1753
-  _globals['_GENERATEUSERAPITOKENREQUEST']._serialized_start=1755
-  _globals['_GENERATEUSERAPITOKENREQUEST']._serialized_end=1815
-  _globals['_GENERATEUSERAPITOKENRESPONSE']._serialized_start=1817
-  _globals['_GENERATEUSERAPITOKENRESPONSE']._serialized_end=1874
-  _globals['_USERSERVICE']._serialized_start=1877
-  _globals['_USERSERVICE']._serialized_end=3253
+  _globals['_USERSERVICE'].methods_by_name['ListUserPluginPermissionGrants']._loaded_options = None
+  _globals['_USERSERVICE'].methods_by_name['ListUserPluginPermissionGrants']._serialized_options = b'\312\363\030<\n\"List user plugin permission grants\032\tREAD_USER\"\013server.user\202\323\344\223\002(\022&/v1/users/{user_id}/plugin-permissions'
+  _globals['_USERSERVICE'].methods_by_name['SetUserPluginPermissionGrant']._loaded_options = None
+  _globals['_USERSERVICE'].methods_by_name['SetUserPluginPermissionGrant']._serialized_options = b'\312\363\030l\n Set user plugin permission grant\032\013UPDATE_USER\"\013server.user:.Changes a user\'s effective plugin permissions.\202\323\344\223\002;\0326/v1/users/{user_id}/plugin-permissions/{permission_id}:\001*'
+  _globals['_USERSERVICE'].methods_by_name['DeleteUserPluginPermissionGrant']._loaded_options = None
+  _globals['_USERSERVICE'].methods_by_name['DeleteUserPluginPermissionGrant']._serialized_options = b'\312\363\030u\n#Delete user plugin permission grant\032\013UPDATE_USER\"\013server.user:4Restores a plugin permission\'s default grant policy.\202\323\344\223\0028*6/v1/users/{user_id}/plugin-permissions/{permission_id}'
+  _globals['_USERCREATEREQUEST']._serialized_start=208
+  _globals['_USERCREATEREQUEST']._serialized_end=346
+  _globals['_USERCREATERESPONSE']._serialized_start=348
+  _globals['_USERCREATERESPONSE']._serialized_end=399
+  _globals['_USERDELETEREQUEST']._serialized_start=401
+  _globals['_USERDELETEREQUEST']._serialized_end=451
+  _globals['_USERDELETERESPONSE']._serialized_start=453
+  _globals['_USERDELETERESPONSE']._serialized_end=473
+  _globals['_USERLISTREQUEST']._serialized_start=475
+  _globals['_USERLISTREQUEST']._serialized_end=492
+  _globals['_USERLISTRESPONSE']._serialized_start=495
+  _globals['_USERLISTRESPONSE']._serialized_end=1022
+  _globals['_USERLISTRESPONSE_USER']._serialized_start=582
+  _globals['_USERLISTRESPONSE_USER']._serialized_end=1022
+  _globals['_USERINFOREQUEST']._serialized_start=1024
+  _globals['_USERINFOREQUEST']._serialized_end=1072
+  _globals['_USERINFORESPONSE']._serialized_start=1075
+  _globals['_USERINFORESPONSE']._serialized_end=1496
+  _globals['_INVALIDATESESSIONSREQUEST']._serialized_start=1498
+  _globals['_INVALIDATESESSIONSREQUEST']._serialized_end=1556
+  _globals['_INVALIDATESESSIONSRESPONSE']._serialized_start=1558
+  _globals['_INVALIDATESESSIONSRESPONSE']._serialized_end=1586
+  _globals['_UPDATEUSERREQUEST']._serialized_start=1589
+  _globals['_UPDATEUSERREQUEST']._serialized_end=1758
+  _globals['_UPDATEUSERRESPONSE']._serialized_start=1760
+  _globals['_UPDATEUSERRESPONSE']._serialized_end=1780
+  _globals['_GENERATEUSERAPITOKENREQUEST']._serialized_start=1782
+  _globals['_GENERATEUSERAPITOKENREQUEST']._serialized_end=1842
+  _globals['_GENERATEUSERAPITOKENRESPONSE']._serialized_start=1844
+  _globals['_GENERATEUSERAPITOKENRESPONSE']._serialized_end=1901
+  _globals['_USERPLUGINPERMISSIONGRANT']._serialized_start=1904
+  _globals['_USERPLUGINPERMISSIONGRANT']._serialized_end=2330
+  _globals['_LISTUSERPLUGINPERMISSIONGRANTSREQUEST']._serialized_start=2332
+  _globals['_LISTUSERPLUGINPERMISSIONGRANTSREQUEST']._serialized_end=2411
+  _globals['_LISTUSERPLUGINPERMISSIONGRANTSRESPONSE']._serialized_start=2413
+  _globals['_LISTUSERPLUGINPERMISSIONGRANTSRESPONSE']._serialized_end=2522
+  _globals['_SETUSERPLUGINPERMISSIONGRANTREQUEST']._serialized_start=2525
+  _globals['_SETUSERPLUGINPERMISSIONGRANTREQUEST']._serialized_end=2804
+  _globals['_DELETEUSERPLUGINPERMISSIONGRANTREQUEST']._serialized_start=2807
+  _globals['_DELETEUSERPLUGINPERMISSIONGRANTREQUEST']._serialized_end=3058
+  _globals['_DELETEUSERPLUGINPERMISSIONGRANTRESPONSE']._serialized_start=3060
+  _globals['_DELETEUSERPLUGINPERMISSIONGRANTRESPONSE']._serialized_end=3101
+  _globals['_USERSERVICE']._serialized_start=3104
+  _globals['_USERSERVICE']._serialized_end=5364
 # @@protoc_insertion_point(module_scope)

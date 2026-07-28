@@ -485,6 +485,8 @@ message InstanceAuditLogResponse {
     BOT_DESIRED_STATE_CHANGE = 14;
     // One or more bots were restarted.
     BOT_RESTART = 15;
+    // A permission-scoped plugin RPC completed.
+    PLUGIN_RPC = 16;
   }
 
   // A single entry in the audit log.

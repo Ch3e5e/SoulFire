@@ -21,12 +21,14 @@ import com.soulfiremc.server.bot.BotConnection;
 import com.soulfiremc.server.pathfinding.SFVec3i;
 import com.soulfiremc.server.util.MathHelper;
 import com.soulfiremc.server.util.VectorHelper;
+import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 @RequiredArgsConstructor
 public final class GapJumpAction implements WorldAction {
+  @Getter
   private final SFVec3i blockPosition;
   private final int gapLength;
   private int noJumpTicks;

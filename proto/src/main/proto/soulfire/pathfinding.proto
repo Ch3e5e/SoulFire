@@ -1,0 +1,82 @@
+syntax = "proto3";
+
+option java_package = "com.soulfiremc.grpc.generated";
+option java_multiple_files = true;
+
+package soulfire.v1;
+
+import "google/api/annotations.proto";
+import "google/api/field_behavior.proto";
+import "soulfire/api_docs.proto";
+import "soulfire/bot_live.proto";
+import "soulfire/common.proto";
+
+enum PathStepKind {
+  PATH_STEP_KIND_UNSPECIFIED = 0;
+  PATH_STEP_KIND_MOVE = 1;
+  PATH_STEP_KIND_BREAK_BLOCK = 2;
+  PATH_STEP_KIND_PLACE_BLOCK = 3;
+  PATH_STEP_KIND_JUMP = 4;
+  PATH_STEP_KIND_INTERACT = 5;
+  PATH_STEP_KIND_RECALCULATE = 6;
+}
+
+enum PathPlanStatus {
+  PATH_PLAN_STATUS_UNSPECIFIED = 0;
+  PATH_PLAN_STATUS_COMPLETE = 1;
+  PATH_PLAN_STATUS_PARTIAL = 2;
+  PATH_PLAN_STATUS_UNREACHABLE = 3;
+  PATH_PLAN_STATUS_SEARCH_EXPIRED = 4;
+  PATH_PLAN_STATUS_CANCELLED = 5;
+}
+
+message PathStep {
+  uint32 index = 1 [(google.api.field_behavior) = REQUIRED];
+  PathStepKind kind = 2 [(google.api.field_behavior) = REQUIRED];
+  BlockPosition position = 3 [(google.api.field_behavior) = REQUIRED];
+  string description = 4;
+  uint32 maximum_ticks = 5;
+}
+
+message PathPlan {
+  PathPlanStatus status = 1 [(google.api.field_behavior) = REQUIRED];
+  BlockPosition start = 2 [(google.api.field_behavior) = REQUIRED];
+  repeated PathStep steps = 3;
+  repeated BlockPosition blocks_to_break = 4;
+  repeated BlockPosition blocks_to_place = 5;
+  uint64 maximum_ticks = 6;
+  optional string partial_reason = 7;
+}
+
+message PlanPathRequest {
+  string instance_id = 1 [
+    (google.api.field_behavior) = REQUIRED,
+    (soulfire.v1.api_field).format = "uuid"
+  ];
+  string bot_id = 2 [
+    (google.api.field_behavior) = REQUIRED,
+    (soulfire.v1.api_field).format = "uuid"
+  ];
+  PathfindGoal goal = 3 [(google.api.field_behavior) = REQUIRED];
+  PathfindOptions options = 4;
+  bool include_descriptions = 5;
+}
+
+message PlanPathResponse {
+  PathPlan plan = 1 [(google.api.field_behavior) = REQUIRED];
+}
+
+service PathfinderService {
+  rpc PlanPath (PlanPathRequest) returns (PlanPathResponse) {
+    option (google.api.http) = {
+      post: "/v1/instances/{instance_id}/bots/{bot_id}/pathfinder:plan"
+      body: "*"
+    };
+    option (soulfire.v1.api_method) = {
+      display_name: "Plan bot path"
+      permissions: "READ_BOT_INFO"
+      scope: "instance.bot"
+      execution: "Searches loaded world data without moving the bot."
+    };
+  }
+}

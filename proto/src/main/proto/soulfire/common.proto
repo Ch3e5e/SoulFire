@@ -13,6 +13,28 @@ import "soulfire/api_docs.proto";
 import "google/api/field_behavior.proto";
 import "google/protobuf/struct.proto";
 
+// A block position in a specific dimension. Coordinates are Minecraft block
+// integers, not chunk-relative.
+message BlockPosition {
+  // Block X coordinate. East is positive.
+  int32 x = 1 [(google.api.field_behavior) = REQUIRED];
+  // Block Y coordinate. Vertical axis.
+  int32 y = 2 [(google.api.field_behavior) = REQUIRED];
+  // Block Z coordinate. South is positive.
+  int32 z = 3 [(google.api.field_behavior) = REQUIRED];
+  // Namespaced dimension id. If empty, APIs use the bot's current dimension.
+  string dimension = 4;
+}
+
+// A precise world position. Used for entity locations and pathfinding goals
+// where sub-block precision matters.
+message WorldPosition {
+  double x = 1 [(google.api.field_behavior) = REQUIRED];
+  double y = 2 [(google.api.field_behavior) = REQUIRED];
+  double z = 3 [(google.api.field_behavior) = REQUIRED];
+  string dimension = 4;
+}
+
 // Represents a network proxy configuration used for routing bot connections.
 // Proxies can be used to mask the origin of bot traffic or to distribute connections
 // across multiple IP addresses. Used in instance configuration and proxy checking services.
@@ -389,6 +411,9 @@ enum InstancePermission {
   // This is deliberately separate from UPDATE_BOT_CONFIG so operators can
   // script bots without changing persistent settings.
   CONTROL_BOT_ACTIONS = 23;
+  // Permission to inject version-dependent raw Minecraft protocol packets.
+  // This is intentionally admin-only by default.
+  RAW_PROTOCOL = 24;
 }
 
 // The role assigned to a user account, determining their base permission level.

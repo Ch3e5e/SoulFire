@@ -19,12 +19,14 @@ package com.soulfiremc.server.grpc;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
+import com.google.protobuf.util.Timestamps;
 import com.mojang.authlib.GameProfile;
 import com.soulfiremc.grpc.generated.*;
 import com.soulfiremc.server.SoulFireServer;
 import com.soulfiremc.server.bot.BotConnection;
 import com.soulfiremc.server.bot.BotControlLeaseManager;
 import com.soulfiremc.server.bot.CompletableControlTask;
+import com.soulfiremc.server.bot.ControlResource;
 import com.soulfiremc.server.bot.ControlStopReason;
 import com.soulfiremc.server.bot.ControlTask;
 import com.soulfiremc.server.database.generated.Tables;
@@ -48,6 +50,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -56,6 +59,8 @@ import net.minecraft.world.entity.ItemOwner;
 import net.minecraft.world.inventory.*;
 import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.LightLayer;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.Vec3;
 import org.jooq.impl.DSL;
 
@@ -70,6 +75,8 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Slf4j
 @RequiredArgsConstructor
@@ -303,7 +310,16 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
   }
 
   private static void executeAction(BotConnection bot, Runnable action) throws Exception {
-    var task = new CompletableControlTask(ControlTask.once("gRPC bot action", action));
+    executeAction(bot, ControlResource.all(), action);
+  }
+
+  private static void executeAction(
+    BotConnection bot,
+    Set<ControlResource> resources,
+    Runnable action
+  ) throws Exception {
+    var task = new CompletableControlTask(
+      ControlTask.once("gRPC bot action", resources, action));
     callInBotContext(bot, () -> {
       bot.botControl().replace(task);
       return null;
@@ -672,53 +688,271 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
         throw Status.FAILED_PRECONDITION.withDescription("Bot '%s' is not online".formatted(botId)).asRuntimeException();
       }
 
-      var renderWidth = effectiveDimension(request.getWidth(), RenderConstants.DEFAULT_WIDTH, 1920);
-      var renderHeight = effectiveDimension(request.getHeight(), RenderConstants.DEFAULT_HEIGHT, 1080);
-      var includeHud = !request.hasIncludeHud() || request.getIncludeHud();
-      var includeHands = !request.hasIncludeHands() || request.getIncludeHands();
-
-      var response = callInBotContext(activeBot, () -> {
-        var minecraft = activeBot.minecraft();
-        var player = minecraft.player;
-        var level = minecraft.level;
-        if (player == null || level == null) {
-          throw Status.FAILED_PRECONDITION.withDescription("Bot player or level is not available").asRuntimeException();
-        }
-
-        var renderDistanceChunks = minecraft.options.getEffectiveRenderDistance();
-        var maxDistance = effectiveMaxDistance(request, renderDistanceChunks);
-        var eyePos = effectiveEyePosition(request, player);
-        var options = new SoftwareRenderer.Options(
-          eyePos,
-          effectiveYRot(request, player),
-          effectiveXRot(request, player),
-          renderWidth,
-          renderHeight,
-          effectiveFov(request),
-          maxDistance,
-          includeHands,
-          includeHud,
-          request.getIncludeDebugTrace()
-        );
-        var result = SoftwareRenderer.renderWithResult(level, player, options);
-
-        var responseBuilder = BotRenderPovResponse.newBuilder()
-          .setImageBase64(toBase64PNG(result.image()))
-          .setImageMimeType("image/png")
-          .setMetadata(buildPovMetadata(options));
-        if (request.getIncludeDebugTrace()) {
-          responseBuilder.setDebugTrace(buildPovDebugTrace(result.debugTrace()));
-        }
-
-        return responseBuilder.build();
-      });
-
-      responseObserver.onNext(response);
+      responseObserver.onNext(renderPovFrame(activeBot, request));
       responseObserver.onCompleted();
     } catch (Throwable t) {
       log.error("Error rendering bot POV", t);
       throw toGrpcError(t);
     }
+  }
+
+  @Override
+  public void watchBotPov(BotWatchPovRequest request, StreamObserver<BotPovFrame> responseObserver) {
+    var instanceId = UUID.fromString(request.getInstanceId());
+    var botId = UUID.fromString(request.getBotId());
+    ServerRPCConstants.USER_CONTEXT_KEY.get()
+      .hasPermissionOrThrow(PermissionContext.instance(InstancePermission.READ_BOT_INFO, instanceId));
+    var instance = soulFireServer.getInstance(instanceId)
+      .orElseThrow(() -> Status.NOT_FOUND
+        .withDescription("Instance '%s' not found".formatted(instanceId))
+        .asRuntimeException());
+    if (!instance.settingsSource().accounts().containsKey(botId)) {
+      throw Status.NOT_FOUND
+        .withDescription("Bot '%s' not found in instance '%s'".formatted(botId, instanceId))
+        .asRuntimeException();
+    }
+
+    var observer = (ServerCallStreamObserver<BotPovFrame>) responseObserver;
+    var closed = new AtomicBoolean();
+    var sequence = new AtomicLong();
+    var dropped = new AtomicLong();
+    var intervalMs = Math.min(Math.max(request.getIntervalMs() > 0 ? request.getIntervalMs() : 1000, 100), 60_000);
+    var renderRequest = povRenderRequest(request);
+    observer.setOnCancelHandler(() -> closed.set(true));
+    schedulePovFrame(instanceId, botId, intervalMs, renderRequest, observer, closed, sequence, dropped);
+  }
+
+  @Override
+  public void getBotWorldMap(BotWorldMapRequest request, StreamObserver<BotWorldMapResponse> responseObserver) {
+    var instanceId = UUID.fromString(request.getInstanceId());
+    var botId = UUID.fromString(request.getBotId());
+    ServerRPCConstants.USER_CONTEXT_KEY.get()
+      .hasPermissionOrThrow(PermissionContext.instance(InstancePermission.READ_BOT_INFO, instanceId));
+
+    try {
+      var instance = soulFireServer.getInstance(instanceId)
+        .orElseThrow(() -> Status.NOT_FOUND
+          .withDescription("Instance '%s' not found".formatted(instanceId))
+          .asRuntimeException());
+      var bot = instance.botConnections().get(botId);
+      if (bot == null) {
+        throw Status.FAILED_PRECONDITION
+          .withDescription("Bot '%s' is not online".formatted(botId))
+          .asRuntimeException();
+      }
+      responseObserver.onNext(buildWorldMap(bot, request));
+      responseObserver.onCompleted();
+    } catch (Throwable t) {
+      log.error("Error sampling bot world map", t);
+      throw toGrpcError(t);
+    }
+  }
+
+  private void schedulePovFrame(UUID instanceId,
+                                UUID botId,
+                                int intervalMs,
+                                BotRenderPovRequest renderRequest,
+                                ServerCallStreamObserver<BotPovFrame> observer,
+                                AtomicBoolean closed,
+                                AtomicLong sequence,
+                                AtomicLong dropped) {
+    soulFireServer.scheduler().schedule(new Runnable() {
+      @Override
+      public void run() {
+        if (closed.get() || observer.isCancelled()) {
+          return;
+        }
+        try {
+          if (!observer.isReady()) {
+            dropped.incrementAndGet();
+            return;
+          }
+          var instance = soulFireServer.getInstance(instanceId)
+            .orElseThrow(() -> Status.NOT_FOUND
+              .withDescription("Instance '%s' no longer exists".formatted(instanceId))
+              .asRuntimeException());
+          var bot = instance.botConnections().get(botId);
+          if (bot == null) {
+            throw Status.FAILED_PRECONDITION
+              .withDescription("Bot '%s' is no longer online".formatted(botId))
+              .asRuntimeException();
+          }
+          var frame = BotPovFrame.newBuilder()
+            .setSequence(sequence.incrementAndGet())
+            .setCapturedAt(Timestamps.fromMillis(System.currentTimeMillis()))
+            .setRender(renderPovFrame(bot, renderRequest))
+            .setDroppedBefore(dropped.getAndSet(0))
+            .build();
+          synchronized (observer) {
+            if (!closed.get() && !observer.isCancelled()) {
+              observer.onNext(frame);
+            }
+          }
+        } catch (Throwable throwable) {
+          if (closed.compareAndSet(false, true)) {
+            synchronized (observer) {
+              if (!observer.isCancelled()) {
+                observer.onError(toGrpcError(throwable));
+              }
+            }
+          }
+        } finally {
+          if (!closed.get() && !observer.isCancelled()) {
+            soulFireServer.scheduler().schedule(this, intervalMs, TimeUnit.MILLISECONDS);
+          }
+        }
+      }
+    }, 0, TimeUnit.MILLISECONDS);
+  }
+
+  private static BotRenderPovRequest povRenderRequest(BotWatchPovRequest request) {
+    var builder = BotRenderPovRequest.newBuilder()
+      .setInstanceId(request.getInstanceId())
+      .setBotId(request.getBotId())
+      .setWidth(request.getWidth())
+      .setHeight(request.getHeight())
+      .setIncludeDebugTrace(request.getIncludeDebugTrace());
+    if (request.hasMaxDistance()) {
+      builder.setMaxDistance(request.getMaxDistance());
+    }
+    if (request.hasFov()) {
+      builder.setFov(request.getFov());
+    }
+    if (request.hasCameraX()) {
+      builder.setCameraX(request.getCameraX());
+    }
+    if (request.hasCameraY()) {
+      builder.setCameraY(request.getCameraY());
+    }
+    if (request.hasCameraZ()) {
+      builder.setCameraZ(request.getCameraZ());
+    }
+    if (request.hasYRot()) {
+      builder.setYRot(request.getYRot());
+    }
+    if (request.hasXRot()) {
+      builder.setXRot(request.getXRot());
+    }
+    if (request.hasIncludeHud()) {
+      builder.setIncludeHud(request.getIncludeHud());
+    }
+    if (request.hasIncludeHands()) {
+      builder.setIncludeHands(request.getIncludeHands());
+    }
+    return builder.build();
+  }
+
+  private static BotRenderPovResponse renderPovFrame(BotConnection activeBot,
+                                                     BotRenderPovRequest request) throws Exception {
+    var renderWidth = effectiveDimension(request.getWidth(), RenderConstants.DEFAULT_WIDTH, 1920);
+    var renderHeight = effectiveDimension(request.getHeight(), RenderConstants.DEFAULT_HEIGHT, 1080);
+    var includeHud = !request.hasIncludeHud() || request.getIncludeHud();
+    var includeHands = !request.hasIncludeHands() || request.getIncludeHands();
+    return callInBotContext(activeBot, () -> {
+      var minecraft = activeBot.minecraft();
+      var player = minecraft.player;
+      var level = minecraft.level;
+      if (player == null || level == null) {
+        throw Status.FAILED_PRECONDITION.withDescription("Bot player or level is not available").asRuntimeException();
+      }
+
+      var options = new SoftwareRenderer.Options(
+        effectiveEyePosition(request, player),
+        effectiveYRot(request, player),
+        effectiveXRot(request, player),
+        renderWidth,
+        renderHeight,
+        effectiveFov(request),
+        effectiveMaxDistance(request, minecraft.options.getEffectiveRenderDistance()),
+        includeHands,
+        includeHud,
+        request.getIncludeDebugTrace()
+      );
+      var result = SoftwareRenderer.renderWithResult(level, player, options);
+      var response = BotRenderPovResponse.newBuilder()
+        .setImageBase64(toBase64PNG(result.image()))
+        .setImageMimeType("image/png")
+        .setMetadata(buildPovMetadata(options));
+      if (request.getIncludeDebugTrace()) {
+        response.setDebugTrace(buildPovDebugTrace(result.debugTrace()));
+      }
+      return response.build();
+    });
+  }
+
+  private static BotWorldMapResponse buildWorldMap(BotConnection bot,
+                                                   BotWorldMapRequest request) throws Exception {
+    return callInBotContext(bot, () -> {
+      var level = bot.minecraft().level;
+      var player = bot.minecraft().player;
+      if (player == null || level == null) {
+        throw Status.FAILED_PRECONDITION
+          .withDescription("Bot player or level is not available")
+          .asRuntimeException();
+      }
+      var centerX = request.hasCenterX() ? request.getCenterX() : player.getBlockX();
+      var centerZ = request.hasCenterZ() ? request.getCenterZ() : player.getBlockZ();
+      var radius = Math.min(Math.max(request.getRadius() > 0 ? request.getRadius() : 64, 1), 256);
+      var step = Math.min(Math.max(request.getSampleStep() > 0 ? request.getSampleStep() : 1, 1), 16);
+      var response = BotWorldMapResponse.newBuilder()
+        .setDimension(level.dimension().identifier().toString())
+        .setCenterX(centerX)
+        .setCenterZ(centerZ)
+        .setRadius(radius)
+        .setSampleStep(step)
+        .setMinY(level.getMinY())
+        .setMaxY(level.getMaxY())
+        .setWorldRevision(Math.max(0, level.getGameTime()))
+        .setSampledAt(Timestamps.fromMillis(System.currentTimeMillis()));
+
+      for (var x = centerX - radius; x <= centerX + radius; x += step) {
+        for (var z = centerZ - radius; z <= centerZ + radius; z += step) {
+          var probe = new BlockPos(x, player.getBlockY(), z);
+          var column = BotWorldMapColumn.newBuilder().setX(x).setZ(z);
+          if (!level.hasChunkAt(probe)) {
+            response.addColumns(column.setLoaded(false));
+            continue;
+          }
+          column.setLoaded(true);
+          var surfaceY = level.getHeight(Heightmap.Types.MOTION_BLOCKING, x, z) - 1;
+          if (surfaceY >= level.getMinY() && surfaceY < level.getMaxY()) {
+            var surface = new BlockPos(x, surfaceY, z);
+            var state = level.getBlockState(surface);
+            column
+              .setSurfaceY(surfaceY)
+              .setBlockId(BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString())
+              .setSkyLight(level.getBrightness(LightLayer.SKY, surface))
+              .setBlockLight(level.getBrightness(LightLayer.BLOCK, surface));
+            level.getBiome(surface).unwrapKey()
+              .ifPresent(key -> column.setBiomeId(key.identifier().toString()));
+          }
+          response.addColumns(column);
+        }
+      }
+
+      if (request.getIncludeEntities()) {
+        var radiusSquared = (double) radius * radius;
+        for (var entity : level.entitiesForRendering()) {
+          if (entity == player) {
+            continue;
+          }
+          var dx = entity.getX() - centerX;
+          var dz = entity.getZ() - centerZ;
+          if (dx * dx + dz * dz > radiusSquared) {
+            continue;
+          }
+          response.addEntities(BotWorldMapEntity.newBuilder()
+            .setEntityId(entity.getUUID().toString())
+            .setEntityType(BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString())
+            .setDisplayName(entity.getName().getString())
+            .setX(entity.getX())
+            .setY(entity.getY())
+            .setZ(entity.getZ())
+            .setYaw(entity.getYRot()));
+        }
+      }
+      return response.build();
+    });
   }
 
   private static int effectiveDimension(int requestedDimension, int defaultDimension, int maxDimension) {
@@ -825,7 +1059,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
    * Builds a ContainerLayout describing the slot regions for the given menu.
    * This allows the frontend to render any container type dynamically.
    */
-  private static ContainerLayout buildContainerLayout(AbstractContainerMenu menu, String title) {
+  static ContainerLayout buildContainerLayout(AbstractContainerMenu menu, String title) {
     var layoutBuilder = ContainerLayout.newBuilder()
       .setTitle(title)
       .setTotalSlots(menu.slots.size());
@@ -1599,7 +1833,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
   /**
    * Gets the display title for a container menu.
    */
-  private static String getContainerTitle(AbstractContainerMenu menu, Minecraft minecraft) {
+  static String getContainerTitle(AbstractContainerMenu menu, Minecraft minecraft) {
     // For player inventory, use a standard title
     if (menu instanceof InventoryMenu) {
       return "Inventory";
@@ -2218,7 +2452,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
       }
 
       // Apply movement state changes
-      executeAction(activeBot, () -> {
+      executeAction(activeBot, Set.of(ControlResource.MOVEMENT), () -> {
         var controlState = activeBot.controlState();
 
         if (request.hasForward()) {
@@ -2273,7 +2507,10 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
       }
 
       // Reset all movement
-      executeAction(activeBot, () -> activeBot.controlState().resetAll());
+      executeAction(
+        activeBot,
+        Set.of(ControlResource.MOVEMENT),
+        () -> activeBot.controlState().resetAll());
 
       log.info("Reset movement for bot {}", botId);
 
@@ -2333,6 +2570,7 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
 
         executeAction(
           activeBot,
+          Set.of(ControlResource.ROTATION),
           () -> activeBot.rotationControl().lookTo(finalYaw, finalPitch));
         return BotSetRotationResponse.newBuilder()
           .setSuccess(true)

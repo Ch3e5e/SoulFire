@@ -23,6 +23,7 @@ import com.soulfiremc.server.pathfinding.SFVec3i;
 import com.soulfiremc.server.pathfinding.graph.constraint.PathConstraint;
 import com.soulfiremc.server.util.MathHelper;
 import com.soulfiremc.server.util.VectorHelper;
+import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import net.minecraft.client.player.LocalPlayer;
@@ -35,6 +36,7 @@ import java.util.concurrent.ThreadLocalRandom;
 @RequiredArgsConstructor
 public final class MovementAction implements WorldAction {
   private static final double STEP_HEIGHT = 0.6;
+  @Getter
   private final SFVec3i blockPosition;
   // Corner jumps normally require you to stand closer to the block to jump
   private final boolean walkFewTicksNoJump;

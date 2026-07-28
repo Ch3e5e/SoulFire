@@ -1,6 +1,7 @@
 version: v2
 modules:
-  - path: proto/src/main/proto
+  - name: buf.build/soulfiremc/soulfire
+    path: proto/src/main/proto
 deps:
   - buf.build/googleapis/googleapis
 lint:

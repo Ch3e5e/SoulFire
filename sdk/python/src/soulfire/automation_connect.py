@@ -18,10 +18,10 @@ from connectrpc.protocol import ProtocolType
 from connectrpc.server import ConnectASGIApplication, ConnectWSGIApplication, Endpoint, EndpointSync
 from pyqwest import Client, SyncClient
 
-from .automation_pb2 import ApplyAutomationPresetRequest, ApplyAutomationPresetResponse, AutomationActionRequest, AutomationActionResponse, GetAutomationBotStateRequest, GetAutomationBotStateResponse, GetAutomationCoordinationStateRequest, GetAutomationCoordinationStateResponse, GetAutomationMemoryStateRequest, GetAutomationMemoryStateResponse, GetAutomationTeamStateRequest, GetAutomationTeamStateResponse, ReleaseAutomationBotClaimsRequest, ReleaseAutomationBotClaimsResponse, ReleaseAutomationClaimRequest, ReleaseAutomationClaimResponse, ResetAutomationCoordinationStateRequest, ResetAutomationCoordinationStateResponse, ResetAutomationMemoryRequest, ResetAutomationMemoryResponse, SetAutomationCollaborationRequest, SetAutomationCollaborationResponse, SetAutomationMaxEndBotsRequest, SetAutomationMaxEndBotsResponse, SetAutomationObjectiveOverrideRequest, SetAutomationObjectiveOverrideResponse, SetAutomationQuotaOverrideRequest, SetAutomationQuotaOverrideResponse, SetAutomationRoleOverrideRequest, SetAutomationRoleOverrideResponse, SetAutomationRolePolicyRequest, SetAutomationRolePolicyResponse, SetAutomationSharedClaimsRequest, SetAutomationSharedClaimsResponse, SetAutomationSharedEndEntryRequest, SetAutomationSharedEndEntryResponse, SetAutomationSharedStructuresRequest, SetAutomationSharedStructuresResponse, StartAutomationAcquireRequest, UpdateAutomationBotSettingsRequest, UpdateAutomationBotSettingsResponse
+from .automation_pb2 import ApplyAutomationPresetRequest, ApplyAutomationPresetResponse, AutomationActionRequest, AutomationActionResponse, AutomationEvent, GetAutomationBotStateRequest, GetAutomationBotStateResponse, GetAutomationCoordinationStateRequest, GetAutomationCoordinationStateResponse, GetAutomationMemoryStateRequest, GetAutomationMemoryStateResponse, GetAutomationTeamStateRequest, GetAutomationTeamStateResponse, ReleaseAutomationBotClaimsRequest, ReleaseAutomationBotClaimsResponse, ReleaseAutomationClaimRequest, ReleaseAutomationClaimResponse, ResetAutomationCoordinationStateRequest, ResetAutomationCoordinationStateResponse, ResetAutomationMemoryRequest, ResetAutomationMemoryResponse, SetAutomationCollaborationRequest, SetAutomationCollaborationResponse, SetAutomationMaxEndBotsRequest, SetAutomationMaxEndBotsResponse, SetAutomationObjectiveOverrideRequest, SetAutomationObjectiveOverrideResponse, SetAutomationQuotaOverrideRequest, SetAutomationQuotaOverrideResponse, SetAutomationRoleOverrideRequest, SetAutomationRoleOverrideResponse, SetAutomationRolePolicyRequest, SetAutomationRolePolicyResponse, SetAutomationSharedClaimsRequest, SetAutomationSharedClaimsResponse, SetAutomationSharedEndEntryRequest, SetAutomationSharedEndEntryResponse, SetAutomationSharedStructuresRequest, SetAutomationSharedStructuresResponse, StartAutomationAcquireRequest, UpdateAutomationBotSettingsRequest, UpdateAutomationBotSettingsResponse, WatchAutomationEventsRequest
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Iterable, Mapping
+    from collections.abc import AsyncGenerator, AsyncIterator, Iterable, Iterator, Mapping
 
     from connectrpc.codec import Codec
     from connectrpc.compression import Compression
@@ -35,6 +35,9 @@ _PROTO_BINARY_CODEC = google_protobuf_binary_codec()
 _GZIP_COMPRESSION = GzipCompression()
 
 class AutomationService(Protocol):
+    def watch_automation_events(self, request: WatchAutomationEventsRequest, ctx: RequestContext[WatchAutomationEventsRequest, AutomationEvent]) -> AsyncIterator[AutomationEvent]:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
     async def get_automation_team_state(self, request: GetAutomationTeamStateRequest, ctx: RequestContext[GetAutomationTeamStateRequest, GetAutomationTeamStateResponse]) -> GetAutomationTeamStateResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
@@ -121,6 +124,16 @@ class AutomationServiceASGIApplication(ConnectASGIApplication[AutomationService]
         super().__init__(
             service=service,
             endpoints=lambda svc: {
+                "/soulfire.v1.AutomationService/WatchAutomationEvents": Endpoint.server_stream(
+                    method=MethodInfo(
+                        name="WatchAutomationEvents",
+                        service_name="soulfire.v1.AutomationService",
+                        input=WatchAutomationEventsRequest,
+                        output=AutomationEvent,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.watch_automation_events,
+                ),
                 "/soulfire.v1.AutomationService/GetAutomationTeamState": Endpoint.unary(
                     method=MethodInfo(
                         name="GetAutomationTeamState",
@@ -399,6 +412,26 @@ class AutomationServiceClient(ConnectClient):
             interceptors=interceptors,
             http_client=http_client,
         )
+    def watch_automation_events(
+        self,
+        request: WatchAutomationEventsRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> AsyncIterator[AutomationEvent]:
+        return self.execute_server_stream(
+            request=request,
+            method=MethodInfo(
+                name="WatchAutomationEvents",
+                service_name="soulfire.v1.AutomationService",
+                input=WatchAutomationEventsRequest,
+                output=AutomationEvent,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
     async def get_automation_team_state(
         self,
         request: GetAutomationTeamStateRequest,
@@ -880,6 +913,9 @@ class AutomationServiceClient(ConnectClient):
         )
 
 class AutomationServiceSync(Protocol):
+    def watch_automation_events(self, request: WatchAutomationEventsRequest, ctx: RequestContext[WatchAutomationEventsRequest, AutomationEvent]) -> Iterator[AutomationEvent]:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
     def get_automation_team_state(self, request: GetAutomationTeamStateRequest, ctx: RequestContext[GetAutomationTeamStateRequest, GetAutomationTeamStateResponse]) -> GetAutomationTeamStateResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
@@ -964,6 +1000,16 @@ class AutomationServiceWSGIApplication(ConnectWSGIApplication):
     ) -> None:
         super().__init__(
             endpoints={
+                "/soulfire.v1.AutomationService/WatchAutomationEvents": EndpointSync.server_stream(
+                    method=MethodInfo(
+                        name="WatchAutomationEvents",
+                        service_name="soulfire.v1.AutomationService",
+                        input=WatchAutomationEventsRequest,
+                        output=AutomationEvent,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=service.watch_automation_events,
+                ),
                 "/soulfire.v1.AutomationService/GetAutomationTeamState": EndpointSync.unary(
                     method=MethodInfo(
                         name="GetAutomationTeamState",
@@ -1241,6 +1287,25 @@ class AutomationServiceClientSync(ConnectClientSync):
             read_max_bytes=read_max_bytes,
             interceptors=interceptors,
             http_client=http_client,
+        )
+    def watch_automation_events(
+        self,
+        request: WatchAutomationEventsRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> Iterator[AutomationEvent]:
+        return self.execute_server_stream(
+            request=request,
+            method=MethodInfo(
+                name="WatchAutomationEvents",
+                service_name="soulfire.v1.AutomationService",
+                input=WatchAutomationEventsRequest,
+                output=AutomationEvent,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
         )
     def get_automation_team_state(
         self,

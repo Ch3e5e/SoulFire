@@ -411,6 +411,7 @@ class InstanceAuditLogResponse(_message.Message):
         AUTOMATION_RELEASE_CLAIMS: _ClassVar[InstanceAuditLogResponse.AuditLogEntryType]
         BOT_DESIRED_STATE_CHANGE: _ClassVar[InstanceAuditLogResponse.AuditLogEntryType]
         BOT_RESTART: _ClassVar[InstanceAuditLogResponse.AuditLogEntryType]
+        PLUGIN_RPC: _ClassVar[InstanceAuditLogResponse.AuditLogEntryType]
     EXECUTE_COMMAND: InstanceAuditLogResponse.AuditLogEntryType
     AUTOMATION_START: InstanceAuditLogResponse.AuditLogEntryType
     AUTOMATION_PAUSE: InstanceAuditLogResponse.AuditLogEntryType
@@ -423,6 +424,7 @@ class InstanceAuditLogResponse(_message.Message):
     AUTOMATION_RELEASE_CLAIMS: InstanceAuditLogResponse.AuditLogEntryType
     BOT_DESIRED_STATE_CHANGE: InstanceAuditLogResponse.AuditLogEntryType
     BOT_RESTART: InstanceAuditLogResponse.AuditLogEntryType
+    PLUGIN_RPC: InstanceAuditLogResponse.AuditLogEntryType
     class AuditLogEntry(_message.Message):
         __slots__ = ("id", "user", "type", "timestamp", "data")
         ID_FIELD_NUMBER: _ClassVar[int]

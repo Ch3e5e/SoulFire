@@ -1,0 +1,141 @@
+syntax = "proto3";
+
+option java_package = "com.soulfiremc.grpc.generated";
+option java_multiple_files = true;
+
+package soulfire.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/struct.proto";
+import "soulfire/api_docs.proto";
+
+enum RegistryKind {
+  REGISTRY_KIND_UNSPECIFIED = 0;
+  REGISTRY_KIND_BLOCK = 1;
+  REGISTRY_KIND_ITEM = 2;
+  REGISTRY_KIND_ENTITY_TYPE = 3;
+  REGISTRY_KIND_BIOME = 4;
+  REGISTRY_KIND_DIMENSION = 5;
+  REGISTRY_KIND_RECIPE = 6;
+  REGISTRY_KIND_ENCHANTMENT = 7;
+  REGISTRY_KIND_EFFECT = 8;
+  REGISTRY_KIND_ATTRIBUTE = 9;
+  REGISTRY_KIND_GAME_EVENT = 10;
+  REGISTRY_KIND_SOUND = 11;
+  REGISTRY_KIND_PARTICLE = 12;
+  REGISTRY_KIND_CONTAINER = 13;
+}
+
+message RegistryIdentity {
+  string soulfire_version = 1;
+  string minecraft_version = 2;
+  int32 protocol_version = 3;
+  string registry_hash = 4;
+}
+
+message MinecraftRegistryEntry {
+  RegistryKind kind = 1;
+  string id = 2;
+  optional int32 numeric_id = 3;
+  string display_name = 4;
+  google.protobuf.Struct properties = 5;
+  repeated string tags = 6;
+}
+
+message GetRegistryIdentityRequest {
+  optional string instance_id = 1 [(soulfire.v1.api_field).format = "uuid"];
+  optional string bot_id = 2 [(soulfire.v1.api_field).format = "uuid"];
+}
+
+message GetRegistryIdentityResponse {
+  RegistryIdentity identity = 1;
+  repeated RegistryKind supported_kinds = 2;
+  repeated string protocol_features = 3;
+}
+
+message ListRegistryEntriesRequest {
+  RegistryKind kind = 1;
+  string id_prefix = 2;
+  repeated string tags = 3;
+  uint32 page_size = 4;
+  string page_token = 5;
+  optional string instance_id = 6 [(soulfire.v1.api_field).format = "uuid"];
+  optional string bot_id = 7 [(soulfire.v1.api_field).format = "uuid"];
+}
+
+message ListRegistryEntriesResponse {
+  repeated MinecraftRegistryEntry entries = 1;
+  string next_page_token = 2;
+  string registry_hash = 3;
+}
+
+message GetRegistryEntryRequest {
+  RegistryKind kind = 1;
+  string id = 2;
+  optional string instance_id = 3 [(soulfire.v1.api_field).format = "uuid"];
+  optional string bot_id = 4 [(soulfire.v1.api_field).format = "uuid"];
+}
+
+message GetRegistryEntryResponse {
+  MinecraftRegistryEntry entry = 1;
+  string registry_hash = 2;
+}
+
+message ListRegistryTagsRequest {
+  RegistryKind kind = 1;
+  string prefix = 2;
+  uint32 page_size = 3;
+  string page_token = 4;
+  optional string instance_id = 5 [(soulfire.v1.api_field).format = "uuid"];
+  optional string bot_id = 6 [(soulfire.v1.api_field).format = "uuid"];
+}
+
+message RegistryTag {
+  RegistryKind kind = 1;
+  string id = 2;
+  repeated string values = 3;
+}
+
+message ListRegistryTagsResponse {
+  repeated RegistryTag tags = 1;
+  string next_page_token = 2;
+  string registry_hash = 3;
+}
+
+service RegistryService {
+  rpc GetRegistryIdentity (GetRegistryIdentityRequest) returns (GetRegistryIdentityResponse) {
+    option (google.api.http) = { get: "/v1/registry" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Get registry identity"
+      permissions: "READ_CLIENT_DATA"
+      scope: "server"
+    };
+  }
+
+  rpc ListRegistryEntries (ListRegistryEntriesRequest) returns (ListRegistryEntriesResponse) {
+    option (google.api.http) = { get: "/v1/registry/entries" };
+    option (soulfire.v1.api_method) = {
+      display_name: "List registry entries"
+      permissions: "READ_CLIENT_DATA"
+      scope: "server"
+    };
+  }
+
+  rpc GetRegistryEntry (GetRegistryEntryRequest) returns (GetRegistryEntryResponse) {
+    option (google.api.http) = { get: "/v1/registry/entry" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Get registry entry"
+      permissions: "READ_CLIENT_DATA"
+      scope: "server"
+    };
+  }
+
+  rpc ListRegistryTags (ListRegistryTagsRequest) returns (ListRegistryTagsResponse) {
+    option (google.api.http) = { get: "/v1/registry/tags" };
+    option (soulfire.v1.api_method) = {
+      display_name: "List registry tags"
+      permissions: "READ_CLIENT_DATA"
+      scope: "server"
+    };
+  }
+}

@@ -1,0 +1,231 @@
+syntax = "proto3";
+
+option java_package = "com.soulfiremc.grpc.generated";
+option java_multiple_files = true;
+
+package soulfire.v1;
+
+import "google/protobuf/struct.proto";
+import "soulfire/bot.proto";
+import "soulfire/common.proto";
+
+// A dimension-independent three-dimensional vector.
+message Vec3 {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+}
+
+message Rotation {
+  float yaw = 1;
+  float pitch = 2;
+  optional float head_yaw = 3;
+}
+
+message BoundingBox {
+  Vec3 minimum = 1;
+  Vec3 maximum = 2;
+}
+
+// Both renderable and plain representations of a Minecraft text component.
+message TextComponent {
+  string plain_text = 1;
+  optional string json = 2;
+}
+
+message EnchantmentSnapshot {
+  string enchantment_id = 1;
+  int32 level = 2;
+}
+
+message EffectSnapshot {
+  string effect_id = 1;
+  int32 amplifier = 2;
+  int32 duration_ticks = 3;
+  bool ambient = 4;
+  bool visible = 5;
+  bool show_icon = 6;
+}
+
+message AttributeModifierSnapshot {
+  string id = 1;
+  double amount = 2;
+  string operation = 3;
+}
+
+message AttributeSnapshot {
+  string attribute_id = 1;
+  double base_value = 2;
+  double value = 3;
+  repeated AttributeModifierSnapshot modifiers = 4;
+}
+
+message FoodProperties {
+  int32 nutrition = 1;
+  float saturation_modifier = 2;
+  bool can_always_eat = 3;
+  float eat_seconds = 4;
+}
+
+message ToolProperties {
+  repeated string tool_tags = 1;
+  float default_mining_speed = 2;
+  int32 harvest_level = 3;
+}
+
+message ArmorProperties {
+  string equipment_slot = 1;
+  int32 defense = 2;
+  float toughness = 3;
+  float knockback_resistance = 4;
+}
+
+message PotionProperties {
+  optional string potion_id = 1;
+  repeated EffectSnapshot effects = 2;
+  optional int32 color = 3;
+}
+
+// Semantic item data. Large presentation assets are deliberately excluded.
+message ItemStackSnapshot {
+  string item_id = 1;
+  int32 count = 2;
+  int32 max_stack_size = 3;
+  int32 damage = 4;
+  int32 max_damage = 5;
+  optional TextComponent custom_name = 6;
+  repeated TextComponent lore = 7;
+  repeated EnchantmentSnapshot enchantments = 8;
+  optional FoodProperties food = 9;
+  optional ToolProperties tool = 10;
+  optional ArmorProperties armor = 11;
+  google.protobuf.Struct components = 12;
+  optional bytes custom_data_nbt = 13;
+  string fingerprint = 14;
+  optional PotionProperties potion = 15;
+}
+
+// Network IDs are scoped to a connection epoch and must not be cached alone.
+message EntityReference {
+  string connection_epoch = 1;
+  int32 network_id = 2;
+  optional string uuid = 3;
+}
+
+enum EntityCategory {
+  ENTITY_CATEGORY_UNSPECIFIED = 0;
+  ENTITY_CATEGORY_PLAYER = 1;
+  ENTITY_CATEGORY_HOSTILE = 2;
+  ENTITY_CATEGORY_PASSIVE = 3;
+  ENTITY_CATEGORY_PROJECTILE = 4;
+  ENTITY_CATEGORY_VEHICLE = 5;
+  ENTITY_CATEGORY_DROPPED_ITEM = 6;
+  ENTITY_CATEGORY_OTHER = 7;
+}
+
+message EntitySnapshot {
+  EntityReference reference = 1;
+  string entity_type = 2;
+  EntityCategory category = 3;
+  WorldPosition position = 4;
+  Vec3 velocity = 5;
+  Rotation rotation = 6;
+  BoundingBox bounding_box = 7;
+  string pose = 8;
+  bool on_ground = 9;
+  optional TextComponent display_name = 10;
+  optional string player_name = 11;
+  optional float health = 12;
+  optional float max_health = 13;
+  map<string, ItemStackSnapshot> equipment = 14;
+  repeated EffectSnapshot effects = 15;
+  repeated AttributeSnapshot attributes = 16;
+  optional EntityReference vehicle = 17;
+  repeated EntityReference passengers = 18;
+  optional EntityReference owner = 19;
+  optional EntityReference target = 20;
+  optional ItemStackSnapshot item = 21;
+  bool alive = 22;
+  google.protobuf.Struct metadata = 23;
+  optional int32 age_ticks = 24;
+  optional bool tamed = 25;
+}
+
+message FluidSnapshot {
+  string fluid_id = 1;
+  bool source = 2;
+  float height = 3;
+}
+
+message VoxelShape {
+  repeated BoundingBox boxes = 1;
+}
+
+message BlockSnapshot {
+  BlockPosition position = 1;
+  string block_id = 2;
+  map<string, string> properties = 3;
+  optional google.protobuf.Struct block_entity = 4;
+  optional string biome_id = 5;
+  optional int32 sky_light = 6;
+  optional int32 block_light = 7;
+  float hardness = 8;
+  bool diggable = 9;
+  bool replaceable = 10;
+  bool solid = 11;
+  bool interactive = 12;
+  repeated string effective_tool_tags = 13;
+  optional FluidSnapshot fluid = 14;
+  optional VoxelShape collision_shape = 15;
+  optional VoxelShape interaction_shape = 16;
+  uint64 chunk_revision = 17;
+}
+
+message PlayerAbilitiesSnapshot {
+  bool invulnerable = 1;
+  bool flying = 2;
+  bool may_fly = 3;
+  bool instant_build = 4;
+  float flying_speed = 5;
+  float walking_speed = 6;
+}
+
+message ExperienceSnapshot {
+  int32 level = 1;
+  float progress = 2;
+  int32 total = 3;
+}
+
+message PlayerSnapshot {
+  WorldPosition position = 1;
+  Vec3 velocity = 2;
+  Rotation rotation = 3;
+  bool on_ground = 4;
+  string pose = 5;
+  float health = 6;
+  float max_health = 7;
+  int32 food = 8;
+  float saturation = 9;
+  float exhaustion = 10;
+  int32 air = 11;
+  int32 max_air = 12;
+  int32 fire_ticks = 13;
+  int32 freezing_ticks = 14;
+  ExperienceSnapshot experience = 15;
+  GameMode game_mode = 16;
+  PlayerAbilitiesSnapshot abilities = 17;
+  int32 selected_hotbar_slot = 18;
+  optional ItemStackSnapshot main_hand = 19;
+  optional ItemStackSnapshot off_hand = 20;
+  map<string, ItemStackSnapshot> equipment = 21;
+  repeated EffectSnapshot effects = 22;
+  repeated AttributeSnapshot attributes = 23;
+  bool sleeping = 24;
+  bool using_item = 25;
+  optional EntityReference vehicle = 26;
+  optional BlockPosition spawn_point = 27;
+  bool dead = 28;
+  optional float last_damage = 29;
+  string connection_epoch = 30;
+  uint64 revision = 31;
+}

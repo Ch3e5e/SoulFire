@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file soulfire/api_docs.proto.
  */
 export const file_soulfire_api_docs: GenFile = /*@__PURE__*/
-  fileDesc("Chdzb3VsZmlyZS9hcGlfZG9jcy5wcm90bxILc291bGZpcmUudjEingEKDUFwaU1ldGhvZERvY3MSFAoMZGlzcGxheV9uYW1lGAEgASgJEhMKC2Rlc2NyaXB0aW9uGAIgASgJEhMKC3Blcm1pc3Npb25zGAMgAygJEg0KBXNjb3BlGAQgASgJEhUKDXByZWNvbmRpdGlvbnMYBSADKAkSEQoJZXhlY3V0aW9uGAYgASgJEhQKDHNpZGVfZWZmZWN0cxgHIAMoCSIvCgxBcGlGaWVsZERvY3MSDgoGZm9ybWF0GAEgASgJEg8KB2V4YW1wbGUYAiABKAk6WwoKYXBpX21ldGhvZBIeLmdvb2dsZS5wcm90b2J1Zi5NZXRob2RPcHRpb25zGLmOAyABKAsyGi5zb3VsZmlyZS52MS5BcGlNZXRob2REb2NzUglhcGlNZXRob2Q6VwoJYXBpX2ZpZWxkEh0uZ29vZ2xlLnByb3RvYnVmLkZpZWxkT3B0aW9ucxi6jgMgASgLMhkuc291bGZpcmUudjEuQXBpRmllbGREb2NzUghhcGlGaWVsZEIvCh1jb20uc291bGZpcmVtYy5ncnBjLmdlbmVyYXRlZEIMQXBpRG9jc1Byb3RvUAFiBnByb3RvMw", [file_google_protobuf_descriptor]);
+  fileDesc("Chdzb3VsZmlyZS9hcGlfZG9jcy5wcm90bxILc291bGZpcmUudjEi2AEKDUFwaU1ldGhvZERvY3MSFAoMZGlzcGxheV9uYW1lGAEgASgJEhMKC2Rlc2NyaXB0aW9uGAIgASgJEhMKC3Blcm1pc3Npb25zGAMgAygJEg0KBXNjb3BlGAQgASgJEhUKDXByZWNvbmRpdGlvbnMYBSADKAkSEQoJZXhlY3V0aW9uGAYgASgJEhQKDHNpZGVfZWZmZWN0cxgHIAMoCRIVCg1leHBvc2VfdG9fbWNwGAggASgIEiEKGW1jcF9yZXF1aXJlc19jb25maXJtYXRpb24YCSABKAgiLwoMQXBpRmllbGREb2NzEg4KBmZvcm1hdBgBIAEoCRIPCgdleGFtcGxlGAIgASgJOlsKCmFwaV9tZXRob2QSHi5nb29nbGUucHJvdG9idWYuTWV0aG9kT3B0aW9ucxi5jgMgASgLMhouc291bGZpcmUudjEuQXBpTWV0aG9kRG9jc1IJYXBpTWV0aG9kOlcKCWFwaV9maWVsZBIdLmdvb2dsZS5wcm90b2J1Zi5GaWVsZE9wdGlvbnMYuo4DIAEoCzIZLnNvdWxmaXJlLnYxLkFwaUZpZWxkRG9jc1IIYXBpRmllbGRCLwodY29tLnNvdWxmaXJlbWMuZ3JwYy5nZW5lcmF0ZWRCDEFwaURvY3NQcm90b1ABYgZwcm90bzM", [file_google_protobuf_descriptor]);
 
 /**
  * @generated from message soulfire.v1.ApiMethodDocs
@@ -52,6 +52,21 @@ export type ApiMethodDocs = Message<"soulfire.v1.ApiMethodDocs"> & {
    * @generated from field: repeated string side_effects = 7;
    */
   sideEffects: string[];
+
+  /**
+   * Explicitly publishes a unary method as an MCP tool.
+   *
+   * @generated from field: bool expose_to_mcp = 8;
+   */
+  exposeToMcp: boolean;
+
+  /**
+   * Requires the MCP caller to pass confirm=true. Mandatory for exposed
+   * mutation and destructive methods.
+   *
+   * @generated from field: bool mcp_requires_confirmation = 9;
+   */
+  mcpRequiresConfirmation: boolean;
 };
 
 /**

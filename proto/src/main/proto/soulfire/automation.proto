@@ -245,6 +245,52 @@ message AutomationMemoryState {
   repeated AutomationMemoryUnreachablePosition unreachable_positions = 14;
 }
 
+enum AutomationEventKind {
+  AUTOMATION_EVENT_KIND_UNSPECIFIED = 0;
+  AUTOMATION_EVENT_KIND_SNAPSHOT = 1;
+  AUTOMATION_EVENT_KIND_BOT_CONNECTED = 2;
+  AUTOMATION_EVENT_KIND_BOT_DISCONNECTED = 3;
+  AUTOMATION_EVENT_KIND_GOAL_CHANGED = 4;
+  AUTOMATION_EVENT_KIND_PHASE_CHANGED = 5;
+  AUTOMATION_EVENT_KIND_ACTION_CHANGED = 6;
+  AUTOMATION_EVENT_KIND_PROGRESS = 7;
+  AUTOMATION_EVENT_KIND_PAUSED = 8;
+  AUTOMATION_EVENT_KIND_RESUMED = 9;
+  AUTOMATION_EVENT_KIND_DEATH = 10;
+  AUTOMATION_EVENT_KIND_STALLED = 11;
+  AUTOMATION_EVENT_KIND_RECOVERY = 12;
+  AUTOMATION_EVENT_KIND_OBJECTIVE_CHANGED = 13;
+  AUTOMATION_EVENT_KIND_TEAM_STATE_CHANGED = 14;
+  AUTOMATION_EVENT_KIND_CLAIMS_CHANGED = 15;
+  AUTOMATION_EVENT_KIND_SHARED_MEMORY_CHANGED = 16;
+  AUTOMATION_EVENT_KIND_COMPLETED = 17;
+  AUTOMATION_EVENT_KIND_FAILED = 18;
+  AUTOMATION_EVENT_KIND_HEARTBEAT = 19;
+}
+
+message WatchAutomationEventsRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  repeated string bot_ids = 2 [(soulfire.v1.api_field).format = "uuid"];
+  bool include_coordination = 3;
+  int32 max_coordination_entries = 4;
+  int32 poll_interval_ms = 5;
+  int32 heartbeat_interval_seconds = 6;
+  bool include_progress = 7;
+}
+
+message AutomationEvent {
+  uint64 sequence = 1 [(google.api.field_behavior) = REQUIRED];
+  google.protobuf.Timestamp observed_at = 2 [(google.api.field_behavior) = REQUIRED];
+  AutomationEventKind kind = 3 [(google.api.field_behavior) = REQUIRED];
+  optional string bot_id = 4 [(soulfire.v1.api_field).format = "uuid"];
+  optional string account_name = 5;
+  optional string summary = 6;
+  optional AutomationTeamState team_state = 7;
+  optional AutomationBotState bot_state = 8;
+  optional AutomationCoordinationState coordination_state = 9;
+  uint64 dropped_before = 10 [(google.api.field_behavior) = REQUIRED];
+}
+
 message GetAutomationTeamStateRequest {
   string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
 }
@@ -452,6 +498,16 @@ message UpdateAutomationBotSettingsResponse {
 }
 
 service AutomationService {
+  rpc WatchAutomationEvents (WatchAutomationEventsRequest) returns (stream AutomationEvent) {
+    option (google.api.http) = { get: "/v1/instances/{instance_id}/automation/events" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Watch automation events"
+      permissions: "READ_BOT_INFO"
+      scope: "instance"
+      side_effects: "Opens a resumable state-change stream for instance automation."
+    };
+  }
+
   rpc GetAutomationTeamState (GetAutomationTeamStateRequest) returns (GetAutomationTeamStateResponse) {
     option (google.api.http) = { get: "/v1/instances/{instance_id}/automation" };
     option (soulfire.v1.api_method) = {

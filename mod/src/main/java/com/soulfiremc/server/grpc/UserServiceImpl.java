@@ -20,10 +20,13 @@ package com.soulfiremc.server.grpc;
 import com.google.protobuf.util.Timestamps;
 import com.soulfiremc.grpc.generated.*;
 import com.soulfiremc.server.SoulFireServer;
+import com.soulfiremc.server.api.SoulFireAPI;
 import com.soulfiremc.server.database.UserRole;
 import com.soulfiremc.server.database.generated.Tables;
+import com.soulfiremc.server.database.generated.tables.records.PluginPermissionGrantsRecord;
 import com.soulfiremc.server.user.AuthSystem;
 import com.soulfiremc.server.user.PermissionContext;
+import com.soulfiremc.server.user.PluginPermissionGrantScope;
 import com.soulfiremc.server.util.RPCConstants;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
@@ -252,5 +255,163 @@ public final class UserServiceImpl extends UserServiceGrpc.UserServiceImplBase {
       log.error("Error generating user API token", t);
       throw Status.INTERNAL.withDescription(t.getMessage()).withCause(t).asRuntimeException();
     }
+  }
+
+  @Override
+  public void listUserPluginPermissionGrants(
+    ListUserPluginPermissionGrantsRequest request,
+    StreamObserver<ListUserPluginPermissionGrantsResponse> responseObserver
+  ) {
+    ServerRPCConstants.USER_CONTEXT_KEY.get()
+      .hasPermissionOrThrow(PermissionContext.global(GlobalPermission.READ_USER));
+    try {
+      var userId = UUID.fromString(request.getUserId());
+      requireUser(userId);
+      var grants = soulFireServer.dsl()
+        .selectFrom(Tables.PLUGIN_PERMISSION_GRANTS)
+        .where(Tables.PLUGIN_PERMISSION_GRANTS.USER_ID.eq(userId.toString()))
+        .orderBy(
+          Tables.PLUGIN_PERMISSION_GRANTS.PERMISSION_ID,
+          Tables.PLUGIN_PERMISSION_GRANTS.SCOPE,
+          Tables.PLUGIN_PERMISSION_GRANTS.RESOURCE_ID
+        )
+        .fetch()
+        .map(UserServiceImpl::toPluginPermissionGrant);
+      responseObserver.onNext(ListUserPluginPermissionGrantsResponse.newBuilder()
+        .addAllGrants(grants)
+        .build());
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException e) {
+      throw Status.INVALID_ARGUMENT.withDescription(e.getMessage()).withCause(e).asRuntimeException();
+    }
+  }
+
+  @Override
+  public void setUserPluginPermissionGrant(
+    SetUserPluginPermissionGrantRequest request,
+    StreamObserver<UserPluginPermissionGrant> responseObserver
+  ) {
+    ServerRPCConstants.USER_CONTEXT_KEY.get()
+      .hasPermissionOrThrow(PermissionContext.global(GlobalPermission.UPDATE_USER));
+    try {
+      var userId = UUID.fromString(request.getUserId());
+      mutateOrThrow(userId);
+      requireUser(userId);
+      var permission = SoulFireAPI.pluginApis()
+        .findPermission(request.getPermissionId())
+        .orElseThrow(() -> new IllegalArgumentException(
+          "Plugin permission is not registered: " + request.getPermissionId()));
+      var target = PluginPermissionGrantScope.fromRequest(
+        request.getScope(),
+        request.hasResourceId() ? java.util.Optional.of(request.getResourceId()) : java.util.Optional.empty()
+      );
+      var declaredScope = PluginPermissionGrantScope.toProto(permission.definition().scope());
+      if (declaredScope != request.getScope()) {
+        throw new IllegalArgumentException(
+          "Permission %s uses scope %s, not %s".formatted(
+            permission.id(),
+            declaredScope,
+            request.getScope()
+          ));
+      }
+
+      var now = LocalDateTime.now(ZoneOffset.UTC);
+      soulFireServer.dsl().transaction(configuration -> {
+        var ctx = DSL.using(configuration);
+        var table = Tables.PLUGIN_PERMISSION_GRANTS;
+        var existing = ctx.selectFrom(table)
+          .where(table.USER_ID.eq(userId.toString()))
+          .and(table.PERMISSION_ID.eq(permission.id()))
+          .and(table.SCOPE.eq(target.scope()))
+          .and(table.RESOURCE_ID.eq(target.resourceId()))
+          .fetchOne();
+        if (existing == null) {
+          ctx.insertInto(table)
+            .set(table.USER_ID, userId.toString())
+            .set(table.PERMISSION_ID, permission.id())
+            .set(table.SCOPE, target.scope())
+            .set(table.RESOURCE_ID, target.resourceId())
+            .set(table.GRANTED, request.getGranted())
+            .set(table.CREATED_AT, now)
+            .set(table.UPDATED_AT, now)
+            .execute();
+        } else {
+          ctx.update(table)
+            .set(table.GRANTED, request.getGranted())
+            .set(table.UPDATED_AT, now)
+            .where(table.USER_ID.eq(userId.toString()))
+            .and(table.PERMISSION_ID.eq(permission.id()))
+            .and(table.SCOPE.eq(target.scope()))
+            .and(table.RESOURCE_ID.eq(target.resourceId()))
+            .execute();
+        }
+      });
+      var result = soulFireServer.dsl().selectFrom(Tables.PLUGIN_PERMISSION_GRANTS)
+        .where(Tables.PLUGIN_PERMISSION_GRANTS.USER_ID.eq(userId.toString()))
+        .and(Tables.PLUGIN_PERMISSION_GRANTS.PERMISSION_ID.eq(permission.id()))
+        .and(Tables.PLUGIN_PERMISSION_GRANTS.SCOPE.eq(target.scope()))
+        .and(Tables.PLUGIN_PERMISSION_GRANTS.RESOURCE_ID.eq(target.resourceId()))
+        .fetchOne();
+      if (result == null) {
+        throw new IllegalStateException("Plugin permission grant was not persisted");
+      }
+      responseObserver.onNext(toPluginPermissionGrant(result));
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException e) {
+      throw Status.INVALID_ARGUMENT.withDescription(e.getMessage()).withCause(e).asRuntimeException();
+    }
+  }
+
+  @Override
+  public void deleteUserPluginPermissionGrant(
+    DeleteUserPluginPermissionGrantRequest request,
+    StreamObserver<DeleteUserPluginPermissionGrantResponse> responseObserver
+  ) {
+    ServerRPCConstants.USER_CONTEXT_KEY.get()
+      .hasPermissionOrThrow(PermissionContext.global(GlobalPermission.UPDATE_USER));
+    try {
+      var userId = UUID.fromString(request.getUserId());
+      mutateOrThrow(userId);
+      requireUser(userId);
+      var target = PluginPermissionGrantScope.fromRequest(
+        request.getScope(),
+        request.hasResourceId() ? java.util.Optional.of(request.getResourceId()) : java.util.Optional.empty()
+      );
+      soulFireServer.dsl().deleteFrom(Tables.PLUGIN_PERMISSION_GRANTS)
+        .where(Tables.PLUGIN_PERMISSION_GRANTS.USER_ID.eq(userId.toString()))
+        .and(Tables.PLUGIN_PERMISSION_GRANTS.PERMISSION_ID.eq(request.getPermissionId()))
+        .and(Tables.PLUGIN_PERMISSION_GRANTS.SCOPE.eq(target.scope()))
+        .and(Tables.PLUGIN_PERMISSION_GRANTS.RESOURCE_ID.eq(target.resourceId()))
+        .execute();
+      responseObserver.onNext(DeleteUserPluginPermissionGrantResponse.getDefaultInstance());
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException e) {
+      throw Status.INVALID_ARGUMENT.withDescription(e.getMessage()).withCause(e).asRuntimeException();
+    }
+  }
+
+  private void requireUser(UUID userId) {
+    if (soulFireServer.authSystem().getUserData(userId).isEmpty()) {
+      throw new IllegalArgumentException("User not found: " + userId);
+    }
+  }
+
+  private static UserPluginPermissionGrant toPluginPermissionGrant(
+    PluginPermissionGrantsRecord record
+  ) {
+    var result = UserPluginPermissionGrant.newBuilder()
+      .setUserId(record.getUserId())
+      .setPermissionId(record.getPermissionId())
+      .setScope(PluginPermissionGrantScope.toProto(record.getScope()))
+      .setGranted(record.getGranted())
+      .setActive(SoulFireAPI.pluginApis().findPermission(record.getPermissionId()).isPresent())
+      .setCreatedAt(Timestamps.fromMillis(
+        record.getCreatedAt().toInstant(ZoneOffset.UTC).toEpochMilli()))
+      .setUpdatedAt(Timestamps.fromMillis(
+        record.getUpdatedAt().toInstant(ZoneOffset.UTC).toEpochMilli()));
+    if (!record.getResourceId().isEmpty()) {
+      result.setResourceId(record.getResourceId());
+    }
+    return result.build();
   }
 }

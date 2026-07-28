@@ -7,6 +7,8 @@ import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2
 import type { UserRole } from "./common_pb.js";
 import { file_soulfire_common } from "./common_pb.js";
 import { file_soulfire_api_docs } from "./api_docs_pb.js";
+import type { PluginPermissionScope } from "./plugin_api_pb.js";
+import { file_soulfire_plugin_api } from "./plugin_api_pb.js";
 import { file_google_api_annotations } from "../google/api/annotations_pb.js";
 import { file_google_api_field_behavior } from "../google/api/field_behavior_pb.js";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
@@ -17,7 +19,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file soulfire/user.proto.
  */
 export const file_soulfire_user: GenFile = /*@__PURE__*/
-  fileDesc("ChNzb3VsZmlyZS91c2VyLnByb3RvEgtzb3VsZmlyZS52MSJzChFVc2VyQ3JlYXRlUmVxdWVzdBIVCgh1c2VybmFtZRgBIAEoCUID4EECEigKBHJvbGUYAiABKA4yFS5zb3VsZmlyZS52MS5Vc2VyUm9sZUID4EECEh0KBWVtYWlsGAMgASgJQg7gQQLS8xgHCgVlbWFpbCIvChJVc2VyQ3JlYXRlUmVzcG9uc2USGQoCaWQYASABKAlCDeBBAtLzGAYKBHV1aWQiLgoRVXNlckRlbGV0ZVJlcXVlc3QSGQoCaWQYASABKAlCDeBBAtLzGAYKBHV1aWQiFAoSVXNlckRlbGV0ZVJlc3BvbnNlIhEKD1VzZXJMaXN0UmVxdWVzdCK9AwoQVXNlckxpc3RSZXNwb25zZRI5CgV1c2VycxgBIAMoCzIiLnNvdWxmaXJlLnYxLlVzZXJMaXN0UmVzcG9uc2UuVXNlckIG4EEC4EEGGu0CCgRVc2VyEhkKAmlkGAEgASgJQg3gQQLS8xgGCgR1dWlkEhUKCHVzZXJuYW1lGAIgASgJQgPgQQISKAoEcm9sZRgDIAEoDjIVLnNvdWxmaXJlLnYxLlVzZXJSb2xlQgPgQQISHQoFZW1haWwYBCABKAlCDuBBAtLzGAcKBWVtYWlsEjMKCmNyZWF0ZWRfYXQYBSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wQgPgQQISMwoKdXBkYXRlZF9hdBgGIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBCA+BBAhI2Cg1sYXN0X2xvZ2luX2F0GAcgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEgAiAEBEjYKDW1pbl9pc3N1ZWRfYXQYCCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wQgPgQQJCEAoOX2xhc3RfbG9naW5fYXQiLAoPVXNlckluZm9SZXF1ZXN0EhkKAmlkGAEgASgJQg3gQQLS8xgGCgR1dWlkIt4CChBVc2VySW5mb1Jlc3BvbnNlEhUKCHVzZXJuYW1lGAEgASgJQgPgQQISKAoEcm9sZRgCIAEoDjIVLnNvdWxmaXJlLnYxLlVzZXJSb2xlQgPgQQISHQoFZW1haWwYAyABKAlCDuBBAtLzGAcKBWVtYWlsEjMKCmNyZWF0ZWRfYXQYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wQgPgQQISMwoKdXBkYXRlZF9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBCA+BBAhI2Cg1sYXN0X2xvZ2luX2F0GAYgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEgAiAEBEjYKDW1pbl9pc3N1ZWRfYXQYByABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wQgPgQQJCEAoOX2xhc3RfbG9naW5fYXQiNgoZSW52YWxpZGF0ZVNlc3Npb25zUmVxdWVzdBIZCgJpZBgBIAEoCUIN4EEC0vMYBgoEdXVpZCIcChpJbnZhbGlkYXRlU2Vzc2lvbnNSZXNwb25zZSKOAQoRVXBkYXRlVXNlclJlcXVlc3QSGQoCaWQYASABKAlCDeBBAtLzGAYKBHV1aWQSFQoIdXNlcm5hbWUYAiABKAlCA+BBAhIoCgRyb2xlGAMgASgOMhUuc291bGZpcmUudjEuVXNlclJvbGVCA+BBAhIdCgVlbWFpbBgEIAEoCUIO4EEC0vMYBwoFZW1haWwiFAoSVXBkYXRlVXNlclJlc3BvbnNlIjgKG0dlbmVyYXRlVXNlckFQSVRva2VuUmVxdWVzdBIZCgJpZBgBIAEoCUIN4EEC0vMYBgoEdXVpZCIyChxHZW5lcmF0ZVVzZXJBUElUb2tlblJlc3BvbnNlEhIKBXRva2VuGAEgASgJQgPgQQIy4AoKC1VzZXJTZXJ2aWNlEqsBCgpDcmVhdGVVc2VyEh4uc291bGZpcmUudjEuVXNlckNyZWF0ZVJlcXVlc3QaHy5zb3VsZmlyZS52MS5Vc2VyQ3JlYXRlUmVzcG9uc2UiXMrzGEQKC0NyZWF0ZSB1c2VyGgtDUkVBVEVfVVNFUiILc2VydmVyLnVzZXI6G0NyZWF0ZXMgYSBuZXcgdXNlciBhY2NvdW50LoLT5JMCDjoBKiIJL3YxL3VzZXJzEroBCgpEZWxldGVVc2VyEh4uc291bGZpcmUudjEuVXNlckRlbGV0ZVJlcXVlc3QaHy5zb3VsZmlyZS52MS5Vc2VyRGVsZXRlUmVzcG9uc2Uia8rzGFEKC0RlbGV0ZSB1c2VyGgtERUxFVEVfVVNFUiILc2VydmVyLnVzZXI6KERlbGV0ZXMgdGhlIHVzZXIgYW5kIHJlbGF0ZWQgb3duZWQgZGF0YS6C0+STAhAqDi92MS91c2Vycy97aWR9EoMBCglMaXN0VXNlcnMSHC5zb3VsZmlyZS52MS5Vc2VyTGlzdFJlcXVlc3QaHS5zb3VsZmlyZS52MS5Vc2VyTGlzdFJlc3BvbnNlIjnK8xgkCgpMaXN0IHVzZXJzGglSRUFEX1VTRVIiC3NlcnZlci51c2VygtPkkwILEgkvdjEvdXNlcnMSiAEKC0dldFVzZXJJbmZvEhwuc291bGZpcmUudjEuVXNlckluZm9SZXF1ZXN0Gh0uc291bGZpcmUudjEuVXNlckluZm9SZXNwb25zZSI8yvMYIgoIR2V0IHVzZXIaCVJFQURfVVNFUiILc2VydmVyLnVzZXKC0+STAhASDi92MS91c2Vycy97aWR9EokCChJJbnZhbGlkYXRlU2Vzc2lvbnMSJi5zb3VsZmlyZS52MS5JbnZhbGlkYXRlU2Vzc2lvbnNSZXF1ZXN0Gicuc291bGZpcmUudjEuSW52YWxpZGF0ZVNlc3Npb25zUmVzcG9uc2UioQHK8xhzChhJbnZhbGlkYXRlIHVzZXIgc2Vzc2lvbnMaE0lOVkFMSURBVEVfU0VTU0lPTlMiC3NlcnZlci51c2VyOjVSZXZva2VzIHByZXZpb3VzbHkgaXNzdWVkIHRva2VucyBmb3IgdGhlIHRhcmdldCB1c2VyLoLT5JMCJCIiL3YxL3VzZXJzL3tpZH0vc2Vzc2lvbnM6aW52YWxpZGF0ZRLEAQoKVXBkYXRlVXNlchIeLnNvdWxmaXJlLnYxLlVwZGF0ZVVzZXJSZXF1ZXN0Gh8uc291bGZpcmUudjEuVXBkYXRlVXNlclJlc3BvbnNlInXK8xhYCgtVcGRhdGUgdXNlchoLVVBEQVRFX1VTRVIiC3NlcnZlci51c2VyOi9QZXJzaXN0cyB0aGUgdXBkYXRlZCB1c2VybmFtZSwgcm9sZSwgYW5kIGVtYWlsLoLT5JMCEzoBKjIOL3YxL3VzZXJzL3tpZH0SgQIKFEdlbmVyYXRlVXNlckFQSVRva2VuEiguc291bGZpcmUudjEuR2VuZXJhdGVVc2VyQVBJVG9rZW5SZXF1ZXN0Gikuc291bGZpcmUudjEuR2VuZXJhdGVVc2VyQVBJVG9rZW5SZXNwb25zZSKTAcrzGGUKF0dlbmVyYXRlIHVzZXIgQVBJIHRva2VuGhJHRU5FUkFURV9BUElfVE9LRU4iC3NlcnZlci51c2VyOilJc3N1ZXMgYSBuZXcgQVBJIEpXVCBmb3IgdGhlIHRhcmdldCB1c2VyLoLT5JMCJCIiL3YxL3VzZXJzL3tpZH0vdG9rZW5zL2FwaTpnZW5lcmF0ZUIhCh1jb20uc291bGZpcmVtYy5ncnBjLmdlbmVyYXRlZFABYgZwcm90bzM", [file_soulfire_common, file_soulfire_api_docs, file_google_api_annotations, file_google_api_field_behavior, file_google_protobuf_timestamp]);
+  fileDesc("ChNzb3VsZmlyZS91c2VyLnByb3RvEgtzb3VsZmlyZS52MSJzChFVc2VyQ3JlYXRlUmVxdWVzdBIVCgh1c2VybmFtZRgBIAEoCUID4EECEigKBHJvbGUYAiABKA4yFS5zb3VsZmlyZS52MS5Vc2VyUm9sZUID4EECEh0KBWVtYWlsGAMgASgJQg7gQQLS8xgHCgVlbWFpbCIvChJVc2VyQ3JlYXRlUmVzcG9uc2USGQoCaWQYASABKAlCDeBBAtLzGAYKBHV1aWQiLgoRVXNlckRlbGV0ZVJlcXVlc3QSGQoCaWQYASABKAlCDeBBAtLzGAYKBHV1aWQiFAoSVXNlckRlbGV0ZVJlc3BvbnNlIhEKD1VzZXJMaXN0UmVxdWVzdCK9AwoQVXNlckxpc3RSZXNwb25zZRI5CgV1c2VycxgBIAMoCzIiLnNvdWxmaXJlLnYxLlVzZXJMaXN0UmVzcG9uc2UuVXNlckIG4EEC4EEGGu0CCgRVc2VyEhkKAmlkGAEgASgJQg3gQQLS8xgGCgR1dWlkEhUKCHVzZXJuYW1lGAIgASgJQgPgQQISKAoEcm9sZRgDIAEoDjIVLnNvdWxmaXJlLnYxLlVzZXJSb2xlQgPgQQISHQoFZW1haWwYBCABKAlCDuBBAtLzGAcKBWVtYWlsEjMKCmNyZWF0ZWRfYXQYBSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wQgPgQQISMwoKdXBkYXRlZF9hdBgGIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBCA+BBAhI2Cg1sYXN0X2xvZ2luX2F0GAcgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEgAiAEBEjYKDW1pbl9pc3N1ZWRfYXQYCCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wQgPgQQJCEAoOX2xhc3RfbG9naW5fYXQiLAoPVXNlckluZm9SZXF1ZXN0EhkKAmlkGAEgASgJQg3gQQLS8xgGCgR1dWlkIt4CChBVc2VySW5mb1Jlc3BvbnNlEhUKCHVzZXJuYW1lGAEgASgJQgPgQQISKAoEcm9sZRgCIAEoDjIVLnNvdWxmaXJlLnYxLlVzZXJSb2xlQgPgQQISHQoFZW1haWwYAyABKAlCDuBBAtLzGAcKBWVtYWlsEjMKCmNyZWF0ZWRfYXQYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wQgPgQQISMwoKdXBkYXRlZF9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXBCA+BBAhI2Cg1sYXN0X2xvZ2luX2F0GAYgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEgAiAEBEjYKDW1pbl9pc3N1ZWRfYXQYByABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wQgPgQQJCEAoOX2xhc3RfbG9naW5fYXQiNgoZSW52YWxpZGF0ZVNlc3Npb25zUmVxdWVzdBIZCgJpZBgBIAEoCUIN4EEC0vMYBgoEdXVpZCIcChpJbnZhbGlkYXRlU2Vzc2lvbnNSZXNwb25zZSKOAQoRVXBkYXRlVXNlclJlcXVlc3QSGQoCaWQYASABKAlCDeBBAtLzGAYKBHV1aWQSFQoIdXNlcm5hbWUYAiABKAlCA+BBAhIoCgRyb2xlGAMgASgOMhUuc291bGZpcmUudjEuVXNlclJvbGVCA+BBAhIdCgVlbWFpbBgEIAEoCUIO4EEC0vMYBwoFZW1haWwiFAoSVXBkYXRlVXNlclJlc3BvbnNlIjgKG0dlbmVyYXRlVXNlckFQSVRva2VuUmVxdWVzdBIZCgJpZBgBIAEoCUIN4EEC0vMYBgoEdXVpZCIyChxHZW5lcmF0ZVVzZXJBUElUb2tlblJlc3BvbnNlEhIKBXRva2VuGAEgASgJQgPgQQIi2gIKGVVzZXJQbHVnaW5QZXJtaXNzaW9uR3JhbnQSHgoHdXNlcl9pZBgBIAEoCUIN4EEC0vMYBgoEdXVpZBIaCg1wZXJtaXNzaW9uX2lkGAIgASgJQgPgQQISNgoFc2NvcGUYAyABKA4yIi5zb3VsZmlyZS52MS5QbHVnaW5QZXJtaXNzaW9uU2NvcGVCA+BBAhIkCgtyZXNvdXJjZV9pZBgEIAEoCUIK0vMYBgoEdXVpZEgAiAEBEhQKB2dyYW50ZWQYBSABKAhCA+BBAhITCgZhY3RpdmUYBiABKAhCA+BBAhIzCgpjcmVhdGVkX2F0GAcgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcEID4EECEjMKCnVwZGF0ZWRfYXQYCCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wQgPgQQJCDgoMX3Jlc291cmNlX2lkIkcKJUxpc3RVc2VyUGx1Z2luUGVybWlzc2lvbkdyYW50c1JlcXVlc3QSHgoHdXNlcl9pZBgBIAEoCUIN4EEC0vMYBgoEdXVpZCJlCiZMaXN0VXNlclBsdWdpblBlcm1pc3Npb25HcmFudHNSZXNwb25zZRI7CgZncmFudHMYASADKAsyJi5zb3VsZmlyZS52MS5Vc2VyUGx1Z2luUGVybWlzc2lvbkdyYW50QgPgQQIi5QEKI1NldFVzZXJQbHVnaW5QZXJtaXNzaW9uR3JhbnRSZXF1ZXN0Eh4KB3VzZXJfaWQYASABKAlCDeBBAtLzGAYKBHV1aWQSGgoNcGVybWlzc2lvbl9pZBgCIAEoCUID4EECEjYKBXNjb3BlGAMgASgOMiIuc291bGZpcmUudjEuUGx1Z2luUGVybWlzc2lvblNjb3BlQgPgQQISJAoLcmVzb3VyY2VfaWQYBCABKAlCCtLzGAYKBHV1aWRIAIgBARIUCgdncmFudGVkGAUgASgIQgPgQQJCDgoMX3Jlc291cmNlX2lkItIBCiZEZWxldGVVc2VyUGx1Z2luUGVybWlzc2lvbkdyYW50UmVxdWVzdBIeCgd1c2VyX2lkGAEgASgJQg3gQQLS8xgGCgR1dWlkEhoKDXBlcm1pc3Npb25faWQYAiABKAlCA+BBAhI2CgVzY29wZRgDIAEoDjIiLnNvdWxmaXJlLnYxLlBsdWdpblBlcm1pc3Npb25TY29wZUID4EECEiQKC3Jlc291cmNlX2lkGAQgASgJQgrS8xgGCgR1dWlkSACIAQFCDgoMX3Jlc291cmNlX2lkIikKJ0RlbGV0ZVVzZXJQbHVnaW5QZXJtaXNzaW9uR3JhbnRSZXNwb25zZTLUEQoLVXNlclNlcnZpY2USqwEKCkNyZWF0ZVVzZXISHi5zb3VsZmlyZS52MS5Vc2VyQ3JlYXRlUmVxdWVzdBofLnNvdWxmaXJlLnYxLlVzZXJDcmVhdGVSZXNwb25zZSJcyvMYRAoLQ3JlYXRlIHVzZXIaC0NSRUFURV9VU0VSIgtzZXJ2ZXIudXNlcjobQ3JlYXRlcyBhIG5ldyB1c2VyIGFjY291bnQugtPkkwIOOgEqIgkvdjEvdXNlcnMSugEKCkRlbGV0ZVVzZXISHi5zb3VsZmlyZS52MS5Vc2VyRGVsZXRlUmVxdWVzdBofLnNvdWxmaXJlLnYxLlVzZXJEZWxldGVSZXNwb25zZSJryvMYUQoLRGVsZXRlIHVzZXIaC0RFTEVURV9VU0VSIgtzZXJ2ZXIudXNlcjooRGVsZXRlcyB0aGUgdXNlciBhbmQgcmVsYXRlZCBvd25lZCBkYXRhLoLT5JMCECoOL3YxL3VzZXJzL3tpZH0SgwEKCUxpc3RVc2VycxIcLnNvdWxmaXJlLnYxLlVzZXJMaXN0UmVxdWVzdBodLnNvdWxmaXJlLnYxLlVzZXJMaXN0UmVzcG9uc2UiOcrzGCQKCkxpc3QgdXNlcnMaCVJFQURfVVNFUiILc2VydmVyLnVzZXKC0+STAgsSCS92MS91c2VycxKIAQoLR2V0VXNlckluZm8SHC5zb3VsZmlyZS52MS5Vc2VySW5mb1JlcXVlc3QaHS5zb3VsZmlyZS52MS5Vc2VySW5mb1Jlc3BvbnNlIjzK8xgiCghHZXQgdXNlchoJUkVBRF9VU0VSIgtzZXJ2ZXIudXNlcoLT5JMCEBIOL3YxL3VzZXJzL3tpZH0SiQIKEkludmFsaWRhdGVTZXNzaW9ucxImLnNvdWxmaXJlLnYxLkludmFsaWRhdGVTZXNzaW9uc1JlcXVlc3QaJy5zb3VsZmlyZS52MS5JbnZhbGlkYXRlU2Vzc2lvbnNSZXNwb25zZSKhAcrzGHMKGEludmFsaWRhdGUgdXNlciBzZXNzaW9ucxoTSU5WQUxJREFURV9TRVNTSU9OUyILc2VydmVyLnVzZXI6NVJldm9rZXMgcHJldmlvdXNseSBpc3N1ZWQgdG9rZW5zIGZvciB0aGUgdGFyZ2V0IHVzZXIugtPkkwIkIiIvdjEvdXNlcnMve2lkfS9zZXNzaW9uczppbnZhbGlkYXRlEsQBCgpVcGRhdGVVc2VyEh4uc291bGZpcmUudjEuVXBkYXRlVXNlclJlcXVlc3QaHy5zb3VsZmlyZS52MS5VcGRhdGVVc2VyUmVzcG9uc2UidcrzGFgKC1VwZGF0ZSB1c2VyGgtVUERBVEVfVVNFUiILc2VydmVyLnVzZXI6L1BlcnNpc3RzIHRoZSB1cGRhdGVkIHVzZXJuYW1lLCByb2xlLCBhbmQgZW1haWwugtPkkwITOgEqMg4vdjEvdXNlcnMve2lkfRKBAgoUR2VuZXJhdGVVc2VyQVBJVG9rZW4SKC5zb3VsZmlyZS52MS5HZW5lcmF0ZVVzZXJBUElUb2tlblJlcXVlc3QaKS5zb3VsZmlyZS52MS5HZW5lcmF0ZVVzZXJBUElUb2tlblJlc3BvbnNlIpMByvMYZQoXR2VuZXJhdGUgdXNlciBBUEkgdG9rZW4aEkdFTkVSQVRFX0FQSV9UT0tFTiILc2VydmVyLnVzZXI6KUlzc3VlcyBhIG5ldyBBUEkgSldUIGZvciB0aGUgdGFyZ2V0IHVzZXIugtPkkwIkIiIvdjEvdXNlcnMve2lkfS90b2tlbnMvYXBpOmdlbmVyYXRlEvkBCh5MaXN0VXNlclBsdWdpblBlcm1pc3Npb25HcmFudHMSMi5zb3VsZmlyZS52MS5MaXN0VXNlclBsdWdpblBlcm1pc3Npb25HcmFudHNSZXF1ZXN0GjMuc291bGZpcmUudjEuTGlzdFVzZXJQbHVnaW5QZXJtaXNzaW9uR3JhbnRzUmVzcG9uc2UibsrzGDwKIkxpc3QgdXNlciBwbHVnaW4gcGVybWlzc2lvbiBncmFudHMaCVJFQURfVVNFUiILc2VydmVyLnVzZXKC0+STAigSJi92MS91c2Vycy97dXNlcl9pZH0vcGx1Z2luLXBlcm1pc3Npb25zEqwCChxTZXRVc2VyUGx1Z2luUGVybWlzc2lvbkdyYW50EjAuc291bGZpcmUudjEuU2V0VXNlclBsdWdpblBlcm1pc3Npb25HcmFudFJlcXVlc3QaJi5zb3VsZmlyZS52MS5Vc2VyUGx1Z2luUGVybWlzc2lvbkdyYW50IrEByvMYbAogU2V0IHVzZXIgcGx1Z2luIHBlcm1pc3Npb24gZ3JhbnQaC1VQREFURV9VU0VSIgtzZXJ2ZXIudXNlcjouQ2hhbmdlcyBhIHVzZXIncyBlZmZlY3RpdmUgcGx1Z2luIHBlcm1pc3Npb25zLoLT5JMCOzoBKho2L3YxL3VzZXJzL3t1c2VyX2lkfS9wbHVnaW4tcGVybWlzc2lvbnMve3Blcm1pc3Npb25faWR9EsYCCh9EZWxldGVVc2VyUGx1Z2luUGVybWlzc2lvbkdyYW50EjMuc291bGZpcmUudjEuRGVsZXRlVXNlclBsdWdpblBlcm1pc3Npb25HcmFudFJlcXVlc3QaNC5zb3VsZmlyZS52MS5EZWxldGVVc2VyUGx1Z2luUGVybWlzc2lvbkdyYW50UmVzcG9uc2UitwHK8xh1CiNEZWxldGUgdXNlciBwbHVnaW4gcGVybWlzc2lvbiBncmFudBoLVVBEQVRFX1VTRVIiC3NlcnZlci51c2VyOjRSZXN0b3JlcyBhIHBsdWdpbiBwZXJtaXNzaW9uJ3MgZGVmYXVsdCBncmFudCBwb2xpY3kugtPkkwI4KjYvdjEvdXNlcnMve3VzZXJfaWR9L3BsdWdpbi1wZXJtaXNzaW9ucy97cGVybWlzc2lvbl9pZH1CIQodY29tLnNvdWxmaXJlbWMuZ3JwYy5nZW5lcmF0ZWRQAWIGcHJvdG8z", [file_soulfire_common, file_soulfire_api_docs, file_soulfire_plugin_api, file_google_api_annotations, file_google_api_field_behavior, file_google_protobuf_timestamp]);
 
 /**
  * Request message for creating a new user account in the SoulFire system.
@@ -480,6 +482,185 @@ export const GenerateUserAPITokenResponseSchema: GenMessage<GenerateUserAPIToken
   messageDesc(file_soulfire_user, 13);
 
 /**
+ * An explicit user-level override for a dynamically registered plugin
+ * permission. Records remain persisted when a plugin is absent so reinstalling
+ * a plugin cannot silently change the meaning of an existing grant.
+ *
+ * @generated from message soulfire.v1.UserPluginPermissionGrant
+ */
+export type UserPluginPermissionGrant = Message<"soulfire.v1.UserPluginPermissionGrant"> & {
+  /**
+   * @generated from field: string user_id = 1;
+   */
+  userId: string;
+
+  /**
+   * @generated from field: string permission_id = 2;
+   */
+  permissionId: string;
+
+  /**
+   * @generated from field: soulfire.v1.PluginPermissionScope scope = 3;
+   */
+  scope: PluginPermissionScope;
+
+  /**
+   * Empty only for global permissions. Instance, bot, and task permissions
+   * use the corresponding resource UUID.
+   *
+   * @generated from field: optional string resource_id = 4;
+   */
+  resourceId?: string | undefined;
+
+  /**
+   * True grants and false explicitly denies the permission.
+   *
+   * @generated from field: bool granted = 5;
+   */
+  granted: boolean;
+
+  /**
+   * False when the owning plugin is not currently installed.
+   *
+   * @generated from field: bool active = 6;
+   */
+  active: boolean;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp created_at = 7;
+   */
+  createdAt?: Timestamp | undefined;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp updated_at = 8;
+   */
+  updatedAt?: Timestamp | undefined;
+};
+
+/**
+ * Describes the message soulfire.v1.UserPluginPermissionGrant.
+ * Use `create(UserPluginPermissionGrantSchema)` to create a new message.
+ */
+export const UserPluginPermissionGrantSchema: GenMessage<UserPluginPermissionGrant> = /*@__PURE__*/
+  messageDesc(file_soulfire_user, 14);
+
+/**
+ * @generated from message soulfire.v1.ListUserPluginPermissionGrantsRequest
+ */
+export type ListUserPluginPermissionGrantsRequest = Message<"soulfire.v1.ListUserPluginPermissionGrantsRequest"> & {
+  /**
+   * @generated from field: string user_id = 1;
+   */
+  userId: string;
+};
+
+/**
+ * Describes the message soulfire.v1.ListUserPluginPermissionGrantsRequest.
+ * Use `create(ListUserPluginPermissionGrantsRequestSchema)` to create a new message.
+ */
+export const ListUserPluginPermissionGrantsRequestSchema: GenMessage<ListUserPluginPermissionGrantsRequest> = /*@__PURE__*/
+  messageDesc(file_soulfire_user, 15);
+
+/**
+ * @generated from message soulfire.v1.ListUserPluginPermissionGrantsResponse
+ */
+export type ListUserPluginPermissionGrantsResponse = Message<"soulfire.v1.ListUserPluginPermissionGrantsResponse"> & {
+  /**
+   * @generated from field: repeated soulfire.v1.UserPluginPermissionGrant grants = 1;
+   */
+  grants: UserPluginPermissionGrant[];
+};
+
+/**
+ * Describes the message soulfire.v1.ListUserPluginPermissionGrantsResponse.
+ * Use `create(ListUserPluginPermissionGrantsResponseSchema)` to create a new message.
+ */
+export const ListUserPluginPermissionGrantsResponseSchema: GenMessage<ListUserPluginPermissionGrantsResponse> = /*@__PURE__*/
+  messageDesc(file_soulfire_user, 16);
+
+/**
+ * @generated from message soulfire.v1.SetUserPluginPermissionGrantRequest
+ */
+export type SetUserPluginPermissionGrantRequest = Message<"soulfire.v1.SetUserPluginPermissionGrantRequest"> & {
+  /**
+   * @generated from field: string user_id = 1;
+   */
+  userId: string;
+
+  /**
+   * @generated from field: string permission_id = 2;
+   */
+  permissionId: string;
+
+  /**
+   * @generated from field: soulfire.v1.PluginPermissionScope scope = 3;
+   */
+  scope: PluginPermissionScope;
+
+  /**
+   * @generated from field: optional string resource_id = 4;
+   */
+  resourceId?: string | undefined;
+
+  /**
+   * @generated from field: bool granted = 5;
+   */
+  granted: boolean;
+};
+
+/**
+ * Describes the message soulfire.v1.SetUserPluginPermissionGrantRequest.
+ * Use `create(SetUserPluginPermissionGrantRequestSchema)` to create a new message.
+ */
+export const SetUserPluginPermissionGrantRequestSchema: GenMessage<SetUserPluginPermissionGrantRequest> = /*@__PURE__*/
+  messageDesc(file_soulfire_user, 17);
+
+/**
+ * @generated from message soulfire.v1.DeleteUserPluginPermissionGrantRequest
+ */
+export type DeleteUserPluginPermissionGrantRequest = Message<"soulfire.v1.DeleteUserPluginPermissionGrantRequest"> & {
+  /**
+   * @generated from field: string user_id = 1;
+   */
+  userId: string;
+
+  /**
+   * @generated from field: string permission_id = 2;
+   */
+  permissionId: string;
+
+  /**
+   * @generated from field: soulfire.v1.PluginPermissionScope scope = 3;
+   */
+  scope: PluginPermissionScope;
+
+  /**
+   * @generated from field: optional string resource_id = 4;
+   */
+  resourceId?: string | undefined;
+};
+
+/**
+ * Describes the message soulfire.v1.DeleteUserPluginPermissionGrantRequest.
+ * Use `create(DeleteUserPluginPermissionGrantRequestSchema)` to create a new message.
+ */
+export const DeleteUserPluginPermissionGrantRequestSchema: GenMessage<DeleteUserPluginPermissionGrantRequest> = /*@__PURE__*/
+  messageDesc(file_soulfire_user, 18);
+
+/**
+ * @generated from message soulfire.v1.DeleteUserPluginPermissionGrantResponse
+ */
+export type DeleteUserPluginPermissionGrantResponse = Message<"soulfire.v1.DeleteUserPluginPermissionGrantResponse"> & {
+};
+
+/**
+ * Describes the message soulfire.v1.DeleteUserPluginPermissionGrantResponse.
+ * Use `create(DeleteUserPluginPermissionGrantResponseSchema)` to create a new message.
+ */
+export const DeleteUserPluginPermissionGrantResponseSchema: GenMessage<DeleteUserPluginPermissionGrantResponse> = /*@__PURE__*/
+  messageDesc(file_soulfire_user, 19);
+
+/**
  * UserService provides user management functionality for the SoulFire system.
  * All methods require authentication via JWT token in the request metadata.
  * Most methods require specific global permissions (CREATE_USER, READ_USER, UPDATE_USER,
@@ -597,6 +778,38 @@ export const UserService: GenService<{
     methodKind: "unary";
     input: typeof GenerateUserAPITokenRequestSchema;
     output: typeof GenerateUserAPITokenResponseSchema;
+  },
+  /**
+   * Lists explicit dynamic plugin permission overrides for one user,
+   * including inactive grants retained for plugins that are not installed.
+   *
+   * @generated from rpc soulfire.v1.UserService.ListUserPluginPermissionGrants
+   */
+  listUserPluginPermissionGrants: {
+    methodKind: "unary";
+    input: typeof ListUserPluginPermissionGrantsRequestSchema;
+    output: typeof ListUserPluginPermissionGrantsResponseSchema;
+  },
+  /**
+   * Creates or replaces one explicit plugin permission override.
+   *
+   * @generated from rpc soulfire.v1.UserService.SetUserPluginPermissionGrant
+   */
+  setUserPluginPermissionGrant: {
+    methodKind: "unary";
+    input: typeof SetUserPluginPermissionGrantRequestSchema;
+    output: typeof UserPluginPermissionGrantSchema;
+  },
+  /**
+   * Removes one explicit override so the plugin permission's default grant
+   * policy applies again.
+   *
+   * @generated from rpc soulfire.v1.UserService.DeleteUserPluginPermissionGrant
+   */
+  deleteUserPluginPermissionGrant: {
+    methodKind: "unary";
+    input: typeof DeleteUserPluginPermissionGrantRequestSchema;
+    output: typeof DeleteUserPluginPermissionGrantResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_soulfire_user, 0);

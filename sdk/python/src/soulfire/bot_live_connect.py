@@ -18,7 +18,7 @@ from connectrpc.protocol import ProtocolType
 from connectrpc.server import ConnectASGIApplication, ConnectWSGIApplication, Endpoint, EndpointSync
 from pyqwest import Client, SyncClient
 
-from .bot_live_pb2 import AcquireBotControlRequest, AcquireBotControlResponse, AttackEntityRequest, AttackEntityResponse, BotEvent, DigBlockRequest, DigBlockResponse, FindBlocksRequest, FindBlocksResponse, GetBlockRequest, GetBlockResponse, GoToRequest, InteractEntityRequest, InteractEntityResponse, ListNearbyEntitiesRequest, ListNearbyEntitiesResponse, PathfindProgress, PlaceBlockRequest, PlaceBlockResponse, ReleaseBotControlRequest, ReleaseBotControlResponse, ReleaseItemRequest, ReleaseItemResponse, RenewBotControlRequest, RenewBotControlResponse, RespawnRequest, RespawnResponse, SendChatRequest, SendChatResponse, StopPathfindingRequest, StopPathfindingResponse, SwingArmRequest, SwingArmResponse, UseItemRequest, UseItemResponse, WatchBotEventsRequest
+from .bot_live_pb2 import AcquireBotControlRequest, AcquireBotControlResponse, AttackEntityRequest, AttackEntityResponse, BotEvent, DigBlockRequest, DigBlockResponse, DismountRequest, DismountResponse, FindBlocksRequest, FindBlocksResponse, GetBlockRequest, GetBlockResponse, GoToRequest, InteractBlockRequest, InteractBlockResponse, InteractEntityRequest, InteractEntityResponse, ListNearbyEntitiesRequest, ListNearbyEntitiesResponse, MountEntityRequest, MountEntityResponse, PathfindProgress, PlaceBlockRequest, PlaceBlockResponse, ReleaseBotControlRequest, ReleaseBotControlResponse, ReleaseItemRequest, ReleaseItemResponse, RenewBotControlRequest, RenewBotControlResponse, RespawnRequest, RespawnResponse, RespondResourcePackRequest, RespondResourcePackResponse, SendChatRequest, SendChatResponse, SetCreativeSlotRequest, SetCreativeSlotResponse, SetFlyingRequest, SetFlyingResponse, SetVehicleControlRequest, SetVehicleControlResponse, SleepRequest, SleepResponse, StartElytraFlightRequest, StartElytraFlightResponse, StopPathfindingRequest, StopPathfindingResponse, SwingArmRequest, SwingArmResponse, UpdateSignRequest, UpdateSignResponse, UseItemRequest, UseItemResponse, WaitForChunksRequest, WaitForChunksResponse, WakeRequest, WakeResponse, WatchBotEventsRequest, WriteBookRequest, WriteBookResponse
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator, Iterable, Iterator, Mapping
@@ -56,6 +56,9 @@ class BotLiveService(Protocol):
     async def place_block(self, request: PlaceBlockRequest, ctx: RequestContext[PlaceBlockRequest, PlaceBlockResponse]) -> PlaceBlockResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
+    async def interact_block(self, request: InteractBlockRequest, ctx: RequestContext[InteractBlockRequest, InteractBlockResponse]) -> InteractBlockResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
     async def use_item(self, request: UseItemRequest, ctx: RequestContext[UseItemRequest, UseItemResponse]) -> UseItemResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
@@ -72,6 +75,42 @@ class BotLiveService(Protocol):
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
     async def respawn(self, request: RespawnRequest, ctx: RequestContext[RespawnRequest, RespawnResponse]) -> RespawnResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def sleep(self, request: SleepRequest, ctx: RequestContext[SleepRequest, SleepResponse]) -> SleepResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def wake(self, request: WakeRequest, ctx: RequestContext[WakeRequest, WakeResponse]) -> WakeResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def mount_entity(self, request: MountEntityRequest, ctx: RequestContext[MountEntityRequest, MountEntityResponse]) -> MountEntityResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def dismount(self, request: DismountRequest, ctx: RequestContext[DismountRequest, DismountResponse]) -> DismountResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def set_vehicle_control(self, request: SetVehicleControlRequest, ctx: RequestContext[SetVehicleControlRequest, SetVehicleControlResponse]) -> SetVehicleControlResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def update_sign(self, request: UpdateSignRequest, ctx: RequestContext[UpdateSignRequest, UpdateSignResponse]) -> UpdateSignResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def write_book(self, request: WriteBookRequest, ctx: RequestContext[WriteBookRequest, WriteBookResponse]) -> WriteBookResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def respond_resource_pack(self, request: RespondResourcePackRequest, ctx: RequestContext[RespondResourcePackRequest, RespondResourcePackResponse]) -> RespondResourcePackResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def set_flying(self, request: SetFlyingRequest, ctx: RequestContext[SetFlyingRequest, SetFlyingResponse]) -> SetFlyingResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def start_elytra_flight(self, request: StartElytraFlightRequest, ctx: RequestContext[StartElytraFlightRequest, StartElytraFlightResponse]) -> StartElytraFlightResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def set_creative_slot(self, request: SetCreativeSlotRequest, ctx: RequestContext[SetCreativeSlotRequest, SetCreativeSlotResponse]) -> SetCreativeSlotResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    async def wait_for_chunks(self, request: WaitForChunksRequest, ctx: RequestContext[WaitForChunksRequest, WaitForChunksResponse]) -> WaitForChunksResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
     def go_to(self, request: GoToRequest, ctx: RequestContext[GoToRequest, PathfindProgress]) -> AsyncIterator[PathfindProgress]:
@@ -173,6 +212,16 @@ class BotLiveServiceASGIApplication(ConnectASGIApplication[BotLiveService]):
                     ),
                     function=svc.place_block,
                 ),
+                "/soulfire.v1.BotLiveService/InteractBlock": Endpoint.unary(
+                    method=MethodInfo(
+                        name="InteractBlock",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=InteractBlockRequest,
+                        output=InteractBlockResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.interact_block,
+                ),
                 "/soulfire.v1.BotLiveService/UseItem": Endpoint.unary(
                     method=MethodInfo(
                         name="UseItem",
@@ -232,6 +281,126 @@ class BotLiveServiceASGIApplication(ConnectASGIApplication[BotLiveService]):
                         idempotency_level=IdempotencyLevel.UNKNOWN,
                     ),
                     function=svc.respawn,
+                ),
+                "/soulfire.v1.BotLiveService/Sleep": Endpoint.unary(
+                    method=MethodInfo(
+                        name="Sleep",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=SleepRequest,
+                        output=SleepResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.sleep,
+                ),
+                "/soulfire.v1.BotLiveService/Wake": Endpoint.unary(
+                    method=MethodInfo(
+                        name="Wake",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=WakeRequest,
+                        output=WakeResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.wake,
+                ),
+                "/soulfire.v1.BotLiveService/MountEntity": Endpoint.unary(
+                    method=MethodInfo(
+                        name="MountEntity",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=MountEntityRequest,
+                        output=MountEntityResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.mount_entity,
+                ),
+                "/soulfire.v1.BotLiveService/Dismount": Endpoint.unary(
+                    method=MethodInfo(
+                        name="Dismount",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=DismountRequest,
+                        output=DismountResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.dismount,
+                ),
+                "/soulfire.v1.BotLiveService/SetVehicleControl": Endpoint.unary(
+                    method=MethodInfo(
+                        name="SetVehicleControl",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=SetVehicleControlRequest,
+                        output=SetVehicleControlResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.set_vehicle_control,
+                ),
+                "/soulfire.v1.BotLiveService/UpdateSign": Endpoint.unary(
+                    method=MethodInfo(
+                        name="UpdateSign",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=UpdateSignRequest,
+                        output=UpdateSignResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.update_sign,
+                ),
+                "/soulfire.v1.BotLiveService/WriteBook": Endpoint.unary(
+                    method=MethodInfo(
+                        name="WriteBook",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=WriteBookRequest,
+                        output=WriteBookResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.write_book,
+                ),
+                "/soulfire.v1.BotLiveService/RespondResourcePack": Endpoint.unary(
+                    method=MethodInfo(
+                        name="RespondResourcePack",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=RespondResourcePackRequest,
+                        output=RespondResourcePackResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.respond_resource_pack,
+                ),
+                "/soulfire.v1.BotLiveService/SetFlying": Endpoint.unary(
+                    method=MethodInfo(
+                        name="SetFlying",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=SetFlyingRequest,
+                        output=SetFlyingResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.set_flying,
+                ),
+                "/soulfire.v1.BotLiveService/StartElytraFlight": Endpoint.unary(
+                    method=MethodInfo(
+                        name="StartElytraFlight",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=StartElytraFlightRequest,
+                        output=StartElytraFlightResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.start_elytra_flight,
+                ),
+                "/soulfire.v1.BotLiveService/SetCreativeSlot": Endpoint.unary(
+                    method=MethodInfo(
+                        name="SetCreativeSlot",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=SetCreativeSlotRequest,
+                        output=SetCreativeSlotResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.set_creative_slot,
+                ),
+                "/soulfire.v1.BotLiveService/WaitForChunks": Endpoint.unary(
+                    method=MethodInfo(
+                        name="WaitForChunks",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=WaitForChunksRequest,
+                        output=WaitForChunksResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=svc.wait_for_chunks,
                 ),
                 "/soulfire.v1.BotLiveService/GoTo": Endpoint.server_stream(
                     method=MethodInfo(
@@ -461,6 +630,26 @@ class BotLiveServiceClient(ConnectClient):
             timeout_ms=timeout_ms,
         )
 
+    async def interact_block(
+        self,
+        request: InteractBlockRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> InteractBlockResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="InteractBlock",
+                service_name="soulfire.v1.BotLiveService",
+                input=InteractBlockRequest,
+                output=InteractBlockResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
     async def use_item(
         self,
         request: UseItemRequest,
@@ -575,6 +764,246 @@ class BotLiveServiceClient(ConnectClient):
                 service_name="soulfire.v1.BotLiveService",
                 input=RespawnRequest,
                 output=RespawnResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def sleep(
+        self,
+        request: SleepRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> SleepResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="Sleep",
+                service_name="soulfire.v1.BotLiveService",
+                input=SleepRequest,
+                output=SleepResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def wake(
+        self,
+        request: WakeRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> WakeResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="Wake",
+                service_name="soulfire.v1.BotLiveService",
+                input=WakeRequest,
+                output=WakeResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def mount_entity(
+        self,
+        request: MountEntityRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> MountEntityResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="MountEntity",
+                service_name="soulfire.v1.BotLiveService",
+                input=MountEntityRequest,
+                output=MountEntityResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def dismount(
+        self,
+        request: DismountRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> DismountResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="Dismount",
+                service_name="soulfire.v1.BotLiveService",
+                input=DismountRequest,
+                output=DismountResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def set_vehicle_control(
+        self,
+        request: SetVehicleControlRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> SetVehicleControlResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="SetVehicleControl",
+                service_name="soulfire.v1.BotLiveService",
+                input=SetVehicleControlRequest,
+                output=SetVehicleControlResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def update_sign(
+        self,
+        request: UpdateSignRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> UpdateSignResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="UpdateSign",
+                service_name="soulfire.v1.BotLiveService",
+                input=UpdateSignRequest,
+                output=UpdateSignResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def write_book(
+        self,
+        request: WriteBookRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> WriteBookResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="WriteBook",
+                service_name="soulfire.v1.BotLiveService",
+                input=WriteBookRequest,
+                output=WriteBookResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def respond_resource_pack(
+        self,
+        request: RespondResourcePackRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> RespondResourcePackResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="RespondResourcePack",
+                service_name="soulfire.v1.BotLiveService",
+                input=RespondResourcePackRequest,
+                output=RespondResourcePackResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def set_flying(
+        self,
+        request: SetFlyingRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> SetFlyingResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="SetFlying",
+                service_name="soulfire.v1.BotLiveService",
+                input=SetFlyingRequest,
+                output=SetFlyingResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def start_elytra_flight(
+        self,
+        request: StartElytraFlightRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> StartElytraFlightResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="StartElytraFlight",
+                service_name="soulfire.v1.BotLiveService",
+                input=StartElytraFlightRequest,
+                output=StartElytraFlightResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def set_creative_slot(
+        self,
+        request: SetCreativeSlotRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> SetCreativeSlotResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="SetCreativeSlot",
+                service_name="soulfire.v1.BotLiveService",
+                input=SetCreativeSlotRequest,
+                output=SetCreativeSlotResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+
+    async def wait_for_chunks(
+        self,
+        request: WaitForChunksRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> WaitForChunksResponse:
+        return await self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="WaitForChunks",
+                service_name="soulfire.v1.BotLiveService",
+                input=WaitForChunksRequest,
+                output=WaitForChunksResponse,
                 idempotency_level=IdempotencyLevel.UNKNOWN,
             ),
             headers=headers,
@@ -703,6 +1132,9 @@ class BotLiveServiceSync(Protocol):
     def place_block(self, request: PlaceBlockRequest, ctx: RequestContext[PlaceBlockRequest, PlaceBlockResponse]) -> PlaceBlockResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
+    def interact_block(self, request: InteractBlockRequest, ctx: RequestContext[InteractBlockRequest, InteractBlockResponse]) -> InteractBlockResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
     def use_item(self, request: UseItemRequest, ctx: RequestContext[UseItemRequest, UseItemResponse]) -> UseItemResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
@@ -719,6 +1151,42 @@ class BotLiveServiceSync(Protocol):
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
     def respawn(self, request: RespawnRequest, ctx: RequestContext[RespawnRequest, RespawnResponse]) -> RespawnResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    def sleep(self, request: SleepRequest, ctx: RequestContext[SleepRequest, SleepResponse]) -> SleepResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    def wake(self, request: WakeRequest, ctx: RequestContext[WakeRequest, WakeResponse]) -> WakeResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    def mount_entity(self, request: MountEntityRequest, ctx: RequestContext[MountEntityRequest, MountEntityResponse]) -> MountEntityResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    def dismount(self, request: DismountRequest, ctx: RequestContext[DismountRequest, DismountResponse]) -> DismountResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    def set_vehicle_control(self, request: SetVehicleControlRequest, ctx: RequestContext[SetVehicleControlRequest, SetVehicleControlResponse]) -> SetVehicleControlResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    def update_sign(self, request: UpdateSignRequest, ctx: RequestContext[UpdateSignRequest, UpdateSignResponse]) -> UpdateSignResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    def write_book(self, request: WriteBookRequest, ctx: RequestContext[WriteBookRequest, WriteBookResponse]) -> WriteBookResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    def respond_resource_pack(self, request: RespondResourcePackRequest, ctx: RequestContext[RespondResourcePackRequest, RespondResourcePackResponse]) -> RespondResourcePackResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    def set_flying(self, request: SetFlyingRequest, ctx: RequestContext[SetFlyingRequest, SetFlyingResponse]) -> SetFlyingResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    def start_elytra_flight(self, request: StartElytraFlightRequest, ctx: RequestContext[StartElytraFlightRequest, StartElytraFlightResponse]) -> StartElytraFlightResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    def set_creative_slot(self, request: SetCreativeSlotRequest, ctx: RequestContext[SetCreativeSlotRequest, SetCreativeSlotResponse]) -> SetCreativeSlotResponse:
+        raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
+
+    def wait_for_chunks(self, request: WaitForChunksRequest, ctx: RequestContext[WaitForChunksRequest, WaitForChunksResponse]) -> WaitForChunksResponse:
         raise ConnectError(Code.UNIMPLEMENTED, 'Not implemented')
 
     def go_to(self, request: GoToRequest, ctx: RequestContext[GoToRequest, PathfindProgress]) -> Iterator[PathfindProgress]:
@@ -818,6 +1286,16 @@ class BotLiveServiceWSGIApplication(ConnectWSGIApplication):
                     ),
                     function=service.place_block,
                 ),
+                "/soulfire.v1.BotLiveService/InteractBlock": EndpointSync.unary(
+                    method=MethodInfo(
+                        name="InteractBlock",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=InteractBlockRequest,
+                        output=InteractBlockResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=service.interact_block,
+                ),
                 "/soulfire.v1.BotLiveService/UseItem": EndpointSync.unary(
                     method=MethodInfo(
                         name="UseItem",
@@ -877,6 +1355,126 @@ class BotLiveServiceWSGIApplication(ConnectWSGIApplication):
                         idempotency_level=IdempotencyLevel.UNKNOWN,
                     ),
                     function=service.respawn,
+                ),
+                "/soulfire.v1.BotLiveService/Sleep": EndpointSync.unary(
+                    method=MethodInfo(
+                        name="Sleep",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=SleepRequest,
+                        output=SleepResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=service.sleep,
+                ),
+                "/soulfire.v1.BotLiveService/Wake": EndpointSync.unary(
+                    method=MethodInfo(
+                        name="Wake",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=WakeRequest,
+                        output=WakeResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=service.wake,
+                ),
+                "/soulfire.v1.BotLiveService/MountEntity": EndpointSync.unary(
+                    method=MethodInfo(
+                        name="MountEntity",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=MountEntityRequest,
+                        output=MountEntityResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=service.mount_entity,
+                ),
+                "/soulfire.v1.BotLiveService/Dismount": EndpointSync.unary(
+                    method=MethodInfo(
+                        name="Dismount",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=DismountRequest,
+                        output=DismountResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=service.dismount,
+                ),
+                "/soulfire.v1.BotLiveService/SetVehicleControl": EndpointSync.unary(
+                    method=MethodInfo(
+                        name="SetVehicleControl",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=SetVehicleControlRequest,
+                        output=SetVehicleControlResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=service.set_vehicle_control,
+                ),
+                "/soulfire.v1.BotLiveService/UpdateSign": EndpointSync.unary(
+                    method=MethodInfo(
+                        name="UpdateSign",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=UpdateSignRequest,
+                        output=UpdateSignResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=service.update_sign,
+                ),
+                "/soulfire.v1.BotLiveService/WriteBook": EndpointSync.unary(
+                    method=MethodInfo(
+                        name="WriteBook",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=WriteBookRequest,
+                        output=WriteBookResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=service.write_book,
+                ),
+                "/soulfire.v1.BotLiveService/RespondResourcePack": EndpointSync.unary(
+                    method=MethodInfo(
+                        name="RespondResourcePack",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=RespondResourcePackRequest,
+                        output=RespondResourcePackResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=service.respond_resource_pack,
+                ),
+                "/soulfire.v1.BotLiveService/SetFlying": EndpointSync.unary(
+                    method=MethodInfo(
+                        name="SetFlying",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=SetFlyingRequest,
+                        output=SetFlyingResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=service.set_flying,
+                ),
+                "/soulfire.v1.BotLiveService/StartElytraFlight": EndpointSync.unary(
+                    method=MethodInfo(
+                        name="StartElytraFlight",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=StartElytraFlightRequest,
+                        output=StartElytraFlightResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=service.start_elytra_flight,
+                ),
+                "/soulfire.v1.BotLiveService/SetCreativeSlot": EndpointSync.unary(
+                    method=MethodInfo(
+                        name="SetCreativeSlot",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=SetCreativeSlotRequest,
+                        output=SetCreativeSlotResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=service.set_creative_slot,
+                ),
+                "/soulfire.v1.BotLiveService/WaitForChunks": EndpointSync.unary(
+                    method=MethodInfo(
+                        name="WaitForChunks",
+                        service_name="soulfire.v1.BotLiveService",
+                        input=WaitForChunksRequest,
+                        output=WaitForChunksResponse,
+                        idempotency_level=IdempotencyLevel.UNKNOWN,
+                    ),
+                    function=service.wait_for_chunks,
                 ),
                 "/soulfire.v1.BotLiveService/GoTo": EndpointSync.server_stream(
                     method=MethodInfo(
@@ -1099,6 +1697,25 @@ class BotLiveServiceClientSync(ConnectClientSync):
             headers=headers,
             timeout_ms=timeout_ms,
         )
+    def interact_block(
+        self,
+        request: InteractBlockRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> InteractBlockResponse:
+        return self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="InteractBlock",
+                service_name="soulfire.v1.BotLiveService",
+                input=InteractBlockRequest,
+                output=InteractBlockResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
     def use_item(
         self,
         request: UseItemRequest,
@@ -1208,6 +1825,234 @@ class BotLiveServiceClientSync(ConnectClientSync):
                 service_name="soulfire.v1.BotLiveService",
                 input=RespawnRequest,
                 output=RespawnResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+    def sleep(
+        self,
+        request: SleepRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> SleepResponse:
+        return self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="Sleep",
+                service_name="soulfire.v1.BotLiveService",
+                input=SleepRequest,
+                output=SleepResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+    def wake(
+        self,
+        request: WakeRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> WakeResponse:
+        return self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="Wake",
+                service_name="soulfire.v1.BotLiveService",
+                input=WakeRequest,
+                output=WakeResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+    def mount_entity(
+        self,
+        request: MountEntityRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> MountEntityResponse:
+        return self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="MountEntity",
+                service_name="soulfire.v1.BotLiveService",
+                input=MountEntityRequest,
+                output=MountEntityResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+    def dismount(
+        self,
+        request: DismountRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> DismountResponse:
+        return self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="Dismount",
+                service_name="soulfire.v1.BotLiveService",
+                input=DismountRequest,
+                output=DismountResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+    def set_vehicle_control(
+        self,
+        request: SetVehicleControlRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> SetVehicleControlResponse:
+        return self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="SetVehicleControl",
+                service_name="soulfire.v1.BotLiveService",
+                input=SetVehicleControlRequest,
+                output=SetVehicleControlResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+    def update_sign(
+        self,
+        request: UpdateSignRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> UpdateSignResponse:
+        return self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="UpdateSign",
+                service_name="soulfire.v1.BotLiveService",
+                input=UpdateSignRequest,
+                output=UpdateSignResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+    def write_book(
+        self,
+        request: WriteBookRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> WriteBookResponse:
+        return self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="WriteBook",
+                service_name="soulfire.v1.BotLiveService",
+                input=WriteBookRequest,
+                output=WriteBookResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+    def respond_resource_pack(
+        self,
+        request: RespondResourcePackRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> RespondResourcePackResponse:
+        return self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="RespondResourcePack",
+                service_name="soulfire.v1.BotLiveService",
+                input=RespondResourcePackRequest,
+                output=RespondResourcePackResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+    def set_flying(
+        self,
+        request: SetFlyingRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> SetFlyingResponse:
+        return self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="SetFlying",
+                service_name="soulfire.v1.BotLiveService",
+                input=SetFlyingRequest,
+                output=SetFlyingResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+    def start_elytra_flight(
+        self,
+        request: StartElytraFlightRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> StartElytraFlightResponse:
+        return self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="StartElytraFlight",
+                service_name="soulfire.v1.BotLiveService",
+                input=StartElytraFlightRequest,
+                output=StartElytraFlightResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+    def set_creative_slot(
+        self,
+        request: SetCreativeSlotRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> SetCreativeSlotResponse:
+        return self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="SetCreativeSlot",
+                service_name="soulfire.v1.BotLiveService",
+                input=SetCreativeSlotRequest,
+                output=SetCreativeSlotResponse,
+                idempotency_level=IdempotencyLevel.UNKNOWN,
+            ),
+            headers=headers,
+            timeout_ms=timeout_ms,
+        )
+    def wait_for_chunks(
+        self,
+        request: WaitForChunksRequest,
+        *,
+        headers: Headers | Mapping[str, str] | None = None,
+        timeout_ms: int | None = None,
+    ) -> WaitForChunksResponse:
+        return self.execute_unary(
+            request=request,
+            method=MethodInfo(
+                name="WaitForChunks",
+                service_name="soulfire.v1.BotLiveService",
+                input=WaitForChunksRequest,
+                output=WaitForChunksResponse,
                 idempotency_level=IdempotencyLevel.UNKNOWN,
             ),
             headers=headers,

@@ -19,6 +19,8 @@ package com.soulfiremc.server.automation;
 
 import com.soulfiremc.server.InstanceManager;
 import com.soulfiremc.server.account.MinecraftAccount;
+import com.soulfiremc.server.api.PluginAutomationExtensionContext;
+import com.soulfiremc.server.api.SoulFireAPI;
 import com.soulfiremc.server.bot.BotConnection;
 import com.soulfiremc.server.settings.instance.AutomationSettings;
 import com.soulfiremc.server.util.structs.GsonInstance;
@@ -74,40 +76,64 @@ public final class AutomationTeamCoordinator {
     return instanceManager;
   }
 
-  public synchronized void tick() {
-    prune(System.currentTimeMillis());
+  public void tick() {
+    synchronized (this) {
+      prune(System.currentTimeMillis());
+    }
+
+    var context = new PluginAutomationExtensionContext(
+      instanceManager,
+      this,
+      Optional.empty(),
+      Optional.empty()
+    );
+    for (var extension : SoulFireAPI.pluginApis().automationExtensions()) {
+      extension.invokeTick(context);
+    }
   }
 
-  public synchronized void observe(BotConnection bot,
-                                   AutomationWorldMemory worldMemory,
-                                   String status,
-                                   @Nullable String phase,
-                                   Map<String, Integer> inventorySnapshot) {
+  public void observe(BotConnection bot,
+                      AutomationWorldMemory worldMemory,
+                      String status,
+                      @Nullable String phase,
+                      Map<String, Integer> inventorySnapshot) {
     var player = bot.minecraft().player;
     var level = bot.minecraft().level;
     if (player == null || level == null) {
       return;
     }
 
-    var now = System.currentTimeMillis();
-    prune(now);
+    synchronized (this) {
+      var now = System.currentTimeMillis();
+      prune(now);
 
-    var snapshot = botSnapshots.computeIfAbsent(bot.accountProfileId(), _ -> new BotSnapshot(bot.accountProfileId(), bot.accountName()));
-    snapshot.observe(player.position(), level.dimension(), player.isAlive(), status, phase, now);
-    sharedInventory.put(bot.accountProfileId(), Map.copyOf(inventorySnapshot));
-    telemetry.computeIfAbsent(bot.accountProfileId(), _ -> new BotTelemetry());
+      var snapshot = botSnapshots.computeIfAbsent(bot.accountProfileId(), _ -> new BotSnapshot(bot.accountProfileId(), bot.accountName()));
+      snapshot.observe(player.position(), level.dimension(), player.isAlive(), status, phase, now);
+      sharedInventory.put(bot.accountProfileId(), Map.copyOf(inventorySnapshot));
+      telemetry.computeIfAbsent(bot.accountProfileId(), _ -> new BotTelemetry());
 
-    var sharedDimensionBlocks = sharedBlocks.computeIfAbsent(level.dimension(), _ -> new HashMap<>());
-    for (var block : worldMemory.rememberedBlocks()) {
-      if (!isSharedInteresting(block.state())) {
-        continue;
+      var sharedDimensionBlocks = sharedBlocks.computeIfAbsent(level.dimension(), _ -> new HashMap<>());
+      for (var block : worldMemory.rememberedBlocks()) {
+        if (!isSharedInteresting(block.state())) {
+          continue;
+        }
+
+        sharedDimensionBlocks.put(block.pos().asLong(), new SharedBlock(bot.accountProfileId(), block.pos(), block.state(), now));
       }
 
-      sharedDimensionBlocks.put(block.pos().asLong(), new SharedBlock(bot.accountProfileId(), block.pos(), block.state(), now));
+      rebalanceRoles();
+      updateObjective();
     }
 
-    rebalanceRoles();
-    updateObjective();
+    var context = new PluginAutomationExtensionContext(
+      instanceManager,
+      this,
+      Optional.of(bot),
+      Optional.of(worldMemory)
+    );
+    for (var extension : SoulFireAPI.pluginApis().automationExtensions()) {
+      extension.invokeObservation(context);
+    }
   }
 
   public synchronized void noteProgress(BotConnection bot) {
@@ -253,6 +279,28 @@ public final class AutomationTeamCoordinator {
     }
 
     return fallback != null ? fallback : focus;
+  }
+
+  public synchronized boolean claimExplorationTarget(
+    BotConnection bot,
+    ResourceKey<Level> dimension,
+    String purpose,
+    Vec3 target
+  ) {
+    var x = (int) Math.floor(target.x);
+    var z = (int) Math.floor(target.z);
+    var key = "explore-sdk:%s:%s:%d:%d".formatted(
+      dimension.identifier(),
+      purpose,
+      x,
+      z
+    );
+    return claim(
+      bot.accountProfileId(),
+      key,
+      target,
+      CLAIM_EXPIRY_MILLIS
+    );
   }
 
   public synchronized Vec3 assignLayeredExplorationTarget(BotConnection bot,

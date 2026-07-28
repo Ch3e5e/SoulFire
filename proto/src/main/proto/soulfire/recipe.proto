@@ -1,0 +1,190 @@
+syntax = "proto3";
+
+option java_package = "com.soulfiremc.grpc.generated";
+option java_multiple_files = true;
+
+package soulfire.v1;
+
+import "google/api/annotations.proto";
+import "google/api/field_behavior.proto";
+import "soulfire/api_docs.proto";
+import "soulfire/bot_live.proto";
+import "soulfire/common.proto";
+import "soulfire/domain.proto";
+import "soulfire/inventory.proto";
+
+message IngredientChoice {
+  repeated string item_ids = 1;
+  repeated string tags = 2;
+  int32 count = 3;
+}
+
+message RecipeSnapshot {
+  string recipe_id = 1;
+  string recipe_type = 2;
+  optional string group = 3;
+  repeated IngredientChoice ingredients = 4;
+  ItemStackSnapshot result = 5;
+  optional float experience = 6;
+  optional int32 cooking_time_ticks = 7;
+  bool special = 8;
+}
+
+message ListRecipesRequest {
+  optional string result_item_id = 1;
+  optional ItemSelector ingredient = 2;
+  repeated string recipe_types = 3;
+  uint32 page_size = 4;
+  string page_token = 5;
+  InventoryScope scope = 6 [(google.api.field_behavior) = REQUIRED];
+}
+
+message ListRecipesResponse {
+  repeated RecipeSnapshot recipes = 1;
+  string next_page_token = 2;
+  string registry_hash = 3;
+}
+
+message CanCraftRequest {
+  InventoryScope scope = 1;
+  string recipe_id = 2;
+  int32 count = 3;
+}
+
+message MissingIngredient {
+  IngredientChoice ingredient = 1;
+  int32 available = 2;
+  int32 missing = 3;
+}
+
+message CanCraftResponse {
+  bool can_craft = 1;
+  int32 maximum_craft_count = 2;
+  repeated MissingIngredient missing = 3;
+  optional string required_station = 4;
+}
+
+message CraftTask {
+  // Recipe display ID returned by ListRecipes, such as "display:42".
+  string recipe_id = 1;
+  // Number of recipe operations to perform, not the number of output items.
+  int32 count = 2;
+  // Required for recipes that need a crafting table unless one is already open.
+  optional BlockPosition station = 3;
+}
+
+message CraftTaskResult {
+  ItemStackSnapshot result = 1;
+  // Number of recipe operations completed.
+  int32 crafted = 2;
+}
+
+message SmeltTask {
+  // Selects inventory items accepted by a known cooking recipe.
+  ItemSelector input = 1;
+  // Number of input items to cook.
+  int32 count = 2;
+  // Optional fuel restriction. SoulFire otherwise selects any valid fuel.
+  optional ItemSelector fuel = 3;
+  // Required unless a compatible furnace menu is already open.
+  optional BlockPosition station = 4;
+}
+
+message SmeltTaskResult {
+  // Output stacks collected from each completed cooking operation.
+  repeated ItemStackSnapshot outputs = 1;
+}
+
+message BrewTask {
+  // Selects potion bottles accepted as input by the requested ingredient.
+  ItemSelector input = 1;
+  // Selects the brewing ingredient to consume for each bottle.
+  ItemSelector ingredient = 2;
+  // Number of individual bottles to brew.
+  int32 count = 3;
+  // Optional fuel restriction. SoulFire otherwise selects blaze powder.
+  optional ItemSelector fuel = 4;
+  // Required unless a brewing stand menu is already open.
+  optional BlockPosition station = 5;
+  // Refuses to brew when the predicted output no longer matches this selector.
+  optional ItemSelector expected_result = 6;
+}
+
+message BrewTaskResult {
+  // Finished potion stacks collected from the brewing stand.
+  repeated ItemStackSnapshot outputs = 1;
+}
+
+// One offer in the merchant menu currently open for the bot.
+message VillagerTradeOfferSnapshot {
+  uint32 offer_index = 1;
+  ItemStackSnapshot first_cost = 2;
+  optional ItemStackSnapshot second_cost = 3;
+  ItemStackSnapshot result = 4;
+  int32 uses = 5;
+  int32 maximum_uses = 6;
+  bool out_of_stock = 7;
+  bool rewards_experience = 8;
+  int32 villager_experience = 9;
+  int32 demand = 10;
+  int32 special_price = 11;
+  float price_multiplier = 12;
+}
+
+message ListVillagerTradesRequest {
+  InventoryScope scope = 1 [(google.api.field_behavior) = REQUIRED];
+}
+
+message ListVillagerTradesResponse {
+  repeated VillagerTradeOfferSnapshot offers = 1;
+  int32 villager_level = 2;
+  int32 villager_experience = 3;
+  bool can_restock = 4;
+  int32 container_id = 5;
+  int32 container_revision = 6;
+}
+
+message VillagerTradeTask {
+  // Zero-based index from ListVillagerTrades.
+  uint32 offer_index = 1;
+  // Exact number of individual trades to execute.
+  int32 count = 2;
+  // Refuses to trade if the selected offer no longer has this result.
+  optional ItemSelector expected_result = 3;
+  // Close the merchant menu after a successful task.
+  bool close_when_done = 4;
+}
+
+message VillagerTradeTaskResult {
+  repeated ItemStackSnapshot outputs = 1;
+  int32 completed_trades = 2;
+}
+
+service RecipeService {
+  rpc ListRecipes (ListRecipesRequest) returns (ListRecipesResponse) {
+    option (google.api.http) = { get: "/v1/recipes" };
+    option (soulfire.v1.api_method) = {
+      display_name: "List recipes"
+      permissions: "READ_BOT_INFO"
+      scope: "instance.bot"
+    };
+  }
+
+  rpc CanCraft (CanCraftRequest) returns (CanCraftResponse) {
+    option (google.api.http) = { post: "/v1/recipes:canCraft" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Check recipe materials"
+      permissions: "READ_BOT_INFO"
+      scope: "instance.bot"
+    };
+  }
+
+  rpc ListVillagerTrades (ListVillagerTradesRequest) returns (ListVillagerTradesResponse) {
+    option (google.api.http) = { get: "/v1/recipes/villager-trades" };
+    option (soulfire.v1.api_method) = {
+      display_name: "List villager trades"
+      permissions: "READ_BOT_INFO"
+      scope: "instance.bot"
+    };
+  }
+}

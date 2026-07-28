@@ -169,12 +169,25 @@ public final class SettingsPageRegistry {
   @This
   public SettingsPageRegistry addPluginPage(
     Class<? extends SettingsObject> clazz, String id, String pageName, Plugin owningPlugin, String iconId, BooleanProperty<?> enabledProperty) {
+    return addPage(clazz, id, pageName, owningPlugin.pluginInfo(), iconId, enabledProperty);
+  }
+
+  /// Registers a plugin page from a controlled plugin registration context.
+  @This
+  public SettingsPageRegistry addPluginPage(
+    Class<? extends SettingsObject> clazz,
+    String id,
+    String pageName,
+    PluginInfo owningPlugin,
+    String iconId,
+    BooleanProperty<?> enabledProperty
+  ) {
     return addPage(clazz, id, pageName, owningPlugin, iconId, enabledProperty);
   }
 
   @This
   private SettingsPageRegistry addPage(
-    Class<? extends SettingsObject> clazz, String id, String pageName, @Nullable Plugin owningPlugin, String iconId, @Nullable BooleanProperty<?> enabledProperty) {
+    Class<? extends SettingsObject> clazz, String id, String pageName, @Nullable PluginInfo owningPlugin, String iconId, @Nullable BooleanProperty<?> enabledProperty) {
     var properties = new ArrayList<Property<?>>();
     for (var field : clazz.getDeclaredFields()) {
       if (Modifier.isPublic(field.getModifiers())
@@ -198,7 +211,7 @@ public final class SettingsPageRegistry {
 
     pageList.add(new PageDefinition(
       id,
-      owningPlugin != null ? owningPlugin.pluginInfo() : null,
+      owningPlugin,
       pageName,
       properties,
       iconId,

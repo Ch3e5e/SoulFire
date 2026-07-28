@@ -19,6 +19,7 @@ package com.soulfiremc.server.bot;
 
 import org.checkerframework.checker.nullness.qual.Nullable;
 
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
@@ -54,6 +55,11 @@ public final class CompletableControlTask implements ControlTask {
   @Override
   public ControlPriority priority() {
     return delegate.priority();
+  }
+
+  @Override
+  public Set<ControlResource> resources() {
+    return delegate.resources();
   }
 
   @Override

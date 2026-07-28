@@ -1,0 +1,118 @@
+{
+  "schemaVersion": 1,
+  "reviewedAt": "2026-07-28",
+  "source": {
+    "url": "https://github.com/PrismarineJS/mineflayer/blob/master/docs/api.md",
+    "headingCount": 306,
+    "headingSha256": "43c8e54b415a2b3931375f2594e8fb02f497ecac5103bfd4996ca4c1506fb5e9"
+  },
+  "compatibilityBridge": false,
+  "matching": "Rules are evaluated in order. The first matching rule owns the heading. The final catch-all applies only to the pinned source revision.",
+  "statuses": {
+    "native": "SoulFire exposes the concept directly through its protocol and official SDKs.",
+    "different-semantics": "SoulFire exposes the concept through a remote, server-authoritative model instead of Mineflayer's in-process object model.",
+    "sdk-convenience": "The official SDK composes the behavior from native streams and actions.",
+    "server-task": "SoulFire runs the operation as a durable server-side task near the game loop.",
+    "plugin-extension": "A permissioned SoulFire plugin owns the feature and publishes it through plugin RPC, task, event, or automation descriptors.",
+    "raw-protocol": "The stable semantic API does not model this packet-level operation; advanced callers can use the versioned raw protocol API.",
+    "intentionally-unsupported": "SoulFire deliberately does not reproduce this in-process extension mechanism."
+  },
+  "rules": [
+    {
+      "status": "intentionally-unsupported",
+      "exact": [
+        "\"inject_allowed\"",
+        "bot.loadPlugin(plugin)",
+        "bot.loadPlugins(plugins)"
+      ],
+      "soulfire": [
+        "Install server plugins through SoulFire's explicit plugin lifecycle",
+        "Discover plugin capabilities through client.plugins"
+      ],
+      "notes": "The SDK never uploads or evaluates arbitrary JavaScript in the SoulFire server process."
+    },
+    {
+      "status": "plugin-extension",
+      "regex": "^(Player Skin Data|enchantmentTable|anvil\\.|bot\\.setCommandBlock)",
+      "soulfire": [
+        "Plugin catalog and generated companion SDK",
+        "Plugin-defined RPCs, tasks, events, permissions, and automation extensions"
+      ],
+      "notes": "These specialized surfaces use typed plugin contracts until a stable cross-version core abstraction is justified."
+    },
+    {
+      "status": "server-task",
+      "regex": "^(furnace|villager|bot\\.(craft|fish|creative\\.flyTo))",
+      "soulfire": [
+        "bot.recipes and bot.tasks",
+        "Durable craft, smelt, fish, and villager-trade tasks"
+      ],
+      "notes": "Long-running interactions survive SDK disconnects according to the selected disconnect policy."
+    },
+    {
+      "status": "sdk-convenience",
+      "exact": [
+        "bot.chatPatterns",
+        "\"chat:name\" (matches)",
+        "bot.blockInSight(maxSteps, vectorLength)",
+        "bot.blockAtEntityCursor(entity=bot.entity, maxDistance=256)",
+        "bot.findBlock(options)",
+        "bot.chatAddPattern(pattern, chatType, description)",
+        "bot.addChatPattern(name, pattern, chatPatternOptions)",
+        "bot.addChatPatternSet(name, patterns, chatPatternOptions)",
+        "bot.removeChatPattern(name)",
+        "bot.awaitMessage(...args)",
+        "bot.isABed(bedBlock)",
+        "bot.waitForTicks(ticks)",
+        "bot.putSelectedItemRange(start, end, window, slot)",
+        "bot.putAway(slot)",
+        "bot.getEquipmentDestSlot(destination)",
+        "bot.creative.clearSlot(slot)",
+        "bot.creative.clearInventory()"
+      ],
+      "soulfire": [
+        "BotSession.waitFor and BotSession.once",
+        "world.raycast and world.queryEntities",
+        "registry metadata",
+        "inventory transactions and creative slot helpers"
+      ],
+      "notes": "These helpers stay language-native and compose stable protocol operations."
+    },
+    {
+      "status": "raw-protocol",
+      "exact": [
+        "bot.simpleClick.leftMouse (slot)",
+        "bot.simpleClick.rightMouse (slot)",
+        "bot.placeEntity(referenceBlock, faceVector)",
+        "bot.activateEntityAt(entity, position)",
+        "bot.stopDigging()",
+        "bot.updateHeldItem()"
+      ],
+      "soulfire": [
+        "bot.protocol.schemas",
+        "bot.protocol.send",
+        "bot.protocol.watch"
+      ],
+      "notes": "The semantic SDK covers the common operation. Packet-exact variants remain available behind explicit protocol permissions."
+    },
+    {
+      "status": "different-semantics",
+      "regex": "^(bot\\.(world|physicsEnabled|physics|settings\\.|controlState)|\"(entityAttributes|entitySwingArm|entityHurt|entityDead|entityTaming|entityTamed|entityShakingOffWater|entityEatingGrass|entityHandSwap|entityWake|entityEat|entityCriticalEffect|entityMagicCriticalEffect|entityCrouch|entityUncrouch|entityEquip|entitySleep|entityElytraFlew|itemDrop|playerCollect|entityDetach|entityAttach|entityEffect|entityEffectEnd|blockPlaced|noteHeard|pistonMove|chestLidMove|blockBreakProgressObserved|blockBreakProgressEnd|diggingCompleted|diggingAborted|usedFirework|move|forcedMove|physicsTick|windowOpen|windowClose|heldItemChanged))",
+      "soulfire": [
+        "BotSession state reducer",
+        "BotEvent semantic streams",
+        "world snapshots and bounded queries",
+        "server-authoritative movement and physics"
+      ],
+      "notes": "SoulFire avoids exposing mutable in-process client internals. Consumers observe resumable semantic events and immutable snapshots."
+    },
+    {
+      "status": "native",
+      "regex": ".*",
+      "soulfire": [
+        "SoulFire protocol and official TypeScript/Python SDKs"
+      ],
+      "notes": "The concept has a direct semantic API, event, retained session state, capability, or action in the native SoulFire model."
+    }
+  ]
+}

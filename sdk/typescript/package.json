@@ -1,6 +1,6 @@
 {
   "name": "@soulfiremc/sdk",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "TypeScript SDK for automating SoulFire bots over gRPC-Web.",
   "keywords": [
     "minecraft",
@@ -22,10 +22,45 @@
   },
   "type": "module",
   "sideEffects": false,
+  "bin": {
+    "soulfire-sdk": "./dist/cli.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./promise": {
+      "types": "./dist/promise.d.ts",
+      "import": "./dist/promise.js"
+    },
+    "./platform": {
+      "types": "./dist/platform.d.ts",
+      "import": "./dist/platform.js"
+    },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "import": "./dist/browser.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.js"
+    },
+    "./node/promise": {
+      "types": "./dist/node-promise.d.ts",
+      "import": "./dist/node-promise.js"
+    },
+    "./bun": {
+      "types": "./dist/bun.d.ts",
+      "import": "./dist/bun.js"
+    },
+    "./bun/promise": {
+      "types": "./dist/bun-promise.d.ts",
+      "import": "./dist/bun-promise.js"
+    },
+    "./plugin-generator": {
+      "types": "./dist/plugin-generator.d.ts",
+      "import": "./dist/plugin-generator.js"
     },
     "./generated/*": {
       "types": "./dist/generated/*.d.ts",
@@ -38,24 +73,39 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "check": "pnpm typecheck && pnpm test && pnpm build",
+    "check": "pnpm typecheck && pnpm test && pnpm build && pnpm check:browser",
+    "check:browser": "node scripts/check-browser-bundle.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "adm-zip": "0.6.0",
     "@bufbuild/protobuf": "2.13.0",
     "@connectrpc/connect": "2.1.2",
     "@connectrpc/connect-web": "2.1.2",
+    "@effect/platform-node": "0.108.0",
+    "adm-zip": "0.6.0",
     "tar": "7.5.22"
   },
+  "optionalDependencies": {
+    "@bufbuild/buf-darwin-arm64": "1.72.0",
+    "@bufbuild/buf-darwin-x64": "1.72.0",
+    "@bufbuild/buf-linux-aarch64": "1.72.0",
+    "@bufbuild/buf-linux-armv7": "1.72.0",
+    "@bufbuild/buf-linux-x64": "1.72.0",
+    "@bufbuild/buf-win32-arm64": "1.72.0",
+    "@bufbuild/buf-win32-x64": "1.72.0"
+  },
+  "peerDependencies": {
+    "@effect/platform": "^0.97.0",
+    "effect": "^3.22.0"
+  },
   "devDependencies": {
+    "@effect/platform": "0.97.0",
     "@types/node": "24.10.1",
+    "effect": "3.22.0",
+    "esbuild": "0.28.1",
     "typescript": "7.0.2",
     "vitest": "4.1.10"
-  },
-  "engines": {
-    "node": ">=22"
   },
   "publishConfig": {
     "access": "public"

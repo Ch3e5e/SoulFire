@@ -7,6 +7,8 @@ package soulfire.v1;
 
 import "soulfire/api_docs.proto";
 import "soulfire/bot.proto";
+import "soulfire/common.proto";
+import "soulfire/domain.proto";
 import "google/api/annotations.proto";
 import "google/api/field_behavior.proto";
 import "google/protobuf/timestamp.proto";
@@ -35,30 +37,6 @@ import "google/protobuf/timestamp.proto";
 // All RPCs require READ_BOT_INFO (for reads and event streams) or
 // CONTROL_BOT_ACTIONS (for actions) on the owning instance.
 // ============================================================================
-
-// A block position in a specific dimension. Coordinates are Minecraft block
-// integers (not chunk-relative).
-message BlockPosition {
-  // Block X coordinate. East is positive.
-  int32 x = 1 [(google.api.field_behavior) = REQUIRED];
-  // Block Y coordinate. Vertical axis.
-  int32 y = 2 [(google.api.field_behavior) = REQUIRED];
-  // Block Z coordinate. South is positive.
-  int32 z = 3 [(google.api.field_behavior) = REQUIRED];
-  // Namespaced dimension id. Examples: "minecraft:overworld",
-  // "minecraft:the_nether", "minecraft:the_end". Optional; if empty the
-  // bot's current dimension is used.
-  string dimension = 4;
-}
-
-// A precise world position. Used for entity/actor locations and pathfinding
-// goals where sub-block precision matters.
-message WorldPosition {
-  double x = 1 [(google.api.field_behavior) = REQUIRED];
-  double y = 2 [(google.api.field_behavior) = REQUIRED];
-  double z = 3 [(google.api.field_behavior) = REQUIRED];
-  string dimension = 4;
-}
 
 // The face of a block that an action targets. Used when placing a block or
 // right-clicking a block with an item to indicate which side the player is
@@ -148,6 +126,25 @@ message BotEventFilter {
   bool include_inventory = 8;
   // Deliver explicit damage events.
   bool include_damage = 9;
+  // Deliver world clock, weather, and other server game-state changes.
+  bool include_environment = 10;
+  // Deliver tab-list additions, removals, and metadata updates.
+  bool include_player_list = 11;
+  // Deliver boss-bar lifecycle and property updates.
+  bool include_boss_bars = 12;
+  // Deliver sound playback and stop events.
+  bool include_sounds = 13;
+  // Deliver particle spawn events.
+  bool include_particles = 14;
+  // Deliver objectives, scores, display slots, and team updates.
+  bool include_scoreboard = 15;
+  // Deliver server resource-pack offers and removals.
+  bool include_resource_packs = 16;
+  // Deliver title, subtitle, timing, clear, and reset events.
+  bool include_titles = 17;
+  // Deliver chunk-column load and unload events. This can be a high-volume
+  // stream while the bot is moving, so it is not enabled by default.
+  bool include_chunks = 18;
 }
 
 // Request to subscribe to a bot's live event stream.
@@ -158,6 +155,15 @@ message WatchBotEventsRequest {
   string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
   // Which event categories to include in the stream.
   BotEventFilter filter = 3 [(google.api.field_behavior) = REQUIRED];
+  // Last sequence confirmed by the caller. When the requested event is no
+  // longer resumable the server emits a resync_required event followed by a
+  // fresh snapshot.
+  uint64 after_sequence = 4;
+  // Stream epoch associated with after_sequence.
+  optional string stream_epoch = 5 [(soulfire.v1.api_field).format = "uuid"];
+  // Requested heartbeat interval. The server clamps this to its supported
+  // range. Zero selects the server default.
+  uint32 heartbeat_interval_seconds = 6;
 }
 
 // Partial update to the bot's live state. Only fields present have changed
@@ -249,6 +255,9 @@ message BotEntityEvent {
   // Entity summary at the time of the event. For DESPAWN, only entity_id is
   // guaranteed to be populated.
   NearbyEntity entity = 2 [(google.api.field_behavior) = REQUIRED];
+  // Full semantic entity state at the time of the event. Present for spawn
+  // and update events. A despawn uses `entity` as its stable tombstone.
+  optional EntitySnapshot snapshot = 3;
 }
 
 // A block change observed within the bot's block radius.
@@ -259,6 +268,9 @@ message BotBlockUpdateEvent {
   string old_block_id = 2;
   // New block id after the change.
   string new_block_id = 3 [(google.api.field_behavior) = REQUIRED];
+  // Full semantic block state after the change, including properties,
+  // lighting, fluid, mining hints, and interaction metadata.
+  optional BlockSnapshot block = 4;
 }
 
 // Current inventory or open-container state after a change.
@@ -272,6 +284,226 @@ message BotDamageEvent {
   float health = 2 [(google.api.field_behavior) = REQUIRED];
   float amount = 3 [(google.api.field_behavior) = REQUIRED];
 }
+
+message ClockSnapshot {
+  string clock_id = 1 [(google.api.field_behavior) = REQUIRED];
+  int64 total_ticks = 2;
+  float partial_tick = 3;
+  float rate = 4;
+}
+
+message BotTimeEvent {
+  int64 game_time = 1;
+  repeated ClockSnapshot clocks = 2;
+}
+
+enum WeatherEventKind {
+  WEATHER_EVENT_UNSPECIFIED = 0;
+  WEATHER_EVENT_STARTED_RAINING = 1;
+  WEATHER_EVENT_STOPPED_RAINING = 2;
+  WEATHER_EVENT_RAIN_LEVEL_CHANGED = 3;
+  WEATHER_EVENT_THUNDER_LEVEL_CHANGED = 4;
+}
+
+message BotWeatherEvent {
+  WeatherEventKind kind = 1 [(google.api.field_behavior) = REQUIRED];
+  optional float level = 2;
+}
+
+message BotGameEvent {
+  // Stable snake-case event name, such as `immediate_respawn`.
+  string event = 1 [(google.api.field_behavior) = REQUIRED];
+  float parameter = 2;
+}
+
+message BotEnvironmentEvent {
+  oneof change {
+    BotTimeEvent time = 1;
+    BotWeatherEvent weather = 2;
+    BotGameEvent game_event = 3;
+  }
+}
+
+message PlayerListEntrySnapshot {
+  string profile_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  optional string profile_name = 2;
+  bool listed = 3;
+  int32 latency_ms = 4;
+  GameMode game_mode = 5;
+  optional TextComponent display_name = 6;
+  bool show_hat = 7;
+  int32 list_order = 8;
+  // Packet actions applied to this entry, such as `add_player` or
+  // `update_latency`. This lets consumers distinguish an omitted value from
+  // a value that was not part of the update.
+  repeated string changed_fields = 9;
+}
+
+enum PlayerListEventKind {
+  PLAYER_LIST_EVENT_UNSPECIFIED = 0;
+  PLAYER_LIST_EVENT_UPSERT = 1;
+  PLAYER_LIST_EVENT_REMOVE = 2;
+}
+
+message BotPlayerListEvent {
+  PlayerListEventKind kind = 1 [(google.api.field_behavior) = REQUIRED];
+  repeated PlayerListEntrySnapshot entries = 2;
+  repeated string removed_profile_ids = 3 [(soulfire.v1.api_field).format = "uuid"];
+}
+
+enum BossBarEventKind {
+  BOSS_BAR_EVENT_UNSPECIFIED = 0;
+  BOSS_BAR_EVENT_ADD = 1;
+  BOSS_BAR_EVENT_REMOVE = 2;
+  BOSS_BAR_EVENT_UPDATE_PROGRESS = 3;
+  BOSS_BAR_EVENT_UPDATE_NAME = 4;
+  BOSS_BAR_EVENT_UPDATE_STYLE = 5;
+  BOSS_BAR_EVENT_UPDATE_PROPERTIES = 6;
+}
+
+message BotBossBarEvent {
+  string boss_bar_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  BossBarEventKind kind = 2 [(google.api.field_behavior) = REQUIRED];
+  optional TextComponent name = 3;
+  optional float progress = 4;
+  optional string color = 5;
+  optional string overlay = 6;
+  optional bool darken_screen = 7;
+  optional bool play_music = 8;
+  optional bool create_world_fog = 9;
+}
+
+enum SoundEventKind {
+  SOUND_EVENT_UNSPECIFIED = 0;
+  SOUND_EVENT_PLAY_AT_POSITION = 1;
+  SOUND_EVENT_PLAY_AT_ENTITY = 2;
+  SOUND_EVENT_STOP = 3;
+}
+
+message BotSoundEvent {
+  SoundEventKind kind = 1 [(google.api.field_behavior) = REQUIRED];
+  optional string sound_id = 2;
+  optional string source = 3;
+  optional WorldPosition position = 4;
+  optional int32 entity_id = 5;
+  optional float volume = 6;
+  optional float pitch = 7;
+  optional int64 seed = 8;
+}
+
+message BotParticleEvent {
+  string particle_id = 1 [(google.api.field_behavior) = REQUIRED];
+  WorldPosition position = 2 [(google.api.field_behavior) = REQUIRED];
+  Vec3 offset = 3;
+  float max_speed = 4;
+  int32 count = 5;
+  bool always_show = 6;
+  bool override_limiter = 7;
+  // Version-specific particle options rendered as a diagnostic string.
+  optional string options = 8;
+}
+
+enum ScoreboardEventKind {
+  SCOREBOARD_EVENT_UNSPECIFIED = 0;
+  SCOREBOARD_EVENT_OBJECTIVE_ADD = 1;
+  SCOREBOARD_EVENT_OBJECTIVE_REMOVE = 2;
+  SCOREBOARD_EVENT_OBJECTIVE_UPDATE = 3;
+  SCOREBOARD_EVENT_DISPLAY_OBJECTIVE = 4;
+  SCOREBOARD_EVENT_SCORE_SET = 5;
+  SCOREBOARD_EVENT_SCORE_RESET = 6;
+  SCOREBOARD_EVENT_TEAM_ADD = 7;
+  SCOREBOARD_EVENT_TEAM_REMOVE = 8;
+  SCOREBOARD_EVENT_TEAM_UPDATE = 9;
+  SCOREBOARD_EVENT_TEAM_PLAYERS_ADD = 10;
+  SCOREBOARD_EVENT_TEAM_PLAYERS_REMOVE = 11;
+}
+
+message BotScoreboardEvent {
+  ScoreboardEventKind kind = 1 [(google.api.field_behavior) = REQUIRED];
+  optional string objective_name = 2;
+  optional TextComponent display_name = 3;
+  optional string render_type = 4;
+  optional string display_slot = 5;
+  optional string owner = 6;
+  optional int32 score = 7;
+  optional string team_name = 8;
+  repeated string players = 9;
+  optional TextComponent prefix = 10;
+  optional TextComponent suffix = 11;
+  optional string color = 12;
+  optional string name_tag_visibility = 13;
+  optional string collision_rule = 14;
+  optional bool allow_friendly_fire = 15;
+  optional bool see_friendly_invisibles = 16;
+}
+
+enum ResourcePackEventKind {
+  RESOURCE_PACK_EVENT_UNSPECIFIED = 0;
+  RESOURCE_PACK_EVENT_OFFERED = 1;
+  RESOURCE_PACK_EVENT_REMOVED = 2;
+  RESOURCE_PACK_EVENT_CLEARED = 3;
+}
+
+message BotResourcePackEvent {
+  ResourcePackEventKind kind = 1 [(google.api.field_behavior) = REQUIRED];
+  optional string pack_id = 2 [(soulfire.v1.api_field).format = "uuid"];
+  optional string url = 3;
+  optional string hash = 4;
+  optional bool required = 5;
+  optional TextComponent prompt = 6;
+}
+
+enum TitleEventKind {
+  TITLE_EVENT_UNSPECIFIED = 0;
+  TITLE_EVENT_TITLE = 1;
+  TITLE_EVENT_SUBTITLE = 2;
+  TITLE_EVENT_TIMES = 3;
+  TITLE_EVENT_CLEAR = 4;
+  TITLE_EVENT_RESET = 5;
+}
+
+message BotTitleEvent {
+  TitleEventKind kind = 1 [(google.api.field_behavior) = REQUIRED];
+  optional TextComponent text = 2;
+  optional int32 fade_in_ticks = 3;
+  optional int32 stay_ticks = 4;
+  optional int32 fade_out_ticks = 5;
+}
+
+enum ChunkEventKind {
+  CHUNK_EVENT_UNSPECIFIED = 0;
+  CHUNK_EVENT_LOAD = 1;
+  CHUNK_EVENT_UNLOAD = 2;
+}
+
+message BotChunkEvent {
+  ChunkEventKind kind = 1 [(google.api.field_behavior) = REQUIRED];
+  int32 chunk_x = 2 [(google.api.field_behavior) = REQUIRED];
+  int32 chunk_z = 3 [(google.api.field_behavior) = REQUIRED];
+  string dimension = 4 [(google.api.field_behavior) = REQUIRED];
+}
+
+// Metadata shared by every event emitted on a bot stream.
+message BotEventEnvelope {
+  string bot_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string stream_epoch = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  uint64 sequence = 3 [(google.api.field_behavior) = REQUIRED];
+  google.protobuf.Timestamp observed_at = 4 [(google.api.field_behavior) = REQUIRED];
+  uint64 snapshot_revision = 5 [(google.api.field_behavior) = REQUIRED];
+  optional string causation_id = 6 [(soulfire.v1.api_field).format = "uuid"];
+  optional string task_id = 7 [(soulfire.v1.api_field).format = "uuid"];
+}
+
+// Signals that continuity could not be preserved and the caller must replace
+// its synchronized state with the snapshots that follow.
+message BotResyncRequired {
+  string reason = 1 [(google.api.field_behavior) = REQUIRED];
+  optional string requested_epoch = 2 [(soulfire.v1.api_field).format = "uuid"];
+  uint64 requested_after_sequence = 3;
+}
+
+// Keeps idle streams observable and allows clients to detect dead transports.
+message BotHeartbeat {}
 
 // A single message on the bot event stream.
 message BotEvent {
@@ -289,7 +521,19 @@ message BotEvent {
     BotStatus status = 7;
     BotInventoryEvent inventory = 8;
     BotDamageEvent damage = 9;
+    BotResyncRequired resync_required = 10;
+    BotHeartbeat heartbeat = 11;
+    BotEnvironmentEvent environment = 12;
+    BotPlayerListEvent player_list = 13;
+    BotBossBarEvent boss_bar = 14;
+    BotSoundEvent sound = 15;
+    BotParticleEvent particle = 16;
+    BotScoreboardEvent scoreboard = 17;
+    BotResourcePackEvent resource_pack = 18;
+    BotTitleEvent title = 19;
+    BotChunkEvent chunk = 21;
   }
+  BotEventEnvelope envelope = 20 [(google.api.field_behavior) = REQUIRED];
 }
 
 // Final outcome of an imperative bot action.
@@ -410,6 +654,23 @@ message PlaceBlockResponse {
   BotActionResult result = 1 [(google.api.field_behavior) = REQUIRED];
 }
 
+message InteractBlockRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  // Block to activate. Must be loaded and within interaction reach.
+  BlockPosition position = 3 [(google.api.field_behavior) = REQUIRED];
+  // Face to click.
+  BlockFace face = 4 [(google.api.field_behavior) = REQUIRED];
+  Hand hand = 5 [(google.api.field_behavior) = REQUIRED];
+  // Temporarily sneaks for this interaction. Useful when activating a block
+  // while holding an item whose normal use would take precedence.
+  bool sneaking = 6;
+}
+
+message InteractBlockResponse {
+  BotActionResult result = 1 [(google.api.field_behavior) = REQUIRED];
+}
+
 message UseItemRequest {
   string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
   string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
@@ -481,6 +742,171 @@ message RespawnResponse {
   BotActionResult result = 1 [(google.api.field_behavior) = REQUIRED];
 }
 
+message SleepRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  BlockPosition bed = 3 [(google.api.field_behavior) = REQUIRED];
+  Hand hand = 4;
+}
+
+message SleepResponse {
+  BotActionResult result = 1 [(google.api.field_behavior) = REQUIRED];
+}
+
+message WakeRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+}
+
+message WakeResponse {
+  BotActionResult result = 1 [(google.api.field_behavior) = REQUIRED];
+}
+
+message MountEntityRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  int32 entity_id = 3 [(google.api.field_behavior) = REQUIRED];
+  Hand hand = 4;
+}
+
+message MountEntityResponse {
+  BotActionResult result = 1 [(google.api.field_behavior) = REQUIRED];
+  optional EntityReference vehicle = 2;
+}
+
+message DismountRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+}
+
+message DismountResponse {
+  BotActionResult result = 1 [(google.api.field_behavior) = REQUIRED];
+}
+
+message SetVehicleControlRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  optional bool forward = 3;
+  optional bool backward = 4;
+  optional bool left = 5;
+  optional bool right = 6;
+  optional bool jump = 7;
+  optional bool sneak = 8;
+  optional bool sprint = 9;
+  optional float yaw = 10;
+  optional float pitch = 11;
+}
+
+message SetVehicleControlResponse {
+  BotActionResult result = 1 [(google.api.field_behavior) = REQUIRED];
+  optional EntityReference vehicle = 2;
+}
+
+message UpdateSignRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  BlockPosition position = 3 [(google.api.field_behavior) = REQUIRED];
+  bool front_text = 4;
+  // Exactly four plain-text lines. Empty strings clear lines.
+  repeated string lines = 5 [(google.api.field_behavior) = REQUIRED];
+}
+
+message UpdateSignResponse {
+  BotActionResult result = 1 [(google.api.field_behavior) = REQUIRED];
+}
+
+message WriteBookRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  // Player inventory slot from zero through eight containing a writable book.
+  int32 inventory_slot = 3 [(google.api.field_behavior) = REQUIRED];
+  repeated string pages = 4 [(google.api.field_behavior) = REQUIRED];
+  // Providing a title signs the book.
+  optional string title = 5;
+}
+
+message WriteBookResponse {
+  BotActionResult result = 1 [(google.api.field_behavior) = REQUIRED];
+}
+
+enum ResourcePackResponse {
+  RESOURCE_PACK_RESPONSE_UNSPECIFIED = 0;
+  RESOURCE_PACK_RESPONSE_ACCEPTED = 1;
+  RESOURCE_PACK_RESPONSE_DOWNLOADED = 2;
+  RESOURCE_PACK_RESPONSE_SUCCESSFULLY_LOADED = 3;
+  RESOURCE_PACK_RESPONSE_DECLINED = 4;
+  RESOURCE_PACK_RESPONSE_FAILED_DOWNLOAD = 5;
+  RESOURCE_PACK_RESPONSE_INVALID_URL = 6;
+  RESOURCE_PACK_RESPONSE_FAILED_RELOAD = 7;
+  RESOURCE_PACK_RESPONSE_DISCARDED = 8;
+}
+
+message RespondResourcePackRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string pack_id = 3 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  ResourcePackResponse response = 4 [(google.api.field_behavior) = REQUIRED];
+}
+
+message RespondResourcePackResponse {
+  BotActionResult result = 1 [(google.api.field_behavior) = REQUIRED];
+}
+
+message SetFlyingRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  bool flying = 3;
+}
+
+message SetFlyingResponse {
+  BotActionResult result = 1 [(google.api.field_behavior) = REQUIRED];
+}
+
+message StartElytraFlightRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+}
+
+message StartElytraFlightResponse {
+  BotActionResult result = 1 [(google.api.field_behavior) = REQUIRED];
+}
+
+message CreativeItemStack {
+  string item_id = 1 [(google.api.field_behavior) = REQUIRED];
+  int32 count = 2 [(google.api.field_behavior) = REQUIRED];
+}
+
+message SetCreativeSlotRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  // Inventory-menu slot. Values zero through 45 are supported.
+  int32 slot = 3 [(google.api.field_behavior) = REQUIRED];
+  // Omit the item to clear the slot.
+  optional CreativeItemStack item = 4;
+}
+
+message SetCreativeSlotResponse {
+  BotActionResult result = 1 [(google.api.field_behavior) = REQUIRED];
+}
+
+message WaitForChunksRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  // Chebyshev radius around the bot's current chunk. Zero waits for only the
+  // current chunk. The server rejects values above its safety limit.
+  uint32 radius_chunks = 3;
+  // Maximum wait in milliseconds. Zero uses the server default.
+  uint32 timeout_ms = 4;
+}
+
+message WaitForChunksResponse {
+  int32 center_chunk_x = 1 [(google.api.field_behavior) = REQUIRED];
+  int32 center_chunk_z = 2 [(google.api.field_behavior) = REQUIRED];
+  uint32 loaded_chunks = 3 [(google.api.field_behavior) = REQUIRED];
+  uint32 required_chunks = 4 [(google.api.field_behavior) = REQUIRED];
+  string dimension = 5 [(google.api.field_behavior) = REQUIRED];
+}
+
 // ============================================================================
 // Pathfinding
 // ============================================================================
@@ -504,6 +930,7 @@ message PathfindGoal {
   message EntityGoal {
     int32 entity_id = 1 [(google.api.field_behavior) = REQUIRED];
     float radius = 2;
+    optional string connection_epoch = 3 [(soulfire.v1.api_field).format = "uuid"];
   }
   // Reach an XZ column, ignoring Y.
   message XZGoal {
@@ -512,11 +939,45 @@ message PathfindGoal {
     string dimension = 3;
     float radius = 4;
   }
+  // Reach a Y level while allowing the planner to choose X and Z.
+  message YGoal {
+    int32 y = 1 [(google.api.field_behavior) = REQUIRED];
+    string dimension = 2;
+  }
+  // Reach and break one exact block.
+  message BreakBlockGoal {
+    BlockPosition position = 1 [(google.api.field_behavior) = REQUIRED];
+  }
+  // Reach and place the currently selected placeable item at one exact block.
+  message PlaceBlockGoal {
+    BlockPosition position = 1 [(google.api.field_behavior) = REQUIRED];
+  }
+  // Move until the bot is at least `radius` blocks away from a position.
+  message AwayFromPositionGoal {
+    WorldPosition position = 1 [(google.api.field_behavior) = REQUIRED];
+    float radius = 2 [(google.api.field_behavior) = REQUIRED];
+  }
+  // Move until the bot is at least `radius` blocks away from an entity.
+  message AwayFromEntityGoal {
+    int32 entity_id = 1 [(google.api.field_behavior) = REQUIRED];
+    float radius = 2 [(google.api.field_behavior) = REQUIRED];
+    optional string connection_epoch = 3 [(soulfire.v1.api_field).format = "uuid"];
+  }
+  // Complete when any nested goal is reached.
+  message AnyGoal {
+    repeated PathfindGoal goals = 1 [(google.api.field_behavior) = REQUIRED];
+  }
   oneof goal {
     BlockGoal block = 1;
     NearGoal near = 2;
     EntityGoal entity = 3;
     XZGoal xz = 4;
+    YGoal y = 5;
+    BreakBlockGoal break_block = 6;
+    PlaceBlockGoal place_block = 7;
+    AwayFromPositionGoal away_from_position = 8;
+    AwayFromEntityGoal away_from_entity = 9;
+    AnyGoal any = 10;
   }
 }
 
@@ -527,6 +988,12 @@ message PathfindOptions {
   bool allow_placing = 2;
   // Maximum wall-clock seconds for planning + traversal. 0 means server default.
   int32 timeout_seconds = 3;
+  // Overrides the server's path search timeout. 0 means server default.
+  uint32 search_timeout_seconds = 4;
+  // Extra planner cost for breaking a block. Unset uses server settings.
+  optional double break_block_penalty = 5;
+  // Extra planner cost for placing a block. Unset uses server settings.
+  optional double place_block_penalty = 6;
 }
 
 message GoToRequest {
@@ -662,7 +1129,7 @@ service BotLiveService {
   // Returns the block at a world position, if the chunk is loaded.
   rpc GetBlock (GetBlockRequest) returns (GetBlockResponse) {
     option (google.api.http) = {
-      get: "/v1/instances/{instance_id}/bots/{bot_id}/world/block"
+      get: "/v1/instances/{instance_id}/bots/{bot_id}/live/world/block"
     };
     option (soulfire.v1.api_method) = {
       display_name: "Get block"
@@ -676,7 +1143,7 @@ service BotLiveService {
   // sorted by ascending distance.
   rpc FindBlocks (FindBlocksRequest) returns (FindBlocksResponse) {
     option (google.api.http) = {
-      post: "/v1/instances/{instance_id}/bots/{bot_id}/world/blocks:find"
+      post: "/v1/instances/{instance_id}/bots/{bot_id}/live/world/blocks:find"
       body: "*"
     };
     option (soulfire.v1.api_method) = {
@@ -690,7 +1157,7 @@ service BotLiveService {
   // Lists entities within a radius of the bot, optionally filtered by type.
   rpc ListNearbyEntities (ListNearbyEntitiesRequest) returns (ListNearbyEntitiesResponse) {
     option (google.api.http) = {
-      get: "/v1/instances/{instance_id}/bots/{bot_id}/world/entities"
+      get: "/v1/instances/{instance_id}/bots/{bot_id}/live/world/entities"
     };
     option (soulfire.v1.api_method) = {
       display_name: "List nearby entities"
@@ -701,7 +1168,7 @@ service BotLiveService {
   }
 
   // Starts (or stops, when `cancel` is set) breaking a block at a specific
-  // position. Unlike MouseClick, the target is explicit — no raytrace from
+  // position. Unlike MouseClick, the target is explicit, with no raytrace from
   // the current look direction is performed.
   rpc DigBlock (DigBlockRequest) returns (DigBlockResponse) {
     option (google.api.http) = {
@@ -734,6 +1201,25 @@ service BotLiveService {
       preconditions: "Target adjacent position must be within reach and loaded."
       execution: "Immediate"
       side_effects: "Attempts to place the held item as a block."
+    };
+  }
+
+  // Activates a specific block face without assigning placement semantics to
+  // the operation. This covers doors, buttons, beds, redstone controls, and
+  // modded interactive blocks.
+  rpc InteractBlock (InteractBlockRequest) returns (InteractBlockResponse) {
+    option (google.api.http) = {
+      post: "/v1/instances/{instance_id}/bots/{bot_id}/actions/interact-block"
+      body: "*"
+    };
+    option (soulfire.v1.api_method) = {
+      display_name: "Interact with block"
+      permissions: "CONTROL_BOT_ACTIONS"
+      scope: "instance.bot"
+      preconditions: "Bot must be online."
+      preconditions: "Target block must be loaded and within reach."
+      execution: "Immediate"
+      side_effects: "Activates the selected block face and may use the held item."
     };
   }
 
@@ -832,6 +1318,138 @@ service BotLiveService {
       scope: "instance.bot"
       preconditions: "Bot must be online and dead."
       execution: "Completes after the respawn request is sent."
+    };
+  }
+
+  // Uses a reachable bed and completes only after the server confirms that the
+  // bot entered the sleeping state.
+  rpc Sleep (SleepRequest) returns (SleepResponse) {
+    option (google.api.http) = {
+      post: "/v1/instances/{instance_id}/bots/{bot_id}/actions:sleep"
+      body: "*"
+    };
+    option (soulfire.v1.api_method) = {
+      display_name: "Sleep in bed"
+      permissions: "CONTROL_BOT_ACTIONS"
+      scope: "instance.bot"
+      preconditions: "Bot must be online and the target must be a reachable bed."
+      execution: "Completes when the server confirms sleep or the action times out."
+      side_effects: "Interacts with the bed and changes the bot sleeping state."
+    };
+  }
+
+  // Leaves the current bed.
+  rpc Wake (WakeRequest) returns (WakeResponse) {
+    option (google.api.http) = {
+      post: "/v1/instances/{instance_id}/bots/{bot_id}/actions:wake"
+      body: "*"
+    };
+    option (soulfire.v1.api_method) = {
+      display_name: "Wake from bed"
+      permissions: "CONTROL_BOT_ACTIONS"
+      scope: "instance.bot"
+      preconditions: "Bot must be online and sleeping."
+      execution: "Completes after the wake request is sent."
+      side_effects: "Leaves the current bed."
+    };
+  }
+
+  rpc MountEntity (MountEntityRequest) returns (MountEntityResponse) {
+    option (google.api.http) = { post: "/v1/instances/{instance_id}/bots/{bot_id}:mount" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Mount entity"
+      permissions: "CONTROL_BOT_ACTIONS"
+      scope: "instance.bot"
+      side_effects: "Interacts with a rideable entity and waits for server confirmation."
+    };
+  }
+
+  rpc Dismount (DismountRequest) returns (DismountResponse) {
+    option (google.api.http) = { post: "/v1/instances/{instance_id}/bots/{bot_id}:dismount" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Dismount"
+      permissions: "CONTROL_BOT_ACTIONS"
+      scope: "instance.bot"
+    };
+  }
+
+  rpc SetVehicleControl (SetVehicleControlRequest) returns (SetVehicleControlResponse) {
+    option (google.api.http) = { post: "/v1/instances/{instance_id}/bots/{bot_id}/vehicle:control" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Set vehicle control"
+      permissions: "CONTROL_BOT_ACTIONS"
+      scope: "instance.bot"
+      side_effects: "Changes persistent movement input while the bot controls a vehicle."
+    };
+  }
+
+  rpc UpdateSign (UpdateSignRequest) returns (UpdateSignResponse) {
+    option (google.api.http) = { post: "/v1/instances/{instance_id}/bots/{bot_id}/sign:update" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Update sign"
+      permissions: "CONTROL_BOT_ACTIONS"
+      scope: "instance.bot"
+    };
+  }
+
+  rpc WriteBook (WriteBookRequest) returns (WriteBookResponse) {
+    option (google.api.http) = { post: "/v1/instances/{instance_id}/bots/{bot_id}/book:write" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Write book"
+      permissions: "CONTROL_BOT_ACTIONS"
+      scope: "instance.bot"
+    };
+  }
+
+  rpc RespondResourcePack (RespondResourcePackRequest) returns (RespondResourcePackResponse) {
+    option (google.api.http) = { post: "/v1/instances/{instance_id}/bots/{bot_id}/resource-pack:respond" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Respond to resource pack"
+      permissions: "CONTROL_BOT_ACTIONS"
+      scope: "instance.bot"
+    };
+  }
+
+  rpc SetFlying (SetFlyingRequest) returns (SetFlyingResponse) {
+    option (google.api.http) = { post: "/v1/instances/{instance_id}/bots/{bot_id}:setFlying" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Set flying state"
+      permissions: "CONTROL_BOT_ACTIONS"
+      scope: "instance.bot"
+    };
+  }
+
+  // Requests survival-mode elytra flight. Minecraft validates that the bot is
+  // falling and has usable elytra equipment.
+  rpc StartElytraFlight (StartElytraFlightRequest) returns (StartElytraFlightResponse) {
+    option (google.api.http) = { post: "/v1/instances/{instance_id}/bots/{bot_id}/elytra:start" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Start elytra flight"
+      permissions: "CONTROL_BOT_ACTIONS"
+      scope: "instance.bot"
+      preconditions: "Bot must be online and airborne. Minecraft validates elytra equipment."
+      execution: "Completes after the fall-flying request is submitted on the bot game thread."
+    };
+  }
+
+  rpc SetCreativeSlot (SetCreativeSlotRequest) returns (SetCreativeSlotResponse) {
+    option (google.api.http) = { post: "/v1/instances/{instance_id}/bots/{bot_id}/creative-slot:set" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Set creative slot"
+      permissions: "CONTROL_BOT_ACTIONS"
+      scope: "instance.bot"
+    };
+  }
+
+  // Waits until every chunk in a square radius around the bot is loaded.
+  rpc WaitForChunks (WaitForChunksRequest) returns (WaitForChunksResponse) {
+    option (google.api.http) = { post: "/v1/instances/{instance_id}/bots/{bot_id}/chunks:wait" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Wait for chunks"
+      permissions: "READ_BOT_INFO"
+      scope: "instance.bot"
+      preconditions: "Bot must be online and have a loaded client level."
+      execution: "Polls the bot world view until the requested chunk square is loaded or the deadline expires."
     };
   }
 

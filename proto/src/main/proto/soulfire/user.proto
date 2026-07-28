@@ -7,6 +7,7 @@ package soulfire.v1;
 
 import "soulfire/common.proto";
 import "soulfire/api_docs.proto";
+import "soulfire/plugin_api.proto";
 import "google/api/annotations.proto";
 import "google/api/field_behavior.proto";
 import "google/protobuf/timestamp.proto";
@@ -172,6 +173,49 @@ message GenerateUserAPITokenResponse {
   string token = 1 [(google.api.field_behavior) = REQUIRED];
 }
 
+// An explicit user-level override for a dynamically registered plugin
+// permission. Records remain persisted when a plugin is absent so reinstalling
+// a plugin cannot silently change the meaning of an existing grant.
+message UserPluginPermissionGrant {
+  string user_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string permission_id = 2 [(google.api.field_behavior) = REQUIRED];
+  PluginPermissionScope scope = 3 [(google.api.field_behavior) = REQUIRED];
+  // Empty only for global permissions. Instance, bot, and task permissions
+  // use the corresponding resource UUID.
+  optional string resource_id = 4 [(soulfire.v1.api_field).format = "uuid"];
+  // True grants and false explicitly denies the permission.
+  bool granted = 5 [(google.api.field_behavior) = REQUIRED];
+  // False when the owning plugin is not currently installed.
+  bool active = 6 [(google.api.field_behavior) = REQUIRED];
+  google.protobuf.Timestamp created_at = 7 [(google.api.field_behavior) = REQUIRED];
+  google.protobuf.Timestamp updated_at = 8 [(google.api.field_behavior) = REQUIRED];
+}
+
+message ListUserPluginPermissionGrantsRequest {
+  string user_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+}
+
+message ListUserPluginPermissionGrantsResponse {
+  repeated UserPluginPermissionGrant grants = 1 [(google.api.field_behavior) = REQUIRED];
+}
+
+message SetUserPluginPermissionGrantRequest {
+  string user_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string permission_id = 2 [(google.api.field_behavior) = REQUIRED];
+  PluginPermissionScope scope = 3 [(google.api.field_behavior) = REQUIRED];
+  optional string resource_id = 4 [(soulfire.v1.api_field).format = "uuid"];
+  bool granted = 5 [(google.api.field_behavior) = REQUIRED];
+}
+
+message DeleteUserPluginPermissionGrantRequest {
+  string user_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string permission_id = 2 [(google.api.field_behavior) = REQUIRED];
+  PluginPermissionScope scope = 3 [(google.api.field_behavior) = REQUIRED];
+  optional string resource_id = 4 [(soulfire.v1.api_field).format = "uuid"];
+}
+
+message DeleteUserPluginPermissionGrantResponse {}
+
 // UserService provides user management functionality for the SoulFire system.
 // All methods require authentication via JWT token in the request metadata.
 // Most methods require specific global permissions (CREATE_USER, READ_USER, UPDATE_USER,
@@ -295,6 +339,45 @@ service UserService {
       permissions: "GENERATE_API_TOKEN"
       scope: "server.user"
       side_effects: "Issues a new API JWT for the target user."
+    };
+  }
+
+  // Lists explicit dynamic plugin permission overrides for one user,
+  // including inactive grants retained for plugins that are not installed.
+  rpc ListUserPluginPermissionGrants (ListUserPluginPermissionGrantsRequest) returns (ListUserPluginPermissionGrantsResponse) {
+    option (google.api.http) = { get: "/v1/users/{user_id}/plugin-permissions" };
+    option (soulfire.v1.api_method) = {
+      display_name: "List user plugin permission grants"
+      permissions: "READ_USER"
+      scope: "server.user"
+    };
+  }
+
+  // Creates or replaces one explicit plugin permission override.
+  rpc SetUserPluginPermissionGrant (SetUserPluginPermissionGrantRequest) returns (UserPluginPermissionGrant) {
+    option (google.api.http) = {
+      put: "/v1/users/{user_id}/plugin-permissions/{permission_id}"
+      body: "*"
+    };
+    option (soulfire.v1.api_method) = {
+      display_name: "Set user plugin permission grant"
+      permissions: "UPDATE_USER"
+      scope: "server.user"
+      side_effects: "Changes a user's effective plugin permissions."
+    };
+  }
+
+  // Removes one explicit override so the plugin permission's default grant
+  // policy applies again.
+  rpc DeleteUserPluginPermissionGrant (DeleteUserPluginPermissionGrantRequest) returns (DeleteUserPluginPermissionGrantResponse) {
+    option (google.api.http) = {
+      delete: "/v1/users/{user_id}/plugin-permissions/{permission_id}"
+    };
+    option (soulfire.v1.api_method) = {
+      display_name: "Delete user plugin permission grant"
+      permissions: "UPDATE_USER"
+      scope: "server.user"
+      side_effects: "Restores a plugin permission's default grant policy."
     };
   }
 }

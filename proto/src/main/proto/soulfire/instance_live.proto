@@ -15,11 +15,10 @@ import "google/api/field_behavior.proto";
 //
 // While BotLiveService.WatchBotEvents exposes a stream scoped to a single bot,
 // InstanceLiveService multiplexes events across ALL bots in an instance into a
-// single stream. This is what powers an instance-wide live feed (chat across
-// every bot, plus join/leave lifecycle) without opening one stream per bot.
+// single stream. This powers fleet-wide state and activity feeds without
+// opening one network stream per bot.
 //
-// Events reuse the structured BotChatEvent / BotLifecycleEvent messages from
-// bot_live.proto and tag each one with the originating bot.
+// Events reuse BotEvent and tag each one with the originating bot.
 // ============================================================================
 
 // Selects which categories of events the instance stream should deliver.
@@ -29,6 +28,11 @@ message InstanceEventFilter {
   bool include_chat = 1;
   // Deliver connect / disconnect lifecycle events as BotLifecycleEvent.
   bool include_lifecycle = 2;
+  // Full bot event filter. When present, this supersedes the two legacy
+  // category flags above and can request any BotEvent category.
+  optional BotEventFilter bot_events = 3;
+  // Optional profile UUID allowlist. Empty selects every configured bot.
+  repeated string bot_ids = 4 [(soulfire.v1.api_field).format = "uuid"];
 }
 
 // Request to subscribe to an instance's multiplexed live event stream.
@@ -52,6 +56,9 @@ message InstanceEvent {
     BotChatEvent chat = 3;
     // A connection lifecycle change for the bot.
     BotLifecycleEvent lifecycle = 4;
+    // Any bot event not represented by the legacy fields above. Chat and
+    // lifecycle continue to use their original variants for wire compatibility.
+    BotEvent bot_event = 5;
   }
 }
 
@@ -59,9 +66,9 @@ message InstanceEvent {
 // All operations require appropriate permissions.
 service InstanceLiveService {
   // Subscribes to a single multiplexed event stream covering every bot in the
-  // instance. The stream stays open until the client cancels. Unlike
-  // WatchBotEvents it does not emit an initial snapshot; it only forwards
-  // events as they happen.
+  // instance. The stream stays open until the client cancels. Each selected
+  // bot contributes its current status and live snapshots before incremental
+  // events begin.
   rpc WatchInstanceEvents (WatchInstanceEventsRequest) returns (stream InstanceEvent) {
     option (soulfire.v1.api_method) = {
       display_name: "Watch instance events"

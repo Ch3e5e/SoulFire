@@ -755,6 +755,7 @@ public final class InstanceServiceImpl extends InstanceServiceGrpc.InstanceServi
             case AUTOMATION_RELEASE_CLAIMS -> InstanceAuditLogResponse.AuditLogEntryType.AUTOMATION_RELEASE_CLAIMS;
             case BOT_DESIRED_STATE_CHANGE -> InstanceAuditLogResponse.AuditLogEntryType.BOT_DESIRED_STATE_CHANGE;
             case BOT_RESTART -> InstanceAuditLogResponse.AuditLogEntryType.BOT_RESTART;
+            case PLUGIN_RPC -> InstanceAuditLogResponse.AuditLogEntryType.PLUGIN_RPC;
           })
           .setTimestamp(Timestamps.fromMillis(auditLog.getCreatedAt().toInstant(ZoneOffset.UTC).toEpochMilli()))
           .setData(auditLog.getData() != null ? auditLog.getData() : "")

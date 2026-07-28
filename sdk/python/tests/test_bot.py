@@ -3,27 +3,61 @@ from typing import cast
 
 import pytest
 
-from soulfire.bot import SoulFireBot
+from soulfire.bot import AsyncSoulFireBot
 from soulfire.bot_connect import BotServiceClient
 from soulfire.bot_live_connect import BotLiveServiceClient
 from soulfire.bot_live_pb2 import (
+    BLOCK_FACE_NORTH,
     BOT_ACTION_STATUS_COMPLETED,
+    HAND_OFF,
+    RESOURCE_PACK_RESPONSE_ACCEPTED,
     AcquireBotControlRequest,
     AcquireBotControlResponse,
     BotActionResult,
     BotControlLease,
     BotEvent,
+    InteractBlockRequest,
+    InteractBlockResponse,
     ReleaseBotControlRequest,
     ReleaseBotControlResponse,
+    RespondResourcePackRequest,
+    RespondResourcePackResponse,
     SendChatRequest,
     SendChatResponse,
+    SetCreativeSlotRequest,
+    SetCreativeSlotResponse,
+    SetFlyingRequest,
+    SetFlyingResponse,
+    SleepRequest,
+    SleepResponse,
+    StartElytraFlightRequest,
+    StartElytraFlightResponse,
+    UpdateSignRequest,
+    UpdateSignResponse,
+    WaitForChunksRequest,
+    WaitForChunksResponse,
+    WakeRequest,
+    WakeResponse,
     WatchBotEventsRequest,
+    WriteBookRequest,
+    WriteBookResponse,
 )
+from soulfire.common_pb2 import BlockPosition
 
 
 class FakeBotLiveClient:
     event_request: WatchBotEventsRequest | None = None
     chat_request: SendChatRequest | None = None
+    interaction_request: InteractBlockRequest | None = None
+    sleep_request: SleepRequest | None = None
+    wake_request: WakeRequest | None = None
+    sign_request: UpdateSignRequest | None = None
+    book_request: WriteBookRequest | None = None
+    resource_pack_request: RespondResourcePackRequest | None = None
+    flying_request: SetFlyingRequest | None = None
+    elytra_request: StartElytraFlightRequest | None = None
+    creative_slot_request: SetCreativeSlotRequest | None = None
+    chunk_wait_request: WaitForChunksRequest | None = None
     action_headers: list[dict[str, str] | None]
 
     def __init__(self) -> None:
@@ -63,6 +97,107 @@ class FakeBotLiveClient:
         assert request.bot_id == "bot-id"
         return AcquireBotControlResponse(lease=BotControlLease(token="lease-token"))
 
+    async def interact_block(
+        self,
+        request: InteractBlockRequest,
+        **_kwargs: object,
+    ) -> InteractBlockResponse:
+        self.interaction_request = request
+        return InteractBlockResponse(
+            result=BotActionResult(
+                action_id="action-id",
+                status=BOT_ACTION_STATUS_COMPLETED,
+            )
+        )
+
+    async def sleep(
+        self,
+        request: SleepRequest,
+        **_kwargs: object,
+    ) -> SleepResponse:
+        self.sleep_request = request
+        return SleepResponse(
+            result=BotActionResult(
+                action_id="action-id",
+                status=BOT_ACTION_STATUS_COMPLETED,
+            )
+        )
+
+    async def wake(
+        self,
+        request: WakeRequest,
+        **_kwargs: object,
+    ) -> WakeResponse:
+        self.wake_request = request
+        return WakeResponse(
+            result=BotActionResult(
+                action_id="action-id",
+                status=BOT_ACTION_STATUS_COMPLETED,
+            )
+        )
+
+    async def update_sign(
+        self,
+        request: UpdateSignRequest,
+        **_kwargs: object,
+    ) -> UpdateSignResponse:
+        self.sign_request = request
+        return UpdateSignResponse(result=_completed_action())
+
+    async def write_book(
+        self,
+        request: WriteBookRequest,
+        **_kwargs: object,
+    ) -> WriteBookResponse:
+        self.book_request = request
+        return WriteBookResponse(result=_completed_action())
+
+    async def respond_resource_pack(
+        self,
+        request: RespondResourcePackRequest,
+        **_kwargs: object,
+    ) -> RespondResourcePackResponse:
+        self.resource_pack_request = request
+        return RespondResourcePackResponse(result=_completed_action())
+
+    async def set_flying(
+        self,
+        request: SetFlyingRequest,
+        **_kwargs: object,
+    ) -> SetFlyingResponse:
+        self.flying_request = request
+        return SetFlyingResponse(result=_completed_action())
+
+    async def start_elytra_flight(
+        self,
+        request: StartElytraFlightRequest,
+        **_kwargs: object,
+    ) -> StartElytraFlightResponse:
+        self.elytra_request = request
+        return StartElytraFlightResponse(result=_completed_action())
+
+    async def set_creative_slot(
+        self,
+        request: SetCreativeSlotRequest,
+        **_kwargs: object,
+    ) -> SetCreativeSlotResponse:
+        self.creative_slot_request = request
+        return SetCreativeSlotResponse(result=_completed_action())
+
+    async def wait_for_chunks(
+        self,
+        request: WaitForChunksRequest,
+        **_kwargs: object,
+    ) -> WaitForChunksResponse:
+        self.chunk_wait_request = request
+        return WaitForChunksResponse(
+            center_chunk_x=2,
+            center_chunk_z=-3,
+            loaded_chunks=25,
+            required_chunks=25,
+            dimension="minecraft:overworld",
+        )
+
     async def release_bot_control(
         self,
         request: ReleaseBotControlRequest,
@@ -75,7 +210,7 @@ class FakeBotLiveClient:
 @pytest.mark.asyncio
 async def test_bot_scopes_event_stream() -> None:
     service = FakeBotLiveClient()
-    bot = SoulFireBot(
+    bot = AsyncSoulFireBot(
         "instance-id",
         "bot-id",
         cast(BotServiceClient, object()),
@@ -93,12 +228,13 @@ async def test_bot_scopes_event_stream() -> None:
     assert service.event_request.filter.include_inventory
     assert service.event_request.filter.include_lifecycle
     assert service.event_request.filter.include_state_deltas
+    assert service.event_request.filter.include_titles
 
 
 @pytest.mark.asyncio
 async def test_bot_scopes_chat_command() -> None:
     service = FakeBotLiveClient()
-    bot = SoulFireBot(
+    bot = AsyncSoulFireBot(
         "instance-id",
         "bot-id",
         cast(BotServiceClient, object()),
@@ -114,9 +250,41 @@ async def test_bot_scopes_chat_command() -> None:
 
 
 @pytest.mark.asyncio
+async def test_bot_scopes_block_interaction_sleep_and_wake() -> None:
+    service = FakeBotLiveClient()
+    bot = AsyncSoulFireBot(
+        "instance-id",
+        "bot-id",
+        cast(BotServiceClient, object()),
+        cast(BotLiveServiceClient, service),
+    )
+
+    await bot.interact_block(
+        BlockPosition(x=1, y=64, z=2),
+        BLOCK_FACE_NORTH,
+        HAND_OFF,
+        sneaking=True,
+    )
+    await bot.sleep(BlockPosition(x=3, y=64, z=4))
+    await bot.wake()
+
+    assert service.interaction_request is not None
+    assert service.interaction_request.instance_id == "instance-id"
+    assert service.interaction_request.bot_id == "bot-id"
+    assert service.interaction_request.position.x == 1
+    assert service.interaction_request.face == BLOCK_FACE_NORTH
+    assert service.interaction_request.hand == HAND_OFF
+    assert service.interaction_request.sneaking
+    assert service.sleep_request is not None
+    assert service.sleep_request.bed.z == 4
+    assert service.wake_request is not None
+    assert service.wake_request.bot_id == "bot-id"
+
+
+@pytest.mark.asyncio
 async def test_bot_attaches_and_clears_an_acquired_control_lease() -> None:
     service = FakeBotLiveClient()
-    bot = SoulFireBot(
+    bot = AsyncSoulFireBot(
         "instance-id",
         "bot-id",
         cast(BotServiceClient, object()),
@@ -132,3 +300,55 @@ async def test_bot_attaches_and_clears_an_acquired_control_lease() -> None:
         {"X-SoulFire-Control-Token": "lease-token"},
         None,
     ]
+
+
+@pytest.mark.asyncio
+async def test_bot_scopes_rich_player_actions() -> None:
+    service = FakeBotLiveClient()
+    bot = AsyncSoulFireBot(
+        "instance-id",
+        "bot-id",
+        cast(BotServiceClient, object()),
+        cast(BotLiveServiceClient, service),
+    )
+
+    await bot.update_sign(
+        BlockPosition(dimension="minecraft:overworld", x=1, y=64, z=2),
+        ["one", "two", "three", "four"],
+    )
+    await bot.write_book(2, ["first", "second"], title="Field notes")
+    await bot.respond_resource_pack(
+        "00000000-0000-0000-0000-000000000042",
+        RESOURCE_PACK_RESPONSE_ACCEPTED,
+    )
+    await bot.set_flying(True)
+    await bot.start_elytra_flight()
+    await bot.set_creative_slot(36, "minecraft:stone", count=64)
+    chunks = await bot.wait_for_chunks(2, wait_timeout_ms=12_000)
+
+    assert service.sign_request is not None
+    assert service.sign_request.instance_id == "instance-id"
+    assert service.sign_request.position.dimension == "minecraft:overworld"
+    assert service.sign_request.lines == ["one", "two", "three", "four"]
+    assert service.book_request is not None
+    assert service.book_request.title == "Field notes"
+    assert service.resource_pack_request is not None
+    assert service.resource_pack_request.response == RESOURCE_PACK_RESPONSE_ACCEPTED
+    assert service.flying_request is not None
+    assert service.flying_request.flying
+    assert service.elytra_request is not None
+    assert service.elytra_request.bot_id == "bot-id"
+    assert service.creative_slot_request is not None
+    assert service.creative_slot_request.item.item_id == "minecraft:stone"
+    assert service.creative_slot_request.item.count == 64
+    assert service.chunk_wait_request is not None
+    assert service.chunk_wait_request.radius_chunks == 2
+    assert service.chunk_wait_request.timeout_ms == 12_000
+    assert chunks.loaded_chunks == 25
+
+
+def _completed_action() -> BotActionResult:
+    return BotActionResult(
+        action_id="action-id",
+        status=BOT_ACTION_STATUS_COMPLETED,
+    )

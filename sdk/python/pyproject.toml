@@ -4,10 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "soulfire"
-version = "0.1.1"
+version = "0.2.0"
 description = "Python SDK for automating SoulFire bots over gRPC-Web."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.14"
 license = "AGPL-3.0-only"
 authors = [
   { name = "SoulFire" },
@@ -27,6 +27,7 @@ dev = [
   "hatchling>=1.27",
   "pytest>=9.1,<10",
   "pytest-asyncio>=1.2,<2",
+  "pyright>=1.1.411,<1.2",
   "ruff>=0.16,<0.17",
 ]
 
@@ -38,6 +39,25 @@ addopts = "-q"
 asyncio_mode = "auto"
 testpaths = ["tests"]
 
+[tool.pyright]
+include = ["src/soulfire"]
+exclude = [
+  "src/soulfire/*_connect.py",
+  "src/soulfire/*_pb2.py",
+  "src/soulfire/**/*_connect.py",
+  "src/soulfire/**/*_pb2.py",
+]
+ignore = [
+  "src/soulfire/*_connect.py",
+  "src/soulfire/*_pb2.py",
+  "src/soulfire/*_pb2.pyi",
+  "src/soulfire/**/*_connect.py",
+  "src/soulfire/**/*_pb2.py",
+  "src/soulfire/**/*_pb2.pyi",
+]
+pythonVersion = "3.14"
+typeCheckingMode = "strict"
+
 [tool.ruff]
 extend-exclude = [
   "src/soulfire/*_connect.py",
@@ -45,7 +65,7 @@ extend-exclude = [
   "src/soulfire/*_pb2.pyi",
 ]
 line-length = 100
-target-version = "py310"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]

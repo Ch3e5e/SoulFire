@@ -19,7 +19,85 @@ import type { JsonObject, Message } from "@bufbuild/protobuf";
  * Describes the file soulfire/common.proto.
  */
 export const file_soulfire_common: GenFile = /*@__PURE__*/
-  fileDesc("ChVzb3VsZmlyZS9jb21tb24ucHJvdG8SC3NvdWxmaXJlLnYxIsUBCgpQcm94eVByb3RvEi8KBHR5cGUYASABKA4yHC5zb3VsZmlyZS52MS5Qcm94eVByb3RvLlR5cGVCA+BBAhIUCgdhZGRyZXNzGAIgASgJQgPgQQISFQoIdXNlcm5hbWUYAyABKAlIAIgBARIVCghwYXNzd29yZBgEIAEoCUgBiAEBIigKBFR5cGUSCAoESFRUUBAAEgoKBlNPQ0tTNBABEgoKBlNPQ0tTNRACQgsKCV91c2VybmFtZUILCglfcGFzc3dvcmQipAoKFU1pbmVjcmFmdEFjY291bnRQcm90bxJGCgR0eXBlGAEgASgOMjMuc291bGZpcmUudjEuTWluZWNyYWZ0QWNjb3VudFByb3RvLkFjY291bnRUeXBlUHJvdG9CA+BBAhIhCgpwcm9maWxlX2lkGAIgASgJQg3gQQLS8xgGCgR1dWlkEhwKD2xhc3Rfa25vd25fbmFtZRgDIAEoCUID4EECElgKFm9ubGluZV9jaGFpbl9qYXZhX2RhdGEYBSABKAsyNi5zb3VsZmlyZS52MS5NaW5lY3JhZnRBY2NvdW50UHJvdG8uT25saW5lQ2hhaW5KYXZhRGF0YUgAEk8KEW9mZmxpbmVfamF2YV9kYXRhGAYgASgLMjIuc291bGZpcmUudjEuTWluZWNyYWZ0QWNjb3VudFByb3RvLk9mZmxpbmVKYXZhRGF0YUgAEkYKDGJlZHJvY2tfZGF0YRgHIAEoCzIuLnNvdWxmaXJlLnYxLk1pbmVjcmFmdEFjY291bnRQcm90by5CZWRyb2NrRGF0YUgAEloKF29ubGluZV9zaW1wbGVfamF2YV9kYXRhGAogASgLMjcuc291bGZpcmUudjEuTWluZWNyYWZ0QWNjb3VudFByb3RvLk9ubGluZVNpbXBsZUphdmFEYXRhSAASWAoWdGhlX2FsdGVuaW5nX2phdmFfZGF0YRgLIAEoCzI2LnNvdWxmaXJlLnYxLk1pbmVjcmFmdEFjY291bnRQcm90by5UaGVBbHRlbmluZ0phdmFEYXRhSAASMwoGY29uZmlnGAggAygLMh4uc291bGZpcmUudjEuU2V0dGluZ3NOYW1lc3BhY2VCA+BBBhJAChNwZXJzaXN0ZW50X21ldGFkYXRhGAkgAygLMh4uc291bGZpcmUudjEuU2V0dGluZ3NOYW1lc3BhY2VCA+BBBhpHChNPbmxpbmVDaGFpbkphdmFEYXRhEjAKCmF1dGhfY2hhaW4YAyABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0QgPgQQIaEQoPT2ZmbGluZUphdmFEYXRhGk4KFE9ubGluZVNpbXBsZUphdmFEYXRhEhkKDGFjY2Vzc190b2tlbhgBIAEoCUID4EECEhsKDmV4cGlyZV90aW1lX21zGAIgASgDQgPgQQIaTAoTVGhlQWx0ZW5pbmdKYXZhRGF0YRIaCg1hY2NvdW50X3Rva2VuGAEgASgJQgPgQQISGQoMYWNjZXNzX3Rva2VuGAIgASgJQgPgQQIaPwoLQmVkcm9ja0RhdGESMAoKYXV0aF9jaGFpbhgHIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3RCA+BBAiKWAgoQQWNjb3VudFR5cGVQcm90bxIeChpNSUNST1NPRlRfSkFWQV9DUkVERU5USUFMUxAAEiEKHU1JQ1JPU09GVF9CRURST0NLX0NSRURFTlRJQUxTEAESCwoHT0ZGTElORRAEEh4KGk1JQ1JPU09GVF9KQVZBX0RFVklDRV9DT0RFEAUSIQodTUlDUk9TT0ZUX0JFRFJPQ0tfREVWSUNFX0NPREUQBhIgChxNSUNST1NPRlRfSkFWQV9SRUZSRVNIX1RPS0VOEAcSGgoWTUlDUk9TT0ZUX0pBVkFfQ09PS0lFUxAIEh8KG01JQ1JPU09GVF9KQVZBX0FDQ0VTU19UT0tFThAJEhAKDFRIRV9BTFRFTklORxAKQg4KDGFjY291bnRfZGF0YSK+AQoRU2V0dGluZ3NOYW1lc3BhY2USFgoJbmFtZXNwYWNlGAEgASgJQgPgQQISQgoHZW50cmllcxgCIAMoCzIsLnNvdWxmaXJlLnYxLlNldHRpbmdzTmFtZXNwYWNlLlNldHRpbmdzRW50cnlCA+BBBhpNCg1TZXR0aW5nc0VudHJ5EhAKA2tleRgBIAEoCUID4EECEioKBXZhbHVlGAIgASgLMhYuZ29vZ2xlLnByb3RvYnVmLlZhbHVlQgPgQQIiQwoXU2V0dGluZ3NFbnRyeUlkZW50aWZpZXISFgoJbmFtZXNwYWNlGAEgASgJQgPgQQISEAoDa2V5GAIgASgJQgPgQQIi5QIKDVN0cmluZ1NldHRpbmcSFAoHdWlfbmFtZRgBIAEoCUID4EECEhgKC2Rlc2NyaXB0aW9uGAIgASgJQgPgQQISEAoDZGVmGAMgASgJQgPgQQISPQoKaW5wdXRfdHlwZRgKIAEoDjIkLnNvdWxmaXJlLnYxLlN0cmluZ1NldHRpbmcuSW5wdXRUeXBlQgPgQQISGAoLcGxhY2Vob2xkZXIYBiABKAlCA+BBAhIXCgptaW5fbGVuZ3RoGAcgASgFQgPgQQISFwoKbWF4X2xlbmd0aBgIIAEoBUID4EECEhQKB3BhdHRlcm4YCSABKAlCA+BBAhIVCghkaXNhYmxlZBgLIAEoCEID4EECIloKCUlucHV0VHlwZRIICgRURVhUEAASDAoIUEFTU1dPUkQQARIJCgVFTUFJTBACEgoKBlNFQVJDSBADEgcKA1RFTBAEEgcKA1VSTBAFEgwKCFRFWFRBUkVBEAYi1wEKCkludFNldHRpbmcSFAoHdWlfbmFtZRgBIAEoCUID4EECEhgKC2Rlc2NyaXB0aW9uGAIgASgJQgPgQQISEAoDZGVmGAMgASgFQgPgQQISEAoDbWluGAQgASgFQgPgQQISEAoDbWF4GAUgASgFQgPgQQISEQoEc3RlcBgGIAEoBUID4EECEhgKC3BsYWNlaG9sZGVyGAcgASgJQgPgQQISHwoSdGhvdXNhbmRfc2VwYXJhdG9yGAggASgIQgPgQQISFQoIZGlzYWJsZWQYCSABKAhCA+BBAiKYAgoNRG91YmxlU2V0dGluZxIUCgd1aV9uYW1lGAEgASgJQgPgQQISGAoLZGVzY3JpcHRpb24YAiABKAlCA+BBAhIQCgNkZWYYAyABKAFCA+BBAhIQCgNtaW4YBCABKAFCA+BBAhIQCgNtYXgYBSABKAFCA+BBAhIRCgRzdGVwGAYgASgBQgPgQQISGAoLcGxhY2Vob2xkZXIYByABKAlCA+BBAhIfChJ0aG91c2FuZF9zZXBhcmF0b3IYCCABKAhCA+BBAhIaCg1kZWNpbWFsX3NjYWxlGAkgASgFQgPgQQISIAoTZml4ZWRfZGVjaW1hbF9zY2FsZRgKIAEoCEID4EECEhUKCGRpc2FibGVkGAsgASgIQgPgQQIiZgoLQm9vbFNldHRpbmcSFAoHdWlfbmFtZRgBIAEoCUID4EECEhgKC2Rlc2NyaXB0aW9uGAIgASgJQgPgQQISEAoDZGVmGAMgASgIQgPgQQISFQoIZGlzYWJsZWQYBCABKAhCA+BBAiKEAgoMQ29tYm9TZXR0aW5nEhQKB3VpX25hbWUYASABKAlCA+BBAhIYCgtkZXNjcmlwdGlvbhgCIAEoCUID4EECEjEKB29wdGlvbnMYAyADKAsyIC5zb3VsZmlyZS52MS5Db21ib1NldHRpbmcuT3B0aW9uEhAKA2RlZhgEIAEoCUID4EECEhUKCGRpc2FibGVkGAUgASgIQgPgQQIaaAoGT3B0aW9uEg8KAmlkGAEgASgJQgPgQQISGQoMZGlzcGxheV9uYW1lGAIgASgJQgPgQQISFAoHaWNvbl9pZBgDIAEoCUgAiAEBEhAKCGtleXdvcmRzGAQgAygJQgoKCF9pY29uX2lkImcKEVN0cmluZ0xpc3RTZXR0aW5nEhQKB3VpX25hbWUYASABKAlCA+BBAhIYCgtkZXNjcmlwdGlvbhgCIAEoCUID4EECEgsKA2RlZhgDIAMoCRIVCghkaXNhYmxlZBgEIAEoCEID4EECItUCCg1NaW5NYXhTZXR0aW5nEhAKA21pbhgBIAEoBUID4EECEhAKA21heBgCIAEoBUID4EECEhEKBHN0ZXAYAyABKAVCA+BBAhIfChJ0aG91c2FuZF9zZXBhcmF0b3IYBCABKAhCA+BBAhI3CghtaW5FbnRyeRgFIAEoCzIgLnNvdWxmaXJlLnYxLk1pbk1heFNldHRpbmcuRW50cnlCA+BBAhI3CghtYXhFbnRyeRgGIAEoCzIgLnNvdWxmaXJlLnYxLk1pbk1heFNldHRpbmcuRW50cnlCA+BBAhIVCghkaXNhYmxlZBgHIAEoCEID4EECGmMKBUVudHJ5EhQKB3VpX25hbWUYASABKAlCA+BBAhIYCgtkZXNjcmlwdGlvbhgCIAEoCUID4EECEhAKA2RlZhgDIAEoBUID4EECEhgKC3BsYWNlaG9sZGVyGAQgASgJQgPgQQIi0AMKElNldHRpbmdzRGVmaW5pdGlvbhI1CgJpZBgBIAEoCzIkLnNvdWxmaXJlLnYxLlNldHRpbmdzRW50cnlJZGVudGlmaWVyQgPgQQISOwoFc2NvcGUYAiABKA4yJy5zb3VsZmlyZS52MS5TZXR0aW5nc1BhZ2VFbnRyeVNjb3BlVHlwZUID4EECEiwKBnN0cmluZxgDIAEoCzIaLnNvdWxmaXJlLnYxLlN0cmluZ1NldHRpbmdIABImCgNpbnQYBCABKAsyFy5zb3VsZmlyZS52MS5JbnRTZXR0aW5nSAASLAoGZG91YmxlGAUgASgLMhouc291bGZpcmUudjEuRG91YmxlU2V0dGluZ0gAEigKBGJvb2wYBiABKAsyGC5zb3VsZmlyZS52MS5Cb29sU2V0dGluZ0gAEioKBWNvbWJvGAcgASgLMhkuc291bGZpcmUudjEuQ29tYm9TZXR0aW5nSAASNQoLc3RyaW5nX2xpc3QYCCABKAsyHi5zb3VsZmlyZS52MS5TdHJpbmdMaXN0U2V0dGluZ0gAEi0KB21pbl9tYXgYCSABKAsyGi5zb3VsZmlyZS52MS5NaW5NYXhTZXR0aW5nSABCBgoEdHlwZSKWAgoMU2V0dGluZ3NQYWdlEg8KAmlkGAEgASgJQgPgQQISHQoQb3duaW5nX3BsdWdpbl9pZBgCIAEoCUgAiAEBEhYKCXBhZ2VfbmFtZRgDIAEoCUID4EECEjUKB2VudHJpZXMYBSADKAsyJC5zb3VsZmlyZS52MS5TZXR0aW5nc0VudHJ5SWRlbnRpZmllchIUCgdpY29uX2lkGAYgASgJQgPgQQISRQoSZW5hYmxlZF9pZGVudGlmaWVyGAcgASgLMiQuc291bGZpcmUudjEuU2V0dGluZ3NFbnRyeUlkZW50aWZpZXJIAYgBAUITChFfb3duaW5nX3BsdWdpbl9pZEIVChNfZW5hYmxlZF9pZGVudGlmaWVyIpkBCgxTZXJ2ZXJQbHVnaW4SDwoCaWQYASABKAlCA+BBAhIUCgd2ZXJzaW9uGAIgASgJQgPgQQISGAoLZGVzY3JpcHRpb24YAyABKAlCA+BBAhITCgZhdXRob3IYBCABKAlCA+BBAhIUCgdsaWNlbnNlGAUgASgJQgPgQQISHQoHd2Vic2l0ZRgGIAEoCUIM4EEC0vMYBQoDdXJpKtkBChZBY2NvdW50VHlwZUNyZWRlbnRpYWxzEh4KGk1JQ1JPU09GVF9KQVZBX0NSRURFTlRJQUxTEAASIQodTUlDUk9TT0ZUX0JFRFJPQ0tfQ1JFREVOVElBTFMQARILCgdPRkZMSU5FEAQSIAocTUlDUk9TT0ZUX0pBVkFfUkVGUkVTSF9UT0tFThAFEhoKFk1JQ1JPU09GVF9KQVZBX0NPT0tJRVMQBhIfChtNSUNST1NPRlRfSkFWQV9BQ0NFU1NfVE9LRU4QBxIQCgxUSEVfQUxURU5JTkcQCCpaChVBY2NvdW50VHlwZURldmljZUNvZGUSHgoaTUlDUk9TT0ZUX0pBVkFfREVWSUNFX0NPREUQABIhCh1NSUNST1NPRlRfQkVEUk9DS19ERVZJQ0VfQ09ERRABKsUDChBHbG9iYWxQZXJtaXNzaW9uEhMKD0NSRUFURV9JTlNUQU5DRRAAEhkKFUdMT0JBTF9TVUJTQ1JJQkVfTE9HUxABEhQKEFJFQURfQ0xJRU5UX0RBVEEQAhIWChJSRUFEX1NFUlZFUl9DT05GSUcQAxIYChRVUERBVEVfU0VSVkVSX0NPTkZJRxAEEg8KC0NSRUFURV9VU0VSEAUSDQoJUkVBRF9VU0VSEAYSDwoLVVBEQVRFX1VTRVIQBxIPCgtERUxFVEVfVVNFUhAIEhwKGEdMT0JBTF9DT01NQU5EX0VYRUNVVElPThAJEhcKE0lOVkFMSURBVEVfU0VTU0lPTlMQCxIeChpHRU5FUkFURV9TRUxGX1dFQkRBVl9UT0tFThAMEhsKF0dFTkVSQVRFX1NFTEZfQVBJX1RPS0VOEA8SGAoUVVBEQVRFX1NFTEZfVVNFUk5BTUUQDRIVChFVUERBVEVfU0VMRl9FTUFJTBAOEhYKEkdFTkVSQVRFX0FQSV9UT0tFThAQEhwKGElOVkFMSURBVEVfU0VMRl9TRVNTSU9OUxARIgQIEhASIgQIExATIgQIFBAUIgQIFRAVIgQIFhAWKrADChJJbnN0YW5jZVBlcm1pc3Npb24SHgoaSU5TVEFOQ0VfQ09NTUFORF9FWEVDVVRJT04QABIRCg1SRUFEX0lOU1RBTkNFEAISGAoUVVBEQVRFX0lOU1RBTkNFX01FVEEQAxIaChZVUERBVEVfSU5TVEFOQ0VfQ09ORklHEA4SEwoPREVMRVRFX0lOU1RBTkNFEAQSGwoXQVVUSEVOVElDQVRFX01DX0FDQ09VTlQQBhIPCgtDSEVDS19QUk9YWRAHEhAKDERPV05MT0FEX1VSTBAIEhkKFUFDQ0VTU19PQkpFQ1RfU1RPUkFHRRAJEhsKF0lOU1RBTkNFX1NVQlNDUklCRV9MT0dTEA0SHAoYUkVBRF9JTlNUQU5DRV9BVURJVF9MT0dTEA8SEQoNUkVBRF9CT1RfSU5GTxAKEhUKEVVQREFURV9CT1RfQ09ORklHEAsSEAoMQ09OVFJPTF9CT1RTEBUSEwoPRVhFQ1VURV9TQ1JJUFRTEBYSFwoTQ09OVFJPTF9CT1RfQUNUSU9OUxAXIgQIEBAQIgQIERARIgQIEhASIgQIExATIgQIFBAUKh8KCFVzZXJSb2xlEgkKBUFETUlOEAASCAoEVVNFUhABKj8KGlNldHRpbmdzUGFnZUVudHJ5U2NvcGVUeXBlEgoKBlNFUlZFUhAAEgwKCElOU1RBTkNFEAESBwoDQk9UEAJCIQodY29tLnNvdWxmaXJlbWMuZ3JwYy5nZW5lcmF0ZWRQAWIGcHJvdG8z", [file_soulfire_api_docs, file_google_api_field_behavior, file_google_protobuf_struct]);
+  fileDesc("ChVzb3VsZmlyZS9jb21tb24ucHJvdG8SC3NvdWxmaXJlLnYxIlIKDUJsb2NrUG9zaXRpb24SDgoBeBgBIAEoBUID4EECEg4KAXkYAiABKAVCA+BBAhIOCgF6GAMgASgFQgPgQQISEQoJZGltZW5zaW9uGAQgASgJIlIKDVdvcmxkUG9zaXRpb24SDgoBeBgBIAEoAUID4EECEg4KAXkYAiABKAFCA+BBAhIOCgF6GAMgASgBQgPgQQISEQoJZGltZW5zaW9uGAQgASgJIsUBCgpQcm94eVByb3RvEi8KBHR5cGUYASABKA4yHC5zb3VsZmlyZS52MS5Qcm94eVByb3RvLlR5cGVCA+BBAhIUCgdhZGRyZXNzGAIgASgJQgPgQQISFQoIdXNlcm5hbWUYAyABKAlIAIgBARIVCghwYXNzd29yZBgEIAEoCUgBiAEBIigKBFR5cGUSCAoESFRUUBAAEgoKBlNPQ0tTNBABEgoKBlNPQ0tTNRACQgsKCV91c2VybmFtZUILCglfcGFzc3dvcmQipAoKFU1pbmVjcmFmdEFjY291bnRQcm90bxJGCgR0eXBlGAEgASgOMjMuc291bGZpcmUudjEuTWluZWNyYWZ0QWNjb3VudFByb3RvLkFjY291bnRUeXBlUHJvdG9CA+BBAhIhCgpwcm9maWxlX2lkGAIgASgJQg3gQQLS8xgGCgR1dWlkEhwKD2xhc3Rfa25vd25fbmFtZRgDIAEoCUID4EECElgKFm9ubGluZV9jaGFpbl9qYXZhX2RhdGEYBSABKAsyNi5zb3VsZmlyZS52MS5NaW5lY3JhZnRBY2NvdW50UHJvdG8uT25saW5lQ2hhaW5KYXZhRGF0YUgAEk8KEW9mZmxpbmVfamF2YV9kYXRhGAYgASgLMjIuc291bGZpcmUudjEuTWluZWNyYWZ0QWNjb3VudFByb3RvLk9mZmxpbmVKYXZhRGF0YUgAEkYKDGJlZHJvY2tfZGF0YRgHIAEoCzIuLnNvdWxmaXJlLnYxLk1pbmVjcmFmdEFjY291bnRQcm90by5CZWRyb2NrRGF0YUgAEloKF29ubGluZV9zaW1wbGVfamF2YV9kYXRhGAogASgLMjcuc291bGZpcmUudjEuTWluZWNyYWZ0QWNjb3VudFByb3RvLk9ubGluZVNpbXBsZUphdmFEYXRhSAASWAoWdGhlX2FsdGVuaW5nX2phdmFfZGF0YRgLIAEoCzI2LnNvdWxmaXJlLnYxLk1pbmVjcmFmdEFjY291bnRQcm90by5UaGVBbHRlbmluZ0phdmFEYXRhSAASMwoGY29uZmlnGAggAygLMh4uc291bGZpcmUudjEuU2V0dGluZ3NOYW1lc3BhY2VCA+BBBhJAChNwZXJzaXN0ZW50X21ldGFkYXRhGAkgAygLMh4uc291bGZpcmUudjEuU2V0dGluZ3NOYW1lc3BhY2VCA+BBBhpHChNPbmxpbmVDaGFpbkphdmFEYXRhEjAKCmF1dGhfY2hhaW4YAyABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0QgPgQQIaEQoPT2ZmbGluZUphdmFEYXRhGk4KFE9ubGluZVNpbXBsZUphdmFEYXRhEhkKDGFjY2Vzc190b2tlbhgBIAEoCUID4EECEhsKDmV4cGlyZV90aW1lX21zGAIgASgDQgPgQQIaTAoTVGhlQWx0ZW5pbmdKYXZhRGF0YRIaCg1hY2NvdW50X3Rva2VuGAEgASgJQgPgQQISGQoMYWNjZXNzX3Rva2VuGAIgASgJQgPgQQIaPwoLQmVkcm9ja0RhdGESMAoKYXV0aF9jaGFpbhgHIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3RCA+BBAiKWAgoQQWNjb3VudFR5cGVQcm90bxIeChpNSUNST1NPRlRfSkFWQV9DUkVERU5USUFMUxAAEiEKHU1JQ1JPU09GVF9CRURST0NLX0NSRURFTlRJQUxTEAESCwoHT0ZGTElORRAEEh4KGk1JQ1JPU09GVF9KQVZBX0RFVklDRV9DT0RFEAUSIQodTUlDUk9TT0ZUX0JFRFJPQ0tfREVWSUNFX0NPREUQBhIgChxNSUNST1NPRlRfSkFWQV9SRUZSRVNIX1RPS0VOEAcSGgoWTUlDUk9TT0ZUX0pBVkFfQ09PS0lFUxAIEh8KG01JQ1JPU09GVF9KQVZBX0FDQ0VTU19UT0tFThAJEhAKDFRIRV9BTFRFTklORxAKQg4KDGFjY291bnRfZGF0YSK+AQoRU2V0dGluZ3NOYW1lc3BhY2USFgoJbmFtZXNwYWNlGAEgASgJQgPgQQISQgoHZW50cmllcxgCIAMoCzIsLnNvdWxmaXJlLnYx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cmlwdGlvbhgCIAEoCUID4EECEhAKA2RlZhgDIAEoBUID4EECEhgKC3BsYWNlaG9sZGVyGAQgASgJQgPgQQIi0AMKElNldHRpbmdzRGVmaW5pdGlvbhI1CgJpZBgBIAEoCzIkLnNvdWxmaXJlLnYxLlNldHRpbmdzRW50cnlJZGVudGlmaWVyQgPgQQISOwoFc2NvcGUYAiABKA4yJy5zb3VsZmlyZS52MS5TZXR0aW5nc1BhZ2VFbnRyeVNjb3BlVHlwZUID4EECEiwKBnN0cmluZxgDIAEoCzIaLnNvdWxmaXJlLnYxLlN0cmluZ1NldHRpbmdIABImCgNpbnQYBCABKAsyFy5zb3VsZmlyZS52MS5JbnRTZXR0aW5nSAASLAoGZG91YmxlGAUgASgLMhouc291bGZpcmUudjEuRG91YmxlU2V0dGluZ0gAEigKBGJvb2wYBiABKAsyGC5zb3VsZmlyZS52MS5Cb29sU2V0dGluZ0gAEioKBWNvbWJvGAcgASgLMhkuc291bGZpcmUudjEuQ29tYm9TZXR0aW5nSAASNQoLc3RyaW5nX2xpc3QYCCABKAsyHi5zb3VsZmlyZS52MS5TdHJpbmdMaXN0U2V0dGluZ0gAEi0KB21pbl9tYXgYCSABKAsyGi5zb3VsZmlyZS52MS5NaW5NYXhTZXR0aW5nSABCBgoEdHlwZSKWAgoMU2V0dGluZ3NQYWdlEg8KAmlkGAEgASgJQgPgQQISHQoQb3duaW5nX3BsdWdpbl9pZBgCIAEoCUgAiAEBEhYKCXBhZ2VfbmFtZRgDIAEoCUID4EECEjUKB2VudHJpZXMYBSADKAsyJC5zb3VsZmlyZS52MS5TZXR0aW5nc0VudHJ5SWRlbnRpZmllchIUCgdpY29uX2lkGAYgASgJQgPgQQISRQoSZW5hYmxlZF9pZGVudGlmaWVyGAcgASgLMiQuc291bGZpcmUudjEuU2V0dGluZ3NFbnRyeUlkZW50aWZpZXJIAYgBAUITChFfb3duaW5nX3BsdWdpbl9pZEIVChNfZW5hYmxlZF9pZGVudGlmaWVyIpkBCgxTZXJ2ZXJQbHVnaW4SDwoCaWQYASABKAlCA+BBAhIUCgd2ZXJzaW9uGAIgASgJQgPgQQISGAoLZGVzY3JpcHRpb24YAyABKAlCA+BBAhITCgZhdXRob3IYBCABKAlCA+BBAhIUCgdsaWNlbnNlGAUgASgJQgPgQQISHQoHd2Vic2l0ZRgGIAEoCUIM4EEC0vMYBQoDdXJpKtkBChZBY2NvdW50VHlwZUNyZWRlbnRpYWxzEh4KGk1JQ1JPU09GVF9KQVZBX0NSRURFTlRJQUxTEAASIQodTUlDUk9TT0ZUX0JFRFJPQ0tfQ1JFREVOVElBTFMQARILCgdPRkZMSU5FEAQSIAocTUlDUk9TT0ZUX0pBVkFfUkVGUkVTSF9UT0tFThAFEhoKFk1JQ1JPU09GVF9KQVZBX0NPT0tJRVMQBhIfChtNSUNST1NPRlRfSkFWQV9BQ0NFU1NfVE9LRU4QBxIQCgxUSEVfQUxURU5JTkcQCCpaChVBY2NvdW50VHlwZURldmljZUNvZGUSHgoaTUlDUk9TT0ZUX0pBVkFfREVWSUNFX0NPREUQABIhCh1NSUNST1NPRlRfQkVEUk9DS19ERVZJQ0VfQ09ERRABKsUDChBHbG9iYWxQZXJtaXNzaW9uEhMKD0NSRUFURV9JTlNUQU5DRRAAEhkKFUdMT0JBTF9TVUJTQ1JJQkVfTE9HUxABEhQKEFJFQURfQ0xJRU5UX0RBVEEQAhIWChJSRUFEX1NFUlZFUl9DT05GSUcQAxIYChRVUERBVEVfU0VSVkVSX0NPTkZJRxAEEg8KC0NSRUFURV9VU0VSEAUSDQoJUkVBRF9VU0VSEAYSDwoLVVBEQVRFX1VTRVIQBxIPCgtERUxFVEVfVVNFUhAIEhwKGEdMT0JBTF9DT01NQU5EX0VYRUNVVElPThAJEhcKE0lOVkFMSURBVEVfU0VTU0lPTlMQCxIeChpHRU5FUkFURV9TRUxGX1dFQkRBVl9UT0tFThAMEhsKF0dFTkVSQVRFX1NFTEZfQVBJX1RPS0VOEA8SGAoUVVBEQVRFX1NFTEZfVVNFUk5BTUUQDRIVChFVUERBVEVfU0VMRl9FTUFJTBAOEhYKEkdFTkVSQVRFX0FQSV9UT0tFThAQEhwKGElOVkFMSURBVEVfU0VMRl9TRVNTSU9OUxARIgQIEhASIgQIExATIgQIFBAUIgQIFRAVIgQIFhAWKsIDChJJbnN0YW5jZVBlcm1pc3Npb24SHgoaSU5TVEFOQ0VfQ09NTUFORF9FWEVDVVRJT04QABIRCg1SRUFEX0lOU1RBTkNFEAISGAoUVVBEQVRFX0lOU1RBTkNFX01FVEEQAxIaChZVUERBVEVfSU5TVEFOQ0VfQ09ORklHEA4SEwoPREVMRVRFX0lOU1RBTkNFEAQSGwoXQVVUSEVOVElDQVRFX01DX0FDQ09VTlQQBhIPCgtDSEVDS19QUk9YWRAHEhAKDERPV05MT0FEX1VSTBAIEhkKFUFDQ0VTU19PQkpFQ1RfU1RPUkFHRRAJEhsKF0lOU1RBTkNFX1NVQlNDUklCRV9MT0dTEA0SHAoYUkVBRF9JTlNUQU5DRV9BVURJVF9MT0dTEA8SEQoNUkVBRF9CT1RfSU5GTxAKEhUKEVVQREFURV9CT1RfQ09ORklHEAsSEAoMQ09OVFJPTF9CT1RTEBUSEwoPRVhFQ1VURV9TQ1JJUFRTEBYSFwoTQ09OVFJPTF9CT1RfQUNUSU9OUxAXEhAKDFJBV19QUk9UT0NPTBAYIgQIEBAQIgQIERARIgQIEhASIgQIExATIgQIFBAUKh8KCFVzZXJSb2xlEgkKBUFETUlOEAASCAoEVVNFUhABKj8KGlNldHRpbmdzUGFnZUVudHJ5U2NvcGVUeXBlEgoKBlNFUlZFUhAAEgwKCElOU1RBTkNFEAESBwoDQk9UEAJCIQodY29tLnNvdWxmaXJlbWMuZ3JwYy5nZW5lcmF0ZWRQAWIGcHJvdG8z", [file_soulfire_api_docs, file_google_api_field_behavior, file_google_protobuf_struct]);
+
+/**
+ * A block position in a specific dimension. Coordinates are Minecraft block
+ * integers, not chunk-relative.
+ *
+ * @generated from message soulfire.v1.BlockPosition
+ */
+export type BlockPosition = Message<"soulfire.v1.BlockPosition"> & {
+  /**
+   * Block X coordinate. East is positive.
+   *
+   * @generated from field: int32 x = 1;
+   */
+  x: number;
+
+  /**
+   * Block Y coordinate. Vertical axis.
+   *
+   * @generated from field: int32 y = 2;
+   */
+  y: number;
+
+  /**
+   * Block Z coordinate. South is positive.
+   *
+   * @generated from field: int32 z = 3;
+   */
+  z: number;
+
+  /**
+   * Namespaced dimension id. If empty, APIs use the bot's current dimension.
+   *
+   * @generated from field: string dimension = 4;
+   */
+  dimension: string;
+};
+
+/**
+ * Describes the message soulfire.v1.BlockPosition.
+ * Use `create(BlockPositionSchema)` to create a new message.
+ */
+export const BlockPositionSchema: GenMessage<BlockPosition> = /*@__PURE__*/
+  messageDesc(file_soulfire_common, 0);
+
+/**
+ * A precise world position. Used for entity locations and pathfinding goals
+ * where sub-block precision matters.
+ *
+ * @generated from message soulfire.v1.WorldPosition
+ */
+export type WorldPosition = Message<"soulfire.v1.WorldPosition"> & {
+  /**
+   * @generated from field: double x = 1;
+   */
+  x: number;
+
+  /**
+   * @generated from field: double y = 2;
+   */
+  y: number;
+
+  /**
+   * @generated from field: double z = 3;
+   */
+  z: number;
+
+  /**
+   * @generated from field: string dimension = 4;
+   */
+  dimension: string;
+};
+
+/**
+ * Describes the message soulfire.v1.WorldPosition.
+ * Use `create(WorldPositionSchema)` to create a new message.
+ */
+export const WorldPositionSchema: GenMessage<WorldPosition> = /*@__PURE__*/
+  messageDesc(file_soulfire_common, 1);
 
 /**
  * Represents a network proxy configuration used for routing bot connections.
@@ -68,7 +146,7 @@ export type ProxyProto = Message<"soulfire.v1.ProxyProto"> & {
  * Use `create(ProxyProtoSchema)` to create a new message.
  */
 export const ProxyProtoSchema: GenMessage<ProxyProto> = /*@__PURE__*/
-  messageDesc(file_soulfire_common, 0);
+  messageDesc(file_soulfire_common, 2);
 
 /**
  * The type of proxy protocol to use for the connection.
@@ -107,7 +185,7 @@ export enum ProxyProto_Type {
  * Describes the enum soulfire.v1.ProxyProto.Type.
  */
 export const ProxyProto_TypeSchema: GenEnum<ProxyProto_Type> = /*@__PURE__*/
-  enumDesc(file_soulfire_common, 0, 0);
+  enumDesc(file_soulfire_common, 2, 0);
 
 /**
  * Represents an authenticated Minecraft account that can be used by bots.
@@ -221,7 +299,7 @@ export type MinecraftAccountProto = Message<"soulfire.v1.MinecraftAccountProto">
  * Use `create(MinecraftAccountProtoSchema)` to create a new message.
  */
 export const MinecraftAccountProtoSchema: GenMessage<MinecraftAccountProto> = /*@__PURE__*/
-  messageDesc(file_soulfire_common, 1);
+  messageDesc(file_soulfire_common, 3);
 
 /**
  * Authentication chain data for online Java Edition accounts.
@@ -246,7 +324,7 @@ export type MinecraftAccountProto_OnlineChainJavaData = Message<"soulfire.v1.Min
  * Use `create(MinecraftAccountProto_OnlineChainJavaDataSchema)` to create a new message.
  */
 export const MinecraftAccountProto_OnlineChainJavaDataSchema: GenMessage<MinecraftAccountProto_OnlineChainJavaData> = /*@__PURE__*/
-  messageDesc(file_soulfire_common, 1, 0);
+  messageDesc(file_soulfire_common, 3, 0);
 
 /**
  * Account data for offline mode Java accounts.
@@ -266,7 +344,7 @@ export type MinecraftAccountProto_OfflineJavaData = Message<"soulfire.v1.Minecra
  * Use `create(MinecraftAccountProto_OfflineJavaDataSchema)` to create a new message.
  */
 export const MinecraftAccountProto_OfflineJavaDataSchema: GenMessage<MinecraftAccountProto_OfflineJavaData> = /*@__PURE__*/
-  messageDesc(file_soulfire_common, 1, 1);
+  messageDesc(file_soulfire_common, 3, 1);
 
 /**
  * Account data for Java Edition accounts authenticated with a raw access token.
@@ -296,7 +374,7 @@ export type MinecraftAccountProto_OnlineSimpleJavaData = Message<"soulfire.v1.Mi
  * Use `create(MinecraftAccountProto_OnlineSimpleJavaDataSchema)` to create a new message.
  */
 export const MinecraftAccountProto_OnlineSimpleJavaDataSchema: GenMessage<MinecraftAccountProto_OnlineSimpleJavaData> = /*@__PURE__*/
-  messageDesc(file_soulfire_common, 1, 2);
+  messageDesc(file_soulfire_common, 3, 2);
 
 /**
  * Account data for Java Edition accounts authenticated through TheAltening.
@@ -325,7 +403,7 @@ export type MinecraftAccountProto_TheAlteningJavaData = Message<"soulfire.v1.Min
  * Use `create(MinecraftAccountProto_TheAlteningJavaDataSchema)` to create a new message.
  */
 export const MinecraftAccountProto_TheAlteningJavaDataSchema: GenMessage<MinecraftAccountProto_TheAlteningJavaData> = /*@__PURE__*/
-  messageDesc(file_soulfire_common, 1, 3);
+  messageDesc(file_soulfire_common, 3, 3);
 
 /**
  * Authentication chain data for Bedrock Edition accounts.
@@ -350,7 +428,7 @@ export type MinecraftAccountProto_BedrockData = Message<"soulfire.v1.MinecraftAc
  * Use `create(MinecraftAccountProto_BedrockDataSchema)` to create a new message.
  */
 export const MinecraftAccountProto_BedrockDataSchema: GenMessage<MinecraftAccountProto_BedrockData> = /*@__PURE__*/
-  messageDesc(file_soulfire_common, 1, 4);
+  messageDesc(file_soulfire_common, 3, 4);
 
 /**
  * The type of authentication that was used to create this account.
@@ -438,7 +516,7 @@ export enum MinecraftAccountProto_AccountTypeProto {
  * Describes the enum soulfire.v1.MinecraftAccountProto.AccountTypeProto.
  */
 export const MinecraftAccountProto_AccountTypeProtoSchema: GenEnum<MinecraftAccountProto_AccountTypeProto> = /*@__PURE__*/
-  enumDesc(file_soulfire_common, 1, 0);
+  enumDesc(file_soulfire_common, 3, 0);
 
 /**
  * A collection of settings entries grouped under a common namespace.
@@ -472,7 +550,7 @@ export type SettingsNamespace = Message<"soulfire.v1.SettingsNamespace"> & {
  * Use `create(SettingsNamespaceSchema)` to create a new message.
  */
 export const SettingsNamespaceSchema: GenMessage<SettingsNamespace> = /*@__PURE__*/
-  messageDesc(file_soulfire_common, 2);
+  messageDesc(file_soulfire_common, 4);
 
 /**
  * A single key-value setting entry within a namespace.
@@ -503,7 +581,7 @@ export type SettingsNamespace_SettingsEntry = Message<"soulfire.v1.SettingsNames
  * Use `create(SettingsNamespace_SettingsEntrySchema)` to create a new message.
  */
 export const SettingsNamespace_SettingsEntrySchema: GenMessage<SettingsNamespace_SettingsEntry> = /*@__PURE__*/
-  messageDesc(file_soulfire_common, 2, 0);
+  messageDesc(file_soulfire_common, 4, 0);
 
 /**
  * Uniquely identifies a single setting entry by its namespace and key.
@@ -535,7 +613,7 @@ export type SettingsEntryIdentifier = Message<"soulfire.v1.SettingsEntryIdentifi
  * Use `create(SettingsEntryIdentifierSchema)` to create a new message.
  */
 export const SettingsEntryIdentifierSchema: GenMessage<SettingsEntryIdentifier> = /*@__PURE__*/
-  messageDesc(file_soulfire_common, 3);
+  messageDesc(file_soulfire_common, 5);
 
 /**
  * UI definition for a string/text setting.
@@ -618,7 +696,7 @@ export type StringSetting = Message<"soulfire.v1.StringSetting"> & {
  * Use `create(StringSettingSchema)` to create a new message.
  */
 export const StringSettingSchema: GenMessage<StringSetting> = /*@__PURE__*/
-  messageDesc(file_soulfire_common, 4);
+  messageDesc(file_soulfire_common, 6);
 
 /**
  * The type of text input to render in the UI.
@@ -682,7 +760,7 @@ export enum StringSetting_InputType {
  * Describes the enum soulfire.v1.StringSetting.InputType.
  */
 export const StringSetting_InputTypeSchema: GenEnum<StringSetting_InputType> = /*@__PURE__*/
-  enumDesc(file_soulfire_common, 4, 0);
+  enumDesc(file_soulfire_common, 6, 0);
 
 /**
  * UI definition for an integer number setting.
@@ -763,7 +841,7 @@ export type IntSetting = Message<"soulfire.v1.IntSetting"> & {
  * Use `create(IntSettingSchema)` to create a new message.
  */
 export const IntSettingSchema: GenMessage<IntSetting> = /*@__PURE__*/
-  messageDesc(file_soulfire_common, 5);
+  messageDesc(file_soulfire_common, 7);
 
 /**
  * UI definition for a floating-point number setting.
@@ -859,7 +937,7 @@ export type DoubleSetting = Message<"soulfire.v1.DoubleSetting"> & {
  * Use `create(DoubleSettingSchema)` to create a new message.
  */
 export const DoubleSettingSchema: GenMessage<DoubleSetting> = /*@__PURE__*/
-  messageDesc(file_soulfire_common, 6);
+  messageDesc(file_soulfire_common, 8);
 
 /**
  * UI definition for a boolean toggle setting.
@@ -903,7 +981,7 @@ export type BoolSetting = Message<"soulfire.v1.BoolSetting"> & {
  * Use `create(BoolSettingSchema)` to create a new message.
  */
 export const BoolSettingSchema: GenMessage<BoolSetting> = /*@__PURE__*/
-  messageDesc(file_soulfire_common, 7);
+  messageDesc(file_soulfire_common, 9);
 
 /**
  * UI definition for a dropdown/select setting with predefined options.
@@ -956,7 +1034,7 @@ export type ComboSetting = Message<"soulfire.v1.ComboSetting"> & {
  * Use `create(ComboSettingSchema)` to create a new message.
  */
 export const ComboSettingSchema: GenMessage<ComboSetting> = /*@__PURE__*/
-  messageDesc(file_soulfire_common, 8);
+  messageDesc(file_soulfire_common, 10);
 
 /**
  * A single selectable option in the combo box.
@@ -1003,7 +1081,7 @@ export type ComboSetting_Option = Message<"soulfire.v1.ComboSetting.Option"> & {
  * Use `create(ComboSetting_OptionSchema)` to create a new message.
  */
 export const ComboSetting_OptionSchema: GenMessage<ComboSetting_Option> = /*@__PURE__*/
-  messageDesc(file_soulfire_common, 8, 0);
+  messageDesc(file_soulfire_common, 10, 0);
 
 /**
  * UI definition for a list of strings setting.
@@ -1048,7 +1126,7 @@ export type StringListSetting = Message<"soulfire.v1.StringListSetting"> & {
  * Use `create(StringListSettingSchema)` to create a new message.
  */
 export const StringListSettingSchema: GenMessage<StringListSetting> = /*@__PURE__*/
-  messageDesc(file_soulfire_common, 9);
+  messageDesc(file_soulfire_common, 11);
 
 /**
  * UI definition for a min/max range setting with two integer values.
@@ -1118,7 +1196,7 @@ export type MinMaxSetting = Message<"soulfire.v1.MinMaxSetting"> & {
  * Use `create(MinMaxSettingSchema)` to create a new message.
  */
 export const MinMaxSettingSchema: GenMessage<MinMaxSetting> = /*@__PURE__*/
-  messageDesc(file_soulfire_common, 10);
+  messageDesc(file_soulfire_common, 12);
 
 /**
  * Configuration for a single entry in the min/max pair.
@@ -1160,7 +1238,7 @@ export type MinMaxSetting_Entry = Message<"soulfire.v1.MinMaxSetting.Entry"> & {
  * Use `create(MinMaxSetting_EntrySchema)` to create a new message.
  */
 export const MinMaxSetting_EntrySchema: GenMessage<MinMaxSetting_Entry> = /*@__PURE__*/
-  messageDesc(file_soulfire_common, 10, 0);
+  messageDesc(file_soulfire_common, 12, 0);
 
 /**
  * A complete setting definition that describes a single configurable value.
@@ -1257,7 +1335,7 @@ export type SettingsDefinition = Message<"soulfire.v1.SettingsDefinition"> & {
  * Use `create(SettingsDefinitionSchema)` to create a new message.
  */
 export const SettingsDefinitionSchema: GenMessage<SettingsDefinition> = /*@__PURE__*/
-  messageDesc(file_soulfire_common, 11);
+  messageDesc(file_soulfire_common, 13);
 
 /**
  * A settings page that groups related settings together for UI navigation.
@@ -1327,7 +1405,7 @@ export type SettingsPage = Message<"soulfire.v1.SettingsPage"> & {
  * Use `create(SettingsPageSchema)` to create a new message.
  */
 export const SettingsPageSchema: GenMessage<SettingsPage> = /*@__PURE__*/
-  messageDesc(file_soulfire_common, 12);
+  messageDesc(file_soulfire_common, 14);
 
 /**
  * Metadata about a registered server plugin.
@@ -1393,7 +1471,7 @@ export type ServerPlugin = Message<"soulfire.v1.ServerPlugin"> & {
  * Use `create(ServerPluginSchema)` to create a new message.
  */
 export const ServerPluginSchema: GenMessage<ServerPlugin> = /*@__PURE__*/
-  messageDesc(file_soulfire_common, 13);
+  messageDesc(file_soulfire_common, 15);
 
 /**
  * Authentication service types that accept direct credentials (email/password or username).
@@ -1810,6 +1888,14 @@ export enum InstancePermission {
    * @generated from enum value: CONTROL_BOT_ACTIONS = 23;
    */
   CONTROL_BOT_ACTIONS = 23,
+
+  /**
+   * Permission to inject version-dependent raw Minecraft protocol packets.
+   * This is intentionally admin-only by default.
+   *
+   * @generated from enum value: RAW_PROTOCOL = 24;
+   */
+  RAW_PROTOCOL = 24,
 }
 
 /**

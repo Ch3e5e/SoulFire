@@ -2,6 +2,7 @@ import datetime
 
 from soulfire import common_pb2 as _common_pb2
 from soulfire import api_docs_pb2 as _api_docs_pb2
+from soulfire import plugin_api_pb2 as _plugin_api_pb2
 from google.api import annotations_pb2 as _annotations_pb2
 from google.api import field_behavior_pb2 as _field_behavior_pb2
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
@@ -129,3 +130,65 @@ class GenerateUserAPITokenResponse(_message.Message):
     TOKEN_FIELD_NUMBER: _ClassVar[int]
     token: str
     def __init__(self, token: _Optional[str] = ...) -> None: ...
+
+class UserPluginPermissionGrant(_message.Message):
+    __slots__ = ("user_id", "permission_id", "scope", "resource_id", "granted", "active", "created_at", "updated_at")
+    USER_ID_FIELD_NUMBER: _ClassVar[int]
+    PERMISSION_ID_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_FIELD_NUMBER: _ClassVar[int]
+    RESOURCE_ID_FIELD_NUMBER: _ClassVar[int]
+    GRANTED_FIELD_NUMBER: _ClassVar[int]
+    ACTIVE_FIELD_NUMBER: _ClassVar[int]
+    CREATED_AT_FIELD_NUMBER: _ClassVar[int]
+    UPDATED_AT_FIELD_NUMBER: _ClassVar[int]
+    user_id: str
+    permission_id: str
+    scope: _plugin_api_pb2.PluginPermissionScope
+    resource_id: str
+    granted: bool
+    active: bool
+    created_at: _timestamp_pb2.Timestamp
+    updated_at: _timestamp_pb2.Timestamp
+    def __init__(self, user_id: _Optional[str] = ..., permission_id: _Optional[str] = ..., scope: _Optional[_Union[_plugin_api_pb2.PluginPermissionScope, str]] = ..., resource_id: _Optional[str] = ..., granted: bool = ..., active: bool = ..., created_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., updated_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
+
+class ListUserPluginPermissionGrantsRequest(_message.Message):
+    __slots__ = ("user_id",)
+    USER_ID_FIELD_NUMBER: _ClassVar[int]
+    user_id: str
+    def __init__(self, user_id: _Optional[str] = ...) -> None: ...
+
+class ListUserPluginPermissionGrantsResponse(_message.Message):
+    __slots__ = ("grants",)
+    GRANTS_FIELD_NUMBER: _ClassVar[int]
+    grants: _containers.RepeatedCompositeFieldContainer[UserPluginPermissionGrant]
+    def __init__(self, grants: _Optional[_Iterable[_Union[UserPluginPermissionGrant, _Mapping]]] = ...) -> None: ...
+
+class SetUserPluginPermissionGrantRequest(_message.Message):
+    __slots__ = ("user_id", "permission_id", "scope", "resource_id", "granted")
+    USER_ID_FIELD_NUMBER: _ClassVar[int]
+    PERMISSION_ID_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_FIELD_NUMBER: _ClassVar[int]
+    RESOURCE_ID_FIELD_NUMBER: _ClassVar[int]
+    GRANTED_FIELD_NUMBER: _ClassVar[int]
+    user_id: str
+    permission_id: str
+    scope: _plugin_api_pb2.PluginPermissionScope
+    resource_id: str
+    granted: bool
+    def __init__(self, user_id: _Optional[str] = ..., permission_id: _Optional[str] = ..., scope: _Optional[_Union[_plugin_api_pb2.PluginPermissionScope, str]] = ..., resource_id: _Optional[str] = ..., granted: bool = ...) -> None: ...
+
+class DeleteUserPluginPermissionGrantRequest(_message.Message):
+    __slots__ = ("user_id", "permission_id", "scope", "resource_id")
+    USER_ID_FIELD_NUMBER: _ClassVar[int]
+    PERMISSION_ID_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_FIELD_NUMBER: _ClassVar[int]
+    RESOURCE_ID_FIELD_NUMBER: _ClassVar[int]
+    user_id: str
+    permission_id: str
+    scope: _plugin_api_pb2.PluginPermissionScope
+    resource_id: str
+    def __init__(self, user_id: _Optional[str] = ..., permission_id: _Optional[str] = ..., scope: _Optional[_Union[_plugin_api_pb2.PluginPermissionScope, str]] = ..., resource_id: _Optional[str] = ...) -> None: ...
+
+class DeleteUserPluginPermissionGrantResponse(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...

@@ -16,6 +16,11 @@ message ApiMethodDocs {
   repeated string preconditions = 5;
   string execution = 6;
   repeated string side_effects = 7;
+  // Explicitly publishes a unary method as an MCP tool.
+  bool expose_to_mcp = 8;
+  // Requires the MCP caller to pass confirm=true. Mandatory for exposed
+  // mutation and destructive methods.
+  bool mcp_requires_confirmation = 9;
 }
 
 message ApiFieldDocs {

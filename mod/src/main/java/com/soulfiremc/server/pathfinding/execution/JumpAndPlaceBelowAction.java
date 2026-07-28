@@ -37,6 +37,10 @@ public final class JumpAndPlaceBelowAction implements WorldAction {
   private boolean putOnHotbar;
   private boolean finishedPlacing;
 
+  public SFVec3i blockPlacePosition() {
+    return blockPlacePosition;
+  }
+
   @Override
   public boolean isCompleted(BotConnection connection) {
     var level = connection.minecraft().level;

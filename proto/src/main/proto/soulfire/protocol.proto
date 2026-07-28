@@ -1,0 +1,137 @@
+syntax = "proto3";
+
+option java_package = "com.soulfiremc.grpc.generated";
+option java_multiple_files = true;
+
+package soulfire.v1;
+
+import "google/api/annotations.proto";
+import "google/api/field_behavior.proto";
+import "google/protobuf/timestamp.proto";
+import "soulfire/api_docs.proto";
+
+enum PacketDirection {
+  PACKET_DIRECTION_UNSPECIFIED = 0;
+  PACKET_DIRECTION_CLIENTBOUND = 1;
+  PACKET_DIRECTION_SERVERBOUND = 2;
+}
+
+message BotProtocolRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED];
+}
+
+message BotProtocolInfo {
+  // Packet schemas and encoded packet bytes use this native client protocol.
+  int32 minecraft_protocol_version = 1;
+  string minecraft_version_name = 2;
+  string protocol_state = 3;
+  bool packet_observation_supported = 4;
+  bool raw_packet_sending_enabled = 5;
+  uint32 maximum_packet_bytes = 6;
+  uint32 maximum_sends_per_second = 7;
+  // The remote server protocol negotiated by ViaVersion.
+  int32 remote_protocol_version = 8;
+  string remote_version_name = 9;
+}
+
+message ListPacketSchemasRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED];
+  PacketDirection direction = 3 [(google.api.field_behavior) = REQUIRED];
+}
+
+message PacketSchema {
+  PacketDirection direction = 1;
+  string name = 2;
+  uint32 network_id = 3;
+  string protocol_state = 4;
+}
+
+message ListPacketSchemasResponse {
+  repeated PacketSchema packets = 1;
+}
+
+message WatchPacketsRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED];
+  repeated PacketDirection directions = 3;
+  repeated string names = 4;
+  bool include_encoded_packet = 5;
+  // Zero selects the server maximum.
+  uint32 maximum_encoded_bytes = 6;
+}
+
+message RawPacketEvent {
+  uint64 sequence = 1;
+  google.protobuf.Timestamp observed_at = 2;
+  PacketDirection direction = 3;
+  string name = 4;
+  uint32 network_id = 5;
+  string protocol_state = 6;
+  string java_class_name = 7;
+  bytes encoded_packet = 8;
+  bool encoded_packet_truncated = 9;
+  uint64 dropped_before = 10;
+}
+
+message SendRawPacketRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED];
+  // The complete unframed packet, including its protocol packet ID.
+  bytes encoded_packet = 3 [(google.api.field_behavior) = REQUIRED];
+  // Optional guard against sending bytes for the wrong packet schema.
+  optional string expected_name = 4;
+}
+
+message SendRawPacketResponse {
+  string name = 1;
+  uint32 encoded_bytes = 2;
+}
+
+service BotProtocolService {
+  rpc GetProtocolInfo (BotProtocolRequest) returns (BotProtocolInfo) {
+    option (google.api.http) = {
+      get: "/v1/instances/{instance_id}/bots/{bot_id}/protocol"
+    };
+    option (soulfire.v1.api_method) = {
+      display_name: "Get bot protocol information"
+      permissions: "READ_BOT_INFO"
+      scope: "instance.bot"
+    };
+  }
+
+  rpc ListPacketSchemas (ListPacketSchemasRequest) returns (ListPacketSchemasResponse) {
+    option (google.api.http) = {
+      get: "/v1/instances/{instance_id}/bots/{bot_id}/protocol/packets"
+    };
+    option (soulfire.v1.api_method) = {
+      display_name: "List negotiated packet schemas"
+      permissions: "READ_BOT_INFO"
+      scope: "instance.bot"
+    };
+  }
+
+  rpc WatchPackets (WatchPacketsRequest) returns (stream RawPacketEvent) {
+    option (soulfire.v1.api_method) = {
+      display_name: "Watch raw Minecraft packets"
+      permissions: "READ_BOT_INFO"
+      scope: "instance.bot"
+      execution: "Streams filtered version-dependent packet observations with backpressure."
+    };
+  }
+
+  rpc SendRawPacket (SendRawPacketRequest) returns (SendRawPacketResponse) {
+    option (google.api.http) = {
+      post: "/v1/instances/{instance_id}/bots/{bot_id}/protocol/packets:send"
+      body: "*"
+    };
+    option (soulfire.v1.api_method) = {
+      display_name: "Send a raw Minecraft packet"
+      permissions: "RAW_PROTOCOL"
+      scope: "instance.bot"
+      execution: "Validates and injects one unframed packet through the negotiated serverbound codec."
+      side_effects: "Can perform arbitrary version-dependent Minecraft protocol actions."
+    };
+  }
+}

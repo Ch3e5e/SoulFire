@@ -1,0 +1,94 @@
+syntax = "proto3";
+
+option java_package = "com.soulfiremc.grpc.generated";
+option java_multiple_files = true;
+
+package soulfire.v1;
+
+import "google/api/annotations.proto";
+import "google/api/field_behavior.proto";
+import "soulfire/api_docs.proto";
+import "soulfire/bot_live.proto";
+
+message ChatScope {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+}
+
+message SendPublicChatRequest {
+  ChatScope scope = 1;
+  string message = 2;
+  optional string idempotency_key = 3;
+}
+
+message SendCommandRequest {
+  ChatScope scope = 1;
+  string command = 2;
+  optional string idempotency_key = 3;
+}
+
+message SendWhisperRequest {
+  ChatScope scope = 1;
+  string recipient = 2;
+  string message = 3;
+  optional string idempotency_key = 4;
+}
+
+message ChatActionResponse {
+  BotActionResult result = 1;
+}
+
+message TabCompleteRequest {
+  ChatScope scope = 1;
+  string input = 2;
+  optional int32 cursor = 3;
+}
+
+message TabSuggestion {
+  string text = 1;
+  optional string tooltip_json = 2;
+}
+
+message TabCompleteResponse {
+  int32 start = 1;
+  int32 length = 2;
+  repeated TabSuggestion suggestions = 3;
+}
+
+service ChatService {
+  rpc SendPublicChat (SendPublicChatRequest) returns (ChatActionResponse) {
+    option (google.api.http) = { post: "/v1/chat:send" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Send public chat"
+      permissions: "CONTROL_BOT_ACTIONS"
+      scope: "instance.bot"
+    };
+  }
+
+  rpc SendCommand (SendCommandRequest) returns (ChatActionResponse) {
+    option (google.api.http) = { post: "/v1/chat:command" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Send command"
+      permissions: "CONTROL_BOT_ACTIONS"
+      scope: "instance.bot"
+    };
+  }
+
+  rpc SendWhisper (SendWhisperRequest) returns (ChatActionResponse) {
+    option (google.api.http) = { post: "/v1/chat:whisper" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Send whisper"
+      permissions: "CONTROL_BOT_ACTIONS"
+      scope: "instance.bot"
+    };
+  }
+
+  rpc TabComplete (TabCompleteRequest) returns (TabCompleteResponse) {
+    option (google.api.http) = { post: "/v1/chat:complete" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Complete command or chat"
+      permissions: "READ_BOT_INFO"
+      scope: "instance.bot"
+    };
+  }
+}

@@ -20,6 +20,7 @@ package com.soulfiremc.server.bot;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.List;
+import java.util.Set;
 import java.util.function.LongSupplier;
 
 public interface ControlTask {
@@ -32,7 +33,24 @@ public interface ControlTask {
   }
 
   static ControlTask once(@Nullable String description, ControlPriority priority, Runnable runnable) {
-    return new OnceTask(description, priority, runnable);
+    return once(description, priority, ControlResource.all(), runnable);
+  }
+
+  static ControlTask once(
+    @Nullable String description,
+    Set<ControlResource> resources,
+    Runnable runnable
+  ) {
+    return once(description, ControlPriority.NORMAL, resources, runnable);
+  }
+
+  static ControlTask once(
+    @Nullable String description,
+    ControlPriority priority,
+    Set<ControlResource> resources,
+    Runnable runnable
+  ) {
+    return new OnceTask(description, priority, resources, runnable);
   }
 
   static ControlTask sequence(Step... steps) {
@@ -44,11 +62,20 @@ public interface ControlTask {
   }
 
   static ControlTask sequence(@Nullable String description, ControlPriority priority, Step... steps) {
-    return new SequenceTask(description, priority, List.of(steps));
+    return sequence(description, priority, ControlResource.all(), List.of(steps));
   }
 
   static ControlTask sequence(@Nullable String description, ControlPriority priority, List<Step> steps) {
-    return new SequenceTask(description, priority, steps);
+    return sequence(description, priority, ControlResource.all(), steps);
+  }
+
+  static ControlTask sequence(
+    @Nullable String description,
+    ControlPriority priority,
+    Set<ControlResource> resources,
+    List<Step> steps
+  ) {
+    return new SequenceTask(description, priority, resources, steps);
   }
 
   static <M> MarkerTask<M> marker(M marker) {
@@ -56,7 +83,7 @@ public interface ControlTask {
   }
 
   static <M> MarkerTask<M> marker(@Nullable String description, ControlPriority priority, M marker) {
-    return new MarkerTask<>(description, priority, marker);
+    return new MarkerTask<>(description, priority, ControlResource.all(), marker);
   }
 
   static ActionStep action(Runnable runnable) {
@@ -77,6 +104,10 @@ public interface ControlTask {
 
   default ControlPriority priority() {
     return ControlPriority.NORMAL;
+  }
+
+  default Set<ControlResource> resources() {
+    return ControlResource.all();
   }
 
   default void onStarted() {
@@ -107,12 +138,19 @@ public interface ControlTask {
   final class OnceTask implements ControlTask {
     private final @Nullable String taskDescription;
     private final ControlPriority taskPriority;
+    private final Set<ControlResource> taskResources;
     private final Runnable runnable;
     private boolean done;
 
-    private OnceTask(@Nullable String taskDescription, ControlPriority taskPriority, Runnable runnable) {
+    private OnceTask(
+      @Nullable String taskDescription,
+      ControlPriority taskPriority,
+      Set<ControlResource> taskResources,
+      Runnable runnable
+    ) {
       this.taskDescription = taskDescription;
       this.taskPriority = taskPriority;
+      this.taskResources = Set.copyOf(taskResources);
       this.runnable = runnable;
     }
 
@@ -137,6 +175,11 @@ public interface ControlTask {
     }
 
     @Override
+    public Set<ControlResource> resources() {
+      return taskResources;
+    }
+
+    @Override
     public void onStopped(ControlStopReason reason, @Nullable Throwable cause) {
       done = true;
     }
@@ -150,14 +193,21 @@ public interface ControlTask {
   final class SequenceTask implements ControlTask {
     private final @Nullable String taskDescription;
     private final ControlPriority taskPriority;
+    private final Set<ControlResource> taskResources;
     private final List<Step> steps;
     private long currentDelayUntil;
     private int currentStep;
     private boolean done;
 
-    private SequenceTask(@Nullable String taskDescription, ControlPriority taskPriority, List<Step> steps) {
+    private SequenceTask(
+      @Nullable String taskDescription,
+      ControlPriority taskPriority,
+      Set<ControlResource> taskResources,
+      List<Step> steps
+    ) {
       this.taskDescription = taskDescription;
       this.taskPriority = taskPriority;
+      this.taskResources = Set.copyOf(taskResources);
       this.steps = List.copyOf(steps);
       this.done = steps.isEmpty();
     }
@@ -201,6 +251,11 @@ public interface ControlTask {
     }
 
     @Override
+    public Set<ControlResource> resources() {
+      return taskResources;
+    }
+
+    @Override
     public void onStopped(ControlStopReason reason, @Nullable Throwable cause) {
       done = true;
     }
@@ -214,12 +269,19 @@ public interface ControlTask {
   final class MarkerTask<M> implements ControlTask {
     private final @Nullable String taskDescription;
     private final ControlPriority taskPriority;
+    private final Set<ControlResource> taskResources;
     private final M marker;
     private boolean done;
 
-    private MarkerTask(@Nullable String taskDescription, ControlPriority taskPriority, M marker) {
+    private MarkerTask(
+      @Nullable String taskDescription,
+      ControlPriority taskPriority,
+      Set<ControlResource> taskResources,
+      M marker
+    ) {
       this.taskDescription = taskDescription;
       this.taskPriority = taskPriority;
+      this.taskResources = Set.copyOf(taskResources);
       this.marker = marker;
     }
 
@@ -239,6 +301,11 @@ public interface ControlTask {
     @Override
     public ControlPriority priority() {
       return taskPriority;
+    }
+
+    @Override
+    public Set<ControlResource> resources() {
+      return taskResources;
     }
 
     @Override

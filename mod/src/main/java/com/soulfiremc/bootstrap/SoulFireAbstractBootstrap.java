@@ -18,6 +18,8 @@
 package com.soulfiremc.bootstrap;
 
 import com.soulfiremc.server.api.InternalPluginClass;
+import com.soulfiremc.server.api.Plugin;
+import com.soulfiremc.server.api.SoulFireAPI;
 import com.soulfiremc.server.util.PortHelper;
 import com.soulfiremc.server.util.SFPathConstants;
 import io.github.classgraph.ClassGraph;
@@ -78,7 +80,11 @@ public abstract class SoulFireAbstractBootstrap {
   private void processRouteClass(ClassInfo classInfo) {
     try {
       var clazz = Class.forName(classInfo.getName());
-      clazz.getConstructor().newInstance();
+      var instance = clazz.getConstructor().newInstance();
+      if (!(instance instanceof Plugin plugin)) {
+        throw new IllegalStateException("Annotated plugin class does not extend Plugin: " + classInfo.getName());
+      }
+      SoulFireAPI.loadPlugin(plugin);
     } catch (Throwable t) {
       log.error("Failed to load plugin class {}", classInfo.getName(), t);
     }

@@ -1,0 +1,268 @@
+syntax = "proto3";
+
+option java_package = "com.soulfiremc.grpc.generated";
+option java_multiple_files = true;
+
+package soulfire.v1;
+
+import "soulfire/api_docs.proto";
+import "google/api/annotations.proto";
+import "google/api/field_behavior.proto";
+import "google/protobuf/any.proto";
+import "google/protobuf/timestamp.proto";
+
+// The scope in which a plugin permission is evaluated.
+enum PluginPermissionScope {
+  PLUGIN_PERMISSION_SCOPE_UNSPECIFIED = 0;
+  PLUGIN_PERMISSION_SCOPE_GLOBAL = 1;
+  PLUGIN_PERMISSION_SCOPE_INSTANCE = 2;
+  PLUGIN_PERMISSION_SCOPE_BOT = 3;
+  PLUGIN_PERMISSION_SCOPE_TASK = 4;
+}
+
+// The potential impact of an operation guarded by a plugin permission.
+enum PluginPermissionRisk {
+  PLUGIN_PERMISSION_RISK_UNSPECIFIED = 0;
+  PLUGIN_PERMISSION_RISK_READ = 1;
+  PLUGIN_PERMISSION_RISK_CONTROL = 2;
+  PLUGIN_PERMISSION_RISK_MUTATION = 3;
+  PLUGIN_PERMISSION_RISK_DESTRUCTIVE = 4;
+}
+
+// The default grant used when no explicit user grant exists.
+enum PluginPermissionDefault {
+  PLUGIN_PERMISSION_DEFAULT_UNSPECIFIED = 0;
+  PLUGIN_PERMISSION_DEFAULT_ADMIN_ONLY = 1;
+  PLUGIN_PERMISSION_DEFAULT_AUTHENTICATED = 2;
+  PLUGIN_PERMISSION_DEFAULT_INSTANCE_OWNER = 3;
+}
+
+// Stability level of a plugin API.
+enum PluginApiStability {
+  PLUGIN_API_STABILITY_UNSPECIFIED = 0;
+  PLUGIN_API_STABILITY_EXPERIMENTAL = 1;
+  PLUGIN_API_STABILITY_BETA = 2;
+  PLUGIN_API_STABILITY_STABLE = 3;
+  PLUGIN_API_STABILITY_DEPRECATED = 4;
+}
+
+// A dynamically registered permission owned by a plugin.
+message PluginPermissionDescriptor {
+  // Full stable permission ID in the form plugin.<plugin-id>.<permission>.
+  string id = 1 [(google.api.field_behavior) = REQUIRED];
+  string plugin_id = 2 [(google.api.field_behavior) = REQUIRED];
+  PluginPermissionScope scope = 3 [(google.api.field_behavior) = REQUIRED];
+  PluginPermissionRisk risk = 4 [(google.api.field_behavior) = REQUIRED];
+  string display_name = 5 [(google.api.field_behavior) = REQUIRED];
+  string description = 6 [(google.api.field_behavior) = REQUIRED];
+  PluginPermissionDefault default_grant = 7 [(google.api.field_behavior) = REQUIRED];
+}
+
+// Metadata about one method exposed by a plugin RPC service.
+message PluginRpcMethodDescriptor {
+  string name = 1 [(google.api.field_behavior) = REQUIRED];
+  string full_name = 2 [(google.api.field_behavior) = REQUIRED];
+  string input_type_url = 3 [(google.api.field_behavior) = REQUIRED];
+  string output_type_url = 4 [(google.api.field_behavior) = REQUIRED];
+  bool client_streaming = 5 [(google.api.field_behavior) = REQUIRED];
+  bool server_streaming = 6 [(google.api.field_behavior) = REQUIRED];
+  repeated string permissions = 7 [(google.api.field_behavior) = REQUIRED];
+  string display_name = 8;
+  string description = 9;
+  bool exposed_to_mcp = 10 [(google.api.field_behavior) = REQUIRED];
+  bool mcp_requires_confirmation = 11 [(google.api.field_behavior) = REQUIRED];
+}
+
+// Metadata about one gRPC service exposed by a plugin.
+message PluginRpcServiceDescriptor {
+  string name = 1 [(google.api.field_behavior) = REQUIRED];
+  string full_name = 2 [(google.api.field_behavior) = REQUIRED];
+  repeated PluginRpcMethodDescriptor methods = 3 [(google.api.field_behavior) = REQUIRED];
+}
+
+// A typed event published by a plugin.
+message PluginEventTypeDescriptor {
+  string type_url = 1 [(google.api.field_behavior) = REQUIRED];
+  repeated string permissions = 2 [(google.api.field_behavior) = REQUIRED];
+}
+
+// A typed task provider contributed by a plugin.
+message PluginTaskTypeDescriptor {
+  string input_type_url = 1 [(google.api.field_behavior) = REQUIRED];
+  string result_type_url = 2 [(google.api.field_behavior) = REQUIRED];
+  optional string progress_type_url = 3;
+  repeated string permissions = 4 [(google.api.field_behavior) = REQUIRED];
+}
+
+// Optional package coordinates for a plugin's typed SDK companions.
+message PluginSdkPackages {
+  optional string typescript_package = 1;
+  optional string python_package = 2;
+  optional string maven_artifact = 3;
+}
+
+// Complete discoverable description of a plugin API.
+message PluginApiDescriptor {
+  string plugin_id = 1 [(google.api.field_behavior) = REQUIRED];
+  string plugin_version = 2 [(google.api.field_behavior) = REQUIRED];
+  string description = 3 [(google.api.field_behavior) = REQUIRED];
+  string author = 4 [(google.api.field_behavior) = REQUIRED];
+  string license = 5 [(google.api.field_behavior) = REQUIRED];
+  string website_url = 6 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uri"];
+  string required_soulfire_version = 7 [(google.api.field_behavior) = REQUIRED];
+  uint32 api_major_version = 8 [(google.api.field_behavior) = REQUIRED];
+  string descriptor_sha256 = 9 [(google.api.field_behavior) = REQUIRED];
+  repeated PluginRpcServiceDescriptor services = 10 [(google.api.field_behavior) = REQUIRED];
+  repeated PluginPermissionDescriptor permissions = 11 [(google.api.field_behavior) = REQUIRED];
+  repeated string event_type_urls = 12;
+  repeated string task_type_urls = 13;
+  PluginApiStability stability = 14 [(google.api.field_behavior) = REQUIRED];
+  PluginSdkPackages sdk_packages = 15;
+  optional string documentation_url = 16 [(soulfire.v1.api_field).format = "uri"];
+  optional string source_url = 17 [(soulfire.v1.api_field).format = "uri"];
+  repeated PluginEventTypeDescriptor event_types = 18;
+  repeated PluginTaskTypeDescriptor task_types = 19;
+}
+
+message ListPluginApisRequest {}
+
+message ListPluginApisResponse {
+  repeated PluginApiDescriptor plugins = 1 [(google.api.field_behavior) = REQUIRED];
+  uint64 revision = 2 [(google.api.field_behavior) = REQUIRED];
+}
+
+message GetPluginApiRequest {
+  string plugin_id = 1 [(google.api.field_behavior) = REQUIRED];
+}
+
+message GetPluginApiResponse {
+  PluginApiDescriptor plugin = 1 [(google.api.field_behavior) = REQUIRED];
+  uint64 revision = 2 [(google.api.field_behavior) = REQUIRED];
+}
+
+message GetPluginDescriptorSetRequest {
+  string plugin_id = 1 [(google.api.field_behavior) = REQUIRED];
+  // When set, the server rejects a changed descriptor instead of returning it.
+  optional string expected_sha256 = 2;
+}
+
+message GetPluginDescriptorSetResponse {
+  string plugin_id = 1 [(google.api.field_behavior) = REQUIRED];
+  string plugin_version = 2 [(google.api.field_behavior) = REQUIRED];
+  string descriptor_sha256 = 3 [(google.api.field_behavior) = REQUIRED];
+  // Serialized google.protobuf.FileDescriptorSet.
+  bytes descriptor_set = 4 [(google.api.field_behavior) = REQUIRED];
+}
+
+message WatchPluginApisRequest {
+  // A known catalog revision. The server always starts with a snapshot when
+  // this value is zero or no longer resumable.
+  uint64 after_revision = 1;
+}
+
+enum PluginApiEventKind {
+  PLUGIN_API_EVENT_KIND_UNSPECIFIED = 0;
+  PLUGIN_API_EVENT_KIND_SNAPSHOT = 1;
+  PLUGIN_API_EVENT_KIND_ADDED = 2;
+  PLUGIN_API_EVENT_KIND_UPDATED = 3;
+  PLUGIN_API_EVENT_KIND_REMOVED = 4;
+}
+
+message PluginApiEvent {
+  uint64 revision = 1 [(google.api.field_behavior) = REQUIRED];
+  PluginApiEventKind kind = 2 [(google.api.field_behavior) = REQUIRED];
+  optional PluginApiDescriptor plugin = 3;
+  // Populated for snapshot events.
+  repeated PluginApiDescriptor plugins = 4;
+  // Populated for removed events.
+  optional string removed_plugin_id = 5;
+}
+
+// Scope attached to one plugin event. An empty scope represents a global
+// event. Bot and task events also carry their containing instance.
+message PluginEventScope {
+  optional string instance_id = 1 [(soulfire.v1.api_field).format = "uuid"];
+  optional string bot_id = 2 [(soulfire.v1.api_field).format = "uuid"];
+  optional string task_id = 3 [(soulfire.v1.api_field).format = "uuid"];
+}
+
+message WatchPluginEventsRequest {
+  repeated string plugin_ids = 1;
+  repeated string type_urls = 2;
+  optional string instance_id = 3 [(soulfire.v1.api_field).format = "uuid"];
+  optional string bot_id = 4 [(soulfire.v1.api_field).format = "uuid"];
+  optional string task_id = 5 [(soulfire.v1.api_field).format = "uuid"];
+
+  // The last sequence observed by the caller. Events are not retained. The
+  // initial READY event sets resume_gap when replay was not possible.
+  uint64 after_sequence = 6;
+}
+
+enum PluginEventKind {
+  PLUGIN_EVENT_KIND_UNSPECIFIED = 0;
+  PLUGIN_EVENT_KIND_READY = 1;
+  PLUGIN_EVENT_KIND_DATA = 2;
+}
+
+// Normalized event envelope shared by typed and reflective SDK consumers.
+message PluginEvent {
+  uint64 sequence = 1 [(google.api.field_behavior) = REQUIRED];
+  google.protobuf.Timestamp emitted_at = 2 [(google.api.field_behavior) = REQUIRED];
+  PluginEventKind kind = 3 [(google.api.field_behavior) = REQUIRED];
+  optional string plugin_id = 4;
+  optional string type_url = 5;
+  PluginEventScope scope = 6 [(google.api.field_behavior) = REQUIRED];
+  optional google.protobuf.Any payload = 7;
+  uint64 dropped_before = 8 [(google.api.field_behavior) = REQUIRED];
+  bool resume_gap = 9 [(google.api.field_behavior) = REQUIRED];
+}
+
+// Discovers typed APIs registered by SoulFire server plugins.
+service PluginApiService {
+  rpc ListPluginApis(ListPluginApisRequest) returns (ListPluginApisResponse) {
+    option (google.api.http) = { get: "/v1/plugins/apis" };
+    option (soulfire.v1.api_method) = {
+      display_name: "List plugin APIs"
+      permissions: "READ_CLIENT_DATA"
+      scope: "client.self"
+    };
+  }
+
+  rpc GetPluginApi(GetPluginApiRequest) returns (GetPluginApiResponse) {
+    option (google.api.http) = { get: "/v1/plugins/{plugin_id}/api" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Get plugin API"
+      permissions: "READ_CLIENT_DATA"
+      scope: "client.self"
+    };
+  }
+
+  rpc GetPluginDescriptorSet(GetPluginDescriptorSetRequest) returns (GetPluginDescriptorSetResponse) {
+    option (google.api.http) = { get: "/v1/plugins/{plugin_id}/descriptor-set" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Download plugin descriptor set"
+      permissions: "READ_CLIENT_DATA"
+      scope: "client.self"
+    };
+  }
+
+  rpc WatchPluginApis(WatchPluginApisRequest) returns (stream PluginApiEvent) {
+    option (google.api.http) = { get: "/v1/plugins/apis:watch" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Watch plugin APIs"
+      permissions: "READ_CLIENT_DATA"
+      scope: "client.self"
+      execution: "Long-lived server stream."
+    };
+  }
+
+  rpc WatchPluginEvents(WatchPluginEventsRequest) returns (stream PluginEvent) {
+    option (google.api.http) = { get: "/v1/plugins/events:watch" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Watch plugin events"
+      permissions: "READ_CLIENT_DATA"
+      scope: "client.self"
+      execution: "Long-lived server stream with dynamic plugin permissions."
+    };
+  }
+}

@@ -17,145 +17,210 @@
  */
 package com.soulfiremc.server.grpc;
 
-import com.google.protobuf.Timestamp;
 import com.soulfiremc.grpc.generated.*;
 import com.soulfiremc.server.SoulFireServer;
-import com.soulfiremc.server.adventure.SoulFireAdventure;
-import com.soulfiremc.server.api.SoulFireAPI;
-import com.soulfiremc.server.api.event.bot.BotConnectionInitEvent;
-import com.soulfiremc.server.api.event.bot.BotDisconnectedEvent;
-import com.soulfiremc.server.api.event.bot.ChatMessageReceiveEvent;
-import com.soulfiremc.server.bot.BotConnection;
 import com.soulfiremc.server.user.PermissionContext;
 import io.grpc.Status;
 import io.grpc.stub.ServerCallStreamObserver;
 import io.grpc.stub.StreamObserver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import net.kyori.adventure.text.serializer.gson.GsonComponentSerializer;
 
-import java.time.Instant;
+import java.util.List;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Consumer;
 
-/// Instance-wide counterpart to {@link BotLiveServiceImpl}'s WatchBotEvents.
+/// Multiplexes the complete per-bot event contract onto one instance stream.
 ///
-/// Rather than one stream per bot, this fans in over the same global event bus
-/// and forwards events from every bot belonging to the instance, tagging each
-/// with the originating bot. This is what backs an instance-wide live feed.
+/// The internal child observers reuse BotLiveService's snapshot, filtering,
+/// sequencing, backpressure, and cleanup behavior. One public gRPC stream can
+/// therefore observe a fleet without maintaining a second event mapper.
 @Slf4j
 @RequiredArgsConstructor
 public final class InstanceLiveServiceImpl extends InstanceLiveServiceGrpc.InstanceLiveServiceImplBase {
   private final SoulFireServer soulFireServer;
 
   @Override
-  public void watchInstanceEvents(WatchInstanceEventsRequest request, StreamObserver<InstanceEvent> responseObserver) {
+  public void watchInstanceEvents(
+    WatchInstanceEventsRequest request,
+    StreamObserver<InstanceEvent> responseObserver
+  ) {
     var instanceId = UUID.fromString(request.getInstanceId());
     ServerRPCConstants.USER_CONTEXT_KEY.get()
-      .hasPermissionOrThrow(PermissionContext.instance(InstancePermission.READ_BOT_INFO, instanceId));
-
-    // Validate the instance exists before opening the stream.
-    if (soulFireServer.getInstance(instanceId).isEmpty()) {
-      responseObserver.onError(Status.NOT_FOUND
+      .hasPermissionOrThrow(PermissionContext.instance(
+        InstancePermission.READ_BOT_INFO,
+        instanceId));
+    var instance = soulFireServer.getInstance(instanceId)
+      .orElseThrow(() -> Status.NOT_FOUND
         .withDescription("Instance '%s' not found".formatted(instanceId))
         .asRuntimeException());
-      return;
-    }
-
-    var filter = request.getFilter();
-    var serverObserver = (ServerCallStreamObserver<InstanceEvent>) responseObserver;
+    var parent = (ServerCallStreamObserver<InstanceEvent>) responseObserver;
     var closed = new AtomicBoolean(false);
+    var children = new CopyOnWriteArrayList<MultiplexingObserver>();
+    var selectedBotIds = parseBotIds(request.getFilter().getBotIdsList());
+    var botFilter = botFilter(request.getFilter());
+    var legacyEnvelope = !request.getFilter().hasBotEvents();
+    var botLiveService = new BotLiveServiceImpl(soulFireServer);
 
-    Consumer<ChatMessageReceiveEvent> chatListener = null;
-    Consumer<BotConnectionInitEvent> connectListener = null;
-    Consumer<BotDisconnectedEvent> disconnectListener = null;
-
-    if (filter.getIncludeChat()) {
-      chatListener = event -> {
-        if (closed.get() || !belongsToInstance(event.connection(), instanceId)) {
-          return;
-        }
-        var plain = event.parseToPlainText();
-        var json = GsonComponentSerializer.gson().serialize(event.message());
-        var nowSec = Instant.ofEpochMilli(event.timestamp()).getEpochSecond();
-        var chat = BotChatEvent.newBuilder()
-          .setSource(ChatSource.CHAT_SOURCE_SYSTEM)
-          .setPlainText(plain)
-          .setJsonComponent(json)
-          .setReceivedAt(Timestamp.newBuilder().setSeconds(nowSec).build())
-          .build();
-        emit(serverObserver, closed, baseEvent(event.connection()).setChat(chat).build());
-      };
-      SoulFireAPI.registerListener(ChatMessageReceiveEvent.class, chatListener);
+    for (var entry : instance.settingsSource().accounts().entrySet()) {
+      var botId = entry.getKey();
+      if (!selectedBotIds.isEmpty() && !selectedBotIds.contains(botId)) {
+        continue;
+      }
+      var child = new MultiplexingObserver(
+        parent,
+        botId,
+        entry.getValue().lastKnownName(),
+        legacyEnvelope
+      );
+      children.add(child);
+      botLiveService.watchBotEvents(
+        WatchBotEventsRequest.newBuilder()
+          .setInstanceId(request.getInstanceId())
+          .setBotId(botId.toString())
+          .setFilter(botFilter)
+          .build(),
+        child
+      );
     }
 
-    if (filter.getIncludeLifecycle()) {
-      connectListener = event -> {
-        if (closed.get() || !belongsToInstance(event.connection(), instanceId)) {
-          return;
-        }
-        var lifecycle = BotLifecycleEvent.newBuilder()
-          .setKind(BotLifecycleKind.BOT_LIFECYCLE_CONNECTING)
-          .build();
-        emit(serverObserver, closed, baseEvent(event.connection()).setLifecycle(lifecycle).build());
-      };
-      SoulFireAPI.registerListener(BotConnectionInitEvent.class, connectListener);
-
-      disconnectListener = event -> {
-        if (closed.get() || !belongsToInstance(event.connection(), instanceId)) {
-          return;
-        }
-        var reason = event.message() == null
-          ? ""
-          : SoulFireAdventure.PLAIN_MESSAGE_SERIALIZER.serialize(event.message());
-        var lifecycle = BotLifecycleEvent.newBuilder()
-          .setKind(BotLifecycleKind.BOT_LIFECYCLE_DISCONNECTED)
-          .setMessage(reason)
-          .build();
-        emit(serverObserver, closed, baseEvent(event.connection()).setLifecycle(lifecycle).build());
-      };
-      SoulFireAPI.registerListener(BotDisconnectedEvent.class, disconnectListener);
-    }
-
-    var finalChatListener = chatListener;
-    var finalConnectListener = connectListener;
-    var finalDisconnectListener = disconnectListener;
-
-    serverObserver.setOnCancelHandler(() -> {
-      if (!closed.compareAndSet(false, true)) {
-        return;
-      }
-      if (finalChatListener != null) {
-        SoulFireAPI.unregisterListener(ChatMessageReceiveEvent.class, finalChatListener);
-      }
-      if (finalConnectListener != null) {
-        SoulFireAPI.unregisterListener(BotConnectionInitEvent.class, finalConnectListener);
-      }
-      if (finalDisconnectListener != null) {
-        SoulFireAPI.unregisterListener(BotDisconnectedEvent.class, finalDisconnectListener);
+    parent.setOnReadyHandler(() ->
+      children.forEach(MultiplexingObserver::notifyReady));
+    parent.setOnCancelHandler(() -> {
+      if (closed.compareAndSet(false, true)) {
+        children.forEach(MultiplexingObserver::cancel);
+        children.clear();
       }
     });
   }
 
-  private static boolean belongsToInstance(BotConnection connection, UUID instanceId) {
-    return connection.instanceManager().id().equals(instanceId);
-  }
-
-  private static InstanceEvent.Builder baseEvent(BotConnection connection) {
-    var builder = InstanceEvent.newBuilder()
-      .setBotProfileId(connection.accountProfileId().toString());
-    var name = connection.accountName();
-    if (name != null) {
-      builder.setBotName(name);
+  private static Set<UUID> parseBotIds(List<String> botIds) {
+    try {
+      return botIds.stream()
+        .map(UUID::fromString)
+        .collect(java.util.stream.Collectors.toUnmodifiableSet());
+    } catch (IllegalArgumentException e) {
+      throw Status.INVALID_ARGUMENT
+        .withDescription("Instance event bot_ids must contain UUIDs")
+        .withCause(e)
+        .asRuntimeException();
     }
-    return builder;
   }
 
-  private static void emit(ServerCallStreamObserver<InstanceEvent> observer, AtomicBoolean closed, InstanceEvent event) {
-    synchronized (observer) {
-      if (!closed.get() && !observer.isCancelled()) {
-        observer.onNext(event);
+  private static BotEventFilter botFilter(InstanceEventFilter filter) {
+    if (filter.hasBotEvents()) {
+      return filter.getBotEvents();
+    }
+    return BotEventFilter.newBuilder()
+      .setIncludeChat(filter.getIncludeChat())
+      .setIncludeLifecycle(filter.getIncludeLifecycle())
+      .build();
+  }
+
+  private static final class MultiplexingObserver extends ServerCallStreamObserver<BotEvent> {
+    private final ServerCallStreamObserver<InstanceEvent> parent;
+    private final String botId;
+    private final String botName;
+    private final boolean legacyEnvelope;
+    private final AtomicBoolean cancelled = new AtomicBoolean(false);
+    private volatile Runnable cancelHandler = () -> {};
+    private volatile Runnable readyHandler = () -> {};
+
+    private MultiplexingObserver(
+      ServerCallStreamObserver<InstanceEvent> parent,
+      UUID botId,
+      String botName,
+      boolean legacyEnvelope
+    ) {
+      this.parent = parent;
+      this.botId = botId.toString();
+      this.botName = botName;
+      this.legacyEnvelope = legacyEnvelope;
+    }
+
+    @Override
+    public void onNext(BotEvent event) {
+      var result = InstanceEvent.newBuilder()
+        .setBotProfileId(botId);
+      if (botName != null) {
+        result.setBotName(botName);
+      }
+      if (legacyEnvelope && event.getEventCase() == BotEvent.EventCase.CHAT) {
+        result.setChat(event.getChat());
+      } else if (legacyEnvelope && event.getEventCase() == BotEvent.EventCase.LIFECYCLE) {
+        result.setLifecycle(event.getLifecycle());
+      } else {
+        result.setBotEvent(event);
+      }
+      synchronized (parent) {
+        if (!isCancelled() && parent.isReady()) {
+          parent.onNext(result.build());
+        }
+      }
+    }
+
+    @Override
+    public void onError(Throwable error) {
+      log.debug("Bot event child stream failed for {}", botId, error);
+      cancel();
+    }
+
+    @Override
+    public void onCompleted() {
+      cancel();
+    }
+
+    @Override
+    public boolean isCancelled() {
+      return cancelled.get() || parent.isCancelled();
+    }
+
+    @Override
+    public void setOnCancelHandler(Runnable handler) {
+      cancelHandler = handler;
+    }
+
+    @Override
+    public void setCompression(String compression) {
+      parent.setCompression(compression);
+    }
+
+    @Override
+    public boolean isReady() {
+      return !isCancelled() && parent.isReady();
+    }
+
+    @Override
+    public void setOnReadyHandler(Runnable handler) {
+      readyHandler = handler;
+    }
+
+    @Override
+    public void disableAutoInboundFlowControl() {
+      // This observer only receives server output.
+    }
+
+    @Override
+    public void request(int count) {
+      // This observer only receives server output.
+    }
+
+    @Override
+    public void setMessageCompression(boolean enable) {
+      parent.setMessageCompression(enable);
+    }
+
+    private void notifyReady() {
+      if (isReady()) {
+        readyHandler.run();
+      }
+    }
+
+    private void cancel() {
+      if (cancelled.compareAndSet(false, true)) {
+        cancelHandler.run();
       }
     }
   }

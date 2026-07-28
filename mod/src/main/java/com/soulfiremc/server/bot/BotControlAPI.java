@@ -17,176 +17,200 @@
  */
 package com.soulfiremc.server.bot;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
+import java.util.List;
 
-/// This class is used to control the bot. The goal is to reduce friction for doing simple things.
+/// Arbitrates independently claimable bot resources between control tasks.
 @Slf4j
-@RequiredArgsConstructor
 public final class BotControlAPI {
-  private final Deque<ControlTask> taskStack = new ArrayDeque<>();
+  private final List<ControlTask> activeTasks = new ArrayList<>();
+  private final Deque<ControlTask> suspendedTasks = new ArrayDeque<>();
 
   public synchronized void tick() {
-    var task = activeTask();
-    if (task == null) {
-      return;
-    }
-
-    if (task.isDone()) {
-      finishActiveTask(ControlStopReason.COMPLETED, null);
-      return;
-    }
-
-    try {
-      task.tick();
-    } catch (Throwable t) {
-      logTaskFailure("executing", task, t);
-      finishActiveTask(ControlStopReason.FAILED, t);
-      return;
-    }
-
-    if (task.isDone()) {
-      finishActiveTask(ControlStopReason.COMPLETED, null);
+    for (var task : List.copyOf(activeTasks)) {
+      if (!activeTasks.contains(task)) {
+        continue;
+      }
+      if (task.isDone()) {
+        finishTask(task, ControlStopReason.COMPLETED, null);
+        continue;
+      }
+      try {
+        task.tick();
+      } catch (Throwable t) {
+        logTaskFailure("executing", task, t);
+        finishTask(task, ControlStopReason.FAILED, t);
+        continue;
+      }
+      if (task.isDone()) {
+        finishTask(task, ControlStopReason.COMPLETED, null);
+      }
     }
   }
 
   public synchronized boolean stopAll() {
-    return clearTasks(ControlStopReason.CANCELLED, null);
+    var stoppedAny = !activeTasks.isEmpty() || !suspendedTasks.isEmpty();
+    for (var task : List.copyOf(activeTasks)) {
+      activeTasks.remove(task);
+      stopTask(task, ControlStopReason.CANCELLED, null);
+    }
+    ControlTask task;
+    while ((task = suspendedTasks.pollLast()) != null) {
+      stopTask(task, ControlStopReason.CANCELLED, null);
+    }
+    return stoppedAny;
   }
 
   public synchronized boolean cancel(ControlTask task) {
-    var active = activeTask();
-    if (active == task) {
-      finishActiveTask(ControlStopReason.CANCELLED, null);
+    if (activeTasks.remove(task) || suspendedTasks.remove(task)) {
+      stopTask(task, ControlStopReason.CANCELLED, null);
+      resumeTasks();
       return true;
     }
-    if (!taskStack.remove(task)) {
-      return false;
-    }
-    stopTask(task, ControlStopReason.CANCELLED, null);
-    return true;
+    return false;
   }
 
   public synchronized boolean hasActiveTask() {
-    return activeTask() != null;
+    return !activeTasks.isEmpty();
+  }
+
+  public synchronized boolean hasActiveTask(ControlResource resource) {
+    return activeTasks.stream().anyMatch(task -> task.resources().contains(resource));
   }
 
   public synchronized void replace(ControlTask task) {
-    clearTasks(ControlStopReason.REPLACED, null);
+    for (var conflict : conflicts(task)) {
+      activeTasks.remove(conflict);
+      stopTask(conflict, ControlStopReason.REPLACED, null);
+    }
+    suspendedTasks.removeIf(conflict -> {
+      if (!conflicts(task, conflict)) {
+        return false;
+      }
+      stopTask(conflict, ControlStopReason.REPLACED, null);
+      return true;
+    });
     startTask(task);
   }
 
   public synchronized boolean tryStart(ControlTask task) {
-    if (hasActiveTask()) {
+    if (!conflicts(task).isEmpty()) {
       return false;
     }
-
     startTask(task);
-    return true;
+    return activeTasks.contains(task);
   }
 
   public synchronized boolean submit(ControlTask task) {
-    var current = activeTask();
-    if (current == null) {
+    var conflicts = conflicts(task);
+    if (conflicts.isEmpty()) {
       startTask(task);
-      return true;
+      return activeTasks.contains(task);
     }
-
-    if (!task.priority().canPreempt(current.priority())) {
+    if (conflicts.stream().anyMatch(active ->
+      !task.priority().canPreempt(active.priority()))) {
       return false;
     }
-
-    if (!suspendActiveTask(current)) {
-      return false;
+    for (var active : conflicts) {
+      if (!suspendTask(active)) {
+        resumeTasks();
+        return false;
+      }
     }
-
     startTask(task);
-    return true;
+    return activeTasks.contains(task);
   }
 
   public synchronized <M> @Nullable M claimMarker(Class<M> clazz) {
-    var task = activeTask();
-    if (task instanceof ControlTask.MarkerTask<?> markerTask
-      && clazz.isInstance(markerTask.marker())) {
-      var marker = clazz.cast(markerTask.marker());
-      finishActiveTask(ControlStopReason.CLAIMED, null);
-      return marker;
+    for (var task : List.copyOf(activeTasks)) {
+      if (task instanceof ControlTask.MarkerTask<?> markerTask
+        && clazz.isInstance(markerTask.marker())) {
+        var marker = clazz.cast(markerTask.marker());
+        finishTask(task, ControlStopReason.CLAIMED, null);
+        return marker;
+      }
     }
-
     return null;
   }
 
-  private @Nullable ControlTask activeTask() {
-    return taskStack.peekLast();
-  }
-
   private void startTask(ControlTask task) {
-    taskStack.addLast(task);
+    activeTasks.add(task);
     try {
       task.onStarted();
     } catch (Throwable t) {
       logTaskFailure("starting", task, t);
-      taskStack.removeLastOccurrence(task);
+      activeTasks.remove(task);
       stopTask(task, ControlStopReason.FAILED, t);
-      resumeActiveTask();
+      resumeTasks();
     }
   }
 
-  private boolean suspendActiveTask(ControlTask task) {
+  private boolean suspendTask(ControlTask task) {
     try {
       task.onSuspended();
+      activeTasks.remove(task);
+      suspendedTasks.addLast(task);
       return true;
     } catch (Throwable t) {
       logTaskFailure("suspending", task, t);
-      finishActiveTask(ControlStopReason.FAILED, t);
+      activeTasks.remove(task);
+      stopTask(task, ControlStopReason.FAILED, t);
       return false;
     }
   }
 
-  private void finishActiveTask(ControlStopReason reason, @Nullable Throwable cause) {
-    var task = taskStack.pollLast();
-    if (task == null) {
+  private void finishTask(
+    ControlTask task,
+    ControlStopReason reason,
+    @Nullable Throwable cause
+  ) {
+    if (!activeTasks.remove(task)) {
       return;
     }
-
     stopTask(task, reason, cause);
-    resumeActiveTask();
+    resumeTasks();
   }
 
-  private void resumeActiveTask() {
-    while (true) {
-      var task = activeTask();
-      if (task == null) {
-        return;
+  private void resumeTasks() {
+    var candidates = new ArrayList<ControlTask>();
+    while (!suspendedTasks.isEmpty()) {
+      candidates.add(suspendedTasks.pollLast());
+    }
+    for (var task : candidates) {
+      if (!conflicts(task).isEmpty()) {
+        suspendedTasks.addFirst(task);
+        continue;
       }
-
       try {
         task.onResumed();
-        return;
+        activeTasks.add(task);
       } catch (Throwable t) {
         logTaskFailure("resuming", task, t);
-        taskStack.pollLast();
         stopTask(task, ControlStopReason.FAILED, t);
       }
     }
   }
 
-  private boolean clearTasks(ControlStopReason reason, @Nullable Throwable cause) {
-    var stoppedAny = false;
-    ControlTask task;
-    while ((task = taskStack.pollLast()) != null) {
-      stoppedAny = true;
-      stopTask(task, reason, cause);
-    }
-
-    return stoppedAny;
+  private List<ControlTask> conflicts(ControlTask requested) {
+    return activeTasks.stream()
+      .filter(active -> conflicts(requested, active))
+      .toList();
   }
 
-  private void stopTask(ControlTask task, ControlStopReason reason, @Nullable Throwable cause) {
+  private static boolean conflicts(ControlTask left, ControlTask right) {
+    return left.resources().stream().anyMatch(right.resources()::contains);
+  }
+
+  private void stopTask(
+    ControlTask task,
+    ControlStopReason reason,
+    @Nullable Throwable cause
+  ) {
     try {
       task.onStopped(reason, cause);
     } catch (Throwable t) {
@@ -195,9 +219,9 @@ public final class BotControlAPI {
   }
 
   private void logTaskFailure(String action, ControlTask task, Throwable t) {
-    var desc = task.description();
-    if (desc != null) {
-      log.error("Error while {} control task ({})", action, desc, t);
+    var description = task.description();
+    if (description != null) {
+      log.error("Error while {} control task ({})", action, description, t);
     } else {
       log.error("Error while {} control task", action, t);
     }

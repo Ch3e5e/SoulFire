@@ -488,6 +488,134 @@ class BotRenderPovTextSubmission(_message.Message):
     outline_color: str
     def __init__(self, source: _Optional[str] = ..., text: _Optional[str] = ..., shadow: bool = ..., display_mode: _Optional[str] = ..., light: _Optional[int] = ..., color: _Optional[str] = ..., background_color: _Optional[str] = ..., outline_color: _Optional[str] = ...) -> None: ...
 
+class BotWatchPovRequest(_message.Message):
+    __slots__ = ("instance_id", "bot_id", "width", "height", "max_distance", "fov", "camera_x", "camera_y", "camera_z", "y_rot", "x_rot", "include_hud", "include_hands", "include_debug_trace", "interval_ms")
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    BOT_ID_FIELD_NUMBER: _ClassVar[int]
+    WIDTH_FIELD_NUMBER: _ClassVar[int]
+    HEIGHT_FIELD_NUMBER: _ClassVar[int]
+    MAX_DISTANCE_FIELD_NUMBER: _ClassVar[int]
+    FOV_FIELD_NUMBER: _ClassVar[int]
+    CAMERA_X_FIELD_NUMBER: _ClassVar[int]
+    CAMERA_Y_FIELD_NUMBER: _ClassVar[int]
+    CAMERA_Z_FIELD_NUMBER: _ClassVar[int]
+    Y_ROT_FIELD_NUMBER: _ClassVar[int]
+    X_ROT_FIELD_NUMBER: _ClassVar[int]
+    INCLUDE_HUD_FIELD_NUMBER: _ClassVar[int]
+    INCLUDE_HANDS_FIELD_NUMBER: _ClassVar[int]
+    INCLUDE_DEBUG_TRACE_FIELD_NUMBER: _ClassVar[int]
+    INTERVAL_MS_FIELD_NUMBER: _ClassVar[int]
+    instance_id: str
+    bot_id: str
+    width: int
+    height: int
+    max_distance: int
+    fov: float
+    camera_x: float
+    camera_y: float
+    camera_z: float
+    y_rot: float
+    x_rot: float
+    include_hud: bool
+    include_hands: bool
+    include_debug_trace: bool
+    interval_ms: int
+    def __init__(self, instance_id: _Optional[str] = ..., bot_id: _Optional[str] = ..., width: _Optional[int] = ..., height: _Optional[int] = ..., max_distance: _Optional[int] = ..., fov: _Optional[float] = ..., camera_x: _Optional[float] = ..., camera_y: _Optional[float] = ..., camera_z: _Optional[float] = ..., y_rot: _Optional[float] = ..., x_rot: _Optional[float] = ..., include_hud: bool = ..., include_hands: bool = ..., include_debug_trace: bool = ..., interval_ms: _Optional[int] = ...) -> None: ...
+
+class BotPovFrame(_message.Message):
+    __slots__ = ("sequence", "captured_at", "render", "dropped_before")
+    SEQUENCE_FIELD_NUMBER: _ClassVar[int]
+    CAPTURED_AT_FIELD_NUMBER: _ClassVar[int]
+    RENDER_FIELD_NUMBER: _ClassVar[int]
+    DROPPED_BEFORE_FIELD_NUMBER: _ClassVar[int]
+    sequence: int
+    captured_at: _timestamp_pb2.Timestamp
+    render: BotRenderPovResponse
+    dropped_before: int
+    def __init__(self, sequence: _Optional[int] = ..., captured_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., render: _Optional[_Union[BotRenderPovResponse, _Mapping]] = ..., dropped_before: _Optional[int] = ...) -> None: ...
+
+class BotWorldMapRequest(_message.Message):
+    __slots__ = ("instance_id", "bot_id", "center_x", "center_z", "radius", "sample_step", "include_entities")
+    INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
+    BOT_ID_FIELD_NUMBER: _ClassVar[int]
+    CENTER_X_FIELD_NUMBER: _ClassVar[int]
+    CENTER_Z_FIELD_NUMBER: _ClassVar[int]
+    RADIUS_FIELD_NUMBER: _ClassVar[int]
+    SAMPLE_STEP_FIELD_NUMBER: _ClassVar[int]
+    INCLUDE_ENTITIES_FIELD_NUMBER: _ClassVar[int]
+    instance_id: str
+    bot_id: str
+    center_x: int
+    center_z: int
+    radius: int
+    sample_step: int
+    include_entities: bool
+    def __init__(self, instance_id: _Optional[str] = ..., bot_id: _Optional[str] = ..., center_x: _Optional[int] = ..., center_z: _Optional[int] = ..., radius: _Optional[int] = ..., sample_step: _Optional[int] = ..., include_entities: bool = ...) -> None: ...
+
+class BotWorldMapColumn(_message.Message):
+    __slots__ = ("x", "z", "loaded", "surface_y", "block_id", "biome_id", "sky_light", "block_light")
+    X_FIELD_NUMBER: _ClassVar[int]
+    Z_FIELD_NUMBER: _ClassVar[int]
+    LOADED_FIELD_NUMBER: _ClassVar[int]
+    SURFACE_Y_FIELD_NUMBER: _ClassVar[int]
+    BLOCK_ID_FIELD_NUMBER: _ClassVar[int]
+    BIOME_ID_FIELD_NUMBER: _ClassVar[int]
+    SKY_LIGHT_FIELD_NUMBER: _ClassVar[int]
+    BLOCK_LIGHT_FIELD_NUMBER: _ClassVar[int]
+    x: int
+    z: int
+    loaded: bool
+    surface_y: int
+    block_id: str
+    biome_id: str
+    sky_light: int
+    block_light: int
+    def __init__(self, x: _Optional[int] = ..., z: _Optional[int] = ..., loaded: bool = ..., surface_y: _Optional[int] = ..., block_id: _Optional[str] = ..., biome_id: _Optional[str] = ..., sky_light: _Optional[int] = ..., block_light: _Optional[int] = ...) -> None: ...
+
+class BotWorldMapEntity(_message.Message):
+    __slots__ = ("entity_id", "entity_type", "display_name", "x", "y", "z", "yaw")
+    ENTITY_ID_FIELD_NUMBER: _ClassVar[int]
+    ENTITY_TYPE_FIELD_NUMBER: _ClassVar[int]
+    DISPLAY_NAME_FIELD_NUMBER: _ClassVar[int]
+    X_FIELD_NUMBER: _ClassVar[int]
+    Y_FIELD_NUMBER: _ClassVar[int]
+    Z_FIELD_NUMBER: _ClassVar[int]
+    YAW_FIELD_NUMBER: _ClassVar[int]
+    entity_id: str
+    entity_type: str
+    display_name: str
+    x: float
+    y: float
+    z: float
+    yaw: float
+    def __init__(self, entity_id: _Optional[str] = ..., entity_type: _Optional[str] = ..., display_name: _Optional[str] = ..., x: _Optional[float] = ..., y: _Optional[float] = ..., z: _Optional[float] = ..., yaw: _Optional[float] = ...) -> None: ...
+
+class BotWorldMapResponse(_message.Message):
+    __slots__ = ("dimension", "center_x", "center_z", "radius", "sample_step", "min_y", "max_y", "world_revision", "sampled_at", "columns", "entities")
+    DIMENSION_FIELD_NUMBER: _ClassVar[int]
+    CENTER_X_FIELD_NUMBER: _ClassVar[int]
+    CENTER_Z_FIELD_NUMBER: _ClassVar[int]
+    RADIUS_FIELD_NUMBER: _ClassVar[int]
+    SAMPLE_STEP_FIELD_NUMBER: _ClassVar[int]
+    MIN_Y_FIELD_NUMBER: _ClassVar[int]
+    MAX_Y_FIELD_NUMBER: _ClassVar[int]
+    WORLD_REVISION_FIELD_NUMBER: _ClassVar[int]
+    SAMPLED_AT_FIELD_NUMBER: _ClassVar[int]
+    COLUMNS_FIELD_NUMBER: _ClassVar[int]
+    ENTITIES_FIELD_NUMBER: _ClassVar[int]
+    dimension: str
+    center_x: int
+    center_z: int
+    radius: int
+    sample_step: int
+    min_y: int
+    max_y: int
+    world_revision: int
+    sampled_at: _timestamp_pb2.Timestamp
+    columns: _containers.RepeatedCompositeFieldContainer[BotWorldMapColumn]
+    entities: _containers.RepeatedCompositeFieldContainer[BotWorldMapEntity]
+    def __init__(self, dimension: _Optional[str] = ..., center_x: _Optional[int] = ..., center_z: _Optional[int] = ..., radius: _Optional[int] = ..., sample_step: _Optional[int] = ..., min_y: _Optional[int] = ..., max_y: _Optional[int] = ..., world_revision: _Optional[int] = ..., sampled_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., columns: _Optional[_Iterable[_Union[BotWorldMapColumn, _Mapping]]] = ..., entities: _Optional[_Iterable[_Union[BotWorldMapEntity, _Mapping]]] = ...) -> None: ...
+
 class BotInventoryClickRequest(_message.Message):
     __slots__ = ("instance_id", "bot_id", "slot", "click_type", "hotbar_slot")
     INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]

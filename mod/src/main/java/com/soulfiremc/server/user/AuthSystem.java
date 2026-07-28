@@ -347,8 +347,10 @@ public final class AuthSystem {
                CONTROL_BOTS, CONTROL_BOT_ACTIONS, EXECUTE_SCRIPTS, UPDATE_INSTANCE_CONFIG,
                READ_INSTANCE, READ_INSTANCE_AUDIT_LOGS,
                READ_BOT_INFO, UPDATE_BOT_CONFIG -> TriState.byBoolean(isOwnerOfInstance(instance.instanceId()));
+          case RAW_PROTOCOL -> TriState.FALSE;
           case UNRECOGNIZED -> throw new IllegalStateException("Unexpected value: " + instance.instancePermission());
         };
+        case PermissionContext.PluginContext plugin -> pluginPermission(plugin);
       };
     }
 
@@ -364,6 +366,27 @@ public final class AuthSystem {
         .and(Tables.INSTANCES.OWNER_ID.eq(userData.getId()))
         .fetchOne(0, int.class);
       return count != null && count > 0;
+    }
+
+    private TriState pluginPermission(PermissionContext.PluginContext permission) {
+      var target = PluginPermissionGrantScope.fromContext(permission);
+      var explicit = dsl.select(Tables.PLUGIN_PERMISSION_GRANTS.GRANTED)
+        .from(Tables.PLUGIN_PERMISSION_GRANTS)
+        .where(Tables.PLUGIN_PERMISSION_GRANTS.USER_ID.eq(userData.getId()))
+        .and(Tables.PLUGIN_PERMISSION_GRANTS.PERMISSION_ID.eq(permission.permission().id()))
+        .and(Tables.PLUGIN_PERMISSION_GRANTS.SCOPE.eq(target.scope()))
+        .and(Tables.PLUGIN_PERMISSION_GRANTS.RESOURCE_ID.eq(target.resourceId()))
+        .fetchOne(Tables.PLUGIN_PERMISSION_GRANTS.GRANTED);
+      if (explicit != null) {
+        return TriState.byBoolean(explicit);
+      }
+      return switch (permission.permission().definition().defaultGrant()) {
+        case ADMIN_ONLY -> TriState.FALSE;
+        case AUTHENTICATED -> TriState.TRUE;
+        case INSTANCE_OWNER -> TriState.byBoolean(
+          permission.instanceId().map(this::isOwnerOfInstance).orElse(false)
+        );
+      };
     }
 
     private boolean isAdmin() {

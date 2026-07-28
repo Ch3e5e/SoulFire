@@ -147,6 +147,7 @@ public final class BotConnection {
   private final BotConnectionFactory factory;
   private final InstanceManager instanceManager;
   private final BotSettingsSource settingsSource;
+  private final UUID connectionEpoch = UUID.randomUUID();
   private final UUID accountProfileId;
   private final String accountName;
   private final ServerAddress serverAddress;
@@ -657,6 +658,22 @@ public final class BotConnection {
       // Player may disconnect between our null check and ChatScreen accessing minecraft.player
       log.debug("Failed to send chat message, player likely disconnected", e);
     }
+  }
+
+  public void sendPublicChatMessage(String message) {
+    var connection = minecraft.getConnection();
+    if (connection == null) {
+      throw new IllegalStateException("Bot is not connected");
+    }
+    connection.sendChat(message);
+  }
+
+  public void sendCommand(String command) {
+    var connection = minecraft.getConnection();
+    if (connection == null) {
+      throw new IllegalStateException("Bot is not connected");
+    }
+    connection.sendCommand(command);
   }
 
   private record BotRunnableWrapper(BotConnection botConnection) implements SoulFireScheduler.RunnableWrapper {

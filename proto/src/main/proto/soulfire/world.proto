@@ -1,0 +1,305 @@
+syntax = "proto3";
+
+option java_package = "com.soulfiremc.grpc.generated";
+option java_multiple_files = true;
+
+package soulfire.v1;
+
+import "google/api/annotations.proto";
+import "google/api/field_behavior.proto";
+import "soulfire/api_docs.proto";
+import "soulfire/bot_live.proto";
+import "soulfire/common.proto";
+import "soulfire/domain.proto";
+
+enum QuerySort {
+  QUERY_SORT_UNSPECIFIED = 0;
+  QUERY_SORT_NEAREST = 1;
+  QUERY_SORT_FARTHEST = 2;
+  QUERY_SORT_XYZ = 3;
+}
+
+message IntRange {
+  optional int32 minimum = 1;
+  optional int32 maximum = 2;
+}
+
+message FloatRange {
+  optional float minimum = 1;
+  optional float maximum = 2;
+}
+
+message BlockSelector {
+  repeated string block_ids = 1;
+  repeated string tags = 2;
+  map<string, string> properties = 3;
+  optional bool solid = 4;
+  optional bool replaceable = 5;
+  optional bool interactive = 6;
+  optional bool diggable = 7;
+  repeated string effective_tool_tags = 8;
+  repeated string biome_ids = 9;
+  optional IntRange sky_light = 10;
+  optional IntRange block_light = 11;
+  bool include_block_entity = 12;
+  bool require_line_of_sight = 13;
+}
+
+message EntitySelector {
+  repeated string entity_types = 1;
+  repeated string tags = 2;
+  repeated EntityCategory categories = 3;
+  optional string uuid = 4;
+  optional int32 network_id = 5;
+  optional string player_name = 6;
+  optional bool alive = 7;
+  optional FloatRange health = 8;
+  optional string custom_name = 9;
+  repeated string equipped_item_ids = 10;
+  repeated string effect_ids = 11;
+  optional string owner_uuid = 12;
+  bool require_line_of_sight = 13;
+}
+
+message QueryRegion {
+  oneof region {
+    SphereRegion sphere = 1;
+    BoxRegion box = 2;
+  }
+}
+
+message SphereRegion {
+  WorldPosition center = 1;
+  float radius = 2;
+}
+
+message BoxRegion {
+  BlockPosition minimum = 1;
+  BlockPosition maximum = 2;
+}
+
+message GetPlayerSnapshotRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+}
+
+message GetPlayerSnapshotResponse {
+  PlayerSnapshot player = 1;
+}
+
+message GetWorldBlockRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  BlockPosition position = 3;
+  bool include_block_entity = 4;
+  bool include_shapes = 5;
+}
+
+message GetWorldBlockResponse {
+  BlockSnapshot block = 1;
+}
+
+message QueryBlocksRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  QueryRegion region = 3;
+  BlockSelector selector = 4;
+  QuerySort sort = 5;
+  uint32 page_size = 6;
+  string page_token = 7;
+}
+
+message QueryBlocksResponse {
+  repeated BlockSnapshot blocks = 1;
+  string next_page_token = 2;
+  uint64 world_revision = 3;
+}
+
+message GetWorldEntityRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  EntityReference entity = 3;
+}
+
+message GetWorldEntityResponse {
+  EntitySnapshot entity = 1;
+}
+
+message QueryEntitiesRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  optional WorldPosition origin = 3;
+  float radius = 4;
+  EntitySelector selector = 5;
+  QuerySort sort = 6;
+  uint32 page_size = 7;
+  string page_token = 8;
+}
+
+message QueryEntitiesResponse {
+  repeated EntitySnapshot entities = 1;
+  string next_page_token = 2;
+  uint64 world_revision = 3;
+}
+
+message RaycastRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  // Ray origin. Omit to start at the bot player's current eye position.
+  WorldPosition origin = 3;
+  // Ray direction. Omit to use the bot player's current view direction.
+  Vec3 direction = 4;
+  float maximum_distance = 5;
+  bool include_fluids = 6;
+  bool include_entities = 7;
+}
+
+message RaycastResponse {
+  optional BlockSnapshot block = 1;
+  optional EntitySnapshot entity = 2;
+  optional WorldPosition hit_position = 3;
+  optional BlockFace block_face = 4;
+  float distance = 5;
+}
+
+message CanSeeBlockRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  BlockPosition position = 3 [(google.api.field_behavior) = REQUIRED];
+}
+
+message CanSeeBlockResponse {
+  bool visible = 1 [(google.api.field_behavior) = REQUIRED];
+  float distance = 2 [(google.api.field_behavior) = REQUIRED];
+  BlockSnapshot block = 3 [(google.api.field_behavior) = REQUIRED];
+}
+
+message EstimateDigTimeRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  BlockPosition position = 3 [(google.api.field_behavior) = REQUIRED];
+}
+
+message EstimateDigTimeResponse {
+  bool diggable = 1 [(google.api.field_behavior) = REQUIRED];
+  bool instant = 2 [(google.api.field_behavior) = REQUIRED];
+  uint32 ticks = 3 [(google.api.field_behavior) = REQUIRED];
+  uint64 duration_ms = 4 [(google.api.field_behavior) = REQUIRED];
+  float progress_per_tick = 5 [(google.api.field_behavior) = REQUIRED];
+  bool correct_tool_for_drops = 6 [(google.api.field_behavior) = REQUIRED];
+  BlockSnapshot block = 7 [(google.api.field_behavior) = REQUIRED];
+}
+
+message EstimateExplosionDamageRequest {
+  string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
+  EntityReference target = 3 [(google.api.field_behavior) = REQUIRED];
+  WorldPosition center = 4 [(google.api.field_behavior) = REQUIRED];
+  // Vanilla explosion power. The damage radius is twice this value.
+  float power = 5 [(google.api.field_behavior) = REQUIRED];
+}
+
+message EstimateExplosionDamageResponse {
+  float distance = 1 [(google.api.field_behavior) = REQUIRED];
+  float damage_radius = 2 [(google.api.field_behavior) = REQUIRED];
+  // Fraction of sampled target volume visible from the explosion center.
+  float exposure = 3 [(google.api.field_behavior) = REQUIRED];
+  float raw_damage = 4 [(google.api.field_behavior) = REQUIRED];
+  float damage_after_armor = 5 [(google.api.field_behavior) = REQUIRED];
+  float damage_after_resistance = 6 [(google.api.field_behavior) = REQUIRED];
+  float damage_after_enchantments = 7 [(google.api.field_behavior) = REQUIRED];
+  float absorbed_damage = 8 [(google.api.field_behavior) = REQUIRED];
+  float estimated_health_damage = 9 [(google.api.field_behavior) = REQUIRED];
+  bool invulnerable = 10 [(google.api.field_behavior) = REQUIRED];
+  uint32 armor_points = 11 [(google.api.field_behavior) = REQUIRED];
+  float armor_toughness = 12 [(google.api.field_behavior) = REQUIRED];
+  uint32 resistance_level = 13 [(google.api.field_behavior) = REQUIRED];
+  uint32 explosion_protection = 14 [(google.api.field_behavior) = REQUIRED];
+}
+
+service WorldService {
+  rpc GetPlayerSnapshot (GetPlayerSnapshotRequest) returns (GetPlayerSnapshotResponse) {
+    option (google.api.http) = { get: "/v1/instances/{instance_id}/bots/{bot_id}/world/player" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Get player snapshot"
+      permissions: "READ_BOT_INFO"
+      scope: "instance.bot"
+    };
+  }
+
+  rpc GetWorldBlock (GetWorldBlockRequest) returns (GetWorldBlockResponse) {
+    option (google.api.http) = { get: "/v1/instances/{instance_id}/bots/{bot_id}/world/block" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Get world block"
+      permissions: "READ_BOT_INFO"
+      scope: "instance.bot"
+    };
+  }
+
+  rpc QueryBlocks (QueryBlocksRequest) returns (QueryBlocksResponse) {
+    option (google.api.http) = { post: "/v1/instances/{instance_id}/bots/{bot_id}/world/blocks:query" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Query blocks"
+      permissions: "READ_BOT_INFO"
+      scope: "instance.bot"
+    };
+  }
+
+  rpc GetWorldEntity (GetWorldEntityRequest) returns (GetWorldEntityResponse) {
+    option (google.api.http) = { get: "/v1/instances/{instance_id}/bots/{bot_id}/world/entity" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Get world entity"
+      permissions: "READ_BOT_INFO"
+      scope: "instance.bot"
+    };
+  }
+
+  rpc QueryEntities (QueryEntitiesRequest) returns (QueryEntitiesResponse) {
+    option (google.api.http) = { post: "/v1/instances/{instance_id}/bots/{bot_id}/world/entities:query" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Query entities"
+      permissions: "READ_BOT_INFO"
+      scope: "instance.bot"
+    };
+  }
+
+  rpc Raycast (RaycastRequest) returns (RaycastResponse) {
+    option (google.api.http) = { post: "/v1/instances/{instance_id}/bots/{bot_id}/world:raycast" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Raycast world"
+      permissions: "READ_BOT_INFO"
+      scope: "instance.bot"
+    };
+  }
+
+  rpc CanSeeBlock (CanSeeBlockRequest) returns (CanSeeBlockResponse) {
+    option (google.api.http) = { post: "/v1/instances/{instance_id}/bots/{bot_id}/world/block:canSee" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Check block visibility"
+      permissions: "READ_BOT_INFO"
+      scope: "instance.bot"
+      execution: "Raycasts from the bot player's current eye position to the center of the requested block."
+    };
+  }
+
+  rpc EstimateDigTime (EstimateDigTimeRequest) returns (EstimateDigTimeResponse) {
+    option (google.api.http) = { post: "/v1/instances/{instance_id}/bots/{bot_id}/world/block:estimateDigTime" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Estimate block dig time"
+      permissions: "READ_BOT_INFO"
+      scope: "instance.bot"
+      execution: "Uses the player's current held item, effects, attributes, environment, and the observed block state."
+    };
+  }
+
+  rpc EstimateExplosionDamage (EstimateExplosionDamageRequest) returns (EstimateExplosionDamageResponse) {
+    option (google.api.http) = { post: "/v1/instances/{instance_id}/bots/{bot_id}/world/explosion-damage:estimate" body: "*" };
+    option (soulfire.v1.api_method) = {
+      display_name: "Estimate explosion damage"
+      permissions: "READ_BOT_INFO"
+      scope: "instance.bot"
+      preconditions: "Target entity and explosion center must be observable in the bot's current dimension."
+      execution: "Samples block exposure and applies the target's observed armor, resistance, enchantment, and absorption state."
+    };
+  }
+}

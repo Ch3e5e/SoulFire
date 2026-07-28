@@ -1,10 +1,11 @@
+from collections.abc import AsyncIterator, Iterator
 from typing import Any, cast
 
 import pytest
 from connectrpc.protocol import ProtocolType
 from google.protobuf.struct_pb2 import Value
 
-from soulfire import SoulFire
+from soulfire import AsyncSoulFire, RequiredPlugin, SoulFire
 from soulfire.bot_connect import BotServiceClient
 from soulfire.bot_live_connect import BotLiveServiceClient
 from soulfire.bot_pb2 import (
@@ -20,10 +21,24 @@ from soulfire.bot_pb2 import (
     SetBotsDesiredStateRequest,
     SetBotsDesiredStateResponse,
 )
-from soulfire.client import SoulFireInstance
-from soulfire.common_pb2 import SettingsNamespace
+from soulfire.client import AsyncSoulFireInstance, SoulFireInstance
+from soulfire.common_pb2 import ADMIN, SettingsNamespace
 from soulfire.instance_connect import InstanceServiceClient
+from soulfire.instance_live_connect import (
+    InstanceLiveServiceClient,
+    InstanceLiveServiceClientSync,
+)
+from soulfire.instance_live_pb2 import InstanceEvent, WatchInstanceEventsRequest
 from soulfire.instance_pb2 import InstanceConfig, InstanceInfo, InstanceInfoResponse
+from soulfire.plugin_api_pb2 import PluginApiDescriptor
+from soulfire.sdk_pb2 import (
+    SDK_TRANSPORT_GRPC_WEB,
+    SdkApiVersion,
+    SdkCapability,
+    SdkHandshakeResponse,
+    SdkIdentity,
+    SdkLimit,
+)
 
 
 class FakeGeneratedClient:
@@ -34,6 +49,40 @@ class FakeGeneratedClient:
 
     async def close(self) -> None:
         self.closed = True
+
+
+class FakeSdkClient(FakeGeneratedClient):
+    request = None
+
+    async def handshake(self, request: object) -> SdkHandshakeResponse:
+        self.__class__.request = request
+        return handshake_response()
+
+
+class FakePluginApiClient(FakeGeneratedClient):
+    pass
+
+
+class FakeGeneratedClientSync:
+    def __init__(self, address: str, **options: Any) -> None:
+        self.address = address
+        self.options = options
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class FakeSdkClientSync(FakeGeneratedClientSync):
+    request = None
+
+    def handshake(self, request: object) -> SdkHandshakeResponse:
+        self.__class__.request = request
+        return handshake_response()
+
+
+class FakePluginApiClientSync(FakeGeneratedClientSync):
+    pass
 
 
 class FakeBotService:
@@ -118,9 +167,37 @@ class FakeMixedBotService(FakeBotService):
         return RestartBotsResponse()
 
 
+class FakeInstanceLiveService:
+    request: WatchInstanceEventsRequest | None = None
+
+    def watch_instance_events(
+        self,
+        request: WatchInstanceEventsRequest,
+        **_kwargs: object,
+    ) -> AsyncIterator[InstanceEvent]:
+        self.request = request
+
+        async def stream() -> AsyncIterator[InstanceEvent]:
+            yield InstanceEvent(bot_profile_id="bot-id")
+
+        return stream()
+
+
+class FakeInstanceLiveServiceSync:
+    request: WatchInstanceEventsRequest | None = None
+
+    def watch_instance_events(
+        self,
+        request: WatchInstanceEventsRequest,
+        **_kwargs: object,
+    ) -> Iterator[InstanceEvent]:
+        self.request = request
+        yield InstanceEvent(bot_profile_id="bot-id")
+
+
 @pytest.mark.asyncio
 async def test_connect_creates_the_public_instance_bot_hierarchy() -> None:
-    soulfire = SoulFire.connect(
+    soulfire = AsyncSoulFire.unauthenticated(
         "https://soulfire.example.com/",
         token="token",
     )
@@ -135,7 +212,7 @@ async def test_connect_creates_the_public_instance_bot_hierarchy() -> None:
 
 @pytest.mark.asyncio
 async def test_generated_services_always_use_grpc_web() -> None:
-    soulfire = SoulFire.connect("https://soulfire.example.com")
+    soulfire = AsyncSoulFire.unauthenticated("https://soulfire.example.com")
 
     service = soulfire.service(FakeGeneratedClient)
 
@@ -146,10 +223,49 @@ async def test_generated_services_always_use_grpc_web() -> None:
 
 
 @pytest.mark.asyncio
+async def test_async_connect_negotiates_before_entering_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("soulfire.client.SdkServiceClient", FakeSdkClient)
+    monkeypatch.setattr("soulfire.client.PluginApiServiceClient", FakePluginApiClient)
+
+    async with AsyncSoulFire.connect(
+        "https://soulfire.example.com",
+        token="token",
+        required_capabilities=["plugin.rpc.v1"],
+        required_plugins=[RequiredPlugin("example", "^1.0.0")],
+    ) as soulfire:
+        assert soulfire.server.id == "server-id"
+        assert soulfire.capabilities.supports("plugin.rpc.v1")
+        assert soulfire.plugins.require_descriptor("example").api_major_version == 1
+
+    assert FakeSdkClient.request is not None
+    assert list(FakeSdkClient.request.required_capabilities) == ["plugin.rpc.v1"]
+    assert FakeSdkClient.request.required_plugins[0].version_range == "^1.0.0"
+
+
+def test_sync_connect_negotiates_before_returning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("soulfire.client.SdkServiceClientSync", FakeSdkClientSync)
+    monkeypatch.setattr("soulfire.client.PluginApiServiceClientSync", FakePluginApiClientSync)
+
+    with SoulFire.connect(
+        "https://soulfire.example.com",
+        token="token",
+    ) as soulfire:
+        assert soulfire.identity.username == "developer"
+        assert soulfire.limits["grpc.request_bytes"] == 1024
+
+    assert FakeSdkClientSync.request is not None
+    assert FakeSdkClientSync.request.minimum_api_version.major == 1
+
+
+@pytest.mark.asyncio
 async def test_count_selection_honors_shuffle_accounts(monkeypatch: pytest.MonkeyPatch) -> None:
     bot_service = FakeBotService()
     monkeypatch.setattr("soulfire.client.random.shuffle", lambda values: values.reverse())
-    instance = SoulFireInstance(
+    instance = AsyncSoulFireInstance(
         "instance-id",
         cast(BotServiceClient, bot_service),
         cast(BotLiveServiceClient, object()),
@@ -166,7 +282,7 @@ async def test_count_selection_honors_shuffle_accounts(monkeypatch: pytest.Monke
 @pytest.mark.asyncio
 async def test_restart_without_selection_only_restarts_desired_bots() -> None:
     bot_service = FakeMixedBotService()
-    instance = SoulFireInstance(
+    instance = AsyncSoulFireInstance(
         "instance-id",
         cast(BotServiceClient, bot_service),
         cast(BotLiveServiceClient, object()),
@@ -177,3 +293,72 @@ async def test_restart_without_selection_only_restarts_desired_bots() -> None:
 
     assert bot_service.restart_request is not None
     assert list(bot_service.restart_request.bot_ids) == ["desired"]
+
+
+@pytest.mark.asyncio
+async def test_async_instance_events_scope_and_default_filter() -> None:
+    live = FakeInstanceLiveService()
+    instance = AsyncSoulFireInstance(
+        "instance-id",
+        cast(BotServiceClient, object()),
+        cast(BotLiveServiceClient, object()),
+        cast(InstanceServiceClient, object()),
+        instance_live=cast(InstanceLiveServiceClient, live),
+    )
+
+    event = await anext(instance.events(bot_ids=["bot-id", "bot-id"]))
+
+    assert event.bot_profile_id == "bot-id"
+    assert live.request is not None
+    assert live.request.instance_id == "instance-id"
+    assert list(live.request.filter.bot_ids) == ["bot-id"]
+    assert live.request.filter.bot_events.include_entity_events
+    assert live.request.filter.bot_events.include_resource_packs
+    assert live.request.filter.bot_events.include_titles
+
+
+def test_sync_instance_events_scope_and_default_filter() -> None:
+    live = FakeInstanceLiveServiceSync()
+    instance = SoulFireInstance(
+        "instance-id",
+        cast(Any, object()),
+        cast(Any, object()),
+        cast(Any, object()),
+        instance_live=cast(InstanceLiveServiceClientSync, live),
+    )
+
+    event = next(instance.events(bot_ids=["bot-id"]))
+
+    assert event.bot_profile_id == "bot-id"
+    assert live.request is not None
+    assert live.request.instance_id == "instance-id"
+    assert live.request.filter.bot_events.include_scoreboard
+
+
+def handshake_response() -> SdkHandshakeResponse:
+    return SdkHandshakeResponse(
+        server_id="server-id",
+        soulfire_version="3.0.0",
+        commit_hash="commit",
+        branch_name="main",
+        api_version=SdkApiVersion(major=1),
+        native_minecraft_version="1.21.11",
+        supported_minecraft_versions=["1.21.11"],
+        transports=[SDK_TRANSPORT_GRPC_WEB],
+        capabilities=[SdkCapability(id="plugin.rpc.v1", revision=1)],
+        plugins=[
+            PluginApiDescriptor(
+                plugin_id="example",
+                plugin_version="1.0.0",
+                api_major_version=1,
+            )
+        ],
+        limits=[SdkLimit(id="grpc.request_bytes", value=1024)],
+        identity=SdkIdentity(
+            id="00000000-0000-0000-0000-000000000001",
+            username="developer",
+            email="dev@example.com",
+            role=ADMIN,
+            granted_global_permissions=["READ_CLIENT_DATA"],
+        ),
+    )
