@@ -25,7 +25,6 @@ import com.soulfiremc.grpc.generated.FarmTaskResult;
 import com.soulfiremc.grpc.generated.WorldPosition;
 import com.soulfiremc.server.api.BotTaskExecution;
 import com.soulfiremc.server.api.BotTaskProvider;
-import com.soulfiremc.server.automation.AutomationInventory;
 import com.soulfiremc.server.bot.ControlPriority;
 import com.soulfiremc.server.bot.ControlResource;
 import com.soulfiremc.server.bot.ControlStopReason;
@@ -536,7 +535,7 @@ public final class FarmTaskProvider implements BotTaskProvider<FarmTask> {
         currentTarget.definition().replantItem()
       );
       if (
-        AutomationInventory.ensureHolding(
+        TaskInventorySupport.ensureHolding(
           context.bot(),
           stack -> stack.is(replantItem)
         )
@@ -718,7 +717,7 @@ public final class FarmTaskProvider implements BotTaskProvider<FarmTask> {
         return;
       }
       if (
-        AutomationInventory.ensureHolding(
+        TaskInventorySupport.ensureHolding(
           context.bot(),
           stack -> !stack.is(Items.BONE_MEAL)
         )

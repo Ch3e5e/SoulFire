@@ -16,7 +16,10 @@ import {
   BlockFace,
   Hand,
   ResourcePackResponse,
+  type AttackEntityRequest,
+  type InteractEntityRequest,
   type InteractBlockRequest,
+  type MountEntityRequest,
   type RespondResourcePackRequest,
   type SendChatRequest,
   type SetCreativeSlotRequest,
@@ -164,6 +167,80 @@ describe("SoulFireBot", () => {
     expect(wake).toMatchObject({
       instanceId: "instance-id",
       botId: "bot-id",
+    });
+  });
+
+  it("preserves connection epochs for direct entity actions", async () => {
+    let attack: AttackEntityRequest | undefined;
+    let interaction: InteractEntityRequest | undefined;
+    let mount: MountEntityRequest | undefined;
+    const completed = {
+      result: {
+        actionId: "action-id",
+        status: BotActionStatus.COMPLETED,
+      },
+    };
+    const transport = createRouterTransport(({ service }) => {
+      service(BotLiveService, {
+        attackEntity(request) {
+          attack = request;
+          return completed;
+        },
+        interactEntity(request) {
+          interaction = request;
+          return completed;
+        },
+        mountEntity(request) {
+          mount = request;
+          return completed;
+        },
+      });
+    });
+    const bot = new SoulFireBot(
+      "instance-id",
+      "bot-id",
+      createClient(BotService, transport),
+      createClient(BotLiveService, transport),
+    );
+
+    await bot.attackEntity({
+      entityId: 42,
+      connectionEpoch: "00000000-0000-0000-0000-000000000042",
+      sprinting: true,
+    });
+    await bot.interactEntity({
+      entityId: 43,
+      connectionEpoch: "00000000-0000-0000-0000-000000000043",
+      hand: Hand.OFF,
+      sneaking: true,
+    });
+    await bot.mount({
+      entityId: 44,
+      connectionEpoch: "00000000-0000-0000-0000-000000000044",
+      hand: Hand.MAIN,
+    });
+
+    expect(attack).toMatchObject({
+      instanceId: "instance-id",
+      botId: "bot-id",
+      entityId: 42,
+      connectionEpoch: "00000000-0000-0000-0000-000000000042",
+      sprinting: true,
+    });
+    expect(interaction).toMatchObject({
+      instanceId: "instance-id",
+      botId: "bot-id",
+      entityId: 43,
+      connectionEpoch: "00000000-0000-0000-0000-000000000043",
+      hand: Hand.OFF,
+      sneaking: true,
+    });
+    expect(mount).toMatchObject({
+      instanceId: "instance-id",
+      botId: "bot-id",
+      entityId: 44,
+      connectionEpoch: "00000000-0000-0000-0000-000000000044",
+      hand: Hand.MAIN,
     });
   });
 

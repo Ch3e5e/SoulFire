@@ -1,0 +1,77 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  BeatGamePhase,
+  defaultBeatGameStrategy,
+  PortalStrategy,
+  requirementsForPhase,
+} from "../src/index.js";
+import { observation } from "./fixtures.js";
+
+describe("beat-game requirements", () => {
+  it("counts interchangeable item choices without double counting tags", () => {
+    const inventory = observation({
+      counts: {
+        "minecraft:cooked_beef": 4,
+        "minecraft:bread": 3,
+      },
+    }).inventory;
+
+    const food = requirementsForPhase(
+      BeatGamePhase.PREPARE_OVERWORLD,
+      inventory,
+      defaultBeatGameStrategy,
+    ).find(({ key }) => key === "food");
+
+    expect(food?.currentCount).toBe(7);
+    expect(food?.satisfied).toBe(false);
+  });
+
+  it("orders missing requirements by explicit planner priority", () => {
+    const requirements = requirementsForPhase(
+      BeatGamePhase.PREPARE_OVERWORLD,
+      observation().inventory,
+      defaultBeatGameStrategy,
+    );
+
+    expect(requirements.map(({ key }) => key)).toEqual([
+      "food",
+      "logs",
+      "cobblestone",
+      "iron",
+      "pickaxe",
+      "water-bucket",
+      "ignition",
+      "shield",
+    ]);
+  });
+
+  it("requires a diamond pickaxe before mining an obsidian frame", () => {
+    const strategy = {
+      ...defaultBeatGameStrategy,
+      portalStrategy: PortalStrategy.OBSIDIAN,
+    };
+
+    expect(requirementsForPhase(
+      BeatGamePhase.ENTER_NETHER,
+      observation().inventory,
+      strategy,
+    ).map(({ key }) => key)).toEqual([
+      "diamond-pickaxe",
+      "obsidian",
+      "water-bucket",
+      "ignition",
+    ]);
+
+    expect(requirementsForPhase(
+      BeatGamePhase.ENTER_NETHER,
+      observation({
+        counts: {
+          "minecraft:diamond_pickaxe": 1,
+          "minecraft:obsidian": strategy.targetObsidianCount,
+        },
+      }).inventory,
+      strategy,
+    ).map(({ key }) => key)).not.toContain("diamond-pickaxe");
+  });
+});

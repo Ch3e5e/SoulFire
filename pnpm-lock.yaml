@@ -15,6 +15,28 @@ importers:
         specifier: 2.13.0
         version: 2.13.0(@bufbuild/protobuf@2.13.0)
 
+  sdk/beat-game:
+    dependencies:
+      '@soulfiremc/sdk':
+        specifier: workspace:*
+        version: link:../typescript
+    devDependencies:
+      '@types/node':
+        specifier: 24.10.1
+        version: 24.10.1
+      effect:
+        specifier: 3.22.0
+        version: 3.22.0
+      esbuild:
+        specifier: 0.28.1
+        version: 0.28.1
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 4.1.10
+        version: 4.1.10(@types/node@24.10.1)(vite@8.1.5(@types/node@24.10.1)(esbuild@0.28.1))
+
   sdk/typescript:
     dependencies:
       '@bufbuild/protobuf':

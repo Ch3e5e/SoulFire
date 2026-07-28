@@ -23,7 +23,6 @@ import com.soulfiremc.grpc.generated.SmeltTask;
 import com.soulfiremc.grpc.generated.SmeltTaskResult;
 import com.soulfiremc.server.api.BotTaskExecution;
 import com.soulfiremc.server.api.BotTaskProvider;
-import com.soulfiremc.server.automation.AutomationInventory;
 import com.soulfiremc.server.bot.ControlPriority;
 import com.soulfiremc.server.bot.ControlResource;
 import com.soulfiremc.server.bot.ControlStopReason;
@@ -498,7 +497,7 @@ public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
         );
         return;
       }
-      var target = AutomationInventory.playerInventorySlots(menu)
+      var target = TaskInventorySupport.playerInventorySlots(menu)
         .filter(slot -> canDeposit(menu, slot, carried))
         .findFirst();
       if (target.isEmpty()) {
@@ -528,7 +527,7 @@ public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
       Predicate<ItemStack> selector,
       String missingMessage
     ) {
-      var source = AutomationInventory.playerInventorySlots(menu)
+      var source = TaskInventorySupport.playerInventorySlots(menu)
         .filter(slot -> selector.test(menu.getSlot(slot).getItem()))
         .findFirst();
       if (source.isEmpty()) {

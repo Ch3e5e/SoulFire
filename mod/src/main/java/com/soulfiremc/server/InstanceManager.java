@@ -27,7 +27,6 @@ import com.soulfiremc.server.api.event.bot.BotConnectionRemovedEvent;
 import com.soulfiremc.server.api.event.lifecycle.InstanceSettingsRegistryInitEvent;
 import com.soulfiremc.server.api.metadata.MetadataHolder;
 import com.soulfiremc.server.api.metrics.InstancePluginStats;
-import com.soulfiremc.server.automation.AutomationTeamCoordinator;
 import com.soulfiremc.server.bot.BotConnection;
 import com.soulfiremc.server.bot.BotControlLeaseManager;
 import com.soulfiremc.server.database.AuditLogType;
@@ -35,7 +34,6 @@ import com.soulfiremc.server.database.generated.Tables;
 import com.soulfiremc.server.metrics.InstanceMetricsCollector;
 import com.soulfiremc.server.settings.instance.AISettings;
 import com.soulfiremc.server.settings.instance.AccountSettings;
-import com.soulfiremc.server.settings.instance.AutomationSettings;
 import com.soulfiremc.server.settings.instance.BotSettings;
 import com.soulfiremc.server.settings.instance.PathfindingSettings;
 import com.soulfiremc.server.settings.instance.ProxySettings;
@@ -92,7 +90,6 @@ public final class InstanceManager {
   private final SettingsPageRegistry instanceSettingsPageRegistry;
   private final InstanceMetricsCollector metricsCollector;
   private final InstancePluginStats pluginStats;
-  private final AutomationTeamCoordinator automationCoordinator;
   private final BotStateManager botStateManager;
 
   public static InstanceManager current() {
@@ -124,7 +121,6 @@ public final class InstanceManager {
     this.metricsCollector = new InstanceMetricsCollector(this);
     SoulFireAPI.registerListenersOfObject(metricsCollector);
     this.pluginStats = new InstancePluginStats();
-    this.automationCoordinator = new AutomationTeamCoordinator(this);
 
     try {
       Files.createDirectories(getInstanceObjectStoragePath());
@@ -139,7 +135,6 @@ public final class InstanceManager {
         .addInternalPage(AccountSettings.class, "account", "Account Settings", "users")
         .addInternalPage(ProxySettings.class, "proxy", "Proxy Settings", "waypoints")
         .addInternalPage(AISettings.class, "ai", "AI Settings", "sparkles")
-        .addInternalPage(AutomationSettings.class, "automation", "Automation Settings", "bot-message-square")
         .addInternalPage(PathfindingSettings.class, "pathfinding", "Pathfinding Settings", "route");
 
       SoulFireAPI.pluginApis().applySettingsPages(
@@ -256,7 +251,6 @@ public final class InstanceManager {
   }
 
   private void tick() {
-    automationCoordinator.tick();
     metricsCollector.tick();
     persistDirtyMetadata();
     evictBots();

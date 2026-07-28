@@ -258,63 +258,6 @@ class PluginApiRegistryTest {
     );
   }
 
-  @Test
-  void ordersAndIsolatesPluginAutomationExtensions() {
-    var registry = new PluginApiRegistry();
-    var lowContext = registry.createContext(pluginInfo("low"));
-    var highContext = registry.createContext(pluginInfo("high"));
-    lowContext.automation().register(new PluginAutomationExtension() {
-      @Override
-      public String id() {
-        return "observer";
-      }
-    });
-    var faulty = highContext.automation().register(new PluginAutomationExtension() {
-      @Override
-      public String id() {
-        return "strategy";
-      }
-
-      @Override
-      public int priority() {
-        return 100;
-      }
-
-      @Override
-      public void onTick(PluginAutomationExtensionContext context) {
-        throw new IllegalStateException("broken extension");
-      }
-    });
-
-    assertEquals(
-      List.of("plugin.high.strategy", "plugin.low.observer"),
-      registry.automationExtensions().stream()
-        .map(PluginAutomationExtensionRegistration::id)
-        .toList()
-    );
-    assertThrows(
-      IllegalStateException.class,
-      () -> highContext.automation().register(new PluginAutomationExtension() {
-        @Override
-        public String id() {
-          return "strategy";
-        }
-      })
-    );
-
-    var invocationContext = new PluginAutomationExtensionContext(
-      null,
-      null,
-      Optional.empty(),
-      Optional.empty()
-    );
-    faulty.invokeTick(invocationContext);
-    faulty.invokeTick(invocationContext);
-    assertTrue(faulty.enabled());
-    faulty.invokeTick(invocationContext);
-    assertFalse(faulty.enabled());
-  }
-
   private static PluginInfo pluginInfo(String id) {
     return new PluginInfo(
       id,

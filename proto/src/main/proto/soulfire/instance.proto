@@ -461,26 +461,13 @@ message DeleteInstanceMetadataEntryResponse {
 message InstanceAuditLogResponse {
   // Types of actions that are recorded in the audit log.
   enum AuditLogEntryType {
+    reserved 5 to 13;
+    reserved "AUTOMATION_START", "AUTOMATION_PAUSE", "AUTOMATION_RESUME",
+      "AUTOMATION_STOP", "AUTOMATION_UPDATE_SETTINGS",
+      "AUTOMATION_APPLY_PRESET", "AUTOMATION_RESET_MEMORY",
+      "AUTOMATION_RESET_COORDINATION", "AUTOMATION_RELEASE_CLAIMS";
     // A command was executed on the instance.
     EXECUTE_COMMAND = 0;
-    // Beat or acquire automation was started.
-    AUTOMATION_START = 5;
-    // Automation was paused.
-    AUTOMATION_PAUSE = 6;
-    // Automation was resumed.
-    AUTOMATION_RESUME = 7;
-    // Automation was stopped.
-    AUTOMATION_STOP = 8;
-    // Automation settings were changed.
-    AUTOMATION_UPDATE_SETTINGS = 9;
-    // An automation preset was applied.
-    AUTOMATION_APPLY_PRESET = 10;
-    // Automation memory was reset.
-    AUTOMATION_RESET_MEMORY = 11;
-    // Shared automation coordination state was reset.
-    AUTOMATION_RESET_COORDINATION = 12;
-    // Automation claims were manually released.
-    AUTOMATION_RELEASE_CLAIMS = 13;
     // One or more bots had their desired state changed.
     BOT_DESIRED_STATE_CHANGE = 14;
     // One or more bots were restarted.
@@ -510,7 +497,7 @@ message InstanceAuditLogResponse {
 
 // Service for managing SoulFire instances.
 // An instance is a permission and configuration compartment for independently
-// controlled Minecraft bots, settings, accounts, proxies, and automation.
+// controlled Minecraft bots, settings, accounts, proxies, and remote clients.
 //
 // All operations require appropriate permissions:
 // - CREATE_INSTANCE (global): Required to create new instances

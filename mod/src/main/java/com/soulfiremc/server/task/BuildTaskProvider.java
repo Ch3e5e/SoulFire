@@ -30,7 +30,6 @@ import com.soulfiremc.grpc.generated.BuildTaskResult;
 import com.soulfiremc.grpc.generated.WorldPosition;
 import com.soulfiremc.server.api.BotTaskExecution;
 import com.soulfiremc.server.api.BotTaskProvider;
-import com.soulfiremc.server.automation.AutomationInventory;
 import com.soulfiremc.server.bot.ControlPriority;
 import com.soulfiremc.server.bot.ControlResource;
 import com.soulfiremc.server.bot.ControlStopReason;
@@ -575,7 +574,7 @@ public final class BuildTaskProvider implements BotTaskProvider<BuildTask> {
         result.completeExceptionally(new IllegalStateException("Bot game state is unavailable"));
         return;
       }
-      if (!AutomationInventory.ensureHolding(
+      if (!TaskInventorySupport.ensureHolding(
         context.bot(),
         stack -> stack.getItem() instanceof BlockItem blockItem
           && blockItem.getBlock() == material.block()
@@ -678,7 +677,7 @@ public final class BuildTaskProvider implements BotTaskProvider<BuildTask> {
         .map(id -> material(id, placement.properties()))
         .toList();
       for (var candidate : candidates) {
-        if (AutomationInventory.findInventorySlot(
+        if (TaskInventorySupport.findInventorySlot(
           context.bot(),
           stack -> stack.getItem() instanceof BlockItem blockItem
             && blockItem.getBlock() == candidate.block()

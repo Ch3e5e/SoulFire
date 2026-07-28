@@ -73,6 +73,8 @@ jobs:
         run: pnpm exec buf breaking --against ".git#branch=origin/${BASE_REF},subdir=proto/src/main/proto"
       - name: Check TypeScript SDK
         run: pnpm --filter @soulfiremc/sdk check
+      - name: Check beat-game SDK
+        run: pnpm --filter @soulfiremc/beat-game check
       - name: Import Node.js entry points
         run: |
           node -e 'const sdk = await import("./sdk/typescript/dist/node.js"); if (typeof sdk.SoulFire.connect !== "function") throw new Error("Effect Node.js entry point is invalid")'
@@ -92,6 +94,53 @@ jobs:
           tar -tf "$package_archive" | grep -q 'package/dist/platform.js'
           tar -tf "$package_archive" | grep -q 'package/dist/cli.js'
           tar -tf "$package_archive" | grep -q 'package/dist/plugin-generator.js'
+          if tar -tf "$package_archive" | grep -Eq 'package/dist/(automation|generated/soulfire/automation_pb)'; then
+            echo "Packed SDK contains removed native automation bindings"
+            exit 1
+          fi
+      - name: Verify beat-game npm package contents
+        working-directory: sdk/beat-game
+        run: |
+          package_dir="$(mktemp -d)"
+          pnpm pack --pack-destination "$package_dir"
+          package_archive="$(find "$package_dir" -name '*.tgz' -print -quit)"
+          tar -tf "$package_archive" | grep -q 'package/dist/index.js'
+          tar -tf "$package_archive" | grep -q 'package/dist/promise.js'
+          tar -tf "$package_archive" | grep -q 'package/dist/node.js'
+          tar -tf "$package_archive" | grep -q 'package/README.md'
+          if tar -xOf "$package_archive" package/package.json | grep -q '"workspace:'; then
+            echo "Packed beat-game package contains an unresolved workspace dependency"
+            exit 1
+          fi
+      - name: Install packed SDKs in a fresh project
+        run: |
+          package_dir="$(mktemp -d)"
+          consumer_dir="$(mktemp -d)"
+          pnpm --dir sdk/typescript pack --pack-destination "$package_dir"
+          pnpm --dir sdk/beat-game pack --pack-destination "$package_dir"
+          sdk_archive="$(find "$package_dir" -name 'soulfiremc-sdk-*.tgz' -print -quit)"
+          beat_game_archive="$(find "$package_dir" -name 'soulfiremc-beat-game-*.tgz' -print -quit)"
+          cd "$consumer_dir"
+          npm init --yes
+          npm install --ignore-scripts \
+            "$sdk_archive" \
+            "$beat_game_archive" \
+            effect@3.22.0 \
+            @effect/platform@0.97.0
+          node --input-type=module -e '
+            import { SoulFire } from "@soulfiremc/sdk/node";
+            import { beatGame } from "@soulfiremc/beat-game";
+            import { beatGame as beatGamePromise } from "@soulfiremc/beat-game/promise";
+            import { JsonFileBeatGameCheckpointStore } from "@soulfiremc/beat-game/node";
+            if (
+              typeof SoulFire.connect !== "function"
+              || typeof beatGame !== "function"
+              || typeof beatGamePromise !== "function"
+              || typeof JsonFileBeatGameCheckpointStore !== "function"
+            ) {
+              throw new Error("Packed SDK entry points are invalid");
+            }
+          '
       - name: Verify JSR package
         working-directory: sdk/typescript
         run: npx --yes jsr@0.14.3 publish --dry-run

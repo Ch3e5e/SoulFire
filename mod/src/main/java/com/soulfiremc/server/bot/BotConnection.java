@@ -45,7 +45,6 @@ import com.soulfiremc.server.api.SoulFireAPI;
 import com.soulfiremc.server.api.event.bot.BotDisconnectedEvent;
 import com.soulfiremc.server.api.event.bot.PreBotConnectEvent;
 import com.soulfiremc.server.api.metadata.MetadataHolder;
-import com.soulfiremc.server.automation.AutomationController;
 import com.soulfiremc.server.proxy.ProxyType;
 import com.soulfiremc.server.proxy.SFProxy;
 import com.soulfiremc.server.settings.lib.BotSettingsDelegate;
@@ -142,7 +141,6 @@ public final class BotConnection {
   private final ControlState controlState = new ControlState();
   private final BotControlAPI botControl = new BotControlAPI();
   private final BotRotationController rotationControl;
-  private final AutomationController automation;
   private final SoulFireScheduler scheduler;
   private final BotConnectionFactory factory;
   private final InstanceManager instanceManager;
@@ -201,13 +199,11 @@ public final class BotConnection {
     this.runnableWrapper = instanceManager.runnableWrapper().with(new BotRunnableWrapper(this));
     this.scheduler = new SoulFireScheduler(runnableWrapper);
     this.rotationControl = new BotRotationController(this);
-    this.automation = new AutomationController(this);
     this.serverAddress = serverAddress;
     this.proxy = proxyData;
     this.minecraft = createMinecraftCopy(minecraftAccount);
     this.currentProtocolVersion = currentProtocolVersion;
     this.isStatusPing = isStatusPing;
-    this.shutdownHooks.add(() -> instanceManager.automationCoordinator().releaseBot(this));
   }
 
   private MetadataHolder<JsonElement> fillPersistentMetadata(MinecraftAccount minecraftAccount) {

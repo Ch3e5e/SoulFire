@@ -125,7 +125,7 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.StreamSupport;
 
-/// BotLiveService is the automation-first API for SoulFire bots. It provides the
+/// BotLiveService is the remote-control API for SoulFire bots. It provides the
 /// streaming event channel, imperative per-position / per-entity actions, world
 /// queries, and pathfinding RPCs that make the public gRPC surface feel like a
 /// mineflayer/azalea style bot library.
@@ -2144,6 +2144,9 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
     var instanceId = UUID.fromString(request.getInstanceId());
     var botId = UUID.fromString(request.getBotId());
     var bot = requireControlledOnlineBot(soulFireServer, instanceId, botId);
+    requireConnectionEpoch(bot, request.hasConnectionEpoch()
+      ? request.getConnectionEpoch()
+      : null);
     submitAction(
       bot,
       ControlTask.once("SDK attack entity", () -> {
@@ -2187,6 +2190,22 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
       .orElse(null);
   }
 
+  private static void requireConnectionEpoch(
+    BotConnection bot,
+    @Nullable String requestedEpoch
+  ) {
+    if (
+      requestedEpoch != null
+        && !requestedEpoch.equals(bot.connectionEpoch().toString())
+    ) {
+      throw Status.FAILED_PRECONDITION
+        .withDescription(
+          "Entity reference belongs to an earlier bot connection"
+        )
+        .asRuntimeException();
+    }
+  }
+
   // =====================================================================
   // InteractEntity
   // =====================================================================
@@ -2196,6 +2215,9 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
     var instanceId = UUID.fromString(request.getInstanceId());
     var botId = UUID.fromString(request.getBotId());
     var bot = requireControlledOnlineBot(soulFireServer, instanceId, botId);
+    requireConnectionEpoch(bot, request.hasConnectionEpoch()
+      ? request.getConnectionEpoch()
+      : null);
     var hand = toMcHand(request.getHand());
     submitAction(
       bot,
@@ -2354,6 +2376,9 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
     var instanceId = UUID.fromString(request.getInstanceId());
     var botId = UUID.fromString(request.getBotId());
     var bot = requireControlledOnlineBot(soulFireServer, instanceId, botId);
+    requireConnectionEpoch(bot, request.hasConnectionEpoch()
+      ? request.getConnectionEpoch()
+      : null);
     var mountedVehicle = new AtomicReference<EntityReference>();
     submitAction(
       bot,
@@ -2620,7 +2645,7 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
       bot,
       ControlTask.once(
         "SDK respond to resource pack",
-        Set.of(ControlResource.AUTOMATION),
+        Set.of(ControlResource.PROTOCOL),
         () -> {
           var player = bot.minecraft().player;
           if (player == null) {

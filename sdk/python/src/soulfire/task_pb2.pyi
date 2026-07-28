@@ -31,7 +31,7 @@ class BotTaskResource(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     BOT_TASK_RESOURCE_CHAT: _ClassVar[BotTaskResource]
     BOT_TASK_RESOURCE_VEHICLE: _ClassVar[BotTaskResource]
     BOT_TASK_RESOURCE_CAMERA: _ClassVar[BotTaskResource]
-    BOT_TASK_RESOURCE_AUTOMATION: _ClassVar[BotTaskResource]
+    BOT_TASK_RESOURCE_PROTOCOL: _ClassVar[BotTaskResource]
 
 class BotTaskStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -247,7 +247,7 @@ BOT_TASK_RESOURCE_CONTAINER: BotTaskResource
 BOT_TASK_RESOURCE_CHAT: BotTaskResource
 BOT_TASK_RESOURCE_VEHICLE: BotTaskResource
 BOT_TASK_RESOURCE_CAMERA: BotTaskResource
-BOT_TASK_RESOURCE_AUTOMATION: BotTaskResource
+BOT_TASK_RESOURCE_PROTOCOL: BotTaskResource
 BOT_TASK_STATUS_UNSPECIFIED: BotTaskStatus
 BOT_TASK_STATUS_QUEUED: BotTaskStatus
 BOT_TASK_STATUS_WAITING_FOR_RESOURCES: BotTaskStatus

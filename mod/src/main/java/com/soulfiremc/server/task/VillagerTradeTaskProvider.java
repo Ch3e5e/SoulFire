@@ -23,7 +23,6 @@ import com.soulfiremc.grpc.generated.VillagerTradeTask;
 import com.soulfiremc.grpc.generated.VillagerTradeTaskResult;
 import com.soulfiremc.server.api.BotTaskExecution;
 import com.soulfiremc.server.api.BotTaskProvider;
-import com.soulfiremc.server.automation.AutomationInventory;
 import com.soulfiremc.server.bot.ControlPriority;
 import com.soulfiremc.server.bot.ControlResource;
 import com.soulfiremc.server.bot.ControlStopReason;
@@ -278,7 +277,7 @@ public final class VillagerTradeTaskProvider
           : "Preparing next villager trade");
         return;
       }
-      var destination = AutomationInventory.playerInventorySlots(menu)
+      var destination = TaskInventorySupport.playerInventorySlots(menu)
         .filter(slot -> canDeposit(menu, slot, carried))
         .findFirst();
       if (destination.isEmpty()) {
@@ -339,7 +338,7 @@ public final class VillagerTradeTaskProvider
       MerchantMenu menu,
       ItemStack output
     ) {
-      var capacity = AutomationInventory.playerInventorySlots(menu)
+      var capacity = TaskInventorySupport.playerInventorySlots(menu)
         .map(slotIndex -> {
           var slot = menu.getSlot(slotIndex);
           if (!slot.mayPlace(output)) {

@@ -1,0 +1,142 @@
+import { mkdir } from "node:fs/promises";
+import process from "node:process";
+
+import { beatGame, beatGameTeam } from "@soulfiremc/beat-game/promise";
+import { JsonFileBeatGameCheckpointStore } from "@soulfiremc/beat-game/node";
+import { SoulFire } from "@soulfiremc/sdk/node/promise";
+
+const configuration = {
+  baseUrl: requiredEnvironment("SOULFIRE_SMOKE_BASE_URL"),
+  token: requiredEnvironment("SOULFIRE_SMOKE_TOKEN"),
+  instanceId: requiredEnvironment("SOULFIRE_SMOKE_INSTANCE_ID"),
+  botIds: commaSeparatedEnvironment("SOULFIRE_SMOKE_BOT_IDS"),
+  runId: environment("SOULFIRE_SMOKE_RUN_ID", "beat-game-live-smoke"),
+  teamId: environment("SOULFIRE_SMOKE_TEAM_ID", "beat-game-live-smoke-team"),
+  checkpointDirectory: environment(
+    "SOULFIRE_SMOKE_CHECKPOINT_DIR",
+    "./beat-game-checkpoints",
+  ),
+  startBots: booleanEnvironment("SOULFIRE_SMOKE_START_BOTS", true),
+  crashAfterCheckpoints: optionalPositiveIntegerEnvironment(
+    "SOULFIRE_SMOKE_CRASH_AFTER_CHECKPOINTS",
+  ),
+};
+
+await mkdir(configuration.checkpointDirectory, { recursive: true });
+
+await using soulfire = await SoulFire.connect({
+  baseUrl: configuration.baseUrl,
+  token: configuration.token,
+});
+
+const bots = configuration.botIds.map((botId) =>
+  soulfire.instance(configuration.instanceId).bot(botId)
+);
+if (configuration.startBots) {
+  await Promise.all(bots.map((bot) => bot.start()));
+}
+
+const checkpointStore = new JsonFileBeatGameCheckpointStore(
+  configuration.checkpointDirectory,
+);
+const run = bots.length === 1
+  ? await beatGame(bots[0], {
+    runId: configuration.runId,
+    checkpointStore,
+    team: { teamId: configuration.teamId },
+  })
+  : await beatGameTeam(bots, {
+    teamId: configuration.teamId,
+    checkpointStore,
+  });
+const memberRuns = "runs" in run ? run.runs : [run];
+let savedCheckpoints = 0;
+
+const eventConsumers = memberRuns.map(async (memberRun) => {
+  for await (const event of memberRun.events) {
+    process.stdout.write(`${jsonLine({
+      kind: "beat-game-event",
+      memberRunId: memberRun.id,
+      event,
+    })}\n`);
+    if (event.type !== "checkpoint-saved") {
+      continue;
+    }
+    savedCheckpoints += 1;
+    if (
+      configuration.crashAfterCheckpoints !== undefined
+      && savedCheckpoints >= configuration.crashAfterCheckpoints
+    ) {
+      process.stderr.write(
+        `${jsonLine({
+          kind: "intentional-hard-crash",
+          savedCheckpoints,
+        })}\n`,
+      );
+      process.exit(75);
+    }
+  }
+});
+
+const result = await run.awaitCompletion();
+await Promise.all(eventConsumers);
+process.stdout.write(`${jsonLine({
+  kind: "beat-game-completed",
+  result,
+})}\n`);
+
+function requiredEnvironment(name) {
+  const value = process.env[name]?.trim();
+  if (value === undefined || value.length === 0) {
+    throw new Error(`${name} is required`);
+  }
+  return value;
+}
+
+function commaSeparatedEnvironment(name) {
+  const values = requiredEnvironment(name)
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+  if (values.length === 0 || new Set(values).size !== values.length) {
+    throw new Error(`${name} must contain unique comma-separated bot IDs`);
+  }
+  return values;
+}
+
+function environment(name, fallback) {
+  const value = process.env[name]?.trim();
+  return value === undefined || value.length === 0 ? fallback : value;
+}
+
+function booleanEnvironment(name, fallback) {
+  const value = process.env[name]?.trim().toLowerCase();
+  if (value === undefined || value.length === 0) {
+    return fallback;
+  }
+  if (value === "true") {
+    return true;
+  }
+  if (value === "false") {
+    return false;
+  }
+  throw new Error(`${name} must be true or false`);
+}
+
+function optionalPositiveIntegerEnvironment(name) {
+  const value = process.env[name]?.trim();
+  if (value === undefined || value.length === 0) {
+    return undefined;
+  }
+  const number = Number(value);
+  if (!Number.isSafeInteger(number) || number < 1) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  return number;
+}
+
+function jsonLine(value) {
+  return JSON.stringify(value, (_, nestedValue) =>
+    typeof nestedValue === "bigint" ? nestedValue.toString() : nestedValue
+  );
+}

@@ -26,7 +26,6 @@ import com.soulfiremc.grpc.generated.ItemSelector;
 import com.soulfiremc.grpc.generated.PathfindGoal;
 import com.soulfiremc.server.api.BotTaskExecution;
 import com.soulfiremc.server.api.BotTaskProvider;
-import com.soulfiremc.server.automation.AutomationInventory;
 import com.soulfiremc.server.bot.ControlResource;
 import com.soulfiremc.server.bot.ControlStopReason;
 import com.soulfiremc.server.bot.ControlTask;
@@ -359,7 +358,7 @@ public final class AttackEntityTaskProvider
         return true;
       }
       var player = Objects.requireNonNull(context.bot().minecraft().player);
-      var best = AutomationInventory.playerInventorySlots(
+      var best = TaskInventorySupport.playerInventorySlots(
           player.inventoryMenu
         )
         .mapToObj(slot -> player.inventoryMenu.getSlot(slot).getItem())
@@ -379,7 +378,7 @@ public final class AttackEntityTaskProvider
         return true;
       }
       var selected = best.orElseThrow().copy();
-      return AutomationInventory.ensureHolding(
+      return TaskInventorySupport.ensureHolding(
         context.bot(),
         stack -> ItemStack.isSameItemSameComponents(stack, selected)
       );

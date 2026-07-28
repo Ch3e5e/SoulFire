@@ -2,8 +2,11 @@
 
 This document is intended to help developers get started with the project and learn how to learn the tools used.
 
-- [Automation roadmap](docs/automation-roadmap.md): maintainer backlog for SoulFire-native automation parity, operator controls, and reliable parallel beat-game runs.
-- [Automation settings and commands](docs/automation-settings.md): current reference for the built-in automation settings page and CLI controls.
+- [Beat-game SDK architecture](docs/beat-game-architecture.md): ownership
+  boundaries between SoulFire, reusable tasks, plugins, and the TypeScript
+  runner.
+- [Beat-game SDK plan](SOULFIRE_BEAT_GAME_SDK_PLAN.md): migration decisions,
+  implementation stages, and release acceptance criteria.
 
 ## Protocol Sniffing
 

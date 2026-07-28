@@ -91,37 +91,43 @@ public final class BotTaskManager implements AutoCloseable {
   public BotTaskManager(SoulFireServer server) {
     this.server = server;
     var registered = new LinkedHashMap<String, ProviderEntry<?>>();
-    registerCore(registered, new GoToTaskProvider());
-    registerCore(registered, new FollowEntityTaskProvider());
-    registerCore(registered, new AttackEntityTaskProvider());
-    registerCore(registered, new AttackNearestTaskProvider());
-    registerCore(registered, new RangedAttackTaskProvider());
-    registerCore(registered, new FleeTaskProvider());
-    registerCore(registered, new GuardTaskProvider());
-    registerCore(registered, new SleepTaskProvider());
-    registerCore(registered, new FishTaskProvider());
-    registerCore(registered, new FarmTaskProvider());
-    registerCore(registered, new BreedTaskProvider());
-    registerCore(registered, new ExploreTaskProvider());
-    registerCore(registered, new ContainerTransferTaskProvider());
-    registerCore(registered, new MaintainLoadoutTaskProvider());
-    registerCore(registered, new AutoEatTaskProvider());
-    registerCore(registered, new AutoRespawnTaskProvider());
-    registerCore(registered, new AutoTotemTaskProvider());
-    registerCore(registered, new AutoArmorTaskProvider());
-    registerCore(registered, new CollectBlocksTaskProvider());
-    registerCore(registered, new ExcavateTaskProvider());
-    registerCore(registered, new BuildTaskProvider());
-    registerCore(registered, new CraftTaskProvider());
-    registerCore(registered, new SmeltTaskProvider());
-    registerCore(registered, new BrewTaskProvider());
-    registerCore(registered, new VillagerTradeTaskProvider());
+    coreProviders().forEach(provider -> registerCore(registered, provider));
     for (var pluginProvider : SoulFireAPI.pluginApis().taskProviders()) {
       registerPlugin(registered, pluginProvider);
     }
     this.providers = Map.copyOf(registered);
     SoulFireAPI.registerListener(BotDisconnectedEvent.class, disconnectedListener);
     SoulFireAPI.registerListener(BotConnectedEvent.class, connectedListener);
+  }
+
+  static List<BotTaskProvider<?>> coreProviders() {
+    return List.of(
+      new GoToTaskProvider(),
+      new FollowEntityTaskProvider(),
+      new AttackEntityTaskProvider(),
+      new AttackNearestTaskProvider(),
+      new RangedAttackTaskProvider(),
+      new FleeTaskProvider(),
+      new GuardTaskProvider(),
+      new SleepTaskProvider(),
+      new FishTaskProvider(),
+      new FarmTaskProvider(),
+      new BreedTaskProvider(),
+      new ExploreTaskProvider(),
+      new ContainerTransferTaskProvider(),
+      new MaintainLoadoutTaskProvider(),
+      new AutoEatTaskProvider(),
+      new AutoRespawnTaskProvider(),
+      new AutoTotemTaskProvider(),
+      new AutoArmorTaskProvider(),
+      new CollectBlocksTaskProvider(),
+      new ExcavateTaskProvider(),
+      new BuildTaskProvider(),
+      new CraftTaskProvider(),
+      new SmeltTaskProvider(),
+      new BrewTaskProvider(),
+      new VillagerTradeTaskProvider()
+    );
   }
 
   public BotTask start(StartBotTaskRequest request, SoulFireUser owner) {
@@ -1326,7 +1332,7 @@ public final class BotTaskManager implements AutoCloseable {
       case CHAT -> BotTaskResource.BOT_TASK_RESOURCE_CHAT;
       case VEHICLE -> BotTaskResource.BOT_TASK_RESOURCE_VEHICLE;
       case CAMERA -> BotTaskResource.BOT_TASK_RESOURCE_CAMERA;
-      case AUTOMATION -> BotTaskResource.BOT_TASK_RESOURCE_AUTOMATION;
+      case PROTOCOL -> BotTaskResource.BOT_TASK_RESOURCE_PROTOCOL;
     };
   }
 

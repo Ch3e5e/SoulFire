@@ -22,7 +22,6 @@ import com.soulfiremc.grpc.generated.CraftTask;
 import com.soulfiremc.grpc.generated.CraftTaskResult;
 import com.soulfiremc.server.api.BotTaskExecution;
 import com.soulfiremc.server.api.BotTaskProvider;
-import com.soulfiremc.server.automation.AutomationInventory;
 import com.soulfiremc.server.bot.ControlPriority;
 import com.soulfiremc.server.bot.ControlResource;
 import com.soulfiremc.server.bot.ControlStopReason;
@@ -395,7 +394,7 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
         transition(Stage.PLACE_RECIPE, "Preparing next craft");
         return;
       }
-      var target = AutomationInventory.playerInventorySlots(menu)
+      var target = TaskInventorySupport.playerInventorySlots(menu)
         .filter(slot -> canDeposit(menu, slot, carried))
         .findFirst();
       if (target.isEmpty()) {

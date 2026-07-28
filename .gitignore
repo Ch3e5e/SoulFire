@@ -54,6 +54,7 @@ tmp/
 .soulfire/
 node_modules/
 sdk/typescript/dist/
+sdk/beat-game/dist/
 sdk/python/.venv/
 sdk/python/.pytest_cache/
 sdk/python/.ruff_cache/

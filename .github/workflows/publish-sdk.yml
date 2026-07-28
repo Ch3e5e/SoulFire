@@ -9,7 +9,7 @@ on:
         required: true
         type: string
       publish_npm:
-        description: Publish @soulfiremc/sdk to npm
+        description: Publish @soulfiremc/sdk and @soulfiremc/beat-game to npm
         required: true
         default: true
         type: boolean
@@ -59,6 +59,7 @@ jobs:
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
           node -e 'const version = require("./sdk/typescript/package.json").version; if (version !== process.env.RELEASE_VERSION) throw new Error(`TypeScript SDK version ${version} does not match ${process.env.RELEASE_VERSION}`)'
+          node -e 'const version = require("./sdk/beat-game/package.json").version; if (version !== process.env.RELEASE_VERSION) throw new Error(`Beat-game SDK version ${version} does not match ${process.env.RELEASE_VERSION}`)'
           node -e 'const version = require("./sdk/typescript/jsr.json").version; if (version !== process.env.RELEASE_VERSION) throw new Error(`JSR SDK version ${version} does not match ${process.env.RELEASE_VERSION}`)'
           node -e 'const fs = require("node:fs"); const text = fs.readFileSync("sdk/typescript/src/connection.ts", "utf8"); const version = text.match(/SDK_VERSION = "([^"]+)"/)?.[1]; if (version !== process.env.RELEASE_VERSION) throw new Error(`TypeScript handshake version ${version} does not match ${process.env.RELEASE_VERSION}`)'
           python -c 'import os, pathlib, re; text = pathlib.Path("sdk/python/pyproject.toml").read_text(); match = re.search(r"(?m)^version = \"([^\"]+)\"$", text); version = match.group(1) if match else None; expected = os.environ["RELEASE_VERSION"]; assert version == expected, f"Python SDK version {version} does not match {expected}"'
@@ -75,6 +76,8 @@ jobs:
         run: node scripts/validate-mineflayer-parity.mjs
       - name: Check TypeScript SDK
         run: pnpm --filter @soulfiremc/sdk check
+      - name: Check beat-game SDK
+        run: pnpm --filter @soulfiremc/beat-game check
       - name: Import Node.js entry points
         run: |
           node -e 'const sdk = await import("./sdk/typescript/dist/node.js"); if (typeof sdk.SoulFire.connect !== "function") throw new Error("Effect Node.js entry point is invalid")'
@@ -111,7 +114,11 @@ jobs:
         working-directory: sdk/typescript
         run: |
           mkdir -p ../../.artifacts/npm
-          npm pack --pack-destination ../../.artifacts/npm
+          pnpm pack --pack-destination ../../.artifacts/npm
+      - name: Build beat-game npm package
+        if: inputs.publish_npm
+        working-directory: sdk/beat-game
+        run: pnpm pack --pack-destination ../../.artifacts/npm
       - name: Build Python package
         if: inputs.publish_pypi
         working-directory: sdk/python
@@ -158,7 +165,10 @@ jobs:
           name: npm-package
           path: dist/npm
       - name: Publish npm package
-        run: npm publish dist/npm/*.tgz --access public
+        run: |
+          for package_archive in dist/npm/*.tgz; do
+            npm publish "$package_archive" --access public
+          done
 
   publish-pypi:
     name: Publish to PyPI

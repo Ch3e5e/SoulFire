@@ -1,11 +1,11 @@
 export {
   SoulFire,
+  toEffectBot,
   type BotSession,
   type PluginCatalog,
   type ReflectivePlugin,
   type SoulFireBot,
   type SoulFireBotControlLease,
-  type SoulFireAutomation,
   type SoulFireCamera,
   type SoulFireAdmin,
   type SoulFireFleet,
@@ -208,10 +208,6 @@ export type {
   WatchChatOptions,
 } from "./chat.js";
 export { matchChat } from "./chat.js";
-export type {
-  AutomationBotSettingsPatch,
-  WatchAutomationOptions,
-} from "./automation.js";
 export {
   decodeCameraImage,
   type CameraRenderOptions,
@@ -238,23 +234,6 @@ export type {
   SendRawPacketOptions,
   WatchPacketsOptions,
 } from "./protocol.js";
-export {
-  AutomationBeatPhase,
-  AutomationEventKind,
-  AutomationGoalMode,
-  AutomationPreset,
-  AutomationRolePolicy,
-  AutomationTeamObjective,
-  AutomationTeamRole,
-  type AutomationBotActionResult,
-  type AutomationBotSettings,
-  type AutomationBotState,
-  type AutomationCoordinationState,
-  type AutomationEvent,
-  type AutomationInstanceSettings,
-  type AutomationMemoryState,
-  type AutomationTeamState,
-} from "./generated/soulfire/automation_pb.js";
 export {
   PacketDirection,
   type BotProtocolInfo,

@@ -5,7 +5,7 @@
   "scripts": {
     "sdk:generate": "buf generate && node scripts/format-generated-sdks.mjs",
     "sdk:lint-proto": "buf lint",
-    "sdk:check": "pnpm sdk:generate && pnpm sdk:lint-proto && pnpm --filter @soulfiremc/sdk check"
+    "sdk:check": "pnpm sdk:generate && pnpm sdk:lint-proto && pnpm --filter @soulfiremc/sdk check && pnpm --filter @soulfiremc/beat-game check"
   },
   "devDependencies": {
     "@bufbuild/buf": "1.72.0",

@@ -400,28 +400,10 @@ class InstanceAuditLogResponse(_message.Message):
     class AuditLogEntryType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
         __slots__ = ()
         EXECUTE_COMMAND: _ClassVar[InstanceAuditLogResponse.AuditLogEntryType]
-        AUTOMATION_START: _ClassVar[InstanceAuditLogResponse.AuditLogEntryType]
-        AUTOMATION_PAUSE: _ClassVar[InstanceAuditLogResponse.AuditLogEntryType]
-        AUTOMATION_RESUME: _ClassVar[InstanceAuditLogResponse.AuditLogEntryType]
-        AUTOMATION_STOP: _ClassVar[InstanceAuditLogResponse.AuditLogEntryType]
-        AUTOMATION_UPDATE_SETTINGS: _ClassVar[InstanceAuditLogResponse.AuditLogEntryType]
-        AUTOMATION_APPLY_PRESET: _ClassVar[InstanceAuditLogResponse.AuditLogEntryType]
-        AUTOMATION_RESET_MEMORY: _ClassVar[InstanceAuditLogResponse.AuditLogEntryType]
-        AUTOMATION_RESET_COORDINATION: _ClassVar[InstanceAuditLogResponse.AuditLogEntryType]
-        AUTOMATION_RELEASE_CLAIMS: _ClassVar[InstanceAuditLogResponse.AuditLogEntryType]
         BOT_DESIRED_STATE_CHANGE: _ClassVar[InstanceAuditLogResponse.AuditLogEntryType]
         BOT_RESTART: _ClassVar[InstanceAuditLogResponse.AuditLogEntryType]
         PLUGIN_RPC: _ClassVar[InstanceAuditLogResponse.AuditLogEntryType]
     EXECUTE_COMMAND: InstanceAuditLogResponse.AuditLogEntryType
-    AUTOMATION_START: InstanceAuditLogResponse.AuditLogEntryType
-    AUTOMATION_PAUSE: InstanceAuditLogResponse.AuditLogEntryType
-    AUTOMATION_RESUME: InstanceAuditLogResponse.AuditLogEntryType
-    AUTOMATION_STOP: InstanceAuditLogResponse.AuditLogEntryType
-    AUTOMATION_UPDATE_SETTINGS: InstanceAuditLogResponse.AuditLogEntryType
-    AUTOMATION_APPLY_PRESET: InstanceAuditLogResponse.AuditLogEntryType
-    AUTOMATION_RESET_MEMORY: InstanceAuditLogResponse.AuditLogEntryType
-    AUTOMATION_RESET_COORDINATION: InstanceAuditLogResponse.AuditLogEntryType
-    AUTOMATION_RELEASE_CLAIMS: InstanceAuditLogResponse.AuditLogEntryType
     BOT_DESIRED_STATE_CHANGE: InstanceAuditLogResponse.AuditLogEntryType
     BOT_RESTART: InstanceAuditLogResponse.AuditLogEntryType
     PLUGIN_RPC: InstanceAuditLogResponse.AuditLogEntryType

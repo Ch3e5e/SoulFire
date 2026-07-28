@@ -34,7 +34,6 @@ import {
   type EffectBotSession,
   type EffectSoulFireBot,
   type EffectSoulFireBotControlLease,
-  type EffectSoulFireAutomation,
   type EffectSoulFireCamera,
   type EffectSoulFireAdmin,
   type EffectSoulFireFleet,
@@ -83,7 +82,6 @@ import { SoulFireRegistry as KernelSoulFireRegistry } from "./registry.js";
 import { SoulFireWorld as KernelSoulFireWorld } from "./world.js";
 import { SoulFirePathfinder as KernelSoulFirePathfinder } from "./pathfinding.js";
 import { SoulFireProtocol as KernelSoulFireProtocol } from "./protocol.js";
-import { SoulFireAutomation as KernelSoulFireAutomation } from "./automation.js";
 import { SoulFireCamera as KernelSoulFireCamera } from "./camera.js";
 import { SoulFireAdmin as KernelSoulFireAdmin } from "./admin.js";
 import {
@@ -115,9 +113,7 @@ type PromiseValue<A> =
                   : A extends EffectSoulFireWorld ? SoulFireWorld
                     : A extends EffectSoulFirePathfinder ? SoulFirePathfinder
                       : A extends EffectSoulFireProtocol ? SoulFireProtocol
-                        : A extends EffectSoulFireAutomation
-                          ? SoulFireAutomation
-                          : A extends EffectSoulFireCamera
+                        : A extends EffectSoulFireCamera
                             ? SoulFireCamera
                             : A extends EffectSoulFireAdmin
                               ? SoulFireAdmin
@@ -162,7 +158,6 @@ export type SoulFireRegistry = PromiseApi<EffectSoulFireRegistry>;
 export type SoulFireWorld = PromiseApi<EffectSoulFireWorld>;
 export type SoulFirePathfinder = PromiseApi<EffectSoulFirePathfinder>;
 export type SoulFireProtocol = PromiseApi<EffectSoulFireProtocol>;
-export type SoulFireAutomation = PromiseApi<EffectSoulFireAutomation>;
 export type SoulFireCamera = PromiseApi<EffectSoulFireCamera>;
 export type SoulFireAdmin = PromiseApi<EffectSoulFireAdmin>;
 export type SoulFireFleet =
@@ -225,6 +220,32 @@ export interface PluginCatalog {
 }
 
 type Runtime = ManagedRuntime.ManagedRuntime<never, never>;
+
+const SoulFireEffectBackedTypeId = Symbol.for(
+  "@soulfiremc/sdk/PromiseEffectValue",
+);
+
+interface EffectBacked<T extends object> {
+  readonly [SoulFireEffectBackedTypeId]: T;
+}
+
+/**
+ * Returns the Effect-first bot behind a Promise SDK bot.
+ *
+ * This is intended for Effect-native libraries that expose a Promise facade
+ * without duplicating their implementation.
+ */
+export function toEffectBot(bot: SoulFireBot): EffectSoulFireBot {
+  const effect = (bot as SoulFireBot & EffectBacked<EffectSoulFireBot>)[
+    SoulFireEffectBackedTypeId
+  ];
+  if (effect === undefined) {
+    throw new TypeError(
+      "The bot was not created by the official SoulFire Promise SDK",
+    );
+  }
+  return effect;
+}
 
 export class SoulFire implements AsyncDisposable {
   readonly #runtime: Runtime;
@@ -411,6 +432,9 @@ export class SoulFire implements AsyncDisposable {
     }
     const proxy = new Proxy(value, {
       get: (target, property, receiver) => {
+        if (property === SoulFireEffectBackedTypeId) {
+          return target;
+        }
         const member = Reflect.get(target, property, target) as unknown;
         if (typeof member !== "function") {
           return this.#wrapUnknown(member, `${operation}.${String(property)}`);
@@ -457,7 +481,6 @@ export class SoulFire implements AsyncDisposable {
       || value instanceof KernelSoulFireWorld
       || value instanceof KernelSoulFirePathfinder
       || value instanceof KernelSoulFireProtocol
-      || value instanceof KernelSoulFireAutomation
       || value instanceof KernelSoulFireCamera
       || value instanceof KernelSoulFireAdmin
       || value instanceof KernelReflectivePlugin

@@ -72,9 +72,11 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "pnpm clean && tsc -p tsconfig.build.json",
     "check": "pnpm typecheck && pnpm test && pnpm build && pnpm check:browser",
     "check:browser": "node scripts/check-browser-bundle.mjs",
+    "clean": "node scripts/clean-dist.mjs",
+    "prepack": "pnpm build",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

@@ -137,46 +137,23 @@ Bot event streams stay attached to the configured bot across Minecraft
 reconnects. Stateful consumers can use `bot.observe()` to merge snapshots and
 deltas into a session.
 
-## Coordinate automation
+## Run the beat-game application
 
-`instance.automation` controls SoulFire's persistent multi-bot automation
-engine and exposes its state as an Effect stream:
-
-```ts
-const automation = soulfire.instance(instanceId).automation;
-
-yield* automation.startBeat(botIds);
-
-yield* automation.events({
-  botIds,
-  includeCoordination: true,
-}).pipe(
-  Stream.runForEach((event) =>
-    Effect.logInfo(event.summary ?? "automation update", {
-      kind: event.kind,
-      botId: event.botId,
-      droppedBefore: event.droppedBefore,
-    })
-  ),
-);
-```
-
-The same module can acquire resources, pause, resume, stop, inspect individual
-bot memory, change collaboration and role policies, manage shared claims, tune
-per-bot settings, and reset coordination state. Event kinds cover goals,
-phases, actions, progress, stalls, recovery, deaths, team objectives, claims,
-shared memory, completion, and failure.
-
-Promise applications use the same hierarchy:
+Game-specific progression lives in the separate Effect-first
+`@soulfiremc/beat-game` package. The package consumes only this SDK's public
+bot observations, actions, pathfinding, tasks, control leases, and plugin APIs.
 
 ```ts
-const automation = soulfire.instance(instanceId).automation;
-await automation.acquire("minecraft:bread", 64, botIds);
+import { beatGame } from "@soulfiremc/beat-game";
 
-for await (const event of automation.events({ botIds })) {
-  console.log(event.summary);
-}
+const bot = soulfire.instance(instanceId).bot(botId);
+const run = yield* beatGame(bot);
+const result = yield* run.awaitCompletion;
 ```
+
+The Promise entry point is `@soulfiremc/beat-game/promise`. See the
+[beat-game package guide](../beat-game/README.md) for checkpoint persistence,
+team runs, strategy hooks, events, and reusable behavior programs.
 
 Use `toReadableStream(events)` from `@soulfiremc/sdk/promise` when a Web
 `ReadableStream` fits the surrounding runtime better than `for await`.

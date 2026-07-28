@@ -38,7 +38,6 @@ public class MixinMinecraft {
     if (connection.minecraft().player != null) {
       connection.minecraft().gameRenderer.itemInHandRenderer.tick();
     }
-    connection.automation().tick();
     connection.botControl().tick();
     SoulFireAPI.postEvent(new BotPreTickEvent(connection));
   }

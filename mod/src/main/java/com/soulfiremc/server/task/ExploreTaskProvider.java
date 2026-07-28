@@ -318,29 +318,19 @@ public final class ExploreTaskProvider
           origin.y,
           origin.z + (double) offset.z() * spacing
         );
-        if (
-          context.bot().instanceManager().automationCoordinator()
-            .claimExplorationTarget(
-              context.bot(),
-              dimension,
-              purpose,
-              candidate
-            )
-        ) {
-          target = candidate;
-          path = PathExecutor.createPathfinding(
-            context.bot(),
-            new XZGoal(
-              (int) Math.floor(candidate.x),
-              (int) Math.floor(candidate.z)
-            ),
-            constraint
-          );
-          path.onStarted();
-          stage = Stage.TRAVEL;
-          report("Traveling to exploration frontier");
-          return;
-        }
+        target = candidate;
+        path = PathExecutor.createPathfinding(
+          context.bot(),
+          new XZGoal(
+            (int) Math.floor(candidate.x),
+            (int) Math.floor(candidate.z)
+          ),
+          constraint
+        );
+        path.onStarted();
+        stage = Stage.TRAVEL;
+        report("Traveling to exploration frontier");
+        return;
       }
       complete(
         ExploreCompletionReason
@@ -350,15 +340,6 @@ public final class ExploreTaskProvider
 
     private void travel() {
       var activePath = Objects.requireNonNull(path);
-      if (ticks % 200 == 0 && target != null) {
-        context.bot().instanceManager().automationCoordinator()
-          .claimExplorationTarget(
-            context.bot(),
-            dimension,
-            purpose,
-            target
-          );
-      }
       if (!activePath.isDone()) {
         activePath.tick();
         report(activePath.progress().planning()

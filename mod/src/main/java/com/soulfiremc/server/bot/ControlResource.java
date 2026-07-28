@@ -31,7 +31,7 @@ public enum ControlResource {
   CHAT,
   VEHICLE,
   CAMERA,
-  AUTOMATION;
+  PROTOCOL;
 
   private static final Set<ControlResource> ALL =
     Set.copyOf(EnumSet.allOf(ControlResource.class));

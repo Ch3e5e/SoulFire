@@ -31,8 +31,6 @@ from google.protobuf.struct_pb2 import Value
 from ._auth import BearerAuthInterceptor, BearerAuthInterceptorSync, TokenProvider
 from ._install import LocalServerHandle, LocalSoulFireServer
 from .admin import AsyncSoulFireAdmin, SoulFireAdmin
-from .automation import AsyncSoulFireAutomation, SoulFireAutomation
-from .automation_connect import AutomationServiceClient, AutomationServiceClientSync
 from .bot import AsyncSoulFireBot, SoulFireBot
 from .bot_connect import BotServiceClient, BotServiceClientSync
 from .bot_live_connect import BotLiveServiceClient, BotLiveServiceClientSync
@@ -187,7 +185,6 @@ class AsyncSoulFire:
         self.registry_service = self.service(RegistryServiceClient)
         self.world_service = self.service(WorldServiceClient)
         self.protocol_service = self.service(BotProtocolServiceClient)
-        self.automation_service = self.service(AutomationServiceClient)
         self.client_service = self.service(ClientServiceClient)
         self.command_service = self.service(CommandServiceClient)
         self.download_service = self.service(DownloadServiceClient)
@@ -375,7 +372,6 @@ class AsyncSoulFire:
             self.registry_service,
             self.world_service,
             self.protocol_service,
-            self.automation_service,
             None if self._connection is None else self._connection.capabilities,
             self.instance_live,
         )
@@ -557,7 +553,6 @@ class AsyncSoulFireInstance:
         registry_service: RegistryServiceClient | None = None,
         world_service: WorldServiceClient | None = None,
         protocol_service: BotProtocolServiceClient | None = None,
-        automation_service: AutomationServiceClient | None = None,
         capabilities: CapabilitySet | None = None,
         instance_live: InstanceLiveServiceClient | None = None,
     ) -> None:
@@ -574,15 +569,8 @@ class AsyncSoulFireInstance:
         self._registry_service = registry_service
         self._world_service = world_service
         self._protocol_service = protocol_service
-        self._automation_service = automation_service
         self._capabilities = capabilities
         self._instance_live = instance_live
-
-    @property
-    def automation(self) -> AsyncSoulFireAutomation:
-        if self._automation_service is None:
-            raise RuntimeError("The automation service is unavailable")
-        return AsyncSoulFireAutomation(self.id, self._automation_service)
 
     @property
     def fleet(self) -> AsyncSoulFireFleet:
@@ -974,7 +962,6 @@ class SoulFire:
         self.registry_service = self.service(RegistryServiceClientSync)
         self.world_service = self.service(WorldServiceClientSync)
         self.protocol_service = self.service(BotProtocolServiceClientSync)
-        self.automation_service = self.service(AutomationServiceClientSync)
         self.client_service = self.service(ClientServiceClientSync)
         self.command_service = self.service(CommandServiceClientSync)
         self.download_service = self.service(DownloadServiceClientSync)
@@ -1162,7 +1149,6 @@ class SoulFire:
             self.registry_service,
             self.world_service,
             self.protocol_service,
-            self.automation_service,
             None if self._connection is None else self._connection.capabilities,
             self.instance_live,
         )
@@ -1309,7 +1295,6 @@ class SoulFireInstance:
         registry_service: RegistryServiceClientSync | None = None,
         world_service: WorldServiceClientSync | None = None,
         protocol_service: BotProtocolServiceClientSync | None = None,
-        automation_service: AutomationServiceClientSync | None = None,
         capabilities: CapabilitySet | None = None,
         instance_live: InstanceLiveServiceClientSync | None = None,
     ) -> None:
@@ -1326,15 +1311,8 @@ class SoulFireInstance:
         self._registry_service = registry_service
         self._world_service = world_service
         self._protocol_service = protocol_service
-        self._automation_service = automation_service
         self._capabilities = capabilities
         self._instance_live = instance_live
-
-    @property
-    def automation(self) -> SoulFireAutomation:
-        if self._automation_service is None:
-            raise RuntimeError("The automation service is unavailable")
-        return SoulFireAutomation(self.id, self._automation_service)
 
     @property
     def fleet(self) -> SoulFireFleet:

@@ -13,7 +13,7 @@
     "different-semantics": "SoulFire exposes the concept through a remote, server-authoritative model instead of Mineflayer's in-process object model.",
     "sdk-convenience": "The official SDK composes the behavior from native streams and actions.",
     "server-task": "SoulFire runs the operation as a durable server-side task near the game loop.",
-    "plugin-extension": "A permissioned SoulFire plugin owns the feature and publishes it through plugin RPC, task, event, or automation descriptors.",
+    "plugin-extension": "A permissioned SoulFire plugin owns the feature and publishes it through plugin RPC, task, event, or service descriptors.",
     "raw-protocol": "The stable semantic API does not model this packet-level operation; advanced callers can use the versioned raw protocol API.",
     "intentionally-unsupported": "SoulFire deliberately does not reproduce this in-process extension mechanism."
   },
@@ -36,7 +36,7 @@
       "regex": "^(Player Skin Data|enchantmentTable|anvil\\.|bot\\.setCommandBlock)",
       "soulfire": [
         "Plugin catalog and generated companion SDK",
-        "Plugin-defined RPCs, tasks, events, permissions, and automation extensions"
+        "Plugin-defined RPCs, tasks, events, permissions, and generated companion SDKs"
       ],
       "notes": "These specialized surfaces use typed plugin contracts until a stable cross-version core abstraction is justified."
     },

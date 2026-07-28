@@ -55,7 +55,6 @@ public final class ServerCommandManager {
     CollectCommand.register(dispatcher);
     FollowCommand.register(dispatcher);
     ExcavateCommand.register(dispatcher);
-    AutomationCommand.register(dispatcher);
 
     // Movement controls
     LookAtCommand.register(dispatcher);

@@ -17,11 +17,11 @@ import "google/protobuf/timestamp.proto";
 // BotLiveService - Streaming Events, Interactions, and Pathfinding
 // ============================================================================
 //
-// BotLiveService is the automation-first API surface for SoulFire bots. It
+// BotLiveService is the remote-control API surface for SoulFire bots. It
 // complements BotService (which is polling/snapshot oriented) by providing:
 //
 // - A single streaming event channel per bot (state deltas, chat, lifecycle,
-//   entities, block updates) so automation clients don't need to poll.
+//   entities, block updates) so remote controllers don't need to poll.
 // - High-level imperative actions (dig, place, attack, use, interact) that
 //   target specific coordinates or entity ids rather than relying on the bot's
 //   current look direction.
@@ -701,6 +701,9 @@ message AttackEntityRequest {
   // If true, perform a sprint-boosted critical hit when applicable (swings
   // the main hand and applies knockback).
   bool sprinting = 4;
+  // Observation epoch that produced entity_id. When present, the action fails
+  // if the bot has reconnected since that observation.
+  optional string connection_epoch = 5 [(soulfire.v1.api_field).format = "uuid"];
 }
 
 message AttackEntityResponse {
@@ -717,6 +720,9 @@ message InteractEntityRequest {
   // True if the bot is sneaking during the interaction (affects e.g. whether
   // a villager trade menu opens).
   bool sneaking = 5;
+  // Observation epoch that produced entity_id. When present, the action fails
+  // if the bot has reconnected since that observation.
+  optional string connection_epoch = 6 [(soulfire.v1.api_field).format = "uuid"];
 }
 
 message InteractEntityResponse {
@@ -767,6 +773,9 @@ message MountEntityRequest {
   string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
   int32 entity_id = 3 [(google.api.field_behavior) = REQUIRED];
   Hand hand = 4;
+  // Observation epoch that produced entity_id. When present, the action fails
+  // if the bot has reconnected since that observation.
+  optional string connection_epoch = 5 [(soulfire.v1.api_field).format = "uuid"];
 }
 
 message MountEntityResponse {
@@ -1039,7 +1048,7 @@ message StopPathfindingResponse {
 }
 
 // Exclusive control lease for coordinating multiple SDK clients, scripts, and
-// built-in automation against the same bot.
+// independent SDK controllers and server tasks against the same bot.
 message AcquireBotControlRequest {
   string instance_id = 1 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
   string bot_id = 2 [(google.api.field_behavior) = REQUIRED, (soulfire.v1.api_field).format = "uuid"];
@@ -1080,7 +1089,7 @@ message ReleaseBotControlResponse {
 // Service
 // ============================================================================
 
-// Live bot automation service. See file header for scope and design notes.
+// Live bot remote-control service. See file header for scope and design notes.
 //
 // Permissions:
 // - READ_BOT_INFO: required for WatchBotEvents, GetBlock, FindBlocks,

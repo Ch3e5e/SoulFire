@@ -111,7 +111,6 @@ import {
   SdkService,
   type SdkIdentity,
 } from "./generated/soulfire/sdk_pb.js";
-import { AutomationService } from "./generated/soulfire/automation_pb.js";
 import {
   BotTaskService,
 } from "./generated/soulfire/task_pb.js";
@@ -133,7 +132,6 @@ import {
   SoulFireActionError,
   requireCompletedAction,
 } from "./actions.js";
-import { SoulFireAutomation } from "./automation.js";
 import { SoulFireFleet } from "./fleet.js";
 import { SoulFireCamera } from "./camera.js";
 import { SoulFireAdmin } from "./admin.js";
@@ -383,7 +381,6 @@ export class SoulFire {
       createClient(RegistryService, this.#transport),
       createClient(WorldService, this.#transport),
       createClient(BotProtocolService, this.#transport),
-      createClient(AutomationService, this.#transport),
       this.#connection?.capabilities,
       createClient(InstanceLiveService, this.#transport),
     );
@@ -498,7 +495,6 @@ export class SoulFireInstance {
   readonly #registryClient: Client<typeof RegistryService> | undefined;
   readonly #worldClient: Client<typeof WorldService> | undefined;
   readonly #protocolClient: Client<typeof BotProtocolService> | undefined;
-  readonly #automationClient: Client<typeof AutomationService> | undefined;
   readonly #capabilities: CapabilitySet | undefined;
   readonly #instanceLiveClient:
     | Client<typeof InstanceLiveService>
@@ -518,7 +514,6 @@ export class SoulFireInstance {
     registryClient?: Client<typeof RegistryService>,
     worldClient?: Client<typeof WorldService>,
     protocolClient?: Client<typeof BotProtocolService>,
-    automationClient?: Client<typeof AutomationService>,
     capabilities?: CapabilitySet,
     instanceLiveClient?: Client<typeof InstanceLiveService>,
   ) {
@@ -534,16 +529,8 @@ export class SoulFireInstance {
     this.#registryClient = registryClient;
     this.#worldClient = worldClient;
     this.#protocolClient = protocolClient;
-    this.#automationClient = automationClient;
     this.#capabilities = capabilities;
     this.#instanceLiveClient = instanceLiveClient;
-  }
-
-  public get automation(): SoulFireAutomation {
-    if (this.#automationClient === undefined) {
-      throw new Error("The automation service is unavailable");
-    }
-    return new SoulFireAutomation(this.id, this.#automationClient);
   }
 
   public get fleet(): SoulFireFleet {

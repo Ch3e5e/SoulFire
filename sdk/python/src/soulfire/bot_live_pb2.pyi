@@ -900,16 +900,18 @@ class ReleaseItemResponse(_message.Message):
     def __init__(self, result: _Optional[_Union[BotActionResult, _Mapping]] = ...) -> None: ...
 
 class AttackEntityRequest(_message.Message):
-    __slots__ = ("instance_id", "bot_id", "entity_id", "sprinting")
+    __slots__ = ("instance_id", "bot_id", "entity_id", "sprinting", "connection_epoch")
     INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
     BOT_ID_FIELD_NUMBER: _ClassVar[int]
     ENTITY_ID_FIELD_NUMBER: _ClassVar[int]
     SPRINTING_FIELD_NUMBER: _ClassVar[int]
+    CONNECTION_EPOCH_FIELD_NUMBER: _ClassVar[int]
     instance_id: str
     bot_id: str
     entity_id: int
     sprinting: bool
-    def __init__(self, instance_id: _Optional[str] = ..., bot_id: _Optional[str] = ..., entity_id: _Optional[int] = ..., sprinting: bool = ...) -> None: ...
+    connection_epoch: str
+    def __init__(self, instance_id: _Optional[str] = ..., bot_id: _Optional[str] = ..., entity_id: _Optional[int] = ..., sprinting: bool = ..., connection_epoch: _Optional[str] = ...) -> None: ...
 
 class AttackEntityResponse(_message.Message):
     __slots__ = ("result",)
@@ -918,18 +920,20 @@ class AttackEntityResponse(_message.Message):
     def __init__(self, result: _Optional[_Union[BotActionResult, _Mapping]] = ...) -> None: ...
 
 class InteractEntityRequest(_message.Message):
-    __slots__ = ("instance_id", "bot_id", "entity_id", "hand", "sneaking")
+    __slots__ = ("instance_id", "bot_id", "entity_id", "hand", "sneaking", "connection_epoch")
     INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
     BOT_ID_FIELD_NUMBER: _ClassVar[int]
     ENTITY_ID_FIELD_NUMBER: _ClassVar[int]
     HAND_FIELD_NUMBER: _ClassVar[int]
     SNEAKING_FIELD_NUMBER: _ClassVar[int]
+    CONNECTION_EPOCH_FIELD_NUMBER: _ClassVar[int]
     instance_id: str
     bot_id: str
     entity_id: int
     hand: Hand
     sneaking: bool
-    def __init__(self, instance_id: _Optional[str] = ..., bot_id: _Optional[str] = ..., entity_id: _Optional[int] = ..., hand: _Optional[_Union[Hand, str]] = ..., sneaking: bool = ...) -> None: ...
+    connection_epoch: str
+    def __init__(self, instance_id: _Optional[str] = ..., bot_id: _Optional[str] = ..., entity_id: _Optional[int] = ..., hand: _Optional[_Union[Hand, str]] = ..., sneaking: bool = ..., connection_epoch: _Optional[str] = ...) -> None: ...
 
 class InteractEntityResponse(_message.Message):
     __slots__ = ("result",)
@@ -1000,16 +1004,18 @@ class WakeResponse(_message.Message):
     def __init__(self, result: _Optional[_Union[BotActionResult, _Mapping]] = ...) -> None: ...
 
 class MountEntityRequest(_message.Message):
-    __slots__ = ("instance_id", "bot_id", "entity_id", "hand")
+    __slots__ = ("instance_id", "bot_id", "entity_id", "hand", "connection_epoch")
     INSTANCE_ID_FIELD_NUMBER: _ClassVar[int]
     BOT_ID_FIELD_NUMBER: _ClassVar[int]
     ENTITY_ID_FIELD_NUMBER: _ClassVar[int]
     HAND_FIELD_NUMBER: _ClassVar[int]
+    CONNECTION_EPOCH_FIELD_NUMBER: _ClassVar[int]
     instance_id: str
     bot_id: str
     entity_id: int
     hand: Hand
-    def __init__(self, instance_id: _Optional[str] = ..., bot_id: _Optional[str] = ..., entity_id: _Optional[int] = ..., hand: _Optional[_Union[Hand, str]] = ...) -> None: ...
+    connection_epoch: str
+    def __init__(self, instance_id: _Optional[str] = ..., bot_id: _Optional[str] = ..., entity_id: _Optional[int] = ..., hand: _Optional[_Union[Hand, str]] = ..., connection_epoch: _Optional[str] = ...) -> None: ...
 
 class MountEntityResponse(_message.Message):
     __slots__ = ("result", "vehicle")

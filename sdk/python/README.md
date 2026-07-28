@@ -81,38 +81,17 @@ async with asyncio.TaskGroup() as group:
 Cancellation propagates through unary calls and async iterators. Use
 `asyncio.timeout()` when a group of operations needs one scoped deadline.
 
-## Coordinate automation
+## Build progression applications
 
-`instance.automation` controls SoulFire's persistent multi-bot automation
-engine:
+The Python SDK exposes the same complete observation, action, pathfinding,
+task, control, and plugin surface as TypeScript. It does not expose a native
+server-side beat-game planner.
 
-```python
-automation = soulfire.instance(instance_id).automation
-
-await automation.start_beat(bot_ids)
-
-async for event in automation.events(
-    bot_ids=bot_ids,
-    include_coordination=True,
-):
-    print(event.kind, event.summary, event.dropped_before)
-```
-
-The same module can acquire resources, pause, resume, stop, inspect individual
-bot memory, change collaboration and role policies, manage shared claims, tune
-per-bot settings, and reset coordination state. Event kinds cover goals,
-phases, actions, progress, stalls, recovery, deaths, team objectives, claims,
-shared memory, completion, and failure.
-
-The synchronous client uses the same hierarchy without `await`:
-
-```python
-automation = soulfire.instance(instance_id).automation
-automation.acquire("minecraft:bread", 64, bot_ids)
-
-for event in automation.events(bot_ids=bot_ids):
-    print(event.summary)
-```
+SoulFire's first-party runner currently ships as the separate TypeScript
+package `@soulfiremc/beat-game`. Python applications can compose their own
+policy from the primitives and durable tasks documented below. A future
+Python runner can use the same public boundary without moving strategy into
+the SoulFire server.
 
 ## Orchestrate a fleet
 

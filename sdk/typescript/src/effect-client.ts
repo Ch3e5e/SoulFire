@@ -66,7 +66,6 @@ import { SoulFireRegistry as PromiseSoulFireRegistry } from "./registry.js";
 import { SoulFireWorld as PromiseSoulFireWorld } from "./world.js";
 import { SoulFirePathfinder as PromiseSoulFirePathfinder } from "./pathfinding.js";
 import { SoulFireProtocol as PromiseSoulFireProtocol } from "./protocol.js";
-import { SoulFireAutomation as PromiseSoulFireAutomation } from "./automation.js";
 import { SoulFireCamera as PromiseSoulFireCamera } from "./camera.js";
 import { SoulFireAdmin as PromiseSoulFireAdmin } from "./admin.js";
 import {
@@ -323,9 +322,7 @@ type EffectValue<A> =
                         ? EffectSoulFirePathfinder
                         : A extends PromiseSoulFireProtocol
                           ? EffectSoulFireProtocol
-                          : A extends PromiseSoulFireAutomation
-                            ? EffectSoulFireAutomation
-                            : A extends PromiseSoulFireCamera
+                          : A extends PromiseSoulFireCamera
                               ? EffectSoulFireCamera
                               : A extends PromiseSoulFireAdmin
                                 ? EffectSoulFireAdmin
@@ -389,7 +386,6 @@ export type EffectSoulFirePathfinder = EffectApi<
   SoulFireRpcError | SoulFireTaskFailed
 >;
 export type EffectSoulFireProtocol = EffectApi<PromiseSoulFireProtocol>;
-export type EffectSoulFireAutomation = EffectApi<PromiseSoulFireAutomation>;
 export type EffectSoulFireCamera = EffectApi<PromiseSoulFireCamera>;
 export type EffectSoulFireAdmin = EffectApi<PromiseSoulFireAdmin>;
 export type EffectSoulFireFleet =
@@ -875,7 +871,6 @@ function wrapUnknown(value: unknown, operation: string): unknown {
     || value instanceof PromiseSoulFireWorld
     || value instanceof PromiseSoulFirePathfinder
     || value instanceof PromiseSoulFireProtocol
-    || value instanceof PromiseSoulFireAutomation
     || value instanceof PromiseSoulFireCamera
     || value instanceof PromiseSoulFireAdmin
     || value instanceof PromiseReflectivePlugin

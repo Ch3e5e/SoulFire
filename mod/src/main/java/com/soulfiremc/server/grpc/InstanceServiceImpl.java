@@ -744,15 +744,6 @@ public final class InstanceServiceImpl extends InstanceServiceGrpc.InstanceServi
           .setUser(userBuilder.build())
           .setType(switch (auditLogType) {
             case EXECUTE_COMMAND -> InstanceAuditLogResponse.AuditLogEntryType.EXECUTE_COMMAND;
-            case AUTOMATION_START -> InstanceAuditLogResponse.AuditLogEntryType.AUTOMATION_START;
-            case AUTOMATION_PAUSE -> InstanceAuditLogResponse.AuditLogEntryType.AUTOMATION_PAUSE;
-            case AUTOMATION_RESUME -> InstanceAuditLogResponse.AuditLogEntryType.AUTOMATION_RESUME;
-            case AUTOMATION_STOP -> InstanceAuditLogResponse.AuditLogEntryType.AUTOMATION_STOP;
-            case AUTOMATION_UPDATE_SETTINGS -> InstanceAuditLogResponse.AuditLogEntryType.AUTOMATION_UPDATE_SETTINGS;
-            case AUTOMATION_APPLY_PRESET -> InstanceAuditLogResponse.AuditLogEntryType.AUTOMATION_APPLY_PRESET;
-            case AUTOMATION_RESET_MEMORY -> InstanceAuditLogResponse.AuditLogEntryType.AUTOMATION_RESET_MEMORY;
-            case AUTOMATION_RESET_COORDINATION -> InstanceAuditLogResponse.AuditLogEntryType.AUTOMATION_RESET_COORDINATION;
-            case AUTOMATION_RELEASE_CLAIMS -> InstanceAuditLogResponse.AuditLogEntryType.AUTOMATION_RELEASE_CLAIMS;
             case BOT_DESIRED_STATE_CHANGE -> InstanceAuditLogResponse.AuditLogEntryType.BOT_DESIRED_STATE_CHANGE;
             case BOT_RESTART -> InstanceAuditLogResponse.AuditLogEntryType.BOT_RESTART;
             case PLUGIN_RPC -> InstanceAuditLogResponse.AuditLogEntryType.PLUGIN_RPC;

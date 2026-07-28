@@ -27,7 +27,6 @@ import com.soulfiremc.grpc.generated.MaintainLoadoutTaskResult;
 import com.soulfiremc.grpc.generated.WorldPosition;
 import com.soulfiremc.server.api.BotTaskExecution;
 import com.soulfiremc.server.api.BotTaskProvider;
-import com.soulfiremc.server.automation.AutomationInventory;
 import com.soulfiremc.server.bot.ControlPriority;
 import com.soulfiremc.server.bot.ControlResource;
 import com.soulfiremc.server.bot.ControlStopReason;
@@ -438,7 +437,7 @@ public final class MaintainLoadoutTaskProvider
       var counts = new int[input.getRequirementsCount()];
       for (var index = 0; index < input.getRequirementsCount(); index++) {
         var selector = input.getRequirements(index).getSelector();
-        counts[index] = AutomationInventory.playerInventorySlots(menu)
+        counts[index] = TaskInventorySupport.playerInventorySlots(menu)
           .map(slot -> {
             var stack = menu.getSlot(slot).getItem();
             return InventoryServiceImpl.matches(stack, selector)

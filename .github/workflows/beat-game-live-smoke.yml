@@ -1,0 +1,117 @@
+name: Beat-game live smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: URL of the provisioned SoulFire release candidate
+        required: true
+        type: string
+      instance_id:
+        description: SoulFire instance UUID connected to the fixture server
+        required: true
+        type: string
+      bot_ids:
+        description: Comma-separated bot UUIDs
+        required: true
+        type: string
+      run_id:
+        description: Stable run ID used for restart recovery
+        required: true
+        default: beat-game-live-smoke
+        type: string
+      team_id:
+        description: Stable team ID used for coordinated runs
+        required: true
+        default: beat-game-live-smoke-team
+        type: string
+      crash_after_checkpoints:
+        description: Optional checkpoint count for an intentional hard crash
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: beat-game-live-smoke
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: pnpm
+      - name: Install and build SDK packages
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @soulfiremc/sdk build
+          pnpm --filter @soulfiremc/beat-game build
+      - name: Install packed packages as a consumer
+        run: |
+          package_dir="$RUNNER_TEMP/beat-game-packages"
+          consumer_dir="$RUNNER_TEMP/beat-game-consumer"
+          mkdir -p "$package_dir" "$consumer_dir"
+          pnpm --dir sdk/typescript pack --pack-destination "$package_dir"
+          pnpm --dir sdk/beat-game pack --pack-destination "$package_dir"
+          sdk_archive="$(find "$package_dir" -name 'soulfiremc-sdk-*.tgz' -print -quit)"
+          beat_game_archive="$(find "$package_dir" -name 'soulfiremc-beat-game-*.tgz' -print -quit)"
+          cd "$consumer_dir"
+          npm init --yes
+          npm install --ignore-scripts \
+            "$sdk_archive" \
+            "$beat_game_archive" \
+            effect@3.22.0 \
+            @effect/platform@0.97.0
+          cp "$GITHUB_WORKSPACE/sdk/beat-game/smoke/run-live.mjs" .
+      - name: Run beat-game worker
+        working-directory: ${{ runner.temp }}/beat-game-consumer
+        env:
+          SOULFIRE_SMOKE_BASE_URL: ${{ inputs.base_url }}
+          SOULFIRE_SMOKE_TOKEN: ${{ secrets.SOULFIRE_SMOKE_TOKEN }}
+          SOULFIRE_SMOKE_INSTANCE_ID: ${{ inputs.instance_id }}
+          SOULFIRE_SMOKE_BOT_IDS: ${{ inputs.bot_ids }}
+          SOULFIRE_SMOKE_RUN_ID: ${{ inputs.run_id }}
+          SOULFIRE_SMOKE_TEAM_ID: ${{ inputs.team_id }}
+          SOULFIRE_SMOKE_CHECKPOINT_DIR: ${{ runner.temp }}/beat-game-checkpoints
+          SOULFIRE_SMOKE_CRASH_AFTER_CHECKPOINTS: ${{ inputs.crash_after_checkpoints }}
+        run: |
+          evidence="$RUNNER_TEMP/beat-game-events.ndjson"
+          if [[ -z "$SOULFIRE_SMOKE_CRASH_AFTER_CHECKPOINTS" ]]; then
+            node run-live.mjs | tee "$evidence"
+            exit 0
+          fi
+
+          set +e
+          node run-live.mjs | tee "$evidence"
+          worker_status="${PIPESTATUS[0]}"
+          set -e
+          if [[ "$worker_status" -ne 75 ]]; then
+            echo "Expected the first worker to exit with status 75, got $worker_status"
+            exit 1
+          fi
+
+          SOULFIRE_SMOKE_CRASH_AFTER_CHECKPOINTS="" \
+            node run-live.mjs | tee -a "$evidence"
+      - name: Upload smoke evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: beat-game-smoke-evidence
+          path: |
+            ${{ runner.temp }}/beat-game-checkpoints
+            ${{ runner.temp }}/beat-game-events.ndjson
+          if-no-files-found: warn
+          retention-days: 14

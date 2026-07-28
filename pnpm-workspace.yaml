@@ -1,4 +1,5 @@
 packages:
+  - sdk/beat-game
   - sdk/typescript
 
 allowBuilds:

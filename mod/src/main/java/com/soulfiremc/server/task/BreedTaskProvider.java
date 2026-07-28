@@ -26,7 +26,6 @@ import com.soulfiremc.grpc.generated.PathfindGoal;
 import com.soulfiremc.grpc.generated.WorldPosition;
 import com.soulfiremc.server.api.BotTaskExecution;
 import com.soulfiremc.server.api.BotTaskProvider;
-import com.soulfiremc.server.automation.AutomationInventory;
 import com.soulfiremc.server.bot.ControlPriority;
 import com.soulfiremc.server.bot.ControlResource;
 import com.soulfiremc.server.bot.ControlStopReason;
@@ -364,7 +363,7 @@ public final class BreedTaskProvider implements BotTaskProvider<BreedTask> {
         return;
       }
       if (
-        !AutomationInventory.ensureHolding(
+        !TaskInventorySupport.ensureHolding(
           context.bot(),
           stack -> sharedFood(
             first,
@@ -511,7 +510,7 @@ public final class BreedTaskProvider implements BotTaskProvider<BreedTask> {
     }
 
     private boolean hasSharedFood(Animal first, Animal second) {
-      return AutomationInventory.findInventorySlot(
+      return TaskInventorySupport.findInventorySlot(
         context.bot(),
         stack -> sharedFood(first, second, stack)
       ).isPresent();

@@ -24,7 +24,6 @@ public record PluginContext(
   PluginPermissionRegistry permissions,
   BotTaskProviderRegistry tasks,
   PluginEventRegistry events,
-  PluginAutomationRegistry automation,
   PluginSettingsRegistry settings,
   PluginCommandRegistry commands,
   PluginSdkMetadataRegistry sdk

@@ -26,7 +26,6 @@ import com.soulfiremc.grpc.generated.RangedAttackTask;
 import com.soulfiremc.grpc.generated.RangedAttackTaskResult;
 import com.soulfiremc.server.api.BotTaskExecution;
 import com.soulfiremc.server.api.BotTaskProvider;
-import com.soulfiremc.server.automation.AutomationInventory;
 import com.soulfiremc.server.bot.ControlPriority;
 import com.soulfiremc.server.bot.ControlResource;
 import com.soulfiremc.server.bot.ControlStopReason;
@@ -391,7 +390,7 @@ public final class RangedAttackTaskProvider
 
     private @Nullable ItemStack ensureWeapon() {
       var player = Objects.requireNonNull(context.bot().minecraft().player);
-      var selected = AutomationInventory.playerInventorySlots(
+      var selected = TaskInventorySupport.playerInventorySlots(
           player.inventoryMenu
         )
         .mapToObj(slot -> player.inventoryMenu.getSlot(slot).getItem())
@@ -405,7 +404,7 @@ public final class RangedAttackTaskProvider
         return null;
       }
       var expected = selected.orElseThrow().copy();
-      if (!AutomationInventory.ensureHolding(
+      if (!TaskInventorySupport.ensureHolding(
         context.bot(),
         stack -> ItemStack.isSameItemSameComponents(stack, expected)
       )) {

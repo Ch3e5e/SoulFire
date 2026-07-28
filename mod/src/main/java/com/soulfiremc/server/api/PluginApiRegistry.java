@@ -65,7 +65,6 @@ public final class PluginApiRegistry {
       new PluginPermissionRegistry(this, pluginInfo),
       new BotTaskProviderRegistry(this, pluginInfo),
       new PluginEventRegistry(this, pluginInfo),
-      new PluginAutomationRegistry(this, pluginInfo),
       new PluginSettingsRegistry(this, pluginInfo),
       new PluginCommandRegistry(this, pluginInfo),
       new PluginSdkMetadataRegistry(this, pluginInfo)
@@ -248,40 +247,6 @@ public final class PluginApiRegistry {
 
   synchronized List<PluginEventRegistration<?>> eventTypes(String pluginId) {
     return List.copyOf(requiredState(pluginId).events);
-  }
-
-  synchronized PluginAutomationExtensionRegistration registerAutomationExtension(
-    PluginInfo owner,
-    PluginAutomationExtension extension
-  ) {
-    var state = state(owner);
-    var contribution = Objects.requireNonNull(extension, "extension");
-    validateText("automation extension ID", contribution.id(), PERMISSION_NAME);
-    var fullId = "plugin.%s.%s".formatted(owner.id(), contribution.id());
-    if (plugins.values().stream()
-      .flatMap(plugin -> plugin.automationExtensions.stream())
-      .anyMatch(existing -> existing.id().equals(fullId))) {
-      throw new IllegalStateException("Duplicate plugin automation extension: " + fullId);
-    }
-    var registration = new PluginAutomationExtensionRegistration(owner, contribution);
-    state.automationExtensions.add(registration);
-    return registration;
-  }
-
-  synchronized List<PluginAutomationExtensionRegistration> automationExtensions(
-    String pluginId
-  ) {
-    return List.copyOf(requiredState(pluginId).automationExtensions);
-  }
-
-  public synchronized List<PluginAutomationExtensionRegistration> automationExtensions() {
-    return plugins.values().stream()
-      .flatMap(plugin -> plugin.automationExtensions.stream())
-      .sorted(Comparator
-        .comparingInt(PluginAutomationExtensionRegistration::priority)
-        .reversed()
-        .thenComparing(PluginAutomationExtensionRegistration::id))
-      .toList();
   }
 
   synchronized PluginSettingsPageRegistration registerSettingsPage(
@@ -749,8 +714,6 @@ public final class PluginApiRegistry {
     private final List<PluginRpcRegistration> services = new ArrayList<>();
     private final List<BotTaskProviderRegistration<?, ?>> tasks = new ArrayList<>();
     private final List<PluginEventRegistration<?>> events = new ArrayList<>();
-    private final List<PluginAutomationExtensionRegistration> automationExtensions =
-      new ArrayList<>();
     private final List<PluginSettingsPageRegistration> settingsPages = new ArrayList<>();
     private final List<PluginCommandRegistration> commands = new ArrayList<>();
     private PluginSdkMetadata sdkMetadata = PluginSdkMetadata.experimental();

@@ -23,7 +23,6 @@ import com.soulfiremc.grpc.generated.BrewTaskResult;
 import com.soulfiremc.grpc.generated.ItemSelector;
 import com.soulfiremc.server.api.BotTaskExecution;
 import com.soulfiremc.server.api.BotTaskProvider;
-import com.soulfiremc.server.automation.AutomationInventory;
 import com.soulfiremc.server.bot.ControlPriority;
 import com.soulfiremc.server.bot.ControlResource;
 import com.soulfiremc.server.bot.ControlStopReason;
@@ -659,7 +658,7 @@ public final class BrewTaskProvider implements BotTaskProvider<BrewTask> {
     private static java.util.stream.IntStream playerSlots(
       BrewingStandMenu menu
     ) {
-      return AutomationInventory.playerInventorySlots(menu);
+      return TaskInventorySupport.playerInventorySlots(menu);
     }
 
     private static boolean canDeposit(

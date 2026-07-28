@@ -18,6 +18,8 @@ import "soulfire/world.proto";
 
 // A resource whose mutation must be coordinated between bot tasks.
 enum BotTaskResource {
+  reserved 10;
+  reserved "BOT_TASK_RESOURCE_AUTOMATION";
   BOT_TASK_RESOURCE_UNSPECIFIED = 0;
   BOT_TASK_RESOURCE_MOVEMENT = 1;
   BOT_TASK_RESOURCE_ROTATION = 2;
@@ -28,7 +30,7 @@ enum BotTaskResource {
   BOT_TASK_RESOURCE_CHAT = 7;
   BOT_TASK_RESOURCE_VEHICLE = 8;
   BOT_TASK_RESOURCE_CAMERA = 9;
-  BOT_TASK_RESOURCE_AUTOMATION = 10;
+  BOT_TASK_RESOURCE_PROTOCOL = 11;
 }
 
 enum BotTaskStatus {
