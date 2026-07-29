@@ -52,10 +52,15 @@ public final class PathExecutor implements ControlTask {
     ControlResource.INVENTORY
   );
   private static final int MAX_ERROR_DISTANCE = 20;
+  private static final int MAX_CONSECUTIVE_EMPTY_PARTIAL_ROUTES = 5;
   private final Queue<WorldAction> worldActionQueue = new LinkedBlockingQueue<>();
   private final BotConnection connection;
   private final LiveRouteFinder findPath;
   private final CompletableFuture<Void> pathCompletionFuture;
+  private final PartialRouteProgressGuard partialRouteProgressGuard =
+    new PartialRouteProgressGuard(
+      MAX_CONSECUTIVE_EMPTY_PARTIAL_ROUTES
+    );
   private volatile boolean awaitingPath;
   private int totalMovements;
   private int ticks;
@@ -181,6 +186,7 @@ public final class PathExecutor implements ControlTask {
 
         SFHelpers.mustSupply(() -> switch (routeSearchResult.routeSearchResult()) {
           case RouteFinder.FoundRouteResult foundRouteResult -> () -> {
+            partialRouteProgressGuard.reset();
             var newActions = repositionIfNeeded(foundRouteResult.actions(), routeSearchResult.start(), isInitial, this.findPath);
             if (newActions.isEmpty()) {
               log.info("We're already at the goal!");
@@ -195,6 +201,21 @@ public final class PathExecutor implements ControlTask {
           };
           case RouteFinder.NoRouteFoundResult _ -> throw new IllegalStateException("No route found to the goal!");
           case RouteFinder.PartialRouteResult partialRouteResult -> () -> {
+            if (
+              partialRouteProgressGuard.shouldAbort(
+                partialRouteResult.actions()
+              )
+            ) {
+              awaitingPath = false;
+              pathCompletionFuture.completeExceptionally(
+                new IllegalStateException(
+                  "Pathfinding made no progress across "
+                    + MAX_CONSECUTIVE_EMPTY_PARTIAL_ROUTES
+                    + " consecutive partial routes"
+                )
+              );
+              return;
+            }
             var newActions = addRecalculate(repositionIfNeeded(partialRouteResult.actions(), routeSearchResult.start(), isInitial, this.findPath));
             if (newActions.isEmpty()) {
               log.info("We're already at the goal!");
@@ -319,6 +340,34 @@ public final class PathExecutor implements ControlTask {
 
   public void recalculatePath() {
     submitForPathCalculation(false);
+  }
+
+  static final class PartialRouteProgressGuard {
+    private final int maximumConsecutiveEmptyRoutes;
+    private int consecutiveEmptyRoutes;
+
+    PartialRouteProgressGuard(int maximumConsecutiveEmptyRoutes) {
+      if (maximumConsecutiveEmptyRoutes < 1) {
+        throw new IllegalArgumentException(
+          "maximumConsecutiveEmptyRoutes must be positive"
+        );
+      }
+      this.maximumConsecutiveEmptyRoutes =
+        maximumConsecutiveEmptyRoutes;
+    }
+
+    boolean shouldAbort(List<?> actions) {
+      if (!actions.isEmpty()) {
+        reset();
+        return false;
+      }
+      consecutiveEmptyRoutes++;
+      return consecutiveEmptyRoutes >= maximumConsecutiveEmptyRoutes;
+    }
+
+    void reset() {
+      consecutiveEmptyRoutes = 0;
+    }
   }
 
   private record LiveRouteFinder(

@@ -29,6 +29,7 @@ import com.soulfiremc.server.bot.ControlStopReason;
 import com.soulfiremc.server.bot.ControlTask;
 import com.soulfiremc.server.grpc.InventoryServiceImpl;
 import com.soulfiremc.server.grpc.MinecraftDomainMapper;
+import com.soulfiremc.server.util.SFInventoryHelpers;
 import io.grpc.Status;
 import net.minecraft.network.protocol.game.ServerboundSelectTradePacket;
 import net.minecraft.world.inventory.AbstractContainerMenu;
@@ -277,7 +278,7 @@ public final class VillagerTradeTaskProvider
           : "Preparing next villager trade");
         return;
       }
-      var destination = TaskInventorySupport.playerInventorySlots(menu)
+      var destination = SFInventoryHelpers.playerInventorySlots(menu)
         .filter(slot -> canDeposit(menu, slot, carried))
         .findFirst();
       if (destination.isEmpty()) {
@@ -338,7 +339,7 @@ public final class VillagerTradeTaskProvider
       MerchantMenu menu,
       ItemStack output
     ) {
-      var capacity = TaskInventorySupport.playerInventorySlots(menu)
+      var capacity = SFInventoryHelpers.playerInventorySlots(menu)
         .map(slotIndex -> {
           var slot = menu.getSlot(slotIndex);
           if (!slot.mayPlace(output)) {

@@ -37,6 +37,32 @@ import type {
 const NETHER_PORTAL_REENTRY_COOLDOWN_MS = 10_500;
 const MAXIMUM_ATTACK_NEAREST_RADIUS = 128;
 const MAXIMUM_OPEN_SPACE_HANDOFF_DEPTH = 8;
+const LOG_TO_PLANKS = [
+  ["minecraft:oak_log", "minecraft:oak_planks"],
+  ["minecraft:spruce_log", "minecraft:spruce_planks"],
+  ["minecraft:birch_log", "minecraft:birch_planks"],
+  ["minecraft:jungle_log", "minecraft:jungle_planks"],
+  ["minecraft:acacia_log", "minecraft:acacia_planks"],
+  ["minecraft:dark_oak_log", "minecraft:dark_oak_planks"],
+  ["minecraft:mangrove_log", "minecraft:mangrove_planks"],
+  ["minecraft:cherry_log", "minecraft:cherry_planks"],
+  ["minecraft:pale_oak_log", "minecraft:pale_oak_planks"],
+  ["minecraft:crimson_stem", "minecraft:crimson_planks"],
+  ["minecraft:warped_stem", "minecraft:warped_planks"],
+] as const;
+const RECIPE_UNLOCK_PREREQUISITES: Readonly<Record<
+  string,
+  { readonly itemId: string; readonly count: number }
+>> = {
+  "minecraft:wooden_pickaxe": {
+    itemId: "minecraft:stick",
+    count: 2,
+  },
+  "minecraft:ender_eye": {
+    itemId: "minecraft:blaze_powder",
+    count: 1,
+  },
+};
 
 export interface BeatGameBehaviorOptions {
   readonly path?: Partial<BeatGamePathPolicy>;
@@ -87,6 +113,54 @@ export function collectBlocks(
     searchRadius: options.searchRadius
       ?? defaultBeatGameStrategy.blockSearchRadius,
   }, options.path);
+}
+
+export interface CollectNearbyDropsOptions extends BeatGameBehaviorOptions {
+  readonly radius?: number;
+  readonly maximumDrops?: number;
+  readonly settleDelayMs?: number;
+}
+
+export function collectNearbyDrops(
+  driver: BeatGameDriver,
+  options: CollectNearbyDropsOptions = {},
+): Effect.Effect<void, BeatGameDriverError> {
+  return driver.withControl(Effect.gen(function* () {
+    const settleDelayMs = nonNegativeInteger(
+      options.settleDelayMs ?? 250,
+      "settleDelayMs",
+    );
+    if (settleDelayMs > 0) {
+      yield* Effect.sleep(settleDelayMs);
+    }
+    const observation = yield* driver.observe;
+    const drops = yield* driver.queryEntities({
+      origin: observation.player.position,
+      radius: positiveFiniteNumber(options.radius ?? 8, "radius"),
+      selector: {
+        entityTypes: ["minecraft:item"],
+        alive: true,
+      },
+      maximumResults: positiveInteger(
+        options.maximumDrops ?? 16,
+        "maximumDrops",
+      ),
+    });
+    for (const drop of drops) {
+      if (
+        drop.entityType !== "minecraft:item"
+        || !drop.alive
+        || drop.itemId === undefined
+      ) {
+        continue;
+      }
+      yield* driver.pathfind(
+        drop.position,
+        0.5,
+        mergePathPolicy(options.path),
+      ).pipe(Effect.catchAll(() => Effect.void));
+    }
+  }));
 }
 
 export interface ExcavateOptions extends BeatGameBehaviorOptions {
@@ -4372,6 +4446,26 @@ function craftItemDependencies(
   }
   return Effect.gen(function* () {
     const recipes = yield* driver.recipesFor(resultItemId);
+    if (recipes.length === 0) {
+      const unlocked = yield* unlockRecipePrerequisite(
+        driver,
+        resultItemId,
+        options,
+        [...ancestors, resultItemId],
+        remainingDepth - 1,
+      );
+      if (unlocked) {
+        yield* Effect.sleep(100);
+        return yield* craftItemDependencies(
+          driver,
+          resultItemId,
+          requestedCount,
+          options,
+          ancestors,
+          remainingDepth - 1,
+        );
+      }
+    }
     let lastFailure: BeatGameDriverError | undefined;
     recipeLoop:
     for (const recipe of recipes) {
@@ -4431,4 +4525,45 @@ function craftItemDependencies(
       `No known recipe can currently produce ${resultItemId}`,
     ));
   });
+}
+
+function unlockRecipePrerequisite(
+  driver: BeatGameDriver,
+  resultItemId: string,
+  options: CraftItemOptions,
+  ancestors: readonly string[],
+  remainingDepth: number,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  const prerequisite = RECIPE_UNLOCK_PREREQUISITES[resultItemId];
+  if (prerequisite !== undefined) {
+    return craftItemDependencies(
+      driver,
+      prerequisite.itemId,
+      prerequisite.count,
+      options,
+      ancestors,
+      remainingDepth,
+    ).pipe(Effect.as(true));
+  }
+  if (resultItemId === "minecraft:crafting_table") {
+    return driver.observe.pipe(
+      Effect.flatMap((observation) => {
+        const material = LOG_TO_PLANKS.find(([log]) =>
+          (observation.inventory.counts[log] ?? 0) > 0
+        );
+        if (material === undefined) {
+          return Effect.succeed(false);
+        }
+        return craftItemDependencies(
+          driver,
+          material[1],
+          4,
+          options,
+          ancestors,
+          remainingDepth,
+        ).pipe(Effect.as(true));
+      }),
+    );
+  }
+  return Effect.succeed(false);
 }

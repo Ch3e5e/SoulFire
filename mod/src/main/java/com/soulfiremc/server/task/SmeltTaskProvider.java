@@ -36,6 +36,7 @@ import com.soulfiremc.server.pathfinding.graph.constraint.NoBlockBreakingConstra
 import com.soulfiremc.server.pathfinding.graph.constraint.NoBlockPlacingConstraint;
 import com.soulfiremc.server.pathfinding.graph.constraint.PathConstraintImpl;
 import com.soulfiremc.server.recipe.RecipeSupport;
+import com.soulfiremc.server.util.SFInventoryHelpers;
 import io.grpc.Status;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -497,7 +498,7 @@ public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
         );
         return;
       }
-      var target = TaskInventorySupport.playerInventorySlots(menu)
+      var target = SFInventoryHelpers.playerInventorySlots(menu)
         .filter(slot -> canDeposit(menu, slot, carried))
         .findFirst();
       if (target.isEmpty()) {
@@ -527,7 +528,7 @@ public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
       Predicate<ItemStack> selector,
       String missingMessage
     ) {
-      var source = TaskInventorySupport.playerInventorySlots(menu)
+      var source = SFInventoryHelpers.playerInventorySlots(menu)
         .filter(slot -> selector.test(menu.getSlot(slot).getItem()))
         .findFirst();
       if (source.isEmpty()) {

@@ -19,6 +19,10 @@ package com.soulfiremc.server.util;
 
 import lombok.extern.slf4j.Slf4j;
 import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.inventory.AbstractFurnaceMenu;
+import net.minecraft.world.inventory.ChestMenu;
+import net.minecraft.world.inventory.CraftingMenu;
 import net.minecraft.world.inventory.InventoryMenu;
 import net.minecraft.world.item.ItemStack;
 
@@ -79,5 +83,57 @@ public final class SFInventoryHelpers {
     return IntStream.range(5, 9)
       .filter(intPredicate)
       .findFirst();
+  }
+
+  public static IntStream playerInventorySlots(AbstractContainerMenu menu) {
+    var layout = menuLayout(menu);
+    var main = IntStream.range(
+      layout.playerInventoryStart(),
+      Math.min(layout.hotbarStart(), menu.slots.size())
+    );
+    var hotbar = IntStream.range(
+      layout.hotbarStart(),
+      Math.min(layout.hotbarStart() + 9, menu.slots.size())
+    );
+    if (
+      layout.offhandSlot() >= 0
+        && layout.offhandSlot() < menu.slots.size()
+    ) {
+      return IntStream.concat(
+        IntStream.concat(hotbar, main),
+        IntStream.of(layout.offhandSlot())
+      );
+    }
+    return IntStream.concat(hotbar, main);
+  }
+
+  private static MenuLayout menuLayout(AbstractContainerMenu menu) {
+    if (menu instanceof InventoryMenu) {
+      return new MenuLayout(9, 36, 45);
+    }
+    if (menu instanceof ChestMenu chestMenu) {
+      var containerSize = chestMenu.getRowCount() * 9;
+      return new MenuLayout(containerSize, containerSize + 27, -1);
+    }
+    if (menu instanceof AbstractFurnaceMenu) {
+      return new MenuLayout(3, 30, -1);
+    }
+    if (menu instanceof CraftingMenu) {
+      return new MenuLayout(10, 37, -1);
+    }
+
+    var containerSlots = Math.max(0, menu.slots.size() - 36);
+    return new MenuLayout(
+      containerSlots,
+      Math.max(containerSlots, menu.slots.size() - 9),
+      -1
+    );
+  }
+
+  private record MenuLayout(
+    int playerInventoryStart,
+    int hotbarStart,
+    int offhandSlot
+  ) {
   }
 }

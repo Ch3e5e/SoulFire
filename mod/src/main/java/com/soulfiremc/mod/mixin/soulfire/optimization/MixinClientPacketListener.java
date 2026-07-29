@@ -40,18 +40,4 @@ public class MixinClientPacketListener {
     ci.cancel();
   }
 
-  @Inject(method = "handleRecipeBookAdd", at = @At("HEAD"), cancellable = true)
-  public void handleRecipeBookAddHook(CallbackInfo ci) {
-    ci.cancel();
-  }
-
-  @Inject(method = "handleRecipeBookRemove", at = @At("HEAD"), cancellable = true)
-  public void handleRecipeBookRemoveHook(CallbackInfo ci) {
-    ci.cancel();
-  }
-
-  @Inject(method = "handleRecipeBookSettings", at = @At("HEAD"), cancellable = true)
-  public void handleRecipeBookSettingsHook(CallbackInfo ci) {
-    ci.cancel();
-  }
 }

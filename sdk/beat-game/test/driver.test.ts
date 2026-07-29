@@ -1,6 +1,7 @@
 import {
   BotTaskConflictPolicy,
   BotTaskReconnectPolicy,
+  InventoryArea,
   SoulFireTaskError,
   SoulFireTaskFailed,
   type SoulFireBot,
@@ -68,7 +69,28 @@ function effectBot(
         Effect.succeed({
           revision: 9n,
           selectedHotbarSlot: 2,
-          slots: [],
+          slots: [
+            {
+              slot: 10,
+              area: InventoryArea.MAIN,
+              item: { itemId: "minecraft:spruce_log", count: 3 },
+            },
+            {
+              slot: 36,
+              area: InventoryArea.HOTBAR,
+              item: { itemId: "minecraft:spruce_log", count: 2 },
+            },
+            {
+              slot: 1,
+              area: InventoryArea.CRAFTING,
+              item: { itemId: "minecraft:spruce_log", count: 1 },
+            },
+            {
+              slot: 0,
+              area: InventoryArea.CONTAINER,
+              item: { itemId: "minecraft:diamond", count: 64 },
+            },
+          ],
         }),
       selectHotbar: () => Effect.succeed({}),
     },
@@ -134,7 +156,8 @@ describe("production SoulFire beat-game driver", () => {
     expect(current.inventory).toMatchObject({
       revision: 9n,
       selectedHotbarSlot: 2,
-      counts: {},
+      counts: { "minecraft:spruce_log": 5 },
+      hotbar: { 36: "minecraft:spruce_log" },
     });
   });
 

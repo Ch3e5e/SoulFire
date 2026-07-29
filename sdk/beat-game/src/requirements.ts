@@ -18,6 +18,36 @@ const REQUIREMENTS: Readonly<
   Record<BeatGamePhase, readonly BeatGameRequirementDefinition[]>
 > = {
   [BeatGamePhase.PREPARE_OVERWORLD]: [
+    itemRequirement("logs", [
+      "minecraft:oak_log",
+      "minecraft:spruce_log",
+      "minecraft:birch_log",
+      "minecraft:jungle_log",
+      "minecraft:acacia_log",
+      "minecraft:dark_oak_log",
+      "minecraft:mangrove_log",
+      "minecraft:cherry_log",
+      "minecraft:pale_oak_log",
+      "minecraft:crimson_stem",
+      "minecraft:warped_stem",
+    ], ({ targetLogCount }) => targetLogCount, 120),
+    itemRequirement(
+      "cobblestone",
+      ["minecraft:cobblestone"],
+      ({ targetCobblestoneCount }) => targetCobblestoneCount,
+      110,
+    ),
+    itemRequirement(
+      "melee-weapon",
+      [
+        "minecraft:netherite_sword",
+        "minecraft:diamond_sword",
+        "minecraft:iron_sword",
+        "minecraft:stone_sword",
+      ],
+      () => 1,
+      105,
+    ),
     itemRequirement("food", [
       "minecraft:cooked_beef",
       "minecraft:cooked_porkchop",
@@ -35,25 +65,6 @@ const REQUIREMENTS: Readonly<
       "minecraft:potato",
       "minecraft:apple",
     ], ({ targetFoodCount }) => targetFoodCount, 100),
-    itemRequirement("logs", [
-      "minecraft:oak_log",
-      "minecraft:spruce_log",
-      "minecraft:birch_log",
-      "minecraft:jungle_log",
-      "minecraft:acacia_log",
-      "minecraft:dark_oak_log",
-      "minecraft:mangrove_log",
-      "minecraft:cherry_log",
-      "minecraft:pale_oak_log",
-      "minecraft:crimson_stem",
-      "minecraft:warped_stem",
-    ], ({ targetLogCount }) => targetLogCount, 90),
-    itemRequirement(
-      "cobblestone",
-      ["minecraft:cobblestone"],
-      ({ targetCobblestoneCount }) => targetCobblestoneCount,
-      80,
-    ),
     itemRequirement(
       "iron",
       ["minecraft:iron_ingot"],

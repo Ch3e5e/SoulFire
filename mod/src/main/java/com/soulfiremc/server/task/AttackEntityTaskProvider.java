@@ -32,10 +32,13 @@ import com.soulfiremc.server.bot.ControlTask;
 import com.soulfiremc.server.grpc.InventoryServiceImpl;
 import com.soulfiremc.server.pathfinding.PathfindingSupport;
 import com.soulfiremc.server.pathfinding.execution.PathExecutor;
+import com.soulfiremc.server.util.SFInventoryHelpers;
 import com.soulfiremc.server.util.SFItemHelpers;
 import io.grpc.Status;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Objects;
@@ -91,7 +94,7 @@ public final class AttackEntityTaskProvider
       .setEntity(PathfindGoal.EntityGoal.newBuilder()
         .setEntityId(target.getNetworkId())
         .setConnectionEpoch(target.getConnectionEpoch())
-        .setRadius(attackRange))
+        .setRadius(pathfindingApproachRange(attackRange)))
       .build();
     var resolved = PathfindingSupport.resolveGoal(context.bot(), goal);
     var constraint = PathfindingSupport.buildConstraint(
@@ -137,6 +140,17 @@ public final class AttackEntityTaskProvider
         .asRuntimeException();
     }
     return value;
+  }
+
+  static float pathfindingApproachRange(float attackRange) {
+    return Math.max(1.0F, attackRange - 2.0F);
+  }
+
+  static double distanceToBoundingBox(Vec3 position, AABB box) {
+    var x = Math.max(box.minX - position.x, Math.max(0, position.x - box.maxX));
+    var y = Math.max(box.minY - position.y, Math.max(0, position.y - box.maxY));
+    var z = Math.max(box.minZ - position.z, Math.max(0, position.z - box.maxZ));
+    return Math.sqrt(x * x + y * y + z * z);
   }
 
   private static final class AttackControl implements ControlTask {
@@ -238,7 +252,10 @@ public final class AttackEntityTaskProvider
       }
 
       var visiblePoint = entity.getEyePosition();
-      var distance = visiblePoint.distanceTo(player.getEyePosition());
+      var distance = distanceToBoundingBox(
+        player.getEyePosition(),
+        entity.getBoundingBox()
+      );
       if (ticks % 20 == 0) {
         context.reportProgress(BotTaskProgress.newBuilder()
           .setMessage(distance <= attackRange
@@ -358,7 +375,7 @@ public final class AttackEntityTaskProvider
         return true;
       }
       var player = Objects.requireNonNull(context.bot().minecraft().player);
-      var best = TaskInventorySupport.playerInventorySlots(
+      var best = SFInventoryHelpers.playerInventorySlots(
           player.inventoryMenu
         )
         .mapToObj(slot -> player.inventoryMenu.getSlot(slot).getItem())

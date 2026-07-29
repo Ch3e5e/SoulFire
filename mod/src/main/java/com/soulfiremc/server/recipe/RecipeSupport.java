@@ -17,6 +17,7 @@
  */
 package com.soulfiremc.server.recipe;
 
+import com.soulfiremc.mod.mixin.soulfire.ClientRecipeBookAccessor;
 import com.soulfiremc.server.bot.BotConnection;
 import io.grpc.Status;
 import net.minecraft.util.context.ContextMap;
@@ -41,8 +42,10 @@ public final class RecipeSupport {
       "Bot player is not available"
     );
     var byId = new LinkedHashMap<Integer, RecipeDisplayEntry>();
-    player.getRecipeBook().getCollections().stream()
-      .flatMap(collection -> collection.getRecipes().stream())
+    ((ClientRecipeBookAccessor) player.getRecipeBook())
+      .soulfire$getKnownRecipes()
+      .values()
+      .stream()
       .forEach(entry -> byId.put(entry.id().index(), entry));
     return List.copyOf(byId.values());
   }

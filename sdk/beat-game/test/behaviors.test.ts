@@ -9,6 +9,7 @@ import {
   castNetherPortal,
   collectDragonEgg,
   collectBlocks,
+  collectNearbyDrops,
   craftItem,
   createNetherPortalFrame,
   enterEndPortal,
@@ -154,6 +155,67 @@ function queriedBlockPosition(
 }
 
 describe("beat-game behavior programs", () => {
+  it("sweeps nearby item entities into pickup range", async () => {
+    const driver = new FakeBeatGameDriver();
+    const position = {
+      x: 4,
+      y: 64,
+      z: -2,
+      dimension: "minecraft:overworld",
+    };
+    driver.currentObservation = observation({ position });
+    driver.entityResults = [
+      {
+        connectionEpoch: "epoch-1",
+        networkId: 10,
+        entityType: "minecraft:item",
+        itemId: "minecraft:mutton",
+        position: {
+          x: 6,
+          y: 64,
+          z: -2,
+          dimension: "minecraft:overworld",
+        },
+        velocity: { x: 0, y: 0, z: 0 },
+        alive: true,
+        observedAt: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        connectionEpoch: "epoch-1",
+        networkId: 11,
+        entityType: "minecraft:sheep",
+        position: {
+          x: 7,
+          y: 64,
+          z: -2,
+          dimension: "minecraft:overworld",
+        },
+        velocity: { x: 0, y: 0, z: 0 },
+        alive: true,
+        observedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ];
+
+    await Effect.runPromise(collectNearbyDrops(driver, {
+      settleDelayMs: 0,
+    }));
+
+    expect(driver.entityQueries).toEqual([{
+      origin: position,
+      radius: 8,
+      selector: {
+        entityTypes: ["minecraft:item"],
+        alive: true,
+      },
+      maximumResults: 16,
+    }]);
+    expect(driver.paths).toEqual([expect.objectContaining({
+      position: driver.entityResults[0]?.position,
+      radius: 0.5,
+    })]);
+    expect(driver.maximumActiveControlScopes).toBe(1);
+  });
+
   it("delegates reusable collection to the durable generic task", async () => {
     const driver = new FakeBeatGameDriver();
 
@@ -1268,6 +1330,146 @@ describe("beat-game behavior programs", () => {
       {
         type: "craft",
         recipeId: "stick",
+        count: 1,
+      },
+    ]);
+  });
+
+  it("unlocks the crafting table recipe by producing planks first", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      counts: { "minecraft:oak_log": 1 },
+    });
+    let planksCrafted = false;
+    driver.recipeResolver = (resultItemId) => {
+      if (resultItemId === "minecraft:oak_planks") {
+        return [{
+          recipeId: "planks",
+          recipeType: "crafting",
+          resultItemId,
+          resultCount: 4,
+          ingredients: [{
+            itemIds: ["minecraft:oak_log"],
+            tags: [],
+            count: 1,
+          }],
+        }];
+      }
+      if (
+        resultItemId === "minecraft:crafting_table"
+        && planksCrafted
+      ) {
+        return [{
+          recipeId: "crafting-table",
+          recipeType: "crafting",
+          resultItemId,
+          resultCount: 1,
+          ingredients: [{
+            itemIds: ["minecraft:oak_planks"],
+            tags: [],
+            count: 4,
+          }],
+        }];
+      }
+      return [];
+    };
+    driver.craftabilityResolver = () => ({
+      canCraft: true,
+      maximumCraftCount: 64,
+      missing: [],
+    });
+    driver.taskObserver = (task) => {
+      if (task.type === "craft" && task.recipeId === "planks") {
+        planksCrafted = true;
+      }
+    };
+
+    await Effect.runPromise(craftItem(driver, {
+      resultItemId: "minecraft:crafting_table",
+      count: 1,
+    }));
+
+    expect(driver.tasks.filter(({ type }) => type === "craft")).toEqual([
+      {
+        type: "craft",
+        recipeId: "planks",
+        count: 1,
+      },
+      {
+        type: "craft",
+        recipeId: "crafting-table",
+        count: 1,
+      },
+    ]);
+  });
+
+  it("unlocks the wooden pickaxe recipe by producing sticks first", async () => {
+    const driver = new FakeBeatGameDriver();
+    let sticksCrafted = false;
+    driver.recipeResolver = (resultItemId) => {
+      if (resultItemId === "minecraft:stick") {
+        return [{
+          recipeId: "stick",
+          recipeType: "crafting",
+          resultItemId,
+          resultCount: 4,
+          ingredients: [{
+            itemIds: ["minecraft:spruce_planks"],
+            tags: [],
+            count: 2,
+          }],
+        }];
+      }
+      if (
+        resultItemId === "minecraft:wooden_pickaxe"
+        && sticksCrafted
+      ) {
+        return [{
+          recipeId: "wooden-pickaxe",
+          recipeType: "crafting",
+          resultItemId,
+          resultCount: 1,
+          ingredients: [
+            {
+              itemIds: ["minecraft:spruce_planks"],
+              tags: [],
+              count: 3,
+            },
+            {
+              itemIds: ["minecraft:stick"],
+              tags: [],
+              count: 2,
+            },
+          ],
+        }];
+      }
+      return [];
+    };
+    driver.craftabilityResolver = () => ({
+      canCraft: true,
+      maximumCraftCount: 64,
+      missing: [],
+    });
+    driver.taskObserver = (task) => {
+      if (task.type === "craft" && task.recipeId === "stick") {
+        sticksCrafted = true;
+      }
+    };
+
+    await Effect.runPromise(craftItem(driver, {
+      resultItemId: "minecraft:wooden_pickaxe",
+      count: 1,
+    }));
+
+    expect(driver.tasks.filter(({ type }) => type === "craft")).toEqual([
+      {
+        type: "craft",
+        recipeId: "stick",
+        count: 1,
+      },
+      {
+        type: "craft",
+        recipeId: "wooden-pickaxe",
         count: 1,
       },
     ]);

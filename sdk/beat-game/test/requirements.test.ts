@@ -35,9 +35,10 @@ describe("beat-game requirements", () => {
     );
 
     expect(requirements.map(({ key }) => key)).toEqual([
-      "food",
       "logs",
       "cobblestone",
+      "melee-weapon",
+      "food",
       "iron",
       "pickaxe",
       "water-bucket",

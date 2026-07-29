@@ -23,6 +23,7 @@ import com.soulfiremc.server.bot.BotConnection;
 import com.soulfiremc.server.bot.BotThreadExecution;
 import com.soulfiremc.server.recipe.RecipeSupport;
 import com.soulfiremc.server.user.PermissionContext;
+import com.soulfiremc.server.util.SFInventoryHelpers;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
@@ -133,8 +134,12 @@ public final class RecipeServiceImpl
           bot.minecraft().player,
           "Bot player is not available"
         );
+        var menu = player.containerMenu;
+        var inventory = SFInventoryHelpers.playerInventorySlots(menu)
+          .mapToObj(slot -> menu.getSlot(slot).getItem())
+          .toList();
         var contents = new StackedContents<Holder<Item>>();
-        for (var stack : player.getInventory().getNonEquipmentItems()) {
+        for (var stack : inventory) {
           if (!stack.isEmpty()) {
             contents.account(stack.typeHolder(), stack.getCount());
           }
@@ -153,7 +158,7 @@ public final class RecipeServiceImpl
         }
         if (maximum < requested) {
           for (var ingredient : groupIngredients(requirements)) {
-            var available = available(player.getInventory().getNonEquipmentItems(), ingredient);
+            var available = available(inventory, ingredient);
             var needed = Math.multiplyExact(ingredient.count, requested);
             if (available < needed) {
               response.addMissing(MissingIngredient.newBuilder()

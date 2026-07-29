@@ -34,6 +34,7 @@ import com.soulfiremc.server.pathfinding.graph.constraint.NoBlockBreakingConstra
 import com.soulfiremc.server.pathfinding.graph.constraint.NoBlockPlacingConstraint;
 import com.soulfiremc.server.pathfinding.graph.constraint.PathConstraintImpl;
 import com.soulfiremc.server.recipe.RecipeSupport;
+import com.soulfiremc.server.util.SFInventoryHelpers;
 import io.grpc.Status;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -394,7 +395,7 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
         transition(Stage.PLACE_RECIPE, "Preparing next craft");
         return;
       }
-      var target = TaskInventorySupport.playerInventorySlots(menu)
+      var target = SFInventoryHelpers.playerInventorySlots(menu)
         .filter(slot -> canDeposit(menu, slot, carried))
         .findFirst();
       if (target.isEmpty()) {

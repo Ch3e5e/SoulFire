@@ -180,6 +180,17 @@ const program = Effect.scoped(Effect.gen(function* () {
           ],
         }),
         create(SettingsNamespaceSchema, {
+          namespace: "client-settings",
+          entries: [
+            create(SettingsNamespace_SettingsEntrySchema, {
+              key: "render-distance",
+              value: create(ValueSchema, {
+                kind: { case: "numberValue", value: 10 },
+              }),
+            }),
+          ],
+        }),
+        create(SettingsNamespaceSchema, {
           namespace: "pathfinding",
           entries: [
             create(SettingsNamespace_SettingsEntrySchema, {
@@ -283,8 +294,44 @@ const program = Effect.scoped(Effect.gen(function* () {
     path.join(artifactDirectory, "checkpoints"),
   );
   const baseDriver = makeSoulFireBeatGameDriver(bot);
+  yield* baseDriver.waitForChunks(4, 60_000);
+  yield* record("bot-chunks-ready", { radiusChunks: 4 });
+  let lastObservedInventoryRevision: bigint | undefined;
   const driver = {
     ...baseDriver,
+    observe: baseDriver.observe.pipe(
+      Effect.tap((observation) => {
+        if (
+          observation.inventory.revision === lastObservedInventoryRevision
+        ) {
+          return Effect.void;
+        }
+        lastObservedInventoryRevision = observation.inventory.revision;
+        return record("inventory-observed", {
+          revision: observation.inventory.revision,
+          counts: observation.inventory.counts,
+        }).pipe(Effect.orDie);
+      }),
+    ),
+    recipesFor: (resultItemId: string) =>
+      baseDriver.recipesFor(resultItemId).pipe(
+        Effect.tap((recipes) =>
+          record("recipes-observed", {
+            resultItemId,
+            recipes,
+          }).pipe(Effect.orDie)
+        ),
+      ),
+    canCraft: (recipeId: string, count: number) =>
+      baseDriver.canCraft(recipeId, count).pipe(
+        Effect.tap((craftability) =>
+          record("craftability-observed", {
+            recipeId,
+            count,
+            craftability,
+          }).pipe(Effect.orDie)
+        ),
+      ),
     queryBlocks: (query: Parameters<typeof baseDriver.queryBlocks>[0]) =>
       baseDriver.queryBlocks(query).pipe(
         Effect.tap((blocks) =>

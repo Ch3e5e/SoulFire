@@ -37,6 +37,7 @@ import com.soulfiremc.server.pathfinding.SFVec3i;
 import com.soulfiremc.server.pathfinding.execution.PathExecutor;
 import com.soulfiremc.server.pathfinding.goals.CloseToPosGoal;
 import com.soulfiremc.server.pathfinding.graph.constraint.PathConstraint;
+import com.soulfiremc.server.util.SFInventoryHelpers;
 import io.grpc.Status;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -437,7 +438,7 @@ public final class MaintainLoadoutTaskProvider
       var counts = new int[input.getRequirementsCount()];
       for (var index = 0; index < input.getRequirementsCount(); index++) {
         var selector = input.getRequirements(index).getSelector();
-        counts[index] = TaskInventorySupport.playerInventorySlots(menu)
+        counts[index] = SFInventoryHelpers.playerInventorySlots(menu)
           .map(slot -> {
             var stack = menu.getSlot(slot).getItem();
             return InventoryServiceImpl.matches(stack, selector)

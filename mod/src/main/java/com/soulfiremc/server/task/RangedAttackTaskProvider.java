@@ -34,6 +34,7 @@ import com.soulfiremc.server.grpc.InventoryServiceImpl;
 import com.soulfiremc.server.pathfinding.PathfindingSupport;
 import com.soulfiremc.server.pathfinding.execution.PathExecutor;
 import com.soulfiremc.server.plugins.KillAura;
+import com.soulfiremc.server.util.SFInventoryHelpers;
 import io.grpc.Status;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
@@ -390,7 +391,7 @@ public final class RangedAttackTaskProvider
 
     private @Nullable ItemStack ensureWeapon() {
       var player = Objects.requireNonNull(context.bot().minecraft().player);
-      var selected = TaskInventorySupport.playerInventorySlots(
+      var selected = SFInventoryHelpers.playerInventorySlots(
           player.inventoryMenu
         )
         .mapToObj(slot -> player.inventoryMenu.getSlot(slot).getItem())

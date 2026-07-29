@@ -18,6 +18,7 @@ import {
   castNetherPortal,
   collectDragonEgg,
   collectBlocks,
+  collectNearbyDrops,
   craftItem,
   eatWhenNeeded,
   enterEndPortal,
@@ -1212,7 +1213,40 @@ function satisfyRequirement(
         "find-food-animals",
       );
     case "logs":
+      return collectBlocksOrExplore(state, observation, {
+        blockIds: requirement.itemIds,
+        tags: requirement.tags,
+        count: missing,
+        progressItemIds: requirement.itemIds,
+        purpose: "find-logs",
+      });
     case "cobblestone":
+      return ensureMiningPickaxe(
+        state,
+        observation,
+        "minecraft:wooden_pickaxe",
+        [
+          "minecraft:wooden_pickaxe",
+          "minecraft:stone_pickaxe",
+          "minecraft:iron_pickaxe",
+          "minecraft:diamond_pickaxe",
+          "minecraft:netherite_pickaxe",
+        ],
+      ).pipe(
+        Effect.zipRight(collectBlocksOrExplore(state, observation, {
+          blockIds: ["minecraft:stone"],
+          count: missing,
+          progressItemIds: ["minecraft:cobblestone"],
+          purpose: "find-stone",
+        })),
+      );
+    case "melee-weapon":
+      return craftWithTable(
+        state,
+        observation,
+        "minecraft:stone_sword",
+        1,
+      );
     case "obsidian":
       return acquire(state.driver, requirement, {
         searchRadius: state.strategy.blockSearchRadius,
@@ -1251,15 +1285,27 @@ function satisfyRequirement(
           ),
         );
       }
-      return collectBlocks(state.driver, {
-        blockIds: [
-          "minecraft:iron_ore",
-          "minecraft:deepslate_iron_ore",
+      return ensureMiningPickaxe(
+        state,
+        observation,
+        "minecraft:stone_pickaxe",
+        [
+          "minecraft:stone_pickaxe",
+          "minecraft:iron_pickaxe",
+          "minecraft:diamond_pickaxe",
+          "minecraft:netherite_pickaxe",
         ],
-        count: missing - rawIron,
-        searchRadius: state.strategy.blockSearchRadius,
-        path: state.strategy.path,
-      });
+      ).pipe(
+        Effect.zipRight(collectBlocks(state.driver, {
+          blockIds: [
+            "minecraft:iron_ore",
+            "minecraft:deepslate_iron_ore",
+          ],
+          count: missing - rawIron,
+          searchRadius: state.strategy.blockSearchRadius,
+          path: state.strategy.path,
+        })),
+      );
     }
     case "pickaxe":
       return craftWithTable(
@@ -1381,6 +1427,59 @@ function satisfyRequirement(
         ),
       );
   }
+}
+
+function ensureMiningPickaxe(
+  state: RunState,
+  observation: BeatGameObservation,
+  resultItemId: "minecraft:wooden_pickaxe" | "minecraft:stone_pickaxe",
+  usableItemIds: readonly string[],
+): Effect.Effect<void, BeatGameDriverError> {
+  return usableItemIds.some((itemId) =>
+      (observation.inventory.counts[itemId] ?? 0) > 0
+    )
+    ? Effect.void
+    : craftWithTable(state, observation, resultItemId, 1);
+}
+
+function collectBlocksOrExplore(
+  state: RunState,
+  observation: BeatGameObservation,
+  options: {
+    readonly blockIds: readonly string[];
+    readonly tags?: readonly string[];
+    readonly count: number;
+    readonly progressItemIds: readonly string[];
+    readonly purpose: string;
+  },
+): Effect.Effect<void, BeatGameDriverError> {
+  const countItems = (current: BeatGameObservation): number =>
+    options.progressItemIds.reduce(
+      (total, itemId) => total + (current.inventory.counts[itemId] ?? 0),
+      0,
+    );
+  const before = countItems(observation);
+  return collectBlocks(state.driver, {
+    blockIds: options.blockIds,
+    ...(options.tags === undefined ? {} : { tags: options.tags }),
+    count: options.count,
+    searchRadius: state.strategy.blockSearchRadius,
+    path: state.strategy.path,
+  }).pipe(
+    Effect.zipRight(Effect.sleep(250)),
+    Effect.zipRight(state.driver.observe),
+    Effect.flatMap((after) =>
+      countItems(after) > before
+        ? Effect.void
+        : explore(state.driver, {
+          origin: after.player.position,
+          radius: state.strategy.explorationRadius,
+          maximumWaypoints: 1,
+          purpose: options.purpose,
+          path: state.strategy.path,
+        })
+    ),
+  );
 }
 
 function fillLiquidBucket(
@@ -1587,6 +1686,7 @@ function huntOrExplore(
       yield* attackEntity(state.driver, {
         target,
         targetUnavailableTimeoutSeconds: 3,
+        selectBestWeapon: true,
         path: state.strategy.path,
       }).pipe(
         Effect.tapError(() =>
@@ -1614,6 +1714,12 @@ function huntOrExplore(
         ),
         Effect.ensuring(releaseActionClaim(state, claim)),
       );
+      yield* collectNearbyDrops(state.driver, {
+        radius: 8,
+        maximumDrops: 16,
+        settleDelayMs: 250,
+        path: state.strategy.path,
+      });
       attacked += 1;
       if (attacked >= maximumTargets) {
         break;
@@ -1809,13 +1915,16 @@ function ensureWorkstation(
         "minecraft:crafting_table",
       )
       : undefined;
+    const target = yield* findWorkstationTarget(
+      state.driver,
+      observation.player.position,
+    );
     yield* craftItem(state.driver, {
       resultItemId: blockId,
       count: 1,
       ...(craftingTable === undefined ? {} : { station: craftingTable }),
       path: state.strategy.path,
     });
-    const target = workstationTarget(observation.player.position);
     yield* buildStructure(state.driver, {
       origin: target,
       blocks: [{
@@ -1841,15 +1950,81 @@ function ensureWorkstation(
   });
 }
 
-function workstationTarget(
+function findWorkstationTarget(
+  driver: BeatGameDriver,
   position: BeatGamePosition,
-): BeatGameBlockPosition {
-  return {
-    x: Math.floor(position.x) + 2,
-    y: Math.floor(position.y),
-    z: Math.floor(position.z),
-    dimension: position.dimension,
-  };
+): Effect.Effect<BeatGameBlockPosition, BeatGameDriverError> {
+  return Effect.gen(function* () {
+    const playerBlock = {
+      x: Math.floor(position.x),
+      y: Math.floor(position.y),
+      z: Math.floor(position.z),
+    };
+    const supports = yield* driver.queryBlocks({
+      center: position,
+      radius: 4,
+      selector: { replaceable: false },
+      maximumResults: 256,
+    });
+    const candidates = supports
+      .map(({ position: support }) => ({
+        x: support.x,
+        y: support.y + 1,
+        z: support.z,
+        dimension: support.dimension,
+      }))
+      .filter((candidate) =>
+        candidate.dimension === position.dimension
+        && !(
+          candidate.x === playerBlock.x
+          && candidate.z === playerBlock.z
+          && (
+            candidate.y === playerBlock.y
+            || candidate.y === playerBlock.y + 1
+          )
+        )
+      )
+      .sort((left, right) =>
+        workstationDistanceSquared(left, position)
+        - workstationDistanceSquared(right, position)
+      );
+    for (const candidate of candidates) {
+      const replaceable = yield* driver.queryBlocks({
+        center: {
+          x: candidate.x + 0.5,
+          y: candidate.y + 0.5,
+          z: candidate.z + 0.5,
+          dimension: candidate.dimension,
+        },
+        radius: 0.25,
+        selector: { replaceable: true },
+        maximumResults: 1,
+      });
+      if (replaceable.some(({ position: observed }) =>
+        observed.x === candidate.x
+        && observed.y === candidate.y
+        && observed.z === candidate.z
+        && observed.dimension === candidate.dimension
+      )) {
+        return candidate;
+      }
+    }
+    return yield* Effect.fail(new BeatGameDriverError({
+      operation: "find-workstation-target",
+      retryable: true,
+      message: "No supported open block is available for a workstation",
+    }));
+  });
+}
+
+function workstationDistanceSquared(
+  target: BeatGameBlockPosition,
+  player: BeatGamePosition,
+): number {
+  const dx = target.x + 0.5 - player.x;
+  const dy = target.y - player.y;
+  const dz = target.z + 0.5 - player.z;
+  return dx * dx + dy * dy + dz * dz;
 }
 
 function moveToEyeBaseline(

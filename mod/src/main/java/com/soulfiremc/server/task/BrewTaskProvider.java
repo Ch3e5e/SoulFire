@@ -35,6 +35,7 @@ import com.soulfiremc.server.pathfinding.goals.CloseToPosGoal;
 import com.soulfiremc.server.pathfinding.graph.constraint.NoBlockBreakingConstraint;
 import com.soulfiremc.server.pathfinding.graph.constraint.NoBlockPlacingConstraint;
 import com.soulfiremc.server.pathfinding.graph.constraint.PathConstraintImpl;
+import com.soulfiremc.server.util.SFInventoryHelpers;
 import io.grpc.Status;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -658,7 +659,7 @@ public final class BrewTaskProvider implements BotTaskProvider<BrewTask> {
     private static java.util.stream.IntStream playerSlots(
       BrewingStandMenu menu
     ) {
-      return TaskInventorySupport.playerInventorySlots(menu);
+      return SFInventoryHelpers.playerInventorySlots(menu);
     }
 
     private static boolean canDeposit(

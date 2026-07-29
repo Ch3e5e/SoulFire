@@ -434,7 +434,15 @@ export function makeSoulFireBeatGameDriver(
       const counts: Record<string, number> = {};
       const hotbar: Record<number, string> = {};
       for (const slot of inventory.slots) {
-        if (slot.item === undefined) {
+        if (
+          slot.item === undefined
+          || (
+            slot.area !== InventoryArea.MAIN
+            && slot.area !== InventoryArea.HOTBAR
+            && slot.area !== InventoryArea.ARMOR
+            && slot.area !== InventoryArea.OFFHAND
+          )
+        ) {
           continue;
         }
         counts[slot.item.itemId] =

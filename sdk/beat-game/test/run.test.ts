@@ -345,6 +345,7 @@ describe("beat-game run lifecycle", () => {
       "minecraft:cooked_beef": 16,
       "minecraft:oak_log": 8,
       "minecraft:cobblestone": 20,
+      "minecraft:stone_sword": 1,
       "minecraft:iron_ingot": 7,
       "minecraft:iron_pickaxe": 1,
       "minecraft:water_bucket": 1,
@@ -359,7 +360,12 @@ describe("beat-game run lifecycle", () => {
       "minecraft:arrow": 32,
       "minecraft:torch": 1,
     };
-    driver.currentObservation = observation();
+    driver.currentObservation = observation({
+      counts: {
+        ...allRequiredItems,
+        "minecraft:cooked_beef": 0,
+      },
+    });
     driver.entityResults = [{
       connectionEpoch: "epoch-1",
       networkId: 42,
@@ -448,6 +454,116 @@ describe("beat-game run lifecycle", () => {
     expect(attackAttempts).toBe(1);
     expect(result.finalCheckpoint.planner.status)
       .toBe(BeatGameRunStatus.COMPLETED);
+  });
+
+  it("crafts the minimum pickaxe before mining cobblestone", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      counts: {
+        "minecraft:cooked_beef": 16,
+        "minecraft:oak_log": 8,
+      },
+    });
+    let craftingTablePlaced = false;
+    let resolveCollection!: () => void;
+    const collectionStarted = new Promise<void>((resolve) => {
+      resolveCollection = resolve;
+    });
+    driver.recipeResolver = (resultItemId) => [{
+      recipeId: resultItemId,
+      recipeType: "minecraft:crafting",
+      resultItemId,
+      resultCount: 1,
+      ingredients: [],
+    }];
+    driver.craftabilityResolver = (recipeId) => ({
+      canCraft: true,
+      maximumCraftCount: 1,
+      ...(recipeId === "minecraft:wooden_pickaxe"
+        ? { requiredStation: "minecraft:crafting_table" }
+        : {}),
+      missing: [],
+    });
+    driver.blockQueryResolver = ({ center, selector }) => {
+      if (
+        craftingTablePlaced
+        && selector.blockIds?.includes("minecraft:crafting_table") === true
+      ) {
+        return [blockObservation({
+          x: 2,
+          y: 64,
+          z: 0,
+          dimension: "minecraft:overworld",
+        }, { blockId: "minecraft:crafting_table" })];
+      }
+      if (selector.replaceable === false) {
+        return [blockObservation({
+          x: 2,
+          y: 63,
+          z: 0,
+          dimension: "minecraft:overworld",
+        })];
+      }
+      if (selector.replaceable === true) {
+        return [blockObservation({
+          x: Math.floor(center.x),
+          y: Math.floor(center.y),
+          z: Math.floor(center.z),
+          dimension: center.dimension,
+        }, {
+          blockId: "minecraft:air",
+          replaceable: true,
+        })];
+      }
+      return [];
+    };
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (task.type === "build") {
+          craftingTablePlaced = true;
+        }
+        if (
+          task.type === "craft"
+          && task.recipeId === "minecraft:wooden_pickaxe"
+        ) {
+          driver.currentObservation = observation({
+            counts: {
+              ...driver.currentObservation.inventory.counts,
+              "minecraft:wooden_pickaxe": 1,
+            },
+          });
+        }
+        if (task.type === "collect-blocks") {
+          expect(task.blockIds).toEqual(["minecraft:stone"]);
+          expect(
+            driver.currentObservation.inventory.counts[
+              "minecraft:wooden_pickaxe"
+            ],
+          ).toBe(1);
+          resolveCollection();
+        }
+        return {};
+      });
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      yield* Effect.promise(() => collectionStarted).pipe(
+        Effect.timeout("5 seconds"),
+      );
+      yield* run.stop;
+    })));
+
+    expect(driver.tasks.map((task) => task.type === "craft"
+      ? `${task.type}:${task.recipeId}`
+      : task.type)).toEqual([
+        "craft:minecraft:crafting_table",
+        "build",
+        "craft:minecraft:wooden_pickaxe",
+        "collect-blocks",
+      ]);
   });
 
   it("runs custom Effect policy inside the normal planner lifecycle", async () => {
