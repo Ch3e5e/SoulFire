@@ -1,4 +1,4 @@
-import { Effect, Either } from "effect";
+import { Effect, Either, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -20,6 +20,141 @@ import {
 } from "./fixtures.js";
 
 describe("beat-game run lifecycle", () => {
+  it("recovers a lifecycle death even after an immediate respawn", async () => {
+    const driver = new FakeBeatGameDriver();
+    const deathPosition = {
+      x: 24,
+      y: 64,
+      z: -12,
+      dimension: "minecraft:the_end",
+    };
+    driver.currentObservation = observation({
+      dimension: "minecraft:the_end",
+      position: deathPosition,
+      counts: {
+        "minecraft:cooked_beef": 16,
+        "minecraft:bow": 1,
+        "minecraft:arrow": 32,
+      },
+    });
+    driver.events = Stream.make({
+      type: "bot-died",
+      observedAt: "2026-01-01T00:00:01.000Z",
+      message: "Bot was shot by Skeleton",
+    });
+    const store = new InMemoryBeatGameCheckpointStore();
+    await Effect.runPromise(store.save(checkpoint(
+      BeatGamePhase.FIGHT_ENDER_DRAGON,
+      {
+        runId: "lifecycle-death-run",
+        teamId: "lifecycle-death-team",
+      },
+    ), undefined));
+    let recoveries = 0;
+    let recoveredPosition: typeof deathPosition | undefined;
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        runId: "lifecycle-death-run",
+        team: { teamId: "lifecycle-death-team" },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+        hooks: {
+          recoverDeath: ({ observation: current }) =>
+            Effect.sync(() => {
+              recoveries += 1;
+              recoveredPosition = current.player.position;
+            }),
+          fightEnderDragon: () => Effect.never,
+        },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (recoveries === 0) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(recoveries).toBe(1);
+    expect(recoveredPosition).toEqual(deathPosition);
+  });
+
+  it("escapes dangerous neutral mobs before checking for hostile mobs", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({ health: 8 });
+    driver.entityResults = [{
+      connectionEpoch: "epoch-1",
+      networkId: 12,
+      entityType: "minecraft:polar_bear",
+      position: {
+        x: 2,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 30,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    }];
+    driver.taskObserver = (task) => {
+      if (
+        task.type === "flee"
+        && task.selector.categories?.includes(2)
+      ) {
+        driver.currentObservation = observation({ health: 20 });
+      }
+    };
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (
+              driver.tasks.filter((task) => task.type === "flee").length < 2
+            ) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.entityQueries[0]).toMatchObject({
+      radius: 24,
+      selector: {
+        entityTypes: expect.arrayContaining(["minecraft:polar_bear"]),
+        alive: true,
+      },
+      maximumResults: 1,
+    });
+    expect(driver.tasks.filter((task) => task.type === "flee")).toEqual([
+      expect.objectContaining({
+        selector: expect.objectContaining({
+          entityTypes: expect.arrayContaining(["minecraft:polar_bear"]),
+        }),
+        triggerRadius: 24,
+        safeDistance: 32,
+        maximumEscapes: 2,
+      }),
+      expect.objectContaining({
+        selector: { categories: [2], alive: true },
+        triggerRadius: 16,
+        safeDistance: 28,
+        maximumEscapes: 2,
+      }),
+    ]);
+  });
+
   it("uses a distinct idempotency key for repeated task invocations", async () => {
     const driver = new FakeBeatGameDriver();
     const task = {
@@ -552,15 +687,18 @@ describe("beat-game run lifecycle", () => {
           dimension: "minecraft:overworld",
         })];
       }
-      if (selector.replaceable === true) {
+      if (
+        selector.diggable === true
+        && selector.interactive === false
+      ) {
         return [blockObservation({
           x: Math.floor(center.x),
           y: Math.floor(center.y),
           z: Math.floor(center.z),
           dimension: center.dimension,
         }, {
-          blockId: "minecraft:air",
-          replaceable: true,
+          blockId: "minecraft:stone",
+          replaceable: false,
         })];
       }
       return [];
@@ -613,8 +751,11 @@ describe("beat-game run lifecycle", () => {
       "collect-blocks",
     ]);
     expect(driver.blockQueries).toContainEqual(expect.objectContaining({
-      radius: 8,
+      radius: 32,
       selector: { blockIds: ["minecraft:crafting_table"] },
+    }));
+    expect(driver.blockQueries).toContainEqual(expect.objectContaining({
+      selector: { diggable: true, interactive: false },
     }));
   });
 

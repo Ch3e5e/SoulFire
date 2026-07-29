@@ -168,6 +168,7 @@ class AutoEatCompletionReason(int, metaclass=_enum_type_wrapper.EnumTypeWrapper)
     AUTO_EAT_COMPLETION_REASON_UNSPECIFIED: _ClassVar[AutoEatCompletionReason]
     AUTO_EAT_COMPLETION_REASON_MEAL_LIMIT_REACHED: _ClassVar[AutoEatCompletionReason]
     AUTO_EAT_COMPLETION_REASON_NO_FOOD: _ClassVar[AutoEatCompletionReason]
+    AUTO_EAT_COMPLETION_REASON_FOOD_LEVEL_REACHED: _ClassVar[AutoEatCompletionReason]
 
 class AutoRespawnCompletionReason(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -191,6 +192,7 @@ class CollectBlocksCompletionReason(int, metaclass=_enum_type_wrapper.EnumTypeWr
     COLLECT_BLOCKS_COMPLETION_REASON_UNSPECIFIED: _ClassVar[CollectBlocksCompletionReason]
     COLLECT_BLOCKS_COMPLETION_REASON_TARGET_REACHED: _ClassVar[CollectBlocksCompletionReason]
     COLLECT_BLOCKS_COMPLETION_REASON_NO_MATCHING_BLOCKS: _ClassVar[CollectBlocksCompletionReason]
+    COLLECT_BLOCKS_COMPLETION_REASON_NO_REACHABLE_BLOCKS: _ClassVar[CollectBlocksCompletionReason]
 
 class ExcavateCompletionReason(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -327,6 +329,7 @@ CONTAINER_TRANSFER_COMPLETION_REASON_PARTIAL: ContainerTransferCompletionReason
 AUTO_EAT_COMPLETION_REASON_UNSPECIFIED: AutoEatCompletionReason
 AUTO_EAT_COMPLETION_REASON_MEAL_LIMIT_REACHED: AutoEatCompletionReason
 AUTO_EAT_COMPLETION_REASON_NO_FOOD: AutoEatCompletionReason
+AUTO_EAT_COMPLETION_REASON_FOOD_LEVEL_REACHED: AutoEatCompletionReason
 AUTO_RESPAWN_COMPLETION_REASON_UNSPECIFIED: AutoRespawnCompletionReason
 AUTO_RESPAWN_COMPLETION_REASON_RESPAWN_LIMIT_REACHED: AutoRespawnCompletionReason
 AUTO_TOTEM_COMPLETION_REASON_UNSPECIFIED: AutoTotemCompletionReason
@@ -338,6 +341,7 @@ AUTO_ARMOR_COMPLETION_REASON_NO_UPGRADE: AutoArmorCompletionReason
 COLLECT_BLOCKS_COMPLETION_REASON_UNSPECIFIED: CollectBlocksCompletionReason
 COLLECT_BLOCKS_COMPLETION_REASON_TARGET_REACHED: CollectBlocksCompletionReason
 COLLECT_BLOCKS_COMPLETION_REASON_NO_MATCHING_BLOCKS: CollectBlocksCompletionReason
+COLLECT_BLOCKS_COMPLETION_REASON_NO_REACHABLE_BLOCKS: CollectBlocksCompletionReason
 EXCAVATE_COMPLETION_REASON_UNSPECIFIED: ExcavateCompletionReason
 EXCAVATE_COMPLETION_REASON_AREA_CLEARED: ExcavateCompletionReason
 EXCAVATE_COMPLETION_REASON_BLOCK_LIMIT_REACHED: ExcavateCompletionReason

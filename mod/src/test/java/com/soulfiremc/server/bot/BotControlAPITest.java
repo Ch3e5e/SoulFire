@@ -93,6 +93,54 @@ final class BotControlAPITest {
     assertNull(requested.stopReason);
   }
 
+  @Test
+  void startsQueuedTaskWhenConflictingInternalControlFinishes() {
+    var control = new BotControlAPI();
+    var internal = new RecordingTask(
+      ControlPriority.LOW,
+      ControlResource.MAIN_HAND
+    );
+    var queued = new RecordingTask(
+      ControlPriority.NORMAL,
+      ControlResource.MAIN_HAND
+    );
+    control.tryStart(internal);
+
+    control.enqueue(queued);
+    control.tick();
+
+    assertEquals(ControlStopReason.COMPLETED, internal.stopReason);
+    assertEquals(0, queued.ticks);
+
+    control.tick();
+
+    assertEquals(1, queued.ticks);
+    assertEquals(ControlStopReason.COMPLETED, queued.stopReason);
+  }
+
+  @Test
+  void cancellationRemovesQueuedTask() {
+    var control = new BotControlAPI();
+    var active = new RecordingTask(
+      ControlPriority.NORMAL,
+      ControlResource.INVENTORY,
+      2
+    );
+    var queued = new RecordingTask(
+      ControlPriority.NORMAL,
+      ControlResource.INVENTORY
+    );
+    control.tryStart(active);
+    control.enqueue(queued);
+
+    assertTrue(control.cancel(queued));
+    control.tick();
+    control.tick();
+
+    assertEquals(ControlStopReason.CANCELLED, queued.stopReason);
+    assertEquals(0, queued.ticks);
+  }
+
   private static final class RecordingTask implements ControlTask {
     private final ControlPriority priority;
     private final Set<ControlResource> resources;

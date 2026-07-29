@@ -18,6 +18,7 @@ import {
   exitEnd,
   excavateStaircase,
   fightEnderDragon,
+  respawnAndRecover,
   throwEyeOfEnder,
 } from "../src/index.js";
 import {
@@ -174,6 +175,56 @@ describe("beat-game behavior programs", () => {
       completeWhenNoFood: true,
       restoreSelectedSlot: true,
     }]);
+  });
+
+  it("returns to the death site before searching for dropped items", async () => {
+    const driver = new FakeBeatGameDriver();
+    const deathPosition = {
+      x: 96,
+      y: 63,
+      z: -48,
+      dimension: "minecraft:overworld",
+    };
+    const dropPosition = {
+      x: 97,
+      y: 63,
+      z: -48,
+      dimension: "minecraft:overworld",
+    };
+    driver.currentObservation = observation({
+      dead: true,
+      health: 0,
+      position: deathPosition,
+    });
+    driver.entityResults = [{
+      connectionEpoch: "epoch-1",
+      networkId: 24,
+      entityType: "minecraft:item",
+      position: dropPosition,
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 5,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    }];
+
+    await Effect.runPromise(respawnAndRecover(driver, {
+      deathPosition,
+    }));
+
+    expect(driver.tasks).toContainEqual({
+      type: "auto-respawn",
+      maximumRespawns: 1,
+    });
+    expect(driver.paths.map(({ position }) => position)).toEqual([
+      deathPosition,
+      dropPosition,
+    ]);
+    expect(driver.entityQueries).toContainEqual({
+      origin: deathPosition,
+      radius: 24,
+      selector: { alive: true, categories: [6] },
+      maximumResults: 64,
+    });
   });
 
   it("sweeps nearby item entities into pickup range", async () => {

@@ -30,6 +30,7 @@ import com.soulfiremc.server.bot.ControlStopReason;
 import com.soulfiremc.server.bot.ControlTask;
 import com.soulfiremc.server.util.SFInventoryHelpers;
 import com.soulfiremc.server.util.SFItemHelpers;
+import io.grpc.Status;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.inventory.ContainerInput;
@@ -46,6 +47,8 @@ public final class AutoEatTaskProvider
   private static final int DEFAULT_FOOD_LEVEL = 14;
   private static final int DEFAULT_CHECK_INTERVAL_TICKS = 20;
   private static final int MAX_CHECK_INTERVAL_TICKS = 1_200;
+  private static final int MAX_FAILED_MEAL_ATTEMPTS = 3;
+  private static final long CONSUMPTION_CONFIRMATION_GRACE_MILLIS = 1_000L;
   // Monitoring does not own a mutable bot resource. Each meal claims only
   // the hand and inventory resources it needs while it is being consumed.
   private static final Set<ControlResource> TASK_RESOURCES = Set.of();
@@ -112,6 +115,7 @@ public final class AutoEatTaskProvider
     private final CompletableFuture<AutoEatTaskResult> result;
     private @Nullable CompletableControlTask activeMeal;
     private int mealsEaten;
+    private int failedMealAttempts;
     private int ticks;
 
     private AutoEatControl(
@@ -153,6 +157,9 @@ public final class AutoEatTaskProvider
       if (player == null || gameMode == null) {
         return;
       }
+      if (player.isDeadOrDying()) {
+        return;
+      }
       var currentFood = player.getFoodData().getFoodLevel();
       context.reportProgress(BotTaskProgress.newBuilder()
         .setMessage(currentFood <= foodLevel
@@ -160,7 +167,16 @@ public final class AutoEatTaskProvider
           : "Monitoring hunger")
         .setCurrent(mealsEaten)
         .build());
-      if (currentFood > foodLevel || player.hasContainerOpen()) {
+      if (currentFood > foodLevel) {
+        if (maximumMeals > 0) {
+          complete(
+            AutoEatCompletionReason
+              .AUTO_EAT_COMPLETION_REASON_FOOD_LEVEL_REACHED
+          );
+        }
+        return;
+      }
+      if (player.hasContainerOpen()) {
         return;
       }
 
@@ -195,8 +211,21 @@ public final class AutoEatTaskProvider
         return false;
       }
       activeMeal = null;
-      if (!meal.completion().isCompletedExceptionally()
-        && meal.completion().join() == ControlStopReason.COMPLETED) {
+      if (meal.completion().isCompletedExceptionally()) {
+        failedMealAttempts++;
+        if (failedMealAttempts >= MAX_FAILED_MEAL_ATTEMPTS) {
+          result.completeExceptionally(
+            Status.FAILED_PRECONDITION
+              .withDescription(
+                "Food use completed without a confirmed meal"
+              )
+              .asRuntimeException()
+          );
+        }
+        return true;
+      }
+      if (meal.completion().join() == ControlStopReason.COMPLETED) {
+        failedMealAttempts = 0;
         mealsEaten++;
         if (maximumMeals > 0 && mealsEaten >= maximumMeals) {
           complete(
@@ -266,10 +295,11 @@ public final class AutoEatTaskProvider
     }
     var originalHotbar = player.getInventory().getSelectedSlot();
     var stack = player.inventoryMenu.getSlot(slot).getItem();
+    var initialFoodLevel = player.getFoodData().getFoodLevel();
     var consumable = stack.get(DataComponents.CONSUMABLE);
     var consumeMillis = consumable == null
       ? 2_000L
-      : Math.max(250L, Math.round(consumable.consumeSeconds() * 1_000) + 250L);
+      : Math.max(250L, Math.round(consumable.consumeSeconds() * 1_000));
     var steps = new ArrayList<ControlTask.Step>();
     var swappedFromInventory = false;
     var selectedDifferentHotbar = false;
@@ -308,10 +338,23 @@ public final class AutoEatTaskProvider
       steps.add(ControlTask.waitMillis(50L));
     }
     steps.add(ControlTask.action(() -> gameMode.useItem(player, hand)));
-    steps.add(ControlTask.waitMillis(consumeMillis));
+    steps.add(ControlTask.waitMillis(
+      consumeMillis + CONSUMPTION_CONFIRMATION_GRACE_MILLIS
+    ));
     steps.add(ControlTask.action(() -> {
-      if (player.isUsingItem()) {
-        gameMode.releaseUsingItem(player);
+      if (
+        bot.minecraft().player != player
+          || player.isDeadOrDying()
+          || player.getFoodData().getFoodLevel() <= initialFoodLevel
+      ) {
+        if (player.isUsingItem()) {
+          gameMode.releaseUsingItem(player);
+        }
+        throw new IllegalStateException(
+          player.isDeadOrDying() || bot.minecraft().player != player
+            ? "Player died or respawned before the meal was confirmed"
+            : "Food level did not increase after using the selected meal"
+        );
       }
     }));
     if (restoreSelectedSlot && swappedFromInventory) {

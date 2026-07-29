@@ -42,6 +42,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.AbstractFurnaceMenu;
 import net.minecraft.world.inventory.ContainerInput;
@@ -57,10 +58,12 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.function.Predicate;
+import java.util.stream.Stream;
 
 /// Executes furnace, blast-furnace, and smoker recipes one input at a time.
 public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
@@ -166,7 +169,10 @@ public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
     int count
   ) {
     var player = Objects.requireNonNull(context.bot().minecraft().player);
-    var inventory = player.getInventory().getNonEquipmentItems();
+    var inventory = Stream.concat(
+      player.getInventory().getNonEquipmentItems().stream(),
+      Stream.of(player.getOffhandItem())
+    ).toList();
     var recipes = RecipeSupport.recipes(context.bot()).stream()
       .filter(entry -> entry.display() instanceof FurnaceRecipeDisplay)
       .sorted(Comparator.comparingInt(entry -> entry.id().index()))
@@ -202,19 +208,23 @@ public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
   ) {
     var level = Objects.requireNonNull(context.bot().minecraft().level);
     var player = Objects.requireNonNull(context.bot().minecraft().player);
+    Predicate<ItemStack> matchesFuel = stack -> !stack.isEmpty()
+      && (!input.hasFuel()
+      || InventoryServiceImpl.matches(stack, input.getFuel()))
+      && level.fuelValues().isFuel(stack);
     var inventoryFuel = player.getInventory().getNonEquipmentItems().stream()
-      .filter(stack -> !input.hasFuel()
-        || InventoryServiceImpl.matches(stack, input.getFuel()))
-      .filter(level.fuelValues()::isFuel)
+      .filter(matchesFuel)
       .findFirst();
+    var offhandFuelMatches = matchesFuel.test(player.getOffhandItem());
     var stationFuel = player.containerMenu instanceof AbstractFurnaceMenu menu
       ? menu.getSlot(1).getItem()
       : ItemStack.EMPTY;
-    var stationFuelMatches = !stationFuel.isEmpty()
-      && level.fuelValues().isFuel(stationFuel)
-      && (!input.hasFuel()
-      || InventoryServiceImpl.matches(stationFuel, input.getFuel()));
-    if (inventoryFuel.isEmpty() && !stationFuelMatches) {
+    var stationFuelMatches = matchesFuel.test(stationFuel);
+    if (
+      inventoryFuel.isEmpty()
+        && !offhandFuelMatches
+        && !stationFuelMatches
+    ) {
       throw Status.FAILED_PRECONDITION
         .withDescription("No matching valid furnace fuel is available")
         .asRuntimeException();
@@ -423,12 +433,11 @@ public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
 
     private void loadFuel() {
       var menu = requireFurnaceMenu();
-      var level = Objects.requireNonNull(context.bot().minecraft().level);
-      if (menu.isLit()
-        || level.fuelValues().isFuel(menu.getSlot(1).getItem())) {
+      if (menu.isLit() || hasUsableFuel(menu)) {
         transition(Stage.WAIT_FOR_OUTPUT, "Smelting");
         return;
       }
+      var level = Objects.requireNonNull(context.bot().minecraft().level);
       moveOne(
         menu,
         1,
@@ -460,12 +469,24 @@ public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
         transition(Stage.TAKE_OUTPUT, "Collecting smelted output");
         return;
       }
+      if (!menu.isLit() && !hasUsableFuel(menu)) {
+        transition(Stage.LOAD_FUEL, "Refueling smelting station");
+        return;
+      }
       stageTicks++;
       if (stageTicks > COOK_TIMEOUT_TICKS) {
         throw Status.DEADLINE_EXCEEDED
           .withDescription("Timed out waiting for smelting output")
           .asRuntimeException();
       }
+    }
+
+    private boolean hasUsableFuel(AbstractFurnaceMenu menu) {
+      var stack = menu.getSlot(1).getItem();
+      var level = Objects.requireNonNull(context.bot().minecraft().level);
+      return level.fuelValues().isFuel(stack)
+        && (fuelSelector == null
+        || InventoryServiceImpl.matches(stack, fuelSelector));
     }
 
     private void takeOutput() {
@@ -529,9 +550,7 @@ public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
       Predicate<ItemStack> selector,
       String missingMessage
     ) {
-      var source = SFInventoryHelpers.playerInventorySlots(menu)
-        .filter(slot -> selector.test(menu.getSlot(slot).getItem()))
-        .findFirst();
+      var source = findSource(menu, selector);
       if (source.isEmpty()) {
         throw Status.FAILED_PRECONDITION
           .withDescription(missingMessage)
@@ -564,6 +583,54 @@ public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
           player
         );
       }
+    }
+
+    private OptionalInt findSource(
+      AbstractFurnaceMenu menu,
+      Predicate<ItemStack> selector
+    ) {
+      var source = SFInventoryHelpers.playerInventorySlots(menu)
+        .filter(slot -> selector.test(menu.getSlot(slot).getItem()))
+        .findFirst();
+      if (source.isPresent()) {
+        return source;
+      }
+
+      var player = requirePlayer();
+      var offhand = player.getOffhandItem();
+      if (!selector.test(offhand)) {
+        return OptionalInt.empty();
+      }
+      var stagingSlot = SFInventoryHelpers.playerInventorySlots(menu)
+        .filter(slot -> {
+          var menuSlot = menu.getSlot(slot);
+          return menuSlot.getItem().isEmpty() && menuSlot.mayPlace(offhand);
+        })
+        .findFirst()
+        .orElseThrow(() -> Status.RESOURCE_EXHAUSTED
+          .withDescription(
+            "Player inventory has no room to move the matching offhand item"
+          )
+          .asRuntimeException()
+      );
+      var gameMode = Objects.requireNonNull(
+        context.bot().minecraft().gameMode
+      );
+      gameMode.handleContainerInput(
+        menu.containerId,
+        stagingSlot,
+        Inventory.SLOT_OFFHAND,
+        ContainerInput.SWAP,
+        player
+      );
+      if (!selector.test(menu.getSlot(stagingSlot).getItem())) {
+        throw Status.ABORTED
+          .withDescription(
+            "Matching offhand item did not move into the player inventory"
+          )
+          .asRuntimeException();
+      }
+      return OptionalInt.of(stagingSlot);
     }
 
     private static boolean canDeposit(

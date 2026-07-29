@@ -30,6 +30,7 @@ import com.soulfiremc.server.bot.ControlStopReason;
 import com.soulfiremc.server.bot.ControlTask;
 import com.soulfiremc.server.pathfinding.SFVec3i;
 import com.soulfiremc.server.pathfinding.execution.PathExecutor;
+import com.soulfiremc.server.pathfinding.execution.UnreachableGoalException;
 import com.soulfiremc.server.pathfinding.goals.BreakBlockPosGoal;
 import com.soulfiremc.server.pathfinding.goals.CompositeGoal;
 import com.soulfiremc.server.pathfinding.graph.constraint.NoBlockPlacingConstraint;
@@ -224,6 +225,13 @@ public final class CollectBlocksTaskProvider
           ? exception
           : exception.getCause();
         path.onStopped(ControlStopReason.FAILED, cause);
+        if (cause instanceof UnreachableGoalException) {
+          complete(
+            CollectBlocksCompletionReason
+              .COLLECT_BLOCKS_COMPLETION_REASON_NO_REACHABLE_BLOCKS
+          );
+          return;
+        }
         result.completeExceptionally(cause);
       }
     }

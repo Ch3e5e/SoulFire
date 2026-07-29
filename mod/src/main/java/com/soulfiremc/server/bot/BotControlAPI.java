@@ -30,6 +30,7 @@ import java.util.List;
 public final class BotControlAPI {
   private final List<ControlTask> activeTasks = new ArrayList<>();
   private final Deque<ControlTask> suspendedTasks = new ArrayDeque<>();
+  private final Deque<ControlTask> queuedTasks = new ArrayDeque<>();
 
   public synchronized void tick() {
     for (var task : List.copyOf(activeTasks)) {
@@ -54,7 +55,8 @@ public final class BotControlAPI {
   }
 
   public synchronized boolean stopAll() {
-    var stoppedAny = !activeTasks.isEmpty() || !suspendedTasks.isEmpty();
+    var stoppedAny =
+      !activeTasks.isEmpty() || !suspendedTasks.isEmpty() || !queuedTasks.isEmpty();
     for (var task : List.copyOf(activeTasks)) {
       activeTasks.remove(task);
       stopTask(task, ControlStopReason.CANCELLED, null);
@@ -63,13 +65,19 @@ public final class BotControlAPI {
     while ((task = suspendedTasks.pollLast()) != null) {
       stopTask(task, ControlStopReason.CANCELLED, null);
     }
+    while ((task = queuedTasks.pollFirst()) != null) {
+      stopTask(task, ControlStopReason.CANCELLED, null);
+    }
     return stoppedAny;
   }
 
   public synchronized boolean cancel(ControlTask task) {
-    if (activeTasks.remove(task) || suspendedTasks.remove(task)) {
+    if (activeTasks.remove(task)
+      || suspendedTasks.remove(task)
+      || queuedTasks.remove(task)) {
       stopTask(task, ControlStopReason.CANCELLED, null);
       resumeTasks();
+      startQueuedTasks();
       return true;
     }
     return false;
@@ -104,6 +112,14 @@ public final class BotControlAPI {
     }
     startTask(task);
     return activeTasks.contains(task);
+  }
+
+  public synchronized void enqueue(ControlTask task) {
+    if (conflicts(task).isEmpty()) {
+      startTask(task);
+      return;
+    }
+    queuedTasks.addLast(task);
   }
 
   public synchronized boolean submit(ControlTask task) {
@@ -174,6 +190,7 @@ public final class BotControlAPI {
     }
     stopTask(task, reason, cause);
     resumeTasks();
+    startQueuedTasks();
   }
 
   private void resumeTasks() {
@@ -193,6 +210,18 @@ public final class BotControlAPI {
         logTaskFailure("resuming", task, t);
         stopTask(task, ControlStopReason.FAILED, t);
       }
+    }
+  }
+
+  private void startQueuedTasks() {
+    var iterator = queuedTasks.iterator();
+    while (iterator.hasNext()) {
+      var task = iterator.next();
+      if (!conflicts(task).isEmpty()) {
+        continue;
+      }
+      iterator.remove();
+      startTask(task);
     }
   }
 

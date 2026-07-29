@@ -205,7 +205,8 @@ public final class PathExecutor implements ControlTask {
 
             preparePath(newActions);
           };
-          case RouteFinder.NoRouteFoundResult _ -> throw new IllegalStateException("No route found to the goal!");
+          case RouteFinder.NoRouteFoundResult _ ->
+            throw UnreachableGoalException.noRoute();
           case RouteFinder.PartialRouteResult partialRouteResult -> () -> {
             if (
               partialRouteProgressGuard.shouldAbort(
@@ -214,10 +215,8 @@ public final class PathExecutor implements ControlTask {
             ) {
               awaitingPath = false;
               pathCompletionFuture.completeExceptionally(
-                new IllegalStateException(
-                  "Pathfinding made no progress across "
-                    + MAX_CONSECUTIVE_EMPTY_PARTIAL_ROUTES
-                    + " consecutive partial routes"
+                UnreachableGoalException.stalled(
+                  MAX_CONSECUTIVE_EMPTY_PARTIAL_ROUTES
                 )
               );
               return;

@@ -42,6 +42,9 @@ public final class SFItemHelpers {
 
   public static boolean isGoodEdibleFood(ItemStack itemStack) {
     var components = itemStack.getComponents();
+    if (components.get(DataComponents.FOOD) == null) {
+      return false;
+    }
     return Optional.ofNullable(components.get(DataComponents.CONSUMABLE)).map(f -> {
       for (var consumeEffects : f.onConsumeEffects()) {
         if (!(consumeEffects instanceof ApplyStatusEffectsConsumeEffect applyEffects)) {

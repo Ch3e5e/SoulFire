@@ -629,6 +629,11 @@ export function respawnAndRecover(
     if (options.deathPosition === undefined) {
       return;
     }
+    yield* driver.pathfind(
+      options.deathPosition,
+      2,
+      mergePathPolicy(options.path),
+    );
     const drops = yield* driver.queryEntities({
       origin: options.deathPosition,
       radius: options.searchRadius ?? 24,

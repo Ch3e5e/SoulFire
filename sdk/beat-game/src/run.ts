@@ -109,7 +109,18 @@ type EventInput<T extends BeatGameEvent = BeatGameEvent> =
       | "phase">
     : never;
 
-const WORKSTATION_REUSE_RADIUS = 8;
+const WORKSTATION_REUSE_RADIUS = 32;
+const DANGEROUS_NEUTRAL_ENTITY_TYPES = [
+  "minecraft:bee",
+  "minecraft:dolphin",
+  "minecraft:goat",
+  "minecraft:iron_golem",
+  "minecraft:llama",
+  "minecraft:panda",
+  "minecraft:polar_bear",
+  "minecraft:trader_llama",
+  "minecraft:wolf",
+] as const;
 
 export interface BeatGameRun {
   readonly id: string;
@@ -145,6 +156,7 @@ interface RunState {
   readonly hooks: BeatGameStrategyHooks;
   readonly checkpoint: Ref.Ref<BeatGameCheckpoint>;
   readonly observation: Ref.Ref<BeatGameObservation>;
+  readonly pendingDeath: Ref.Ref<PendingDeath | undefined>;
   readonly paused: Ref.Ref<boolean>;
   readonly stopped: Deferred.Deferred<void>;
   readonly checkpointMutex: Effect.Semaphore;
@@ -153,6 +165,12 @@ interface RunState {
   readonly snapshots: ReplayBroadcast<BeatGameSnapshot>;
   readonly sequence: Ref.Ref<bigint>;
   readonly startedAtMs: number;
+}
+
+interface PendingDeath {
+  readonly observedAt: string;
+  readonly position: BeatGamePosition;
+  readonly message?: string;
 }
 
 interface ActionResult {
@@ -243,6 +261,7 @@ export function beatGameWithDriver(
     const stored = restored ?? (yield* store.save(initial, undefined));
     const checkpointRef = yield* Ref.make(stored);
     const observationRef = yield* Ref.make(observation);
+    const pendingDeath = yield* Ref.make<PendingDeath | undefined>(undefined);
     const paused = yield* Ref.make(false);
     const stopped = yield* Deferred.make<void>();
     const checkpointMutex = yield* Effect.makeSemaphore(1);
@@ -258,6 +277,7 @@ export function beatGameWithDriver(
       hooks: options.hooks ?? {},
       checkpoint: checkpointRef,
       observation: observationRef,
+      pendingDeath,
       paused,
       stopped,
       checkpointMutex,
@@ -285,6 +305,7 @@ export function beatGameWithDriver(
       });
     }
 
+    yield* Effect.forkScoped(monitorDriverEvents(state));
     const runtime = runLoop(state).pipe(
       Effect.ensuring(
         Effect.all([
@@ -666,6 +687,9 @@ function runDecisionWithRetry(
       }
       if (result.phase !== undefined) {
         yield* advancePhase(state, result.phase);
+      }
+      if (decision.type === "recover-death") {
+        yield* Ref.set(state.pendingDeath, undefined);
       }
       const latestObservation = yield* Ref.get(state.observation);
       yield* persist(state, (checkpoint) => {
@@ -1151,6 +1175,53 @@ function hasUsableFood(observation: BeatGameObservation): boolean {
 function retreatAndRecover(
   state: RunState,
 ): Effect.Effect<void, BeatGameDriverError> {
+  const escapePath = {
+    ...state.strategy.path,
+    maxSearchTimeMs: Math.min(
+      state.strategy.path.maxSearchTimeMs,
+      3_000,
+    ),
+  };
+  const fleeFromNearbyNeutralThreat = state.driver.observe.pipe(
+    Effect.flatMap((observation) =>
+      state.driver.queryEntities({
+        origin: observation.player.position,
+        radius: 24,
+        selector: {
+          entityTypes: DANGEROUS_NEUTRAL_ENTITY_TYPES,
+          alive: true,
+        },
+        maximumResults: 1,
+      })
+    ),
+    Effect.flatMap((threats) =>
+      threats.length === 0
+        ? Effect.void
+        : flee(state.driver, {
+          selector: {
+            entityTypes: DANGEROUS_NEUTRAL_ENTITY_TYPES,
+            alive: true,
+          },
+          triggerRadius: 24,
+          safeDistance: 32,
+          completeWhenSafe: true,
+          maximumEscapes: 2,
+          path: escapePath,
+        })
+    ),
+  );
+  const eatAvailableFood = state.driver.observe.pipe(
+    Effect.flatMap((observation) =>
+      hasUsableFood(observation)
+        ? eatWhenNeeded(state.driver, {
+          foodLevel: Math.max(18, state.strategy.eatBelowFood),
+          maximumMeals: 8,
+          completeWhenNoFood: true,
+          path: state.strategy.path,
+        })
+        : Effect.void
+    ),
+  );
   const waitForRecovery = (
     attemptsRemaining: number,
   ): Effect.Effect<void, BeatGameDriverError> =>
@@ -1165,29 +1236,19 @@ function retreatAndRecover(
           )
       ),
     );
-  return flee(state.driver, {
-    selector: {
-      categories: [2],
-      alive: true,
-    },
-    triggerRadius: 12,
-    safeDistance: 24,
-    completeWhenSafe: true,
-    maximumEscapes: 1,
-    path: {
-      ...state.strategy.path,
-      maxSearchTimeMs: Math.min(
-        state.strategy.path.maxSearchTimeMs,
-        3_000,
-      ),
-    },
-  }).pipe(
-    Effect.zipRight(eatWhenNeeded(state.driver, {
-      foodLevel: Math.max(18, state.strategy.eatBelowFood),
-      maximumMeals: 8,
-      completeWhenNoFood: true,
-      path: state.strategy.path,
+  return fleeFromNearbyNeutralThreat.pipe(
+    Effect.zipRight(flee(state.driver, {
+      selector: {
+        categories: [2],
+        alive: true,
+      },
+      triggerRadius: 16,
+      safeDistance: 28,
+      completeWhenSafe: true,
+      maximumEscapes: 2,
+      path: escapePath,
     })),
+    Effect.zipRight(eatAvailableFood),
     Effect.zipRight(waitForRecovery(20)),
   );
 }
@@ -2128,8 +2189,10 @@ function findWorkstationTargets(
       .sort((left, right) =>
         workstationDistanceSquared(left, position)
         - workstationDistanceSquared(right, position)
-      );
+      )
+      .slice(0, 64);
     const available: BeatGameBlockPosition[] = [];
+    const clearable: BeatGameBlockPosition[] = [];
     for (const candidate of candidates) {
       const replaceable = yield* driver.queryBlocks({
         center: {
@@ -2152,14 +2215,40 @@ function findWorkstationTargets(
         if (available.length >= 16) {
           break;
         }
+        continue;
+      }
+      const diggable = yield* driver.queryBlocks({
+        center: {
+          x: candidate.x + 0.5,
+          y: candidate.y + 0.5,
+          z: candidate.z + 0.5,
+          dimension: candidate.dimension,
+        },
+        radius: 0.25,
+        selector: {
+          diggable: true,
+          interactive: false,
+        },
+        maximumResults: 1,
+      });
+      if (diggable.some(({ position: observed }) =>
+        observed.x === candidate.x
+        && observed.y === candidate.y
+        && observed.z === candidate.z
+        && observed.dimension === candidate.dimension
+      )) {
+        clearable.push(candidate);
       }
     }
     return available.length > 0
       ? available
+      : clearable.length > 0
+      ? clearable.slice(0, 16)
       : yield* Effect.fail(new BeatGameDriverError({
         operation: "find-workstation-targets",
         retryable: true,
-        message: "No supported open block is available for a workstation",
+        message:
+          "No supported open or diggable block is available for a workstation",
       }));
   });
 }
@@ -2548,7 +2637,7 @@ function observeFresh(
 ): Effect.Effect<BeatGameObservation, BeatGameError> {
   return Effect.gen(function* () {
     const checkpoint = yield* Ref.get(state.checkpoint);
-    return yield* state.driver.observe.pipe(
+    const observation = yield* state.driver.observe.pipe(
       Effect.mapError((cause) =>
         observationError(
           checkpoint.runId,
@@ -2559,7 +2648,45 @@ function observeFresh(
       ),
       Effect.tap((observation) => Ref.set(state.observation, observation)),
     );
+    const pendingDeath = yield* Ref.get(state.pendingDeath);
+    if (pendingDeath === undefined) {
+      return observation;
+    }
+    return {
+      ...observation,
+      observedAt: pendingDeath.observedAt,
+      player: {
+        ...observation.player,
+        position: pendingDeath.position,
+        health: 0,
+        dead: true,
+      },
+    };
   });
+}
+
+function monitorDriverEvents(
+  state: RunState,
+): Effect.Effect<void, never> {
+  return state.driver.events.pipe(
+    Stream.runForEach((event) => {
+      if (event.type !== "bot-died") {
+        return Effect.void;
+      }
+      return Ref.get(state.observation).pipe(
+        Effect.flatMap((observation) =>
+          Ref.set(state.pendingDeath, {
+            observedAt: event.observedAt,
+            position: observation.player.position,
+            ...(event.message === undefined
+              ? {}
+              : { message: event.message }),
+          })
+        ),
+      );
+    }),
+    Effect.catchAll(() => Effect.void),
+  );
 }
 
 function observeWithRecovery(

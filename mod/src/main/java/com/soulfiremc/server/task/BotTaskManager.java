@@ -80,7 +80,6 @@ public final class BotTaskManager implements AutoCloseable {
   private final Map<String, ProviderEntry<?>> providers;
   private final Map<UUID, ManagedTask> tasks = new ConcurrentHashMap<>();
   private final Map<IdempotencyKey, UUID> idempotencyKeys = new ConcurrentHashMap<>();
-  private final Map<BotKey, Deque<ManagedTask>> queues = new ConcurrentHashMap<>();
   private final Set<Consumer<BotTaskEvent>> listeners = new CopyOnWriteArraySet<>();
   private final Deque<BotTaskEvent> journal = new ArrayDeque<>();
   private final AtomicLong eventSequence = new AtomicLong();
@@ -392,11 +391,8 @@ public final class BotTaskManager implements AutoCloseable {
         if (bot.botControl().tryStart(control)) {
           yield true;
         }
-        queues.computeIfAbsent(
-          new BotKey(record.instanceId, record.botId),
-          _ -> new ArrayDeque<>()
-        ).addLast(record);
         updateStatus(record, BotTaskStatus.BOT_TASK_STATUS_WAITING_FOR_RESOURCES);
+        bot.botControl().enqueue(control);
         yield true;
       }
       case BOT_TASK_CONFLICT_POLICY_REPLACE -> {
@@ -522,7 +518,6 @@ public final class BotTaskManager implements AutoCloseable {
     if (task.status != BotTaskStatus.BOT_TASK_STATUS_COMPLETED) {
       cancelChildren(task, "Parent task did not complete successfully");
     }
-    drainQueue(new BotKey(task.instanceId, task.botId));
   }
 
   private void fail(
@@ -541,7 +536,6 @@ public final class BotTaskManager implements AutoCloseable {
       publish(task);
     }
     cancelChildren(task, "Parent task failed");
-    drainQueue(new BotKey(task.instanceId, task.botId));
   }
 
   private void timeout(ManagedTask task) {
@@ -554,32 +548,13 @@ public final class BotTaskManager implements AutoCloseable {
     String reason
   ) {
     ManagedControlTask control;
-    var wasQueued = false;
     synchronized (this) {
       if (isTerminal(task.status)) {
         return;
       }
       task.requestedTerminal = terminal;
       task.terminalReason = reason.isBlank() ? null : reason;
-      var queue = queues.get(new BotKey(task.instanceId, task.botId));
-      if (queue != null && queue.remove(task)) {
-        control = task.control;
-        wasQueued = true;
-        if (queue.isEmpty()) {
-          queues.remove(new BotKey(task.instanceId, task.botId), queue);
-        }
-      } else {
-        control = task.control;
-      }
-    }
-    if (wasQueued) {
-      if (control == null) {
-        completeCancellation(task, terminal);
-      } else {
-        control.cancelBeforeStart();
-      }
-      cancelChildren(task, "Parent task was cancelled");
-      return;
+      control = task.control;
     }
     if (control == null) {
       completeCancellation(task, terminal);
@@ -629,36 +604,6 @@ public final class BotTaskManager implements AutoCloseable {
     }
   }
 
-  private void drainQueue(BotKey key) {
-    var instance = server.getInstance(key.instanceId);
-    var bot = instance.map(value -> value.botConnections().get(key.botId)).orElse(null);
-    if (bot == null || bot.isDisconnected()) {
-      return;
-    }
-    bot.scheduler().execute(() -> {
-      var queue = queues.get(key);
-      if (queue == null) {
-        return;
-      }
-      synchronized (this) {
-        var iterator = queue.iterator();
-        while (iterator.hasNext()) {
-          var candidate = iterator.next();
-          if (isTerminal(candidate.status)) {
-            iterator.remove();
-            continue;
-          }
-          if (bot.botControl().tryStart(candidate.control)) {
-            iterator.remove();
-          }
-        }
-        if (queue.isEmpty()) {
-          queues.remove(key, queue);
-        }
-      }
-    });
-  }
-
   private void onBotDisconnected(BotDisconnectedEvent event) {
     var bot = event.connection();
     if (bot.instanceManager().soulFireServer() != server) {
@@ -684,13 +629,6 @@ public final class BotTaskManager implements AutoCloseable {
         synchronized (this) {
           if (isTerminal(task.status)) {
             continue;
-          }
-          var queue = queues.get(key);
-          if (queue != null) {
-            queue.remove(task);
-            if (queue.isEmpty()) {
-              queues.remove(key, queue);
-            }
           }
           task.generation++;
           task.control = null;
@@ -730,7 +668,6 @@ public final class BotTaskManager implements AutoCloseable {
         task.recoveryStarting = false;
       }
     }
-    drainQueue(new BotKey(instanceId, botId));
   }
 
   @Override

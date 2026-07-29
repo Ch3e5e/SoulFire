@@ -203,6 +203,28 @@ const program = Effect.scoped(Effect.gen(function* () {
             }),
           ],
         }),
+        create(SettingsNamespaceSchema, {
+          namespace: "auto-eat",
+          entries: [
+            create(SettingsNamespace_SettingsEntrySchema, {
+              key: "enabled",
+              value: create(ValueSchema, {
+                kind: { case: "boolValue", value: false },
+              }),
+            }),
+          ],
+        }),
+        create(SettingsNamespaceSchema, {
+          namespace: "auto-respawn",
+          entries: [
+            create(SettingsNamespace_SettingsEntrySchema, {
+              key: "enabled",
+              value: create(ValueSchema, {
+                kind: { case: "boolValue", value: false },
+              }),
+            }),
+          ],
+        }),
       ],
     }),
   ]);

@@ -1,5 +1,6 @@
 import {
   BlockFace,
+  BotLifecycleKind,
   BotTaskConflictPolicy,
   BotTaskReconnectPolicy,
   goals,
@@ -358,11 +359,21 @@ export type BeatGamePrimitiveAction =
     readonly type: "respawn" | "reset-movement" | "close-container";
   };
 
-export interface BeatGameDriverEvent {
-  readonly type: "bot-event";
-  readonly observedAt: string;
-  readonly payload: unknown;
-}
+export type BeatGameDriverEvent =
+  | {
+    readonly type: "bot-event";
+    readonly observedAt: string;
+    readonly payload: unknown;
+  }
+  | {
+    readonly type: "bot-died";
+    readonly observedAt: string;
+    readonly message?: string;
+  }
+  | {
+    readonly type: "bot-respawned";
+    readonly observedAt: string;
+  };
 
 export interface BeatGameDriver {
   readonly instanceId: string;
@@ -885,11 +896,34 @@ export function makeSoulFireBeatGameDriver(
     botId: bot.id,
     observe,
     events: bot.events().pipe(
-      Stream.map((payload): BeatGameDriverEvent => ({
-        type: "bot-event",
-        observedAt: new Date().toISOString(),
-        payload,
-      })),
+      Stream.map((payload): BeatGameDriverEvent => {
+        const observedAt = new Date().toISOString();
+        if (payload.event.case === "lifecycle") {
+          if (
+            payload.event.value.kind
+            === BotLifecycleKind.BOT_LIFECYCLE_DIED
+          ) {
+            return {
+              type: "bot-died",
+              observedAt,
+              ...(payload.event.value.message === undefined
+                ? {}
+                : { message: payload.event.value.message }),
+            };
+          }
+          if (
+            payload.event.value.kind
+            === BotLifecycleKind.BOT_LIFECYCLE_RESPAWNED
+          ) {
+            return { type: "bot-respawned", observedAt };
+          }
+        }
+        return {
+          type: "bot-event",
+          observedAt,
+          payload,
+        };
+      }),
       Stream.mapError(mapError("events")),
     ),
     queryBlocks: (query) =>

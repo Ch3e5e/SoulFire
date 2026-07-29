@@ -189,7 +189,7 @@ export class FakeBeatGameDriver implements BeatGameDriver {
   }
 
   public readonly observe = Effect.suspend(() => this.observationResolver());
-  public readonly events = Stream.empty;
+  public events: BeatGameDriver["events"] = Stream.empty;
 
   public readonly queryBlocks: BeatGameDriver["queryBlocks"] = (query) =>
     Effect.sync(() => {
