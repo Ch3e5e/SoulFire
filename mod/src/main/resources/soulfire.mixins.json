@@ -44,6 +44,7 @@
     "headless.rendering.MixinCommandEncoder",
     "headless.rendering.MixinGameRenderer",
     "headless.rendering.MixinLevelExtractor",
+    "headless.rendering.MixinLevelLoadTrackerWaitingForPlayerChunk",
     "headless.rendering.MixinLevelRenderer",
     "headless.rendering.MixinMouseHandler",
     "headless.rendering.MixinNativeLibrariesBootstrap",

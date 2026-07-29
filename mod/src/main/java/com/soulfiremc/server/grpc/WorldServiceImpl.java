@@ -80,6 +80,7 @@ public final class WorldServiceImpl extends WorldServiceGrpc.WorldServiceImplBas
     unary(responseObserver, () -> {
       var bot = requireReadableBot(request.getInstanceId(), request.getBotId());
       return inBot(bot, () -> {
+        var level = requireLevel(bot);
         var player = Objects.requireNonNull(
           bot.minecraft().player,
           "Bot player is not available"
@@ -88,7 +89,8 @@ public final class WorldServiceImpl extends WorldServiceGrpc.WorldServiceImplBas
           .setPlayer(MinecraftDomainMapper.player(
             bot,
             player,
-            Math.max(0, player.level().getGameTime())
+            level,
+            Math.max(0, level.getGameTime())
           ))
           .build();
       });

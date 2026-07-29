@@ -1,10 +1,12 @@
 import { createClient } from "@connectrpc/connect";
 import { createRouterTransport } from "@connectrpc/connect";
+import { create } from "@bufbuild/protobuf";
 import { describe, expect, it, vi } from "vitest";
 
 import { SoulFire, SoulFireBot, SoulFireInstance } from "../src/client.js";
 import {
   BotDesiredState,
+  BotLiveStateSchema,
   BotRuntimeState,
   BotService,
   type RestartBotsRequest,
@@ -39,6 +41,52 @@ import {
 } from "../src/generated/soulfire/instance_live_pb.js";
 
 describe("SoulFireBot", () => {
+  it("waits for a usable player snapshot instead of runtime startup", async () => {
+    const transport = createRouterTransport(({ service }) => {
+      service(BotService, {
+        getBotInfo() {
+          return {
+            status: {
+              profileId: "bot-id",
+              desiredState: BotDesiredState.RUNNING,
+              runtimeState: BotRuntimeState.RUNNING,
+            },
+          };
+        },
+      });
+      service(BotLiveService, {
+        async *watchBotEvents() {
+          yield {
+            event: {
+              case: "status",
+              value: {
+                profileId: "bot-id",
+                desiredState: BotDesiredState.RUNNING,
+                runtimeState: BotRuntimeState.RUNNING,
+              },
+            },
+          };
+          yield {
+            event: {
+              case: "snapshot",
+              value: create(BotLiveStateSchema),
+            },
+          };
+        },
+      });
+    });
+    const bot = new SoulFireBot(
+      "instance-id",
+      "bot-id",
+      createClient(BotService, transport),
+      createClient(BotLiveService, transport),
+    );
+
+    const status = await bot.waitForOnline();
+
+    expect(status.runtimeState).toBe(BotRuntimeState.RUNNING);
+  });
+
   it("scopes event streams to the selected instance and bot", async () => {
     let received: WatchBotEventsRequest | undefined;
     const transport = createRouterTransport(({ service }) => {

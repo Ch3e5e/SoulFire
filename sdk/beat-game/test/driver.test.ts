@@ -18,6 +18,7 @@ function effectBot(
     attack?: Readonly<Record<string, unknown>>;
     collect?: readonly unknown[];
     goTo?: readonly unknown[];
+    armor?: Readonly<Record<string, unknown>>;
     cancellations: number;
   } = { cancellations: 0 };
   const taskHandle = {
@@ -79,6 +80,10 @@ function effectBot(
       },
       goTo: (...args: readonly unknown[]) => {
         calls.goTo = args;
+        return Effect.succeed(taskHandle);
+      },
+      autoArmor: (options: Readonly<Record<string, unknown>>) => {
+        calls.armor = options;
         return Effect.succeed(taskHandle);
       },
     },
@@ -172,6 +177,22 @@ describe("production SoulFire beat-game driver", () => {
     });
   });
 
+  it("forwards bounded auto-armor completion options", async () => {
+    const { bot, calls } = effectBot();
+    const driver = makeSoulFireBeatGameDriver(bot);
+
+    await Effect.runPromise(driver.runTask({
+      type: "auto-armor",
+      maximumEquips: 4,
+      completeWhenNoUpgrade: true,
+    }, defaultBeatGameStrategy.path));
+
+    expect(calls.armor).toMatchObject({
+      maximumEquips: 4,
+      completeWhenNoUpgrade: true,
+    });
+  });
+
   it("cancels its durable server task when interrupted", async () => {
     const { bot, calls } = effectBot(Effect.never);
     const driver = makeSoulFireBeatGameDriver(bot);
@@ -203,7 +224,10 @@ describe("production SoulFire beat-game driver", () => {
 
     await Effect.runPromise(Fiber.interrupt(fiber));
 
-    expect(calls.goTo).toBeDefined();
+    expect(calls.goTo?.[1]).toMatchObject({
+      conflictPolicy: BotTaskConflictPolicy.REPLACE,
+      reconnectPolicy: BotTaskReconnectPolicy.PAUSE_AND_RESUME,
+    });
     expect(calls.cancellations).toBe(1);
   });
 });

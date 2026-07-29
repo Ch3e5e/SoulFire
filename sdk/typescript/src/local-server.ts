@@ -67,19 +67,36 @@ export async function installLocalServer(
   const directory = path.resolve(options.directory ?? ".soulfire");
   await mkdir(directory, { recursive: true });
 
-  const javaPath = await ensureJvm(
-    path.join(directory, "jvm-25"),
-    fetchImplementation,
-  );
-  const release = await resolveRelease(options.version, fetchImplementation);
-  const jar = resolveDedicatedAsset(release, options.version);
-  const jarPath = path.join(directory, "jars", jar.name);
-  await ensureDownload(
-    jar.browser_download_url,
-    jarPath,
-    requireSha256Digest(jar.digest, "SoulFire release"),
-    fetchImplementation,
-  );
+  const managedJvmDirectory = path.join(directory, "jvm-25");
+  const javaPath = options.javaPath === undefined
+    ? await ensureJvm(
+      managedJvmDirectory,
+      fetchImplementation,
+    )
+    : await requireLocalFile(options.javaPath, "Java executable");
+  const javaHome = options.javaPath === undefined
+    ? getJavaHome(managedJvmDirectory)
+    : path.dirname(path.dirname(javaPath));
+  const localJarPath = options.jarPath === undefined
+    ? undefined
+    : await requireLocalFile(options.jarPath, "SoulFire JAR");
+  let installedVersion = "local";
+  let jarPath = localJarPath;
+  if (jarPath === undefined) {
+    const release = await resolveRelease(
+      options.version,
+      fetchImplementation,
+    );
+    const jar = resolveDedicatedAsset(release, options.version);
+    jarPath = path.join(directory, "jars", jar.name);
+    await ensureDownload(
+      jar.browser_download_url,
+      jarPath,
+      requireSha256Digest(jar.digest, "SoulFire release"),
+      fetchImplementation,
+    );
+    installedVersion = release.tag_name;
+  }
 
   const runDirectory = path.join(directory, "server");
   await mkdir(runDirectory, { recursive: true });
@@ -104,7 +121,7 @@ export async function installLocalServer(
         cwd: runDirectory,
         env: {
           ...process.env,
-          JAVA_HOME: getJavaHome(path.join(directory, "jvm-25")),
+          JAVA_HOME: javaHome,
         },
         stdio: "pipe",
         windowsHide: true,
@@ -127,7 +144,7 @@ export async function installLocalServer(
         javaPath,
         pid: requirePid(child.pid),
         runDirectory,
-        version: release.tag_name,
+        version: installedVersion,
       };
     return {
       get info() {
@@ -153,6 +170,23 @@ export async function installLocalServer(
     await stopChild(child);
     throw error;
   }
+}
+
+async function requireLocalFile(
+  value: string,
+  description: string,
+): Promise<string> {
+  const resolved = path.resolve(value);
+  let metadata;
+  try {
+    metadata = await stat(resolved);
+  } catch (cause) {
+    throw new Error(`${description} does not exist: ${resolved}`, { cause });
+  }
+  if (!metadata.isFile()) {
+    throw new Error(`${description} is not a file: ${resolved}`);
+  }
+  return resolved;
 }
 
 export async function resolveRelease(

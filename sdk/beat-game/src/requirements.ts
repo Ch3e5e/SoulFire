@@ -150,6 +150,21 @@ const REQUIREMENTS: Readonly<
       75,
     ),
   ],
+  [BeatGamePhase.COLLECT_DRAGON_EGG]: [
+    itemRequirement(
+      "torch",
+      ["minecraft:torch"],
+      () => 1,
+      100,
+    ),
+    itemRequirement(
+      "dragon-egg",
+      ["minecraft:dragon_egg"],
+      () => 1,
+      90,
+    ),
+  ],
+  [BeatGamePhase.EXIT_END]: [],
   [BeatGamePhase.COMPLETE]: [],
 };
 

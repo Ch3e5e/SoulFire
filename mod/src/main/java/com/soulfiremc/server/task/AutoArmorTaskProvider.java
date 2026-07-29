@@ -30,13 +30,11 @@ import com.soulfiremc.server.bot.ControlStopReason;
 import com.soulfiremc.server.bot.ControlTask;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.entity.EquipmentSlot;
-import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.inventory.InventoryMenu;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.ItemAttributeModifiers;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -144,7 +142,11 @@ public final class AutoArmorTaskProvider
       }
 
       var player = context.bot().minecraft().player;
-      if (player == null || player.hasContainerOpen()) {
+      if (
+        player == null
+          || player.hasContainerOpen()
+          || !player.inventoryMenu.getCarried().isEmpty()
+      ) {
         return;
       }
       var upgrade = findUpgrade(player.inventoryMenu);
@@ -309,41 +311,13 @@ public final class AutoArmorTaskProvider
         }
       );
     }
-    return ControlTask.sequence(
+    return TaskInventorySupport.swapSlotsViaSelectedHotbar(
+      context.bot(),
       "SDK auto armor equip",
       ControlPriority.HIGH,
       EQUIP_RESOURCES,
-      List.of(
-        ControlTask.action(player::sendOpenInventory),
-        ControlTask.action(() -> click(context, sourceSlot)),
-        ControlTask.waitMillis(50L),
-        ControlTask.action(() -> click(context, equipmentSlot)),
-        ControlTask.waitMillis(50L),
-        ControlTask.action(() -> {
-          if (!player.inventoryMenu.getCarried().isEmpty()) {
-            click(context, sourceSlot);
-          }
-        }),
-        ControlTask.waitMillis(50L),
-        ControlTask.action(player::closeContainer)
-      )
-    );
-  }
-
-  private static void click(BotTaskContext context, int slot) {
-    var player = context.bot().minecraft().player;
-    var gameMode = context.bot().minecraft().gameMode;
-    if (player == null || gameMode == null) {
-      throw new IllegalStateException(
-        "Bot player or game mode is unavailable"
-      );
-    }
-    gameMode.handleContainerInput(
-      player.inventoryMenu.containerId,
-      slot,
-      0,
-      ContainerInput.PICKUP,
-      player
+      sourceSlot,
+      equipmentSlot
     );
   }
 

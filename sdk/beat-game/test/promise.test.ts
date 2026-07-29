@@ -11,6 +11,7 @@ import {
   checkpoint,
   FakeBeatGameDriver,
   observation,
+  postDragonHooks,
 } from "./fixtures.js";
 
 describe("beat-game Promise facade", () => {
@@ -37,6 +38,7 @@ describe("beat-game Promise facade", () => {
       runId: "promise-run",
       team: { teamId: "promise-team" },
       checkpointStore: store,
+      hooks: postDragonHooks(driver),
     });
     const eventTypes: string[] = [];
     const consumeEvents = (async () => {

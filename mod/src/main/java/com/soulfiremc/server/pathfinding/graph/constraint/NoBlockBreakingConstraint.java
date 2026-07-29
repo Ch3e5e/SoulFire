@@ -17,10 +17,18 @@
  */
 package com.soulfiremc.server.pathfinding.graph.constraint;
 
+import com.soulfiremc.server.pathfinding.SFVec3i;
+import net.minecraft.world.level.block.state.BlockState;
+
 public record NoBlockBreakingConstraint(PathConstraint delegate) implements DelegatePathConstraint {
   @Override
   public boolean canBreakBlocks() {
     // Prevents block breaking
+    return false;
+  }
+
+  @Override
+  public boolean canBreakBlock(SFVec3i pos, BlockState blockState) {
     return false;
   }
 }

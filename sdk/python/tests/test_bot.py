@@ -42,6 +42,14 @@ from soulfire.bot_live_pb2 import (
     WriteBookRequest,
     WriteBookResponse,
 )
+from soulfire.bot_pb2 import (
+    BOT_DESIRED_STATE_RUNNING,
+    BOT_RUNTIME_STATE_RUNNING,
+    BotInfoRequest,
+    BotInfoResponse,
+    BotLiveState,
+    BotStatus,
+)
 from soulfire.common_pb2 import BlockPosition
 
 
@@ -207,6 +215,33 @@ class FakeBotLiveClient:
         return ReleaseBotControlResponse()
 
 
+class FakeStartingBotService:
+    async def get_bot_info(
+        self,
+        request: BotInfoRequest,
+        **_kwargs: object,
+    ) -> BotInfoResponse:
+        return BotInfoResponse(
+            status=BotStatus(
+                profile_id=request.bot_id,
+                desired_state=BOT_DESIRED_STATE_RUNNING,
+                runtime_state=BOT_RUNTIME_STATE_RUNNING,
+            )
+        )
+
+
+class FakeJoiningBotLiveClient(FakeBotLiveClient):
+    async def _events(self) -> AsyncIterator[BotEvent]:
+        yield BotEvent(
+            status=BotStatus(
+                profile_id="bot-id",
+                desired_state=BOT_DESIRED_STATE_RUNNING,
+                runtime_state=BOT_RUNTIME_STATE_RUNNING,
+            )
+        )
+        yield BotEvent(snapshot=BotLiveState())
+
+
 @pytest.mark.asyncio
 async def test_bot_scopes_event_stream() -> None:
     service = FakeBotLiveClient()
@@ -229,6 +264,20 @@ async def test_bot_scopes_event_stream() -> None:
     assert service.event_request.filter.include_lifecycle
     assert service.event_request.filter.include_state_deltas
     assert service.event_request.filter.include_titles
+
+
+@pytest.mark.asyncio
+async def test_bot_waits_for_usable_player_snapshot() -> None:
+    bot = AsyncSoulFireBot(
+        "instance-id",
+        "bot-id",
+        cast(BotServiceClient, FakeStartingBotService()),
+        cast(BotLiveServiceClient, FakeJoiningBotLiveClient()),
+    )
+
+    status = await bot.wait_for_online()
+
+    assert status.runtime_state == BOT_RUNTIME_STATE_RUNNING
 
 
 @pytest.mark.asyncio

@@ -59,6 +59,14 @@ export type BeatGamePlannerDecision =
   | {
     readonly type: "fight-ender-dragon";
     readonly action: "fight-ender-dragon";
+  }
+  | {
+    readonly type: "collect-dragon-egg";
+    readonly action: "collect-dragon-egg";
+  }
+  | {
+    readonly type: "exit-end";
+    readonly action: "exit-end";
   };
 
 export interface BeatGamePlannerInput {
@@ -149,6 +157,24 @@ export function decideBeatGameAction(
         action: "fight-ender-dragon",
         }
         : requirementDecision(missing);
+    case BeatGamePhase.COLLECT_DRAGON_EGG: {
+      if ((observation.inventory.counts["minecraft:dragon_egg"] ?? 0) > 0) {
+        return phaseTransition(phase, BeatGamePhase.EXIT_END);
+      }
+      const missingTool = requirements.find(({ key, satisfied }) =>
+        key !== "dragon-egg" && !satisfied
+      );
+      return missingTool === undefined
+        ? {
+          type: "collect-dragon-egg",
+          action: "collect-dragon-egg",
+        }
+        : requirementDecision(missingTool);
+    }
+    case BeatGamePhase.EXIT_END:
+      return isEnd(observation.player.position.dimension)
+        ? { type: "exit-end", action: "exit-end" }
+        : phaseTransition(phase, BeatGamePhase.COMPLETE);
     case BeatGamePhase.COMPLETE:
       return phaseTransition(phase, phase);
   }
@@ -200,6 +226,10 @@ export function nextPhase(phase: BeatGamePhase): BeatGamePhase {
     case BeatGamePhase.ACTIVATE_END_PORTAL:
       return BeatGamePhase.FIGHT_ENDER_DRAGON;
     case BeatGamePhase.FIGHT_ENDER_DRAGON:
+      return BeatGamePhase.COLLECT_DRAGON_EGG;
+    case BeatGamePhase.COLLECT_DRAGON_EGG:
+      return BeatGamePhase.EXIT_END;
+    case BeatGamePhase.EXIT_END:
     case BeatGamePhase.COMPLETE:
       return BeatGamePhase.COMPLETE;
   }
@@ -221,8 +251,12 @@ export function objectiveForPhase(phase: BeatGamePhase): string {
       return "Fill the End portal frames and enter the End";
     case BeatGamePhase.FIGHT_ENDER_DRAGON:
       return "Destroy the End crystals and defeat the dragon";
+    case BeatGamePhase.COLLECT_DRAGON_EGG:
+      return "Collect the dragon egg from the exit portal";
+    case BeatGamePhase.EXIT_END:
+      return "Enter the exit portal and return from the End";
     case BeatGamePhase.COMPLETE:
-      return "The Ender Dragon has been defeated";
+      return "The dragon egg is secured and the bot has left the End";
   }
 }
 

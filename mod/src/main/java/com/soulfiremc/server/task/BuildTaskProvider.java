@@ -71,6 +71,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.stream.Collectors;
 
 /// Places an inline, transformable schematic with exact material and block
 /// state verification.
@@ -159,9 +160,14 @@ public final class BuildTaskProvider implements BotTaskProvider<BuildTask> {
       context.bot().minecraft().player,
       "Bot player is not available"
     );
-    var navigationConstraint = PathfindingSupport.buildConstraint(
-      context.bot(),
-      input.getOptions()
+    var navigationConstraint = protectSchematic(
+      PathfindingSupport.buildConstraint(
+        context.bot(),
+        input.getOptions()
+      ),
+      occupied.stream()
+        .map(SFVec3i::fromInt)
+        .collect(Collectors.toUnmodifiableSet())
     );
     var result = new CompletableFuture<BuildTaskResult>();
     return new BotTaskExecution(
@@ -363,6 +369,30 @@ public final class BuildTaskProvider implements BotTaskProvider<BuildTask> {
       @Override
       public boolean canPlaceBlock(SFVec3i position) {
         return false;
+      }
+
+      @Override
+      public PathConstraint delegate() {
+        return delegate;
+      }
+    };
+  }
+
+  private static PathConstraint protectSchematic(
+    PathConstraint delegate,
+    Set<SFVec3i> positions
+  ) {
+    return new DelegatePathConstraint() {
+      @Override
+      public boolean canBreakBlock(SFVec3i position, BlockState state) {
+        return !positions.contains(position)
+          && delegate.canBreakBlock(position, state);
+      }
+
+      @Override
+      public boolean canPlaceBlock(SFVec3i position) {
+        return !positions.contains(position)
+          && delegate.canPlaceBlock(position);
       }
 
       @Override

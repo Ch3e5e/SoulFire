@@ -242,7 +242,12 @@ export type BeatGameTask =
     readonly maximumRespawns?: number;
   }
   | {
-    readonly type: "auto-totem" | "auto-armor";
+    readonly type: "auto-totem";
+  }
+  | {
+    readonly type: "auto-armor";
+    readonly maximumEquips?: number;
+    readonly completeWhenNoUpgrade?: boolean;
   }
   | {
     readonly type: "build";
@@ -338,6 +343,16 @@ export type BeatGamePrimitiveAction =
     readonly sneaking?: boolean;
   }
   | {
+    readonly type: "set-movement";
+    readonly forward?: boolean;
+    readonly backward?: boolean;
+    readonly left?: boolean;
+    readonly right?: boolean;
+    readonly jump?: boolean;
+    readonly sneak?: boolean;
+    readonly sprint?: boolean;
+  }
+  | {
     readonly type: "respawn" | "reset-movement" | "close-container";
   };
 
@@ -371,6 +386,10 @@ export interface BeatGameDriver {
     recipeId: string,
     count: number,
   ) => Effect.Effect<BeatGameCraftability, BeatGameDriverError>;
+  readonly waitForChunks: (
+    radiusChunks?: number,
+    timeoutMs?: number,
+  ) => Effect.Effect<void, BeatGameDriverError>;
   readonly pathfind: (
     position: BeatGamePosition,
     radius: number,
@@ -744,7 +763,15 @@ export function makeSoulFireBeatGameDriver(
         case "auto-totem":
           return bot.tasks.autoTotem(taskStart);
         case "auto-armor":
-          return bot.tasks.autoArmor(taskStart);
+          return bot.tasks.autoArmor({
+            ...taskStart,
+            ...(task.maximumEquips === undefined
+              ? {}
+              : { maximumEquips: task.maximumEquips }),
+            ...(task.completeWhenNoUpgrade === undefined
+              ? {}
+              : { completeWhenNoUpgrade: task.completeWhenNoUpgrade }),
+          });
         case "build":
           return bot.tasks.build(
             task.origin,
@@ -950,9 +977,17 @@ export function makeSoulFireBeatGameDriver(
         })),
         Effect.mapError(mapError("canCraft")),
       ),
+    waitForChunks: (radiusChunks = 0, timeoutMs = 60_000) =>
+      bot.waitForChunks({
+        radiusChunks,
+        timeoutMs,
+      }).pipe(
+        Effect.asVoid,
+        Effect.mapError(mapError("waitForChunks")),
+      ),
     pathfind: (position, radius, policy) =>
       bot.tasks.goTo(goals.near(position, radius), {
-        conflictPolicy: BotTaskConflictPolicy.QUEUE,
+        conflictPolicy: BotTaskConflictPolicy.REPLACE,
         reconnectPolicy: BotTaskReconnectPolicy.PAUSE_AND_RESUME,
         path: pathOptions(policy),
       }).pipe(
@@ -1040,6 +1075,20 @@ function executePrimitive(
         entityId: action.networkId,
         hand: hand(action.hand),
         sneaking: action.sneaking ?? false,
+      });
+    case "set-movement":
+      return bot.setMovement({
+        ...(action.forward === undefined
+          ? {}
+          : { forward: action.forward }),
+        ...(action.backward === undefined
+          ? {}
+          : { backward: action.backward }),
+        ...(action.left === undefined ? {} : { left: action.left }),
+        ...(action.right === undefined ? {} : { right: action.right }),
+        ...(action.jump === undefined ? {} : { jump: action.jump }),
+        ...(action.sneak === undefined ? {} : { sneak: action.sneak }),
+        ...(action.sprint === undefined ? {} : { sprint: action.sprint }),
       });
     case "respawn":
       return bot.respawn();

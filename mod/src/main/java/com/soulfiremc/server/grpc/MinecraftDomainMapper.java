@@ -307,8 +307,12 @@ public final class MinecraftDomainMapper {
     return builder.build();
   }
 
-  static PlayerSnapshot player(BotConnection bot, LocalPlayer player, long revision) {
-    var level = player.level();
+  static PlayerSnapshot player(
+    BotConnection bot,
+    LocalPlayer player,
+    ClientLevel level,
+    long revision
+  ) {
     var abilities = player.getAbilities();
     var builder = PlayerSnapshot.newBuilder()
       .setPosition(worldPosition(

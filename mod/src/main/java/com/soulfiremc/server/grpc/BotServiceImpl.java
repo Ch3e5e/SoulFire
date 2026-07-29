@@ -261,7 +261,11 @@ public final class BotServiceImpl extends BotServiceGrpc.BotServiceImplBase {
       .setExperienceProgress(player.experienceProgress);
 
     // Add dimension
-    var dimension = player.level().dimension().identifier().toString();
+    var level = Objects.requireNonNull(
+      minecraft.level,
+      "Bot level is not available"
+    );
+    var dimension = level.dimension().identifier().toString();
     builder.setDimension(dimension);
 
     // Add game mode

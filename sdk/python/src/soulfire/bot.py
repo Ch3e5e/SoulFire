@@ -287,6 +287,23 @@ class AsyncSoulFireBot:
             timeout_ms=timeout_ms,
         )
 
+    async def wait_for_online(
+        self,
+        *,
+        timeout_ms: int | None = None,
+    ) -> BotStatus:
+        current = await self.info(timeout_ms=timeout_ms)
+        latest_status = current.status
+        if current.HasField("live_state"):
+            return latest_status
+        async for event in self.events(timeout_ms=timeout_ms):
+            event_type = event.WhichOneof("event")
+            if event_type == "status":
+                latest_status = event.status
+            elif event_type == "snapshot":
+                return latest_status
+        raise RuntimeError(f"Bot {self.id} event stream ended before it came online")
+
     def events(
         self,
         event_filter: BotEventFilter | None = None,
@@ -1160,6 +1177,23 @@ class SoulFireBot:
             BotInfoRequest(instance_id=self.instance_id, bot_id=self.id),
             timeout_ms=timeout_ms,
         )
+
+    def wait_for_online(
+        self,
+        *,
+        timeout_ms: int | None = None,
+    ) -> BotStatus:
+        current = self.info(timeout_ms=timeout_ms)
+        latest_status = current.status
+        if current.HasField("live_state"):
+            return latest_status
+        for event in self.events(timeout_ms=timeout_ms):
+            event_type = event.WhichOneof("event")
+            if event_type == "status":
+                latest_status = event.status
+            elif event_type == "snapshot":
+                return latest_status
+        raise RuntimeError(f"Bot {self.id} event stream ended before it came online")
 
     def events(
         self,

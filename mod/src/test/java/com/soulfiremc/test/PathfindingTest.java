@@ -20,10 +20,14 @@ package com.soulfiremc.test;
 import com.soulfiremc.server.pathfinding.NodeState;
 import com.soulfiremc.server.pathfinding.RouteFinder;
 import com.soulfiremc.server.pathfinding.SFVec3i;
+import com.soulfiremc.server.pathfinding.execution.BlockPlaceAction;
 import com.soulfiremc.server.pathfinding.execution.InteractBlockAction;
 import com.soulfiremc.server.pathfinding.goals.PosGoal;
 import com.soulfiremc.server.pathfinding.graph.MinecraftGraph;
 import com.soulfiremc.server.pathfinding.graph.ProjectedInventory;
+import com.soulfiremc.server.pathfinding.graph.constraint.NoBlockActionsConstraint;
+import com.soulfiremc.server.pathfinding.graph.constraint.NoBlockBreakingConstraint;
+import com.soulfiremc.server.pathfinding.graph.constraint.NoBlockPlacingConstraint;
 import com.soulfiremc.test.utils.TestBlockAccessorBuilder;
 import com.soulfiremc.test.utils.TestBootstrap;
 import com.soulfiremc.test.utils.TestMiningCostCalculator;
@@ -53,6 +57,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
 final class PathfindingTest {
@@ -79,6 +84,74 @@ final class PathfindingTest {
   static void setup() {
     // Bootstrap mixins and Minecraft registries
     TestBootstrap.bootstrapForTest();
+  }
+
+  @Test
+  void noBlockBreakingConstraintRejectsIndividualBlocks() {
+    var constraint = new NoBlockBreakingConstraint(TestPathConstraint.INSTANCE);
+
+    assertFalse(constraint.canBreakBlocks());
+    assertFalse(constraint.canBreakBlock(SFVec3i.ZERO, Blocks.STONE.defaultBlockState()));
+  }
+
+  @Test
+  void noBlockPlacingConstraintRejectsIndividualBlocks() {
+    var constraint = new NoBlockPlacingConstraint(TestPathConstraint.INSTANCE);
+
+    assertFalse(constraint.canPlaceBlocks());
+    assertFalse(constraint.canPlaceBlock(SFVec3i.ZERO));
+  }
+
+  @Test
+  void pathfindingAcrossFlatGroundWithoutBlockActions() {
+    var accessor = new TestBlockAccessorBuilder();
+    for (var x = 0; x <= 4; x++) {
+      accessor.setBlockAt(x, 0, 0, Blocks.STONE);
+      accessor.setBlockAt(x, 0, -1, Blocks.STONE);
+    }
+    var constraint = new NoBlockActionsConstraint(TestPathConstraint.INSTANCE);
+    var inventory = new ProjectedInventory(
+      List.of(itemStack(Items.STONE)),
+      TestMiningCostCalculator.INSTANCE,
+      constraint
+    );
+    var routeFinder = new RouteFinder(new MinecraftGraph(
+      accessor.build(),
+      inventory,
+      constraint
+    ), new PosGoal(4, 1, -1));
+
+    var route = routeFinder.findRouteFuture(
+      NodeState.forInfo(new SFVec3i(0, 1, 0), inventory)
+    ).join();
+
+    var foundRouteResult = assertInstanceOf(RouteFinder.FoundRouteResult.class, route);
+    assertFalse(foundRouteResult.actions().stream().anyMatch(BlockPlaceAction.class::isInstance));
+  }
+
+  @Test
+  void pathfindingDownStaircaseWithoutBlockActions() {
+    var accessor = new TestBlockAccessorBuilder();
+    accessor.setBlockAt(0, 0, 0, Blocks.STONE);
+    accessor.setBlockAt(0, -1, 1, Blocks.STONE);
+    var constraint = new NoBlockActionsConstraint(TestPathConstraint.INSTANCE);
+    var inventory = new ProjectedInventory(
+      List.of(itemStack(Items.STONE)),
+      TestMiningCostCalculator.INSTANCE,
+      constraint
+    );
+    var routeFinder = new RouteFinder(new MinecraftGraph(
+      accessor.build(),
+      inventory,
+      constraint
+    ), new PosGoal(0, 0, 1));
+
+    var route = routeFinder.findRouteFuture(
+      NodeState.forInfo(new SFVec3i(0, 1, 0), inventory)
+    ).join();
+
+    var foundRouteResult = assertInstanceOf(RouteFinder.FoundRouteResult.class, route);
+    assertEquals(1, foundRouteResult.actions().size());
   }
 
   @Test

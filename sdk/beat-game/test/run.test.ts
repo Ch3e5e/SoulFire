@@ -11,13 +11,288 @@ import {
   beatGameWithDriver,
 } from "../src/index.js";
 import {
+  blockObservation,
   checkpoint,
   FakeBeatGameDriver,
+  installStaircaseMovementSimulation,
   observation,
+  postDragonHooks,
 } from "./fixtures.js";
 
 describe("beat-game run lifecycle", () => {
-  it("resumes a checkpoint and completes from observed dragon absence", async () => {
+  it("honors a compact triangulation baseline", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      counts: { "minecraft:ender_eye": 12 },
+      position: {
+        x: 100,
+        y: 70,
+        z: 200,
+        dimension: "minecraft:overworld",
+      },
+    });
+    const store = new InMemoryBeatGameCheckpointStore();
+    const initial = checkpoint(BeatGamePhase.LOCATE_STRONGHOLD, {
+      runId: "compact-baseline-run",
+      teamId: "compact-baseline-team",
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        eyeSamples: [{
+          origin: driver.currentObservation.player.position,
+          direction: { x: 1, z: 0 },
+          observedAt: "2026-01-01T00:00:01.000Z",
+          confidence: 1,
+        }],
+      },
+    }, undefined));
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        runId: "compact-baseline-run",
+        team: { teamId: "compact-baseline-team" },
+        checkpointStore: store,
+        strategy: {
+          explorationRadius: 16,
+          observationPollMs: 1,
+        },
+        hooks: {
+          ...postDragonHooks(driver),
+          throwEye: () =>
+            Effect.succeed({
+              origin: {
+                x: 100,
+                y: 70,
+                z: 232,
+                dimension: "minecraft:overworld",
+              },
+              direction: {
+                x: Math.SQRT1_2,
+                z: -Math.SQRT1_2,
+              },
+              observedAt: "2026-01-01T00:00:02.000Z",
+              confidence: 1,
+            }),
+          searchStronghold: () => Effect.succeed(true),
+          activateEndPortal: () =>
+            Effect.sync(() => {
+              driver.currentObservation = observation({
+                dimension: "minecraft:the_end",
+                counts: driver.currentObservation.inventory.counts,
+              });
+            }),
+        },
+      }).pipe(Effect.flatMap(({ awaitCompletion }) => awaitCompletion)),
+    ));
+
+    expect(driver.paths[0]).toEqual(expect.objectContaining({
+      position: {
+        x: 100,
+        y: 70,
+        z: 232,
+        dimension: "minecraft:overworld",
+      },
+      radius: 4,
+    }));
+  });
+
+  it("resumes a stronghold staircase from an intermediate step", async () => {
+    const driver = new FakeBeatGameDriver();
+    const currentPosition = {
+      x: 15,
+      y: 10,
+      z: 17,
+      dimension: "minecraft:overworld",
+    };
+    driver.currentObservation = observation({
+      counts: { "minecraft:ender_eye": 12 },
+      position: currentPosition,
+    });
+    installStaircaseMovementSimulation(driver, currentPosition);
+    const portalFrames = [
+      { x: 10, z: 20 },
+      { x: 14, z: 20 },
+      { x: 10, z: 24 },
+      { x: 14, z: 24 },
+    ].map(({ x, z }) => ({
+      blockId: "minecraft:end_portal_frame",
+      position: {
+        x,
+        y: 3,
+        z,
+        dimension: "minecraft:overworld",
+      },
+      properties: { eye: "false" },
+      diggable: false,
+      replaceable: false,
+      interactive: true,
+      observedAt: "2026-01-01T00:00:01.000Z",
+    }));
+    driver.blockResults = portalFrames;
+    driver.blockQueryResolver = ({ center, selector }) =>
+      selector.blockIds?.includes("minecraft:end_portal_frame") === true
+        ? portalFrames
+        : [blockObservation({
+          x: Math.floor(center.x),
+          y: Math.floor(center.y),
+          z: Math.floor(center.z),
+          dimension: center.dimension,
+        })];
+    const store = new InMemoryBeatGameCheckpointStore();
+    const initial = checkpoint(BeatGamePhase.LOCATE_STRONGHOLD, {
+      runId: "staircase-resume-run",
+      teamId: "staircase-resume-team",
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        strongholdEstimate: {
+          x: 12,
+          y: 100,
+          z: 0,
+          dimension: "minecraft:overworld",
+        },
+      },
+    }, undefined));
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        runId: "staircase-resume-run",
+        team: { teamId: "staircase-resume-team" },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+        hooks: {
+          ...postDragonHooks(driver),
+          activateEndPortal: () =>
+            Effect.sync(() => {
+              driver.currentObservation = observation({
+                dimension: "minecraft:the_end",
+                counts: driver.currentObservation.inventory.counts,
+              });
+            }),
+        },
+      }).pipe(Effect.flatMap(({ awaitCompletion }) => awaitCompletion)),
+    ));
+
+    expect(driver.paths[0]?.position).toEqual(currentPosition);
+    expect(driver.paths[0]?.radius).toBe(0);
+    expect(driver.paths).not.toContainEqual(expect.objectContaining({
+      position: {
+        x: 15,
+        y: 10,
+        z: 15,
+        dimension: "minecraft:overworld",
+      },
+    }));
+  });
+
+  it("approaches portal frames found after the underground survey", async () => {
+    const driver = new FakeBeatGameDriver();
+    const currentPosition = {
+      x: 2,
+      y: 10,
+      z: -3,
+      dimension: "minecraft:overworld",
+    };
+    driver.currentObservation = observation({
+      counts: {
+        "minecraft:cobblestone": 16,
+        "minecraft:diamond_pickaxe": 1,
+        "minecraft:ender_eye": 12,
+      },
+      position: currentPosition,
+    });
+    installStaircaseMovementSimulation(driver, currentPosition);
+    const portalFrames = [
+      { x: 0, z: 0 },
+      { x: 4, z: 0 },
+      { x: 0, z: 4 },
+      { x: 4, z: 4 },
+    ].map(({ x, z }) =>
+      blockObservation(
+        {
+          x,
+          y: 8,
+          z,
+          dimension: "minecraft:overworld",
+        },
+        {
+          blockId: "minecraft:end_portal_frame",
+          properties: { eye: "false" },
+          diggable: false,
+          interactive: true,
+        },
+      )
+    );
+    let portalFrameQueries = 0;
+    driver.blockQueryResolver = ({ center, selector }) => {
+      if (
+        selector.blockIds?.includes("minecraft:end_portal_frame") === true
+      ) {
+        portalFrameQueries += 1;
+        return portalFrameQueries >= 3 ? portalFrames : [];
+      }
+      return [blockObservation({
+        x: Math.floor(center.x),
+        y: Math.floor(center.y),
+        z: Math.floor(center.z),
+        dimension: center.dimension,
+      })];
+    };
+    const store = new InMemoryBeatGameCheckpointStore();
+    const initial = checkpoint(BeatGamePhase.LOCATE_STRONGHOLD, {
+      runId: "underground-survey-run",
+      teamId: "underground-survey-team",
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        strongholdEstimate: {
+          x: 2,
+          y: 34,
+          z: -10,
+          dimension: "minecraft:overworld",
+        },
+      },
+    }, undefined));
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        runId: "underground-survey-run",
+        team: { teamId: "underground-survey-team" },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+        hooks: {
+          ...postDragonHooks(driver),
+          activateEndPortal: () =>
+            Effect.sync(() => {
+              driver.currentObservation = observation({
+                dimension: "minecraft:the_end",
+                counts: driver.currentObservation.inventory.counts,
+              });
+            }),
+        },
+      }).pipe(Effect.flatMap(({ awaitCompletion }) => awaitCompletion)),
+    ));
+
+    expect(portalFrameQueries).toBeGreaterThanOrEqual(3);
+    expect(driver.paths).toContainEqual(expect.objectContaining({
+      position: currentPosition,
+      radius: 0,
+    }));
+    expect(driver.actions).toContainEqual({
+      type: "set-movement",
+      forward: true,
+      sneak: false,
+      sprint: false,
+    });
+  });
+
+  it("resumes a checkpoint and completes after policy confirms the fight", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
       dimension: "minecraft:the_end",
@@ -46,6 +321,7 @@ describe("beat-game run lifecycle", () => {
         team: { teamId: "resumed-team" },
         checkpointStore: store,
         strategy: { observationPollMs: 1 },
+        hooks: postDragonHooks(driver),
       }).pipe(Effect.flatMap(({ awaitCompletion }) => awaitCompletion)),
     ));
 
@@ -81,6 +357,7 @@ describe("beat-game run lifecycle", () => {
         team: { teamId: "hook-team" },
         checkpointStore: store,
         hooks: {
+          ...postDragonHooks(driver),
           fightEnderDragon: ({ checkpoint: current }) =>
             Effect.sync(() => {
               hookCheckpointRevision = current.revision;
@@ -108,6 +385,8 @@ describe("beat-game run lifecycle", () => {
           "minecraft:cooked_beef": 16,
           "minecraft:bow": 1,
           "minecraft:arrow": 32,
+          "minecraft:torch": 1,
+          "minecraft:dragon_egg": 1,
         },
       });
       await Effect.runPromise(store.save(checkpoint(
@@ -125,6 +404,21 @@ describe("beat-game run lifecycle", () => {
       beatGameTeamWithDrivers(drivers, {
         teamId: "team-run",
         checkpointStore: store,
+        hooks: {
+          exitEnd: ({ driver: current, observation: currentObservation }) =>
+            Effect.sync(() => {
+              const fake = drivers.find(({ botId }) =>
+                botId === current.botId
+              );
+              if (fake === undefined) {
+                throw new Error(`Missing fake driver ${current.botId}`);
+              }
+              fake.currentObservation = observation({
+                dimension: "minecraft:overworld",
+                counts: currentObservation.inventory.counts,
+              });
+            }),
+        },
       }).pipe(Effect.flatMap(({ awaitCompletion }) => awaitCompletion)),
     ));
 
@@ -147,6 +441,7 @@ describe("beat-game run lifecycle", () => {
         "minecraft:arrow": 32,
       },
     });
+    driver.currentObservation = endObservation;
     let observations = 0;
     driver.observationResolver = () => {
       observations += 1;
@@ -157,7 +452,7 @@ describe("beat-game run lifecycle", () => {
           message: "connection restarted",
         }));
       }
-      return Effect.succeed(endObservation);
+      return Effect.succeed(driver.currentObservation);
     };
     const store = new InMemoryBeatGameCheckpointStore();
     await Effect.runPromise(store.save(checkpoint(
@@ -174,6 +469,7 @@ describe("beat-game run lifecycle", () => {
         team: { teamId: "recovery-team" },
         checkpointStore: store,
         strategy: { observationPollMs: 1 },
+        hooks: postDragonHooks(driver),
       }).pipe(Effect.flatMap(({ awaitCompletion }) => awaitCompletion)),
     ));
 
@@ -204,6 +500,7 @@ describe("beat-game run lifecycle", () => {
         checkpointStore: store,
         strategy: { observationPollMs: 1 },
         hooks: {
+          ...postDragonHooks(driver),
           activateEndPortal: () =>
             Effect.suspend(() => {
               activationAttempts += 1;
@@ -228,10 +525,6 @@ describe("beat-game run lifecycle", () => {
     expect(activationAttempts).toBe(1);
     expect(result.finalCheckpoint.planner.status)
       .toBe(BeatGameRunStatus.COMPLETED);
-    expect(result.finalCheckpoint.lastStableAction).toMatchObject({
-      action: "fight-ender-dragon",
-      evidence: "OBSERVED_STATE",
-    });
   });
 
   it("interrupts a long action when a run is paused", async () => {

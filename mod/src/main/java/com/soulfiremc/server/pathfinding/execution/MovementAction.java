@@ -27,6 +27,7 @@ import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.util.Mth;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
@@ -36,6 +37,7 @@ import java.util.concurrent.ThreadLocalRandom;
 @RequiredArgsConstructor
 public final class MovementAction implements WorldAction {
   private static final double STEP_HEIGHT = 0.6;
+  private static final double PRECISE_APPROACH_DISTANCE = 0.75;
   @Getter
   private final SFVec3i blockPosition;
   // Corner jumps normally require you to stand closer to the block to jump
@@ -71,7 +73,14 @@ public final class MovementAction implements WorldAction {
 
     // Leave more space to allow falling
     var adjustedHalfDiagonal = halfDiagonal - 0.1;
-    return botPosition.distanceTo(targetMiddleBlock) < adjustedHalfDiagonal;
+    return horizontalDistance(botPosition, targetMiddleBlock) < adjustedHalfDiagonal;
+  }
+
+  static double horizontalDistance(Vec3 currentPosition, Vec3 targetPosition) {
+    return Math.hypot(
+      targetPosition.x - currentPosition.x,
+      targetPosition.z - currentPosition.z
+    );
   }
 
   @Override
@@ -126,8 +135,61 @@ public final class MovementAction implements WorldAction {
     }
 
     if (!isAtTargetXZ(clientEntity, botPosition, targetMiddleBlock)) {
-      connection.controlState().up(true);
+      var movementInput = movementInputFor(
+        botPosition,
+        clientEntity.getYRot(),
+        targetMiddleBlock
+      );
+      var controlState = connection.controlState();
+      controlState.up(movementInput.forward());
+      controlState.down(movementInput.backward());
+      controlState.left(movementInput.left());
+      controlState.right(movementInput.right());
+      if (shouldUsePreciseApproach(
+        botPosition,
+        targetMiddleBlock,
+        movementInput.horizontalDistance()
+      )) {
+        controlState.shift(true);
+      }
     }
+  }
+
+  static boolean shouldUsePreciseApproach(
+    Vec3 currentPosition,
+    Vec3 targetPosition,
+    double horizontalDistance
+  ) {
+    return horizontalDistance < PRECISE_APPROACH_DISTANCE
+      && targetPosition.y >= currentPosition.y - 0.25;
+  }
+
+  static MovementInput movementInputFor(
+    Vec3 currentPosition,
+    float currentYaw,
+    Vec3 targetPosition
+  ) {
+    var differenceX = targetPosition.x - currentPosition.x;
+    var differenceZ = targetPosition.z - currentPosition.z;
+    var horizontalDistance = horizontalDistance(currentPosition, targetPosition);
+    if (horizontalDistance < 1.0E-6) {
+      return MovementInput.NONE;
+    }
+
+    var targetYaw = (float) (Mth.atan2(differenceZ, differenceX) * Mth.RAD_TO_DEG) - 90.0F;
+    var relativeYaw = Mth.wrapDegrees(targetYaw - currentYaw);
+    var direction = Math.floorMod(Math.round(relativeYaw / 45.0F), 8);
+    return switch (direction) {
+      case 0 -> new MovementInput(true, false, false, false, horizontalDistance);
+      case 1 -> new MovementInput(true, false, false, true, horizontalDistance);
+      case 2 -> new MovementInput(false, false, false, true, horizontalDistance);
+      case 3 -> new MovementInput(false, true, false, true, horizontalDistance);
+      case 4 -> new MovementInput(false, true, false, false, horizontalDistance);
+      case 5 -> new MovementInput(false, true, true, false, horizontalDistance);
+      case 6 -> new MovementInput(false, false, true, false, horizontalDistance);
+      case 7 -> new MovementInput(true, false, true, false, horizontalDistance);
+      default -> throw new IllegalStateException("Unexpected movement direction: " + direction);
+    };
   }
 
   private boolean shouldJump() {
@@ -153,5 +215,16 @@ public final class MovementAction implements WorldAction {
   @Override
   public String toString() {
     return "MovementAction -> " + blockPosition.formatXYZ();
+  }
+
+  record MovementInput(
+    boolean forward,
+    boolean backward,
+    boolean left,
+    boolean right,
+    double horizontalDistance
+  ) {
+    private static final MovementInput NONE =
+      new MovementInput(false, false, false, false, 0.0);
   }
 }

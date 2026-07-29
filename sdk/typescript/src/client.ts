@@ -985,19 +985,24 @@ export class SoulFireBot {
     call?: CallOptions;
     signal?: AbortSignal;
   }): Promise<BotStatus> {
-    const current = await this.status(options?.call);
-    if (current.runtimeState === BotRuntimeState.RUNNING) {
-      return current;
+    const current = await this.info(options?.call);
+    const currentStatus = current.status;
+    if (currentStatus === undefined) {
+      throw new Error(`SoulFire did not return status for bot ${this.id}`);
+    }
+    if (current.liveState !== undefined) {
+      return currentStatus;
     }
     const callOptions = options?.signal === undefined
       ? options?.call
       : { ...options.call, signal: options.signal };
+    let latestStatus = currentStatus;
     for await (const event of this.events(undefined, callOptions)) {
-      if (
-        event.event.case === "status"
-        && event.event.value.runtimeState === BotRuntimeState.RUNNING
-      ) {
-        return event.event.value;
+      if (event.event.case === "status") {
+        latestStatus = event.event.value;
+      }
+      if (event.event.case === "snapshot") {
+        return latestStatus;
       }
     }
     throw new Error(`Bot ${this.id} event stream ended before it came online`);

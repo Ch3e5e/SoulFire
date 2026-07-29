@@ -3,6 +3,8 @@ import { Effect } from "effect";
 import { BeatGameDriverError } from "./errors.js";
 import {
   createNetherPortalFrame,
+  directionFromRotation,
+  distanceSquared,
   horizontalDirection,
   rotationToward,
   triangulateStronghold,
@@ -15,10 +17,12 @@ import {
   type BeatGameEntityObservation,
   type BeatGameEyeSample,
   type BeatGameItemRequirement,
+  type BeatGameObservation,
   type BeatGamePathPolicy,
   type BeatGamePosition,
 } from "./model.js";
 import type {
+  BeatGameBlockFace,
   BeatGameBuildBlock,
   BeatGameContainerTransfer,
   BeatGameDriver,
@@ -29,6 +33,8 @@ import type {
   BeatGameQueryBlocks,
   BeatGameTask,
 } from "./driver.js";
+
+const NETHER_PORTAL_REENTRY_COOLDOWN_MS = 10_500;
 
 export interface BeatGameBehaviorOptions {
   readonly path?: Partial<BeatGamePathPolicy>;
@@ -99,6 +105,85 @@ export function excavate(
       ? {}
       : { maximumBlocks: options.maximumBlocks }),
   }, options.path);
+}
+
+export interface ExcavateStaircaseOptions extends BeatGameBehaviorOptions {
+  readonly from: BeatGameBlockPosition;
+  readonly to: BeatGameBlockPosition;
+  readonly tool?: BeatGameItemSelector;
+}
+
+/**
+ * Carves and follows a two-block-high descending staircase.
+ *
+ * Each horizontal block advances exactly one block downward. Surplus depth is
+ * routed through a rectangular detour so the staircase never becomes a
+ * two-column shaft. Missing floor blocks are bridged before the bot opens the
+ * next step, which keeps cave intersections safe.
+ */
+export function excavateStaircase(
+  driver: BeatGameDriver,
+  options: ExcavateStaircaseOptions,
+): Effect.Effect<void, BeatGameDriverError> {
+  const steps = staircaseSteps(options.from, options.to);
+  return driver.withControl(Effect.gen(function* () {
+    yield* driver.pathfind(options.from, 0, mergePathPolicy(options.path));
+    yield* driver.act({
+      type: "select-item",
+      selector: options.tool ?? {
+        itemIds: [
+          "minecraft:netherite_pickaxe",
+          "minecraft:diamond_pickaxe",
+          "minecraft:iron_pickaxe",
+          "minecraft:stone_pickaxe",
+          "minecraft:wooden_pickaxe",
+          "minecraft:golden_pickaxe",
+        ],
+      },
+    });
+    let previousStep = options.from;
+    let retreatStep: BeatGameBlockPosition | undefined;
+    for (const step of steps) {
+      const placedSupport = yield* ensureStaircaseSupport(
+        driver,
+        previousStep,
+        step,
+        retreatStep,
+        options.path,
+      );
+      if (placedSupport) {
+        yield* driver.act({
+          type: "select-item",
+          selector: options.tool ?? {
+            itemIds: [
+              "minecraft:netherite_pickaxe",
+              "minecraft:diamond_pickaxe",
+              "minecraft:iron_pickaxe",
+              "minecraft:stone_pickaxe",
+              "minecraft:wooden_pickaxe",
+              "minecraft:golden_pickaxe",
+            ],
+          },
+        });
+      }
+      yield* driver.act({
+        type: "dig-block",
+        position: { ...step, y: step.y + 2 },
+      });
+      yield* driver.act({
+        type: "dig-block",
+        position: { ...step, y: step.y + 1 },
+      });
+      yield* driver.act({ type: "dig-block", position: step });
+      yield* walkStaircaseStep(driver, step);
+      retreatStep = previousStep;
+      previousStep = step;
+    }
+  }).pipe(
+    Effect.ensuring(driver.act({ type: "reset-movement" }).pipe(
+      Effect.ignore,
+    )),
+  ));
 }
 
 export interface AttackEntityOptions extends BeatGameBehaviorOptions {
@@ -409,7 +494,10 @@ export function equipBestArmor(
   driver: BeatGameDriver,
   options: BeatGameBehaviorOptions = {},
 ): Effect.Effect<void, BeatGameDriverError> {
-  return runControlled(driver, { type: "auto-armor" }, options.path);
+  return runControlled(driver, {
+    type: "auto-armor",
+    completeWhenNoUpgrade: true,
+  }, options.path);
 }
 
 export function keepTotemEquipped(
@@ -682,57 +770,358 @@ export function buildNetherPortal(
 ): Effect.Effect<PortalFrame, BeatGameDriverError> {
   return Effect.gen(function* () {
     const frame = createNetherPortalFrame(options.origin, options.axis);
-    const existing = yield* driver.queryBlocks({
-      center: {
-        x: options.origin.x + (frame.axis === "x" ? 1.5 : 0),
-        y: options.origin.y + 2,
-        z: options.origin.z + (frame.axis === "z" ? 1.5 : 0),
-        dimension: options.origin.dimension,
-      },
+    yield* placeNetherPortalFrame(driver, frame, options.path);
+    const observed = yield* driver.queryBlocks({
+      center: portalFrameCenter(frame),
       radius: 5,
       selector: { blockIds: ["minecraft:obsidian"] },
       maximumResults: 32,
     });
-    const occupied = new Set(existing.map(({ position }) =>
-      positionKey(position)
-    ));
-    const missing = frame.blocks.filter((position) =>
-      !occupied.has(positionKey(position))
-    );
+    const missing = missingPortalBlocks(frame, observed);
     if (missing.length > 0) {
-      yield* buildStructure(driver, {
-        origin: frame.origin,
-        blocks: missing.map((position): BeatGameBuildBlock => ({
-          offset: {
-            x: position.x - frame.origin.x,
-            y: position.y - frame.origin.y,
-            z: position.z - frame.origin.z,
-          },
-          blockId: "minecraft:obsidian",
-        })),
-        ...(options.path === undefined ? {} : { path: options.path }),
-      });
-      const built = yield* driver.queryBlocks({
-        center: frame.origin,
-        radius: 8,
-        selector: { blockIds: ["minecraft:obsidian"] },
-        maximumResults: 64,
-      });
-      const builtKeys = new Set(built.map(({ position }) =>
-        positionKey(position)
+      return yield* Effect.fail(behaviorError(
+        driver,
+        `Portal construction left ${missing.length} obsidian blocks missing`,
       ));
-      if (missing.some((position) => !builtKeys.has(positionKey(position)))) {
-        return yield* Effect.fail(behaviorError(
-          driver,
-          "The generic build task did not complete the Nether portal frame",
-        ));
-      }
     }
     if (options.ignite ?? true) {
       yield* ignitePortal(driver, frame, true, options.path);
     }
     return frame;
   });
+}
+
+interface PortalFramePlacement {
+  readonly target: BeatGameBlockPosition;
+  readonly against: BeatGameBlockPosition;
+  readonly face: BeatGameBlockFace;
+  readonly itemId: "minecraft:cobblestone" | "minecraft:obsidian";
+  readonly acceptsExistingSolid?: boolean;
+}
+
+function placeNetherPortalFrame(
+  driver: BeatGameDriver,
+  frame: PortalFrame,
+  path?: Partial<BeatGamePathPolicy>,
+): Effect.Effect<void, BeatGameDriverError> {
+  const program = Effect.gen(function* () {
+    yield* driver.act({ type: "reset-movement" });
+    yield* clearPortalInterior(driver, frame, path);
+    const placements = portalFramePlacements(frame);
+    const observation = yield* driver.observe;
+    if (placements.some((placement) =>
+      !portalBlockWithinReach(observation, placement.target)
+      || !portalBlockWithinReach(observation, placement.against)
+    )) {
+      yield* driver.pathfind(
+        portalBuildRetreat(frame),
+        1,
+        portalConstructionPathPolicy(path),
+      );
+    }
+    for (const placement of placements) {
+      yield* ensurePortalFrameBlock(driver, frame, placement, path);
+    }
+  }).pipe(
+    Effect.ensuring(
+      driver.act({ type: "reset-movement" }).pipe(Effect.ignore),
+    ),
+  );
+  return driver.withControl(program);
+}
+
+function portalFramePlacements(
+  frame: PortalFrame,
+): readonly PortalFramePlacement[] {
+  const at = (
+    horizontal: number,
+    vertical: number,
+  ): BeatGameBlockPosition => ({
+    x: frame.origin.x + (frame.axis === "x" ? horizontal : 0),
+    y: frame.origin.y + vertical,
+    z: frame.origin.z + (frame.axis === "z" ? horizontal : 0),
+    dimension: frame.origin.dimension,
+  });
+  const alongFrame: BeatGameBlockFace = frame.axis === "x"
+    ? "east"
+    : "south";
+  const support = (
+    horizontal: number,
+    vertical: number,
+    against: BeatGameBlockPosition,
+    face: BeatGameBlockFace,
+  ): PortalFramePlacement => ({
+    target: at(horizontal, vertical),
+    against,
+    face,
+    itemId: "minecraft:cobblestone",
+    acceptsExistingSolid: true,
+  });
+  const obsidian = (
+    horizontal: number,
+    vertical: number,
+    against: BeatGameBlockPosition,
+    face: BeatGameBlockFace,
+  ): PortalFramePlacement => ({
+    target: at(horizontal, vertical),
+    against,
+    face,
+    itemId: "minecraft:obsidian",
+  });
+
+  return [
+    support(0, 0, below(at(0, 0)), "up"),
+    support(3, 0, below(at(3, 0)), "up"),
+    obsidian(1, 0, below(at(1, 0)), "up"),
+    obsidian(2, 0, below(at(2, 0)), "up"),
+    obsidian(0, 1, at(0, 0), "up"),
+    obsidian(3, 1, at(3, 0), "up"),
+    obsidian(0, 2, at(0, 1), "up"),
+    obsidian(3, 2, at(3, 1), "up"),
+    obsidian(0, 3, at(0, 2), "up"),
+    obsidian(3, 3, at(3, 2), "up"),
+    support(0, 4, at(0, 3), "up"),
+    obsidian(1, 4, at(0, 4), alongFrame),
+    obsidian(2, 4, at(1, 4), alongFrame),
+  ];
+}
+
+function ensurePortalFrameBlock(
+  driver: BeatGameDriver,
+  frame: PortalFrame,
+  placement: PortalFramePlacement,
+  path?: Partial<BeatGamePathPolicy>,
+): Effect.Effect<void, BeatGameDriverError> {
+  return Effect.gen(function* () {
+    let observed = yield* observeExactBlock(driver, placement.target);
+    if (
+      observed?.blockId === placement.itemId
+      || (
+        placement.acceptsExistingSolid === true
+        && observed !== undefined
+        && !observed.replaceable
+      )
+    ) {
+      return;
+    }
+    const observation = yield* driver.observe;
+    if (
+      !portalBlockWithinReach(observation, placement.target)
+      || !portalBlockWithinReach(observation, placement.against)
+    ) {
+      yield* driver.pathfind(
+        portalPlacementWorkPosition(frame, placement.target),
+        1,
+        portalConstructionPathPolicy(path),
+      );
+    }
+    if (observed !== undefined && !observed.replaceable) {
+      const tool = preferredPortalDigTool(observation);
+      if (tool !== undefined) {
+        yield* driver.act({
+          type: "select-item",
+          selector: { itemIds: [tool] },
+        });
+      }
+      yield* driver.act({
+        type: "dig-block",
+        position: placement.target,
+      });
+      observed = yield* waitForExactBlockState(
+        driver,
+        placement.target,
+        (block) => block === undefined || block.replaceable,
+        10,
+        50,
+      );
+      if (observed !== undefined && !observed.replaceable) {
+        return yield* Effect.fail(behaviorError(
+          driver,
+          `Could not clear portal frame position ${positionKey(
+            placement.target,
+          )}`,
+        ));
+      }
+    }
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (attempt > 0) {
+        const retryObservation = yield* driver.observe;
+        if (!portalBlockWithinReach(retryObservation, placement.against)) {
+          yield* driver.pathfind(
+            portalBuildRetreat(frame),
+            1,
+            portalConstructionPathPolicy(path),
+          );
+        }
+      }
+      yield* driver.act({
+        type: "select-item",
+        selector: { itemIds: [placement.itemId] },
+      });
+      const placementResult = yield* driver.act({
+        type: "place-block",
+        against: placement.against,
+        face: placement.face,
+        hand: "main",
+      }).pipe(Effect.either);
+      if (placementResult._tag === "Left") {
+        yield* Effect.sleep(100);
+        continue;
+      }
+      const placed = yield* waitForExactBlockState(
+        driver,
+        placement.target,
+        (block) =>
+          block?.blockId === placement.itemId
+          || (
+            placement.acceptsExistingSolid === true
+            && block !== undefined
+            && !block.replaceable
+          ),
+        10,
+        50,
+      );
+      if (placed !== undefined && !placed.replaceable) {
+        return;
+      }
+    }
+    return yield* Effect.fail(behaviorError(
+      driver,
+      `Could not place ${placement.itemId} at ${positionKey(
+        placement.target,
+      )}`,
+    ));
+  });
+}
+
+function preferredPortalDigTool(
+  observation: BeatGameObservation,
+): string | undefined {
+  return [
+    "minecraft:netherite_pickaxe",
+    "minecraft:diamond_pickaxe",
+    "minecraft:iron_pickaxe",
+    "minecraft:stone_pickaxe",
+    "minecraft:golden_pickaxe",
+    "minecraft:wooden_pickaxe",
+  ].find((itemId) => (observation.inventory.counts[itemId] ?? 0) > 0);
+}
+
+function portalPlacementWorkPosition(
+  frame: PortalFrame,
+  target: BeatGameBlockPosition,
+): BeatGamePosition {
+  return {
+    x: frame.axis === "x" ? target.x : frame.origin.x - 1,
+    y: frame.origin.y + 1,
+    z: frame.axis === "z" ? target.z : frame.origin.z - 1,
+    dimension: frame.origin.dimension,
+  };
+}
+
+function portalBlockWithinReach(
+  observation: BeatGameObservation,
+  block: BeatGameBlockPosition,
+): boolean {
+  const player = observation.player.position;
+  if (player.dimension !== block.dimension) {
+    return false;
+  }
+  const x = player.x - (block.x + 0.5);
+  const y = player.y + 1.62 - (block.y + 0.5);
+  const z = player.z - (block.z + 0.5);
+  return x * x + y * y + z * z <= 30.25;
+}
+
+function portalConstructionPathPolicy(
+  override: Partial<BeatGamePathPolicy> | undefined,
+): BeatGamePathPolicy {
+  return {
+    ...mergePathPolicy(override),
+    allowMining: false,
+    allowPlacing: false,
+  };
+}
+
+function waitForExactBlockState(
+  driver: BeatGameDriver,
+  position: BeatGameBlockPosition,
+  predicate: (
+    block: BeatGameBlockObservation | undefined,
+  ) => boolean,
+  attemptsRemaining: number,
+  delayMs: number,
+): Effect.Effect<BeatGameBlockObservation | undefined, BeatGameDriverError> {
+  return observeExactBlock(driver, position).pipe(
+    Effect.flatMap((block) => {
+      if (predicate(block) || attemptsRemaining <= 1) {
+        return Effect.succeed(block);
+      }
+      return Effect.sleep(delayMs).pipe(
+        Effect.zipRight(
+          waitForExactBlockState(
+            driver,
+            position,
+            predicate,
+            attemptsRemaining - 1,
+            delayMs,
+          ),
+        ),
+      );
+    }),
+  );
+}
+
+function observeExactBlock(
+  driver: BeatGameDriver,
+  position: BeatGameBlockPosition,
+): Effect.Effect<BeatGameBlockObservation | undefined, BeatGameDriverError> {
+  return driver.queryBlocks({
+    center: {
+      ...position,
+      x: position.x + 0.5,
+      y: position.y + 0.5,
+      z: position.z + 0.5,
+    },
+    radius: 0.25,
+    selector: {},
+    maximumResults: 1,
+  }).pipe(
+    Effect.map((blocks) =>
+      blocks.find((block) => samePosition(block.position, position))
+    ),
+  );
+}
+
+function portalFrameCenter(frame: PortalFrame): BeatGamePosition {
+  return {
+    x: frame.origin.x + (frame.axis === "x" ? 1.5 : 0),
+    y: frame.origin.y + 2,
+    z: frame.origin.z + (frame.axis === "z" ? 1.5 : 0),
+    dimension: frame.origin.dimension,
+  };
+}
+
+function missingPortalBlocks(
+  frame: PortalFrame,
+  observed: readonly BeatGameBlockObservation[],
+): readonly BeatGameBlockPosition[] {
+  const occupied = new Set(observed.map(({ position }) =>
+    positionKey(position)
+  ));
+  return frame.blocks.filter((position) =>
+    !occupied.has(positionKey(position))
+  );
+}
+
+function portalBuildRetreat(frame: PortalFrame): BeatGamePosition {
+  return {
+    x: frame.origin.x + (frame.axis === "x" ? 1 : -1),
+    y: frame.origin.y + 1,
+    z: frame.origin.z + (frame.axis === "z" ? 1 : -1),
+    dimension: frame.origin.dimension,
+  };
 }
 
 export interface CastPortalStep {
@@ -807,6 +1196,7 @@ export function enterPortal(
   options: EnterPortalOptions = {},
 ): Effect.Effect<void, BeatGameDriverError> {
   return Effect.gen(function* () {
+    yield* driver.waitForChunks(0, 60_000);
     const observation = yield* driver.observe;
     const origin = options.searchOrigin ?? observation.player.position;
     const target = options.portal ?? (yield* driver.queryBlocks({
@@ -821,7 +1211,187 @@ export function enterPortal(
         "No Nether portal is observable",
       ));
     }
-    yield* driver.pathfind(target, 0, mergePathPolicy(options.path));
+    const observedPortals = yield* driver.queryBlocks({
+      center: target,
+      radius: 2,
+      selector: { blockIds: ["minecraft:nether_portal"] },
+      maximumResults: 8,
+    });
+    const observedPortal = observedPortals[0];
+    const axis = resolvePortalAxis(
+      observedPortal?.properties.axis,
+      observedPortals,
+    );
+    const passage = portalPassage(target, axis, observedPortals);
+    let entryOrigin = observation.player.position;
+    if (
+      isNetherDimension(observation.player.position.dimension)
+      && hasPortalContact(observation.player.position, passage)
+    ) {
+      entryOrigin = yield* leavePortalForReentry(
+        driver,
+        passage,
+        observation.player.position,
+        observation.player.rotation,
+      );
+      if (
+        entryOrigin.dimension !== observation.player.position.dimension
+      ) {
+        yield* driver.waitForChunks(0, 60_000);
+        return;
+      }
+      yield* Effect.sleep(NETHER_PORTAL_REENTRY_COOLDOWN_MS);
+    }
+    if (
+      !isNetherDimension(observation.player.position.dimension)
+      && distanceSquared(observation.player.position, target) <= 4
+    ) {
+      const offset = axis === "z"
+        ? { x: 4, z: 0 }
+        : { x: 0, z: 4 };
+      const away = {
+        ...observation.player.position,
+        x: observation.player.position.x + offset.x,
+        z: observation.player.position.z + offset.z,
+      };
+      const movedAway = yield* navigateUntilDimensionChange(
+        driver,
+        observation.player.position.dimension,
+        driver.pathfind(
+          away,
+          1,
+          mergePathPolicy(options.path),
+        ),
+      ).pipe(Effect.either);
+      if (movedAway._tag === "Right" && movedAway.right) {
+        yield* driver.waitForChunks(0, 60_000);
+        return;
+      }
+      if (movedAway._tag === "Left") {
+        const opposite = {
+          ...away,
+          x: observation.player.position.x - offset.x,
+          z: observation.player.position.z - offset.z,
+        };
+        const changedDimension = yield* navigateUntilDimensionChange(
+          driver,
+          observation.player.position.dimension,
+          driver.pathfind(
+            opposite,
+            1,
+            mergePathPolicy(options.path),
+          ),
+        );
+        if (changedDimension) {
+          yield* driver.waitForChunks(0, 60_000);
+          return;
+        }
+        entryOrigin = opposite;
+      } else {
+        entryOrigin = away;
+      }
+      yield* Effect.sleep(750);
+      entryOrigin = (yield* driver.observe).player.position;
+    }
+    const approachTarget = portalApproachTarget(
+      entryOrigin,
+      target,
+      axis,
+      passage,
+    );
+    const approachObservation = yield* driver.observe;
+    yield* ensurePortalApproachSupport(
+      driver,
+      approachObservation.player.position,
+      approachTarget,
+    );
+    const directEntry = isNetherDimension(
+      approachObservation.player.position.dimension,
+    ) && distanceSquared(
+      approachObservation.player.position,
+      approachTarget,
+    ) <= 64
+      && Math.abs(
+        approachObservation.player.position.y - approachTarget.y,
+      ) <= 0.5;
+    if (!directEntry) {
+      const changedDimension = yield* navigateUntilDimensionChange(
+        driver,
+        observation.player.position.dimension,
+        driver.pathfind(
+          approachTarget,
+          0,
+          mergePathPolicy(options.path),
+        ),
+      );
+      if (changedDimension) {
+        yield* driver.waitForChunks(0, 60_000);
+        return;
+      }
+    }
+    const crossingObservation = yield* driver.observe;
+    if (
+      crossingObservation.player.position.dimension
+      !== observation.player.position.dimension
+    ) {
+      yield* driver.waitForChunks(0, 60_000);
+      return;
+    }
+    const contactTarget = portalContactTarget(
+      target,
+      passage,
+    );
+    const changedWhileEntering = yield* navigateUntilDimensionChange(
+      driver,
+      observation.player.position.dimension,
+      driver.pathfind(
+        contactTarget,
+        0,
+        mergePathPolicy(options.path),
+      ),
+    );
+    if (changedWhileEntering) {
+      yield* driver.waitForChunks(0, 60_000);
+      return;
+    }
+    const contactObservation = yield* driver.observe;
+    if (
+      contactObservation.player.position.dimension
+      !== observation.player.position.dimension
+    ) {
+      yield* driver.waitForChunks(0, 60_000);
+      return;
+    }
+    if (!hasPortalContact(contactObservation.player.position, passage)) {
+      return yield* Effect.fail(behaviorError(
+        driver,
+        "Could not make contact with the Nether portal",
+      ));
+    }
+    yield* driver.withControl(
+      driver.act({ type: "reset-movement" }).pipe(
+        Effect.zipRight(
+          waitForDimensionChange(
+            driver,
+            observation.player.position.dimension,
+            100,
+          ).pipe(
+            Effect.timeoutFail({
+              duration: 45_000,
+              onTimeout: () => behaviorError(
+                driver,
+                "The Nether portal did not change dimensions after contact",
+              ),
+            }),
+          ),
+        ),
+      ),
+    ).pipe(
+      Effect.ensuring(driver.act({ type: "reset-movement" }).pipe(
+        Effect.ignore,
+      )),
+    );
+    yield* driver.waitForChunks(0, 60_000);
   });
 }
 
@@ -929,22 +1499,46 @@ export function activateEndPortal(
       },
       maximumResults: 12,
     });
-    yield* driver.act({
-      type: "select-item",
-      selector: { itemIds: ["minecraft:ender_eye"] },
-    });
+    let filledFrames = 0;
     for (const frame of frames) {
-      yield* driver.pathfind(
+      const beforeFrame = yield* driver.observe;
+      if (!portalBlockWithinReach(beforeFrame, frame.position)) {
+        yield* driver.pathfind(
+          {
+            ...frame.position,
+            y: frame.position.y + 1,
+          },
+          3,
+          {
+            ...mergePathPolicy(options.path),
+            allowMining: false,
+            allowPlacing: false,
+          },
+        );
+      }
+      const unfilledFrame = yield* driver.queryBlocks(exactBlockQuery(
         frame.position,
-        3,
-        mergePathPolicy(options.path),
-      );
+        {
+          blockIds: ["minecraft:end_portal_frame"],
+          properties: { eye: "false" },
+        },
+      ));
+      if (!unfilledFrame.some(({ position }) =>
+        samePosition(position, frame.position)
+      )) {
+        continue;
+      }
+      yield* driver.act({
+        type: "select-item",
+        selector: { itemIds: ["minecraft:ender_eye"] },
+      });
       yield* driver.act({
         type: "interact-block",
         position: frame.position,
         face: "up",
         hand: "main",
       });
+      filledFrames += 1;
     }
     const portal = yield* waitForBlock(
       driver,
@@ -969,8 +1563,308 @@ export function activateEndPortal(
         "End portal blocks were not observable after filling the frames",
       ));
     }
-    return frames.length;
+    return filledFrames;
   }));
+}
+
+export interface EnterEndPortalOptions extends BeatGameBehaviorOptions {
+  readonly center?: BeatGamePosition;
+  readonly searchRadius?: number;
+  readonly transitionTimeoutMs?: number;
+}
+
+export function enterEndPortal(
+  driver: BeatGameDriver,
+  options: EnterEndPortalOptions = {},
+): Effect.Effect<void, BeatGameDriverError> {
+  return driver.withControl(Effect.gen(function* () {
+    const observation = yield* driver.observe;
+    const initialDimension = observation.player.position.dimension;
+    if (isEndDimension(initialDimension)) {
+      return;
+    }
+    const portals = yield* driver.queryBlocks({
+      center: options.center ?? observation.player.position,
+      radius: options.searchRadius ?? 32,
+      selector: { blockIds: ["minecraft:end_portal"] },
+      maximumResults: 16,
+    });
+    if (portals.length === 0) {
+      return yield* Effect.fail(behaviorError(
+        driver,
+        "The active End portal was not observable",
+      ));
+    }
+    const portalCenter = centerOfBlocks(portals);
+    const rimTarget = nearestEndPortalRim(
+      observation.player.position,
+      portals,
+    );
+
+    yield* Effect.gen(function* () {
+      yield* ensureEndPortalRimReachable(
+        driver,
+        observation.player.position,
+        portalCenter,
+        rimTarget,
+        options.path,
+      );
+      const changedOnApproach = yield* navigateUntilDimensionChange(
+        driver,
+        initialDimension,
+        driver.pathfind(
+          rimTarget,
+          0,
+          mergePathPolicy(options.path),
+        ),
+      );
+      if (changedOnApproach) {
+        return;
+      }
+
+      const entryObservation = yield* driver.observe;
+      const rotation = rotationToward(
+        entryObservation.player.position,
+        {
+          x: portalCenter.x,
+          y: entryObservation.player.position.y,
+          z: portalCenter.z,
+        },
+      );
+      yield* driver.act({ type: "reset-movement" });
+      yield* driver.act({
+        type: "look",
+        yaw: rotation.yaw,
+        pitch: 0,
+      });
+      yield* waitForRotation(driver, rotation.yaw, 0, 40, 50);
+      yield* driver.act({
+        type: "set-movement",
+        forward: true,
+      });
+      yield* waitForDimensionChange(driver, initialDimension, 50);
+    }).pipe(
+      Effect.timeoutFail({
+        duration: positiveInteger(
+          options.transitionTimeoutMs ?? 45_000,
+          "transitionTimeoutMs",
+        ),
+        onTimeout: () => behaviorError(
+          driver,
+          "The End portal did not change dimensions after entry",
+        ),
+      }),
+      Effect.ensuring(
+        driver.act({ type: "reset-movement" }).pipe(Effect.ignore),
+      ),
+    );
+    yield* driver.waitForChunks(0, 60_000);
+  }));
+}
+
+function ensureEndPortalRimReachable(
+  driver: BeatGameDriver,
+  player: BeatGamePosition,
+  portalCenter: Readonly<{ x: number; y: number; z: number }>,
+  rim: BeatGameBlockPosition,
+  path: Partial<BeatGamePathPolicy> | undefined,
+): Effect.Effect<void, BeatGameDriverError> {
+  const playerY = Math.floor(player.y);
+  if (playerY >= rim.y - 1) {
+    return Effect.void;
+  }
+  const direction = endPortalOutwardDirection(portalCenter, rim);
+  const rise = rim.y - playerY;
+  const retreat = {
+    ...rim,
+    x: rim.x + direction.x * (rise + 1),
+    y: playerY,
+    z: rim.z + direction.z * (rise + 1),
+  };
+  const pathPolicy = {
+    ...mergePathPolicy(path),
+    allowMining: false,
+    allowPlacing: true,
+  };
+
+  return Effect.gen(function* () {
+    yield* driver.pathfind(retreat, 1, pathPolicy);
+    const material = staircaseSupportMaterial(yield* driver.observe);
+    if (material === undefined) {
+      return yield* Effect.fail(behaviorError(
+        driver,
+        "No solid block is available to build an End portal approach",
+      ));
+    }
+
+    const treads: BeatGameBlockPosition[] = [];
+    for (let feetY = playerY + 1; feetY < rim.y; feetY += 1) {
+      const distanceFromRim = rim.y - feetY;
+      const tread = {
+        ...rim,
+        x: rim.x + direction.x * distanceFromRim,
+        y: feetY - 1,
+        z: rim.z + direction.z * distanceFromRim,
+      };
+      yield* ensureEndPortalApproachColumn(
+        driver,
+        tread,
+        playerY - 1,
+        material,
+      );
+      treads.push({ ...tread, y: feetY });
+    }
+
+    for (const tread of treads) {
+      yield* driver.pathfind(tread, 0, pathPolicy);
+    }
+  });
+}
+
+function endPortalOutwardDirection(
+  portalCenter: Readonly<{ x: number; z: number }>,
+  rim: BeatGameBlockPosition,
+): Readonly<{ x: number; z: number }> {
+  const xDistance = rim.x + 0.5 - portalCenter.x;
+  const zDistance = rim.z + 0.5 - portalCenter.z;
+  return Math.abs(xDistance) >= Math.abs(zDistance)
+    ? { x: xDistance >= 0 ? 1 : -1, z: 0 }
+    : { x: 0, z: zDistance >= 0 ? 1 : -1 };
+}
+
+function ensureEndPortalApproachColumn(
+  driver: BeatGameDriver,
+  tread: BeatGameBlockPosition,
+  minimumAnchorY: number,
+  material: string,
+): Effect.Effect<void, BeatGameDriverError> {
+  return Effect.gen(function* () {
+    let anchor: BeatGameBlockObservation | undefined;
+    for (
+      let y = tread.y;
+      y >= minimumAnchorY;
+      y -= 1
+    ) {
+      const block = yield* queryExactBlock(driver, { ...tread, y });
+      if (block === undefined) {
+        return yield* Effect.fail(behaviorError(
+          driver,
+          "Could not observe the End portal approach",
+        ));
+      }
+      if (!block.replaceable && !isGravityAffectedBlock(block.blockId)) {
+        anchor = block;
+        break;
+      }
+    }
+    if (anchor === undefined) {
+      return yield* Effect.fail(behaviorError(
+        driver,
+        "Could not anchor the End portal approach",
+      ));
+    }
+
+    for (let y = anchor.position.y + 1; y <= tread.y; y += 1) {
+      const target = { ...tread, y };
+      const existing = yield* queryExactBlock(driver, target);
+      if (existing === undefined) {
+        return yield* Effect.fail(behaviorError(
+          driver,
+          "Could not observe an End portal approach block",
+        ));
+      }
+      if (!existing.replaceable && !isGravityAffectedBlock(existing.blockId)) {
+        continue;
+      }
+      if (isGravityAffectedBlock(existing.blockId)) {
+        yield* driver.act({ type: "dig-block", position: target });
+      }
+      const against = { ...target, y: y - 1 };
+      yield* placeStaircaseBlock(
+        driver,
+        material,
+        against,
+        "up",
+        target,
+      );
+      const placed = yield* waitForExactBlock(
+        driver,
+        target,
+        { replaceable: false },
+        10,
+        50,
+      );
+      if (placed === undefined || isGravityAffectedBlock(placed.blockId)) {
+        return yield* Effect.fail(behaviorError(
+          driver,
+          "Could not build a stable End portal approach",
+        ));
+      }
+    }
+  });
+}
+
+function centerOfBlocks(
+  blocks: readonly BeatGameBlockObservation[],
+): Readonly<{ x: number; y: number; z: number }> {
+  return {
+    x: blocks.reduce(
+      (total, block) => total + block.position.x + 0.5,
+      0,
+    ) / blocks.length,
+    y: Math.min(...blocks.map(({ position }) => position.y)) + 0.5,
+    z: blocks.reduce(
+      (total, block) => total + block.position.z + 0.5,
+      0,
+    ) / blocks.length,
+  };
+}
+
+function nearestEndPortalRim(
+  position: BeatGamePosition,
+  portals: readonly BeatGameBlockObservation[],
+): BeatGameBlockPosition {
+  const dimension = portals[0]?.position.dimension
+    ?? position.dimension;
+  const minimumX = Math.min(...portals.map(({ position }) => position.x));
+  const maximumX = Math.max(...portals.map(({ position }) => position.x));
+  const minimumY = Math.min(...portals.map(({ position }) => position.y));
+  const minimumZ = Math.min(...portals.map(({ position }) => position.z));
+  const maximumZ = Math.max(...portals.map(({ position }) => position.z));
+  const centerX = Math.floor((minimumX + maximumX) / 2);
+  const centerZ = Math.floor((minimumZ + maximumZ) / 2);
+  const candidates: readonly BeatGameBlockPosition[] = [
+    {
+      x: minimumX - 1,
+      y: minimumY + 1,
+      z: centerZ,
+      dimension,
+    },
+    {
+      x: maximumX + 1,
+      y: minimumY + 1,
+      z: centerZ,
+      dimension,
+    },
+    {
+      x: centerX,
+      y: minimumY + 1,
+      z: minimumZ - 1,
+      dimension,
+    },
+    {
+      x: centerX,
+      y: minimumY + 1,
+      z: maximumZ + 1,
+      dimension,
+    },
+  ];
+  return candidates.reduce((nearest, candidate) =>
+    distanceSquared(position, candidate)
+        < distanceSquared(position, nearest)
+      ? candidate
+      : nearest
+  );
 }
 
 export interface FightEnderDragonOptions extends BeatGameBehaviorOptions {
@@ -978,6 +1872,8 @@ export interface FightEnderDragonOptions extends BeatGameBehaviorOptions {
   readonly maximumCrystalPasses?: number;
   readonly crystalRangedShotsPerPass?: number;
   readonly dragonRangedShotsPerPass?: number;
+  readonly defeatConfirmationAttempts?: number;
+  readonly defeatConfirmationDelayMs?: number;
 }
 
 export function fightEnderDragon(
@@ -994,6 +1890,31 @@ export function fightEnderDragon(
       options.crystalRangedShotsPerPass ?? 3,
       "crystalRangedShotsPerPass",
     );
+    const confirmationAttempts = positiveInteger(
+      options.defeatConfirmationAttempts ?? 120,
+      "defeatConfirmationAttempts",
+    );
+    const confirmationDelayMs = nonNegativeInteger(
+      options.defeatConfirmationDelayMs ?? 250,
+      "defeatConfirmationDelayMs",
+    );
+    const initialObservation = yield* driver.observe;
+    if (
+      (initialObservation.inventory.counts["minecraft:dragon_egg"] ?? 0)
+        > 0
+    ) {
+      return;
+    }
+    const encounter = yield* waitForDragonOrDefeatResult(
+      driver,
+      initialObservation.player.position,
+      searchRadius,
+      confirmationAttempts,
+      confirmationDelayMs,
+    );
+    if (encounter.defeated) {
+      return;
+    }
     for (let pass = 0; pass < maximumCrystalPasses; pass += 1) {
       const observation = yield* driver.observe;
       const crystals = yield* queryEndEntities(
@@ -1046,6 +1967,13 @@ export function fightEnderDragon(
     );
     const dragon = dragons[0];
     if (dragon === undefined) {
+      yield* waitForDragonDefeatResult(
+        driver,
+        afterCrystals.player.position,
+        searchRadius,
+        confirmationAttempts,
+        confirmationDelayMs,
+      );
       return;
     }
     yield* rangedAttack(driver, {
@@ -1089,24 +2017,1590 @@ export function fightEnderDragon(
         "The Ender Dragon is still alive after the configured attack pass",
       ));
     }
+    yield* waitForDragonDefeatResult(
+      driver,
+      finalObservation.player.position,
+      searchRadius,
+      confirmationAttempts,
+      confirmationDelayMs,
+    );
   });
 }
 
+interface DragonEncounterObservation {
+  readonly defeated: boolean;
+}
+
+function waitForDragonOrDefeatResult(
+  driver: BeatGameDriver,
+  center: BeatGamePosition,
+  radius: number,
+  attempts: number,
+  delayMs: number,
+): Effect.Effect<DragonEncounterObservation, BeatGameDriverError> {
+  return queryEndEntities(
+    driver,
+    center,
+    "minecraft:ender_dragon",
+    radius,
+    1,
+  ).pipe(
+    Effect.flatMap((dragons) => {
+      const dragon = dragons[0];
+      if (dragon !== undefined) {
+        return Effect.succeed({ defeated: false });
+      }
+      return queryDragonDefeatBlocks(driver, center, radius).pipe(
+        Effect.flatMap((results) => {
+          if (results.length > 0) {
+            return Effect.succeed({ defeated: true });
+          }
+          if (attempts <= 1) {
+            return Effect.fail(behaviorError(
+              driver,
+              "The Ender Dragon was not observable and its defeat was not confirmed",
+            ));
+          }
+          return Effect.sleep(delayMs).pipe(
+            Effect.zipRight(waitForDragonOrDefeatResult(
+              driver,
+              center,
+              radius,
+              attempts - 1,
+              delayMs,
+            )),
+          );
+        }),
+      );
+    }),
+  );
+}
+
+function waitForDragonDefeatResult(
+  driver: BeatGameDriver,
+  center: BeatGamePosition,
+  radius: number,
+  attempts: number,
+  delayMs: number,
+): Effect.Effect<void, BeatGameDriverError> {
+  return queryDragonDefeatBlocks(driver, center, radius).pipe(
+    Effect.flatMap((results) => {
+      if (results.length > 0) {
+        return Effect.void;
+      }
+      if (attempts <= 1) {
+        return Effect.fail(behaviorError(
+          driver,
+          "The dragon disappeared before its egg or exit portal appeared",
+        ));
+      }
+      return Effect.sleep(delayMs).pipe(
+        Effect.zipRight(waitForDragonDefeatResult(
+          driver,
+          center,
+          radius,
+          attempts - 1,
+          delayMs,
+        )),
+      );
+    }),
+  );
+}
+
+function queryDragonDefeatBlocks(
+  driver: BeatGameDriver,
+  center: BeatGamePosition,
+  radius: number,
+): Effect.Effect<
+  readonly BeatGameBlockObservation[],
+  BeatGameDriverError
+> {
+  return driver.queryBlocks({
+    center,
+    radius,
+    selector: {
+      blockIds: [
+        "minecraft:dragon_egg",
+        "minecraft:end_portal",
+      ],
+    },
+    maximumResults: 1,
+  });
+}
+
+export interface CollectDragonEggOptions extends BeatGameBehaviorOptions {
+  readonly searchRadius?: number;
+  readonly confirmationAttempts?: number;
+  readonly confirmationDelayMs?: number;
+}
+
+export function collectDragonEgg(
+  driver: BeatGameDriver,
+  options: CollectDragonEggOptions = {},
+): Effect.Effect<void, BeatGameDriverError> {
+  return driver.withControl(Effect.gen(function* () {
+    const attempts = positiveInteger(
+      options.confirmationAttempts ?? 40,
+      "confirmationAttempts",
+    );
+    const delayMs = nonNegativeInteger(
+      options.confirmationDelayMs ?? 250,
+      "confirmationDelayMs",
+    );
+    const initialObservation = yield* driver.observe;
+    if (
+      (initialObservation.inventory.counts["minecraft:dragon_egg"] ?? 0) > 0
+    ) {
+      return;
+    }
+    const center = initialObservation.player.position;
+    const searchRadius = options.searchRadius ?? 64;
+    const initialEgg = (yield* queryDragonEggs(
+      driver,
+      center,
+      searchRadius,
+    ))[0];
+    if (initialEgg === undefined) {
+      return yield* Effect.fail(behaviorError(
+        driver,
+        "The dragon egg was not observable after the dragon fight",
+      ));
+    }
+
+    yield* driver.pathfind(
+      initialEgg.position,
+      3,
+      mergePathPolicy(options.path),
+    );
+    yield* driver.act({
+      type: "dig-block",
+      position: initialEgg.position,
+    }).pipe(Effect.ignore);
+
+    const movedEgg = yield* waitForMovedDragonEgg(
+      driver,
+      center,
+      searchRadius,
+      initialEgg.position,
+      attempts,
+      delayMs,
+    );
+    if (movedEgg === undefined) {
+      return yield* Effect.fail(behaviorError(
+        driver,
+        "The dragon egg did not teleport away from the exit portal",
+      ));
+    }
+
+    yield* driver.pathfind(
+      movedEgg.position,
+      3,
+      mergePathPolicy(options.path),
+    );
+    const torchPosition = {
+      ...movedEgg.position,
+      y: movedEgg.position.y - 2,
+    };
+    const torchSupport = {
+      ...movedEgg.position,
+      y: movedEgg.position.y - 3,
+    };
+    const eggSupport = {
+      ...movedEgg.position,
+      y: movedEgg.position.y - 1,
+    };
+    yield* driver.act({
+      type: "dig-block",
+      position: torchPosition,
+    });
+    yield* driver.act({
+      type: "select-item",
+      selector: { itemIds: ["minecraft:torch"] },
+    });
+    yield* driver.act({
+      type: "place-block",
+      against: torchSupport,
+      face: "up",
+      hand: "main",
+    });
+    yield* driver.act({
+      type: "dig-block",
+      position: eggSupport,
+    });
+    yield* Effect.sleep(delayMs);
+    yield* driver.pathfind(
+      movedEgg.position,
+      1,
+      mergePathPolicy(options.path),
+    ).pipe(Effect.ignore);
+
+    const collected = yield* waitForInventoryItem(
+      driver,
+      "minecraft:dragon_egg",
+      attempts,
+      delayMs,
+    );
+    if (!collected) {
+      return yield* Effect.fail(behaviorError(
+        driver,
+        "The dragon egg did not enter the bot inventory",
+      ));
+    }
+  }));
+}
+
+export interface ExitEndOptions extends BeatGameBehaviorOptions {
+  readonly searchRadius?: number;
+  readonly confirmationAttempts?: number;
+  readonly confirmationDelayMs?: number;
+}
+
+export function exitEnd(
+  driver: BeatGameDriver,
+  options: ExitEndOptions = {},
+): Effect.Effect<void, BeatGameDriverError> {
+  return driver.withControl(Effect.gen(function* () {
+    const observation = yield* driver.observe;
+    if (!isEndDimension(observation.player.position.dimension)) {
+      return;
+    }
+    const portals = yield* driver.queryBlocks({
+      center: observation.player.position,
+      radius: options.searchRadius ?? 64,
+      selector: { blockIds: ["minecraft:end_portal"] },
+      maximumResults: 16,
+    });
+    const portal = portals[0];
+    if (portal === undefined) {
+      return yield* Effect.fail(behaviorError(
+        driver,
+        "The End exit portal was not observable",
+      ));
+    }
+
+    yield* driver.pathfind(
+      portal.position,
+      0,
+      mergePathPolicy(options.path),
+    ).pipe(Effect.ignore);
+    const attempts = positiveInteger(
+      options.confirmationAttempts ?? 40,
+      "confirmationAttempts",
+    );
+    const delayMs = nonNegativeInteger(
+      options.confirmationDelayMs ?? 250,
+      "confirmationDelayMs",
+    );
+    const exitedBeforeRespawn = yield* waitForDimensionExit(
+      driver,
+      Math.max(1, Math.floor(attempts / 4)),
+      delayMs,
+    );
+    if (exitedBeforeRespawn) {
+      return;
+    }
+
+    yield* driver.act({ type: "respawn" }).pipe(Effect.ignore);
+    const exited = yield* waitForDimensionExit(
+      driver,
+      attempts,
+      delayMs,
+    );
+    if (!exited) {
+      return yield* Effect.fail(behaviorError(
+        driver,
+        "The bot remained in the End after entering the exit portal",
+      ));
+    }
+  }));
+}
+
 export { triangulateStronghold };
+
+function queryDragonEggs(
+  driver: BeatGameDriver,
+  center: BeatGamePosition,
+  radius: number,
+): Effect.Effect<
+  readonly BeatGameBlockObservation[],
+  BeatGameDriverError
+> {
+  return driver.queryBlocks({
+    center,
+    radius,
+    selector: { blockIds: ["minecraft:dragon_egg"] },
+    maximumResults: 4,
+  });
+}
+
+function waitForMovedDragonEgg(
+  driver: BeatGameDriver,
+  center: BeatGamePosition,
+  radius: number,
+  initialPosition: BeatGameBlockPosition,
+  attempts: number,
+  delayMs: number,
+): Effect.Effect<
+  BeatGameBlockObservation | undefined,
+  BeatGameDriverError
+> {
+  return queryDragonEggs(driver, center, radius).pipe(
+    Effect.flatMap((eggs) => {
+      const moved = eggs.find(({ position }) =>
+        position.x !== initialPosition.x
+        || position.y !== initialPosition.y
+        || position.z !== initialPosition.z
+      );
+      if (moved !== undefined || attempts <= 1) {
+        return Effect.succeed(moved);
+      }
+      return Effect.sleep(delayMs).pipe(
+        Effect.zipRight(waitForMovedDragonEgg(
+          driver,
+          center,
+          radius,
+          initialPosition,
+          attempts - 1,
+          delayMs,
+        )),
+      );
+    }),
+  );
+}
+
+function waitForInventoryItem(
+  driver: BeatGameDriver,
+  itemId: string,
+  attempts: number,
+  delayMs: number,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  return driver.observe.pipe(
+    Effect.flatMap((observation) => {
+      if ((observation.inventory.counts[itemId] ?? 0) > 0) {
+        return Effect.succeed(true);
+      }
+      if (attempts <= 1) {
+        return Effect.succeed(false);
+      }
+      return Effect.sleep(delayMs).pipe(
+        Effect.zipRight(waitForInventoryItem(
+          driver,
+          itemId,
+          attempts - 1,
+          delayMs,
+        )),
+      );
+    }),
+  );
+}
+
+function waitForDimensionExit(
+  driver: BeatGameDriver,
+  attempts: number,
+  delayMs: number,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  return driver.observe.pipe(
+    Effect.flatMap((observation) => {
+      if (!isEndDimension(observation.player.position.dimension)) {
+        return Effect.succeed(true);
+      }
+      if (attempts <= 1) {
+        return Effect.succeed(false);
+      }
+      return Effect.sleep(delayMs).pipe(
+        Effect.zipRight(waitForDimensionExit(
+          driver,
+          attempts - 1,
+          delayMs,
+        )),
+      );
+    }),
+  );
+}
+
+function waitForDimensionChange(
+  driver: BeatGameDriver,
+  initialDimension: string,
+  delayMs: number,
+): Effect.Effect<void, BeatGameDriverError> {
+  return driver.observe.pipe(
+    Effect.flatMap((observation) =>
+      observation.player.position.dimension !== initialDimension
+        ? Effect.void
+        : Effect.sleep(delayMs).pipe(
+          Effect.zipRight(waitForDimensionChange(
+            driver,
+            initialDimension,
+            delayMs,
+          )),
+        )
+    ),
+  );
+}
+
+function navigateUntilDimensionChange(
+  driver: BeatGameDriver,
+  initialDimension: string,
+  navigation: Effect.Effect<void, BeatGameDriverError>,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  return Effect.raceFirst(
+    navigation.pipe(Effect.as(false)),
+    waitForDimensionChange(driver, initialDimension, 50).pipe(
+      Effect.tap(() => driver.act({ type: "reset-movement" })),
+      Effect.as(true),
+    ),
+  );
+}
+
+function waitForRotation(
+  driver: BeatGameDriver,
+  yaw: number,
+  pitch: number,
+  attempts: number,
+  delayMs: number,
+): Effect.Effect<void, BeatGameDriverError> {
+  return driver.observe.pipe(
+    Effect.flatMap((observation) => {
+      const rotation = observation.player.rotation;
+      if (
+        Math.abs(wrappedDegrees(rotation.yaw - yaw)) <= 4
+        && Math.abs(rotation.pitch - pitch) <= 4
+      ) {
+        return Effect.void;
+      }
+      if (attempts <= 1) {
+        return Effect.fail(behaviorError(
+          driver,
+          `Could not face the Nether portal at yaw ${yaw.toFixed(1)}`,
+        ));
+      }
+      return Effect.sleep(delayMs).pipe(
+        Effect.zipRight(waitForRotation(
+          driver,
+          yaw,
+          pitch,
+          attempts - 1,
+          delayMs,
+        )),
+      );
+    }),
+  );
+}
+
+function wrappedDegrees(value: number): number {
+  return ((value + 180) % 360 + 360) % 360 - 180;
+}
+
+function portalContactTarget(
+  portal: BeatGameBlockPosition,
+  passage: PortalPassage,
+): BeatGamePosition {
+  return {
+    ...portal,
+    x: passage.x,
+    y: passage.y,
+    z: passage.z,
+  };
+}
+
+function leavePortalForReentry(
+  driver: BeatGameDriver,
+  passage: PortalPassage,
+  position: BeatGamePosition,
+  rotation: Readonly<{ yaw: number; pitch: number }>,
+): Effect.Effect<BeatGamePosition, BeatGameDriverError> {
+  const direction = directionFromRotation(rotation);
+  const normal = passage.axis === "x"
+    ? direction.z
+    : passage.axis === "z"
+    ? direction.x
+    : Math.abs(direction.x) >= Math.abs(direction.z)
+    ? direction.x
+    : direction.z;
+  const preferredSign = normal >= 0 ? 1 : -1;
+  const targets = [preferredSign, -preferredSign].map((sign) =>
+    portalRetreatTarget(position, passage, sign)
+  );
+
+  return Effect.gen(function* () {
+    let lastFailure: BeatGameDriverError | undefined;
+    for (const target of targets) {
+      const attempt = yield* driver.withControl(Effect.gen(function* () {
+        const current = yield* driver.observe;
+        if (current.player.position.dimension !== position.dimension) {
+          return current.player.position;
+        }
+        const desiredRotation = rotationToward(
+          current.player.position,
+          target,
+        );
+        yield* driver.act({ type: "reset-movement" });
+        yield* driver.act({
+          type: "look",
+          yaw: desiredRotation.yaw,
+          pitch: 0,
+        });
+        yield* waitForRotation(
+          driver,
+          desiredRotation.yaw,
+          0,
+          40,
+          50,
+        );
+        yield* driver.act({
+          type: "set-movement",
+          forward: true,
+          sprint: true,
+        });
+        return yield* waitForPortalExit(
+          driver,
+          passage,
+          position.dimension,
+          60,
+          50,
+        );
+      }).pipe(
+        Effect.ensuring(driver.act({ type: "reset-movement" }).pipe(
+          Effect.ignore,
+        )),
+        Effect.either,
+      ));
+      if (attempt._tag === "Right") {
+        return attempt.right;
+      }
+      lastFailure = attempt.left;
+    }
+    return yield* Effect.fail(lastFailure ?? behaviorError(
+      driver,
+      "Could not step out of the Nether portal before re-entry",
+    ));
+  });
+}
+
+function portalRetreatTarget(
+  position: BeatGamePosition,
+  passage: PortalPassage,
+  sign: number,
+): BeatGamePosition {
+  if (passage.axis === "x") {
+    return {
+      ...position,
+      x: passage.x,
+      y: passage.y,
+      z: passage.z + sign * 3,
+    };
+  }
+  if (passage.axis === "z") {
+    return {
+      ...position,
+      x: passage.x + sign * 3,
+      y: passage.y,
+      z: passage.z,
+    };
+  }
+  return {
+    ...position,
+    x: passage.x + sign * 3,
+    y: passage.y,
+    z: passage.z,
+  };
+}
+
+function waitForPortalExit(
+  driver: BeatGameDriver,
+  passage: PortalPassage,
+  initialDimension: string,
+  attempts: number,
+  delayMs: number,
+): Effect.Effect<BeatGamePosition, BeatGameDriverError> {
+  return driver.observe.pipe(
+    Effect.flatMap((observation) => {
+      const position = observation.player.position;
+      if (
+        position.dimension !== initialDimension
+        || !hasPortalContact(position, passage)
+      ) {
+        return Effect.succeed(position);
+      }
+      if (attempts <= 1) {
+        return Effect.fail(behaviorError(
+          driver,
+          "Could not step out of the Nether portal before re-entry",
+        ));
+      }
+      return Effect.sleep(delayMs).pipe(
+        Effect.zipRight(waitForPortalExit(
+          driver,
+          passage,
+          initialDimension,
+          attempts - 1,
+          delayMs,
+        )),
+      );
+    }),
+  );
+}
+
+function waitForPortalContact(
+  driver: BeatGameDriver,
+  passage: PortalPassage,
+  delayMs: number,
+): Effect.Effect<void, BeatGameDriverError> {
+  return driver.observe.pipe(
+    Effect.flatMap((observation) => {
+      const position = observation.player.position;
+      return hasPortalContact(position, passage)
+        ? Effect.void
+        : Effect.sleep(delayMs).pipe(
+          Effect.zipRight(waitForPortalContact(
+            driver,
+            passage,
+            delayMs,
+          )),
+        );
+    }),
+  );
+}
+
+function hasPortalContact(
+  position: BeatGamePosition,
+  passage: PortalPassage,
+): boolean {
+  // Positions describe the player's feet, not the center of their hitbox.
+  // Include the player's 1.8-block height and 0.6-block width so standing
+  // against the lower portal face counts as contact.
+  const verticalContact = position.y >= passage.y - 1.81
+    && position.y <= passage.y + 3;
+  const horizontalContact = passage.axis === "x"
+    ? Math.abs(position.z - passage.z) <= 0.65
+      && Math.abs(position.x - passage.x) <= passage.horizontalRadius + 0.1
+    : passage.axis === "z"
+    ? Math.abs(position.x - passage.x) <= 0.65
+      && Math.abs(position.z - passage.z) <= passage.horizontalRadius + 0.1
+    : distanceSquared(position, passage) <= 3;
+  return verticalContact && horizontalContact;
+}
+
+function portalApproachTarget(
+  player: BeatGamePosition,
+  portal: BeatGameBlockPosition,
+  axis: string | undefined,
+  passage: PortalPassage,
+): BeatGamePosition {
+  if (axis === "x") {
+    return {
+      ...portal,
+      x: passage.x,
+      y: passage.y,
+      z: portal.z + (player.z >= portal.z + 0.5 ? 1 : -1),
+    };
+  }
+  if (axis === "z") {
+    return {
+      ...portal,
+      y: passage.y,
+      x: portal.x + (player.x >= portal.x + 0.5 ? 1 : -1),
+      z: passage.z,
+    };
+  }
+  return portal;
+}
+
+function ensurePortalApproachSupport(
+  driver: BeatGameDriver,
+  origin: BeatGamePosition,
+  approach: BeatGamePosition,
+): Effect.Effect<void, BeatGameDriverError> {
+  const finalSupport = {
+    x: Math.floor(approach.x),
+    y: Math.floor(approach.y) - 1,
+    z: Math.floor(approach.z),
+    dimension: approach.dimension,
+  };
+  const supports = portalApproachSupports(origin, finalSupport);
+  return Effect.gen(function* () {
+    for (const support of supports) {
+      const surroundings = yield* driver.queryBlocks({
+        center: support,
+        radius: 2,
+        selector: {},
+        maximumResults: 64,
+      });
+      const supportBlock = surroundings.find(({ position }) =>
+        samePosition(position, support)
+      );
+      if (supportBlock === undefined || !supportBlock.replaceable) {
+        continue;
+      }
+      const anchor = portalSupportAnchor(support, surroundings);
+      if (anchor === undefined) {
+        continue;
+      }
+
+      yield* driver.withControl(Effect.gen(function* () {
+        yield* driver.act({
+          type: "select-item",
+          selector: {
+            itemIds: [
+              "minecraft:cobblestone",
+              "minecraft:cobbled_deepslate",
+              "minecraft:dirt",
+              "minecraft:netherrack",
+              "minecraft:oak_log",
+              "minecraft:spruce_log",
+              "minecraft:birch_log",
+              "minecraft:jungle_log",
+              "minecraft:acacia_log",
+              "minecraft:dark_oak_log",
+              "minecraft:mangrove_log",
+              "minecraft:cherry_log",
+              "minecraft:pale_oak_log",
+              "minecraft:crimson_stem",
+              "minecraft:warped_stem",
+            ],
+          },
+        });
+        yield* driver.act({
+          type: "place-block",
+          against: anchor.position,
+          face: anchor.face,
+          hand: "main",
+        });
+      }));
+      yield* Effect.sleep(150);
+
+      const placed = yield* driver.queryBlocks({
+        center: support,
+        radius: 1,
+        selector: { replaceable: false },
+        maximumResults: 16,
+      });
+      if (!placed.some(({ position }) => samePosition(position, support))) {
+        return yield* Effect.fail(behaviorError(
+          driver,
+          "Could not place a safe support beside the Nether portal",
+        ));
+      }
+    }
+  });
+}
+
+function portalApproachSupports(
+  origin: BeatGamePosition,
+  finalSupport: BeatGameBlockPosition,
+): readonly BeatGameBlockPosition[] {
+  if (
+    origin.dimension !== finalSupport.dimension
+    || Math.floor(origin.y) - 1 !== finalSupport.y
+  ) {
+    return [finalSupport];
+  }
+  let x = Math.floor(origin.x);
+  let z = Math.floor(origin.z);
+  const distance = Math.abs(finalSupport.x - x)
+    + Math.abs(finalSupport.z - z);
+  if (distance > 8) {
+    return [finalSupport];
+  }
+  const supports: BeatGameBlockPosition[] = [];
+  while (x !== finalSupport.x) {
+    x += Math.sign(finalSupport.x - x);
+    supports.push({ ...finalSupport, x, z });
+  }
+  while (z !== finalSupport.z) {
+    z += Math.sign(finalSupport.z - z);
+    supports.push({ ...finalSupport, x, z });
+  }
+  return supports;
+}
+
+function portalSupportAnchor(
+  support: BeatGameBlockPosition,
+  surroundings: readonly BeatGameBlockObservation[],
+): Readonly<{
+  position: BeatGameBlockPosition;
+  face: "up" | "north" | "south" | "east" | "west";
+}> | undefined {
+  const base = { ...support, y: support.y - 1 };
+  const baseBlock = surroundings.find(({ position }) =>
+    samePosition(position, base)
+  );
+  if (baseBlock !== undefined && !baseBlock.replaceable) {
+    return { position: base, face: "up" };
+  }
+  const neighbors = [
+    { ...support, x: support.x - 1 },
+    { ...support, x: support.x + 1 },
+    { ...support, z: support.z - 1 },
+    { ...support, z: support.z + 1 },
+  ];
+  const neighbor = neighbors.find((position) =>
+    surroundings.some((block) =>
+      samePosition(block.position, position) && !block.replaceable
+    )
+  );
+  return neighbor === undefined
+    ? undefined
+    : {
+      position: neighbor,
+      face: horizontalFace(neighbor, support),
+    };
+}
+
+interface PortalPassage {
+  readonly axis: "x" | "z" | undefined;
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly horizontalRadius: number;
+}
+
+function resolvePortalAxis(
+  declaredAxis: string | undefined,
+  observedPortals: readonly BeatGameBlockObservation[],
+): "x" | "z" | undefined {
+  const positions = observedPortals.map(({ position }) => position);
+  if (positions.length >= 2) {
+    const xSpan = coordinateSpan(positions.map(({ x }) => x));
+    const zSpan = coordinateSpan(positions.map(({ z }) => z));
+    if (xSpan !== zSpan) {
+      return xSpan > zSpan ? "x" : "z";
+    }
+  }
+  const normalized = declaredAxis?.toLowerCase();
+  return normalized === "x" || normalized === "z"
+    ? normalized
+    : undefined;
+}
+
+function coordinateSpan(values: readonly number[]): number {
+  return Math.max(...values) - Math.min(...values);
+}
+
+function portalPassage(
+  portal: BeatGameBlockPosition,
+  axis: "x" | "z" | undefined,
+  observedPortals: readonly BeatGameBlockObservation[],
+): PortalPassage {
+  const bottom = Math.min(
+    ...observedPortals.map(({ position }) => position.y),
+    portal.y,
+  );
+  if (axis === "x") {
+    const horizontal = observedPortals
+      .filter(({ position }) =>
+        position.dimension === portal.dimension
+        && position.z === portal.z
+      )
+      .map(({ position }) => position.x);
+    const span = blockSpan(horizontal, portal.x);
+    return {
+      axis,
+      x: span.center,
+      y: bottom,
+      z: portal.z + 0.5,
+      horizontalRadius: span.radius,
+    };
+  }
+  if (axis === "z") {
+    const horizontal = observedPortals
+      .filter(({ position }) =>
+        position.dimension === portal.dimension
+        && position.x === portal.x
+      )
+      .map(({ position }) => position.z);
+    const span = blockSpan(horizontal, portal.z);
+    return {
+      axis,
+      x: portal.x + 0.5,
+      y: bottom,
+      z: span.center,
+      horizontalRadius: span.radius,
+    };
+  }
+  return {
+    axis,
+    x: portal.x + 0.5,
+    y: bottom,
+    z: portal.z + 0.5,
+    horizontalRadius: 1,
+  };
+}
+
+function blockSpan(
+  coordinates: readonly number[],
+  fallback: number,
+): Readonly<{ center: number; radius: number }> {
+  const minimum = coordinates.length === 0
+    ? fallback
+    : Math.min(...coordinates);
+  const maximum = coordinates.length === 0
+    ? fallback
+    : Math.max(...coordinates);
+  return {
+    center: (minimum + maximum + 1) / 2,
+    radius: (maximum - minimum + 1) / 2 + 0.25,
+  };
+}
+
+function staircaseSteps(
+  from: BeatGameBlockPosition,
+  to: BeatGameBlockPosition,
+): readonly BeatGameBlockPosition[] {
+  if (from.dimension !== to.dimension) {
+    throw new RangeError("Staircase endpoints must be in the same dimension");
+  }
+  for (const [name, position] of [["from", from], ["to", to]] as const) {
+    for (const coordinate of ["x", "y", "z"] as const) {
+      if (!Number.isSafeInteger(position[coordinate])) {
+        throw new RangeError(
+          `${name}.${coordinate} must be a safe integer`,
+        );
+      }
+    }
+  }
+  const depth = from.y - to.y;
+  if (depth < 1) {
+    throw new RangeError("A staircase must descend at least one block");
+  }
+  const xDistance = Math.abs(to.x - from.x);
+  const zDistance = Math.abs(to.z - from.z);
+  const directDistance = xDistance + zDistance;
+  if (directDistance > depth) {
+    throw new RangeError(
+      "Staircase horizontal distance cannot exceed its vertical depth",
+    );
+  }
+  const detourSteps = depth - directDistance;
+  if (detourSteps % 2 !== 0) {
+    throw new RangeError(
+      "Staircase depth and horizontal distance must have matching parity",
+    );
+  }
+
+  const xDirection = Math.sign(to.x - from.x);
+  const zDirection = Math.sign(to.z - from.z);
+  const directSteps: Array<Readonly<{ x: number; z: number }>> = [];
+  let completedX = 0;
+  let completedZ = 0;
+  for (let index = 0; index < directDistance; index += 1) {
+    const advanceX = completedX < xDistance
+      && (
+        completedZ >= zDistance
+        || completedX / Math.max(1, xDistance)
+          <= completedZ / Math.max(1, zDistance)
+      );
+    if (advanceX) {
+      directSteps.push({ x: xDirection, z: 0 });
+      completedX += 1;
+    } else {
+      directSteps.push({ x: 0, z: zDirection });
+      completedZ += 1;
+    }
+  }
+
+  const route: Array<Readonly<{ x: number; z: number }>> = [];
+  if (detourSteps >= 4) {
+    const halfPerimeter = detourSteps / 2;
+    const firstLength = Math.floor(halfPerimeter / 2);
+    const secondLength = halfPerimeter - firstLength;
+    const dominantAxis = zDistance >= xDistance ? "z" : "x";
+    const firstDirection = dominantAxis === "z"
+      ? { x: xDirection === 0 ? 1 : -xDirection, z: 0 }
+      : { x: 0, z: zDirection === 0 ? 1 : -zDirection };
+    const secondDirection = dominantAxis === "z"
+      ? { x: 0, z: zDirection === 0 ? 1 : -zDirection }
+      : { x: xDirection === 0 ? 1 : -xDirection, z: 0 };
+    appendHorizontalSteps(route, firstDirection, firstLength);
+    appendHorizontalSteps(route, secondDirection, secondLength);
+    appendHorizontalSteps(route, opposite(firstDirection), firstLength);
+    appendHorizontalSteps(route, opposite(secondDirection), secondLength);
+  } else if (detourSteps === 2) {
+    const firstDirect = directSteps.shift();
+    if (firstDirect === undefined) {
+      route.push({ x: 1, z: 0 }, { x: -1, z: 0 });
+    } else {
+      const side = firstDirect.x === 0
+        ? { x: 1, z: 0 }
+        : { x: 0, z: 1 };
+      route.push(side, firstDirect, opposite(side));
+    }
+  }
+  route.push(...directSteps);
+
+  let x = from.x;
+  let z = from.z;
+  let y = from.y;
+  const steps: BeatGameBlockPosition[] = [];
+  for (const direction of route) {
+    x += direction.x;
+    z += direction.z;
+    y -= 1;
+    steps.push({ x, y, z, dimension: from.dimension });
+  }
+  return steps;
+}
+
+function appendHorizontalSteps(
+  route: Array<Readonly<{ x: number; z: number }>>,
+  direction: Readonly<{ x: number; z: number }>,
+  count: number,
+): void {
+  for (let index = 0; index < count; index += 1) {
+    route.push(direction);
+  }
+}
+
+function opposite(
+  direction: Readonly<{ x: number; z: number }>,
+): Readonly<{ x: number; z: number }> {
+  return { x: -direction.x, z: -direction.z };
+}
+
+function ensureStaircaseSupport(
+  driver: BeatGameDriver,
+  previous: BeatGameBlockPosition,
+  target: BeatGameBlockPosition,
+  retreat: BeatGameBlockPosition | undefined,
+  path: Partial<BeatGamePathPolicy> | undefined,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  const support = below(target);
+  return Effect.gen(function* () {
+    const observedSupport = yield* queryExactBlock(driver, support);
+    if (observedSupport === undefined) {
+      return yield* Effect.fail(behaviorError(
+        driver,
+        "Could not observe the next staircase support block",
+      ));
+    }
+    let supportBlock: BeatGameBlockObservation = observedSupport;
+    if (
+      !supportBlock.replaceable
+      && !isGravityAffectedBlock(supportBlock.blockId)
+    ) {
+      return false;
+    }
+
+    const observedTarget = yield* queryExactBlock(driver, target);
+    if (observedTarget === undefined) {
+      return yield* Effect.fail(behaviorError(
+        driver,
+        "Could not observe the next staircase tread block",
+      ));
+    }
+    let targetBlock: BeatGameBlockObservation = observedTarget;
+    if (isGravityAffectedBlock(targetBlock.blockId)) {
+      yield* driver.act({ type: "dig-block", position: target });
+      const clearedTarget = yield* waitForExactBlock(
+        driver,
+        target,
+        { replaceable: true },
+        10,
+        50,
+      );
+      if (clearedTarget === undefined) {
+        return yield* Effect.fail(behaviorError(
+          driver,
+          "Could not clear an unstable staircase tread block",
+        ));
+      }
+      targetBlock = clearedTarget;
+    }
+    if (isGravityAffectedBlock(supportBlock.blockId)) {
+      yield* driver.act({ type: "dig-block", position: support });
+      const clearedSupport = yield* waitForExactBlock(
+        driver,
+        support,
+        { replaceable: true },
+        10,
+        50,
+      );
+      if (clearedSupport === undefined) {
+        return yield* Effect.fail(behaviorError(
+          driver,
+          "Could not clear an unstable staircase support block",
+        ));
+      }
+      supportBlock = clearedSupport;
+    }
+
+    const observation = yield* driver.observe;
+    const material = staircaseSupportMaterial(observation);
+    if (material === undefined) {
+      return yield* Effect.fail(behaviorError(
+        driver,
+        "No solid block is available to bridge the staircase",
+      ));
+    }
+
+    const lowerAnchor = below(support);
+    const observedLowerAnchor = yield* queryExactBlock(driver, lowerAnchor);
+    if (
+      observedLowerAnchor !== undefined
+      && !observedLowerAnchor.replaceable
+      && !isGravityAffectedBlock(observedLowerAnchor.blockId)
+    ) {
+      const directlyPlaced = yield* placeStaircaseBlock(
+        driver,
+        material,
+        lowerAnchor,
+        "up",
+        support,
+      ).pipe(Effect.either);
+      if (directlyPlaced._tag === "Right") {
+        const placedSupport = yield* waitForExactBlock(
+          driver,
+          support,
+          { replaceable: false },
+          10,
+          50,
+        );
+        if (
+          placedSupport !== undefined
+          && !isGravityAffectedBlock(placedSupport.blockId)
+        ) {
+          return true;
+        }
+      }
+    }
+
+    if (targetBlock.replaceable) {
+      const previousSupport = below(previous);
+      const anchor = yield* queryExactBlock(driver, previousSupport);
+      if (
+        anchor === undefined
+        || anchor.replaceable
+        || isGravityAffectedBlock(anchor.blockId)
+      ) {
+        return yield* Effect.fail(behaviorError(
+          driver,
+          "Could not anchor a temporary staircase tread",
+        ));
+      }
+      if (retreat !== undefined) {
+        yield* driver.pathfind(
+          retreat,
+          0,
+          staircaseStepPathPolicy(path),
+        );
+      }
+      yield* placeStaircaseBlock(
+        driver,
+        material,
+        previousSupport,
+        horizontalFace(previousSupport, target),
+        target,
+      );
+      const placedTread = yield* waitForExactBlock(
+        driver,
+        target,
+        { replaceable: false },
+        10,
+        50,
+      );
+      if (
+        placedTread === undefined
+        || isGravityAffectedBlock(placedTread.blockId)
+      ) {
+        return yield* Effect.fail(behaviorError(
+          driver,
+          "Could not place a temporary staircase tread",
+        ));
+      }
+      if (retreat !== undefined) {
+        yield* walkStaircaseStep(driver, previous);
+      }
+    }
+
+    yield* placeStaircaseBlock(
+      driver,
+      material,
+      target,
+      "down",
+      support,
+    );
+    const placed = yield* waitForExactBlock(
+      driver,
+      support,
+      { replaceable: false },
+      10,
+      50,
+    );
+    if (placed === undefined || isGravityAffectedBlock(placed.blockId)) {
+      return yield* Effect.fail(behaviorError(
+        driver,
+        "Could not place a safe staircase support block",
+      ));
+    }
+    return true;
+  });
+}
+
+function walkStaircaseStep(
+  driver: BeatGameDriver,
+  target: BeatGameBlockPosition,
+): Effect.Effect<void, BeatGameDriverError> {
+  return Effect.gen(function* () {
+    const observation = yield* driver.observe;
+    const movementTarget = staircaseMovementTarget(
+      observation.player.position,
+      target,
+    );
+    const rotation = rotationToward(
+      observation.player.position,
+      movementTarget,
+    );
+    yield* driver.act({ type: "reset-movement" });
+    yield* driver.act({
+      type: "look",
+      yaw: rotation.yaw,
+      pitch: 0,
+    });
+    yield* waitForRotation(driver, rotation.yaw, 0, 40, 50);
+    yield* driver.act({
+      type: "set-movement",
+      forward: true,
+      sneak: false,
+      sprint: false,
+    });
+    yield* advanceToStaircaseCenter(driver, target, 100, false);
+    yield* driver.act({ type: "reset-movement" });
+    yield* Effect.sleep(150);
+    yield* waitForStaircaseLanding(driver, target, 40, 50);
+    yield* driver.act({ type: "reset-movement" });
+  }).pipe(
+    Effect.ensuring(driver.act({ type: "reset-movement" }).pipe(
+      Effect.ignore,
+    )),
+  );
+}
+
+function staircaseMovementTarget(
+  position: BeatGamePosition,
+  target: BeatGameBlockPosition,
+): BeatGamePosition {
+  const currentX = Math.floor(position.x);
+  const currentZ = Math.floor(position.z);
+  if (target.x !== currentX && target.z === currentZ) {
+    return {
+      ...target,
+      x: target.x + 0.5,
+      z: position.z,
+    };
+  }
+  if (target.z !== currentZ && target.x === currentX) {
+    return {
+      ...target,
+      x: position.x,
+      z: target.z + 0.5,
+    };
+  }
+  return {
+    ...target,
+    x: target.x + 0.5,
+    z: target.z + 0.5,
+  };
+}
+
+function advanceToStaircaseCenter(
+  driver: BeatGameDriver,
+  target: BeatGameBlockPosition,
+  attempts: number,
+  enteredTarget: boolean,
+): Effect.Effect<void, BeatGameDriverError> {
+  return driver.observe.pipe(
+    Effect.flatMap((observation) => {
+    const position = observation.player.position;
+    if (position.dimension !== target.dimension) {
+      return Effect.fail(behaviorError(
+        driver,
+        "Changed dimensions while walking a staircase step",
+      ));
+    }
+    if (position.y < target.y - 0.5) {
+      return Effect.fail(behaviorError(
+        driver,
+        "Fell below the next staircase tread",
+      ));
+    }
+    const insideTarget = Math.floor(position.x) === target.x
+      && Math.floor(position.z) === target.z;
+    const centerX = target.x + 0.5;
+    const centerZ = target.z + 0.5;
+    if (
+      insideTarget
+      && Math.max(
+        Math.abs(position.x - centerX),
+        Math.abs(position.z - centerZ),
+      ) <= 0.3
+    ) {
+      return Effect.void;
+    }
+    if (enteredTarget && !insideTarget) {
+      return Effect.fail(behaviorError(
+        driver,
+        "Walked past the next staircase tread",
+      ));
+    }
+    if (attempts <= 1) {
+      return Effect.fail(behaviorError(
+        driver,
+        "Could not walk onto the next staircase tread",
+      ));
+    }
+    return Effect.sleep(10).pipe(
+      Effect.zipRight(advanceToStaircaseCenter(
+        driver,
+        target,
+        attempts - 1,
+        enteredTarget || insideTarget,
+      )),
+    );
+  }),
+  );
+}
+
+function waitForStaircaseLanding(
+  driver: BeatGameDriver,
+  target: BeatGameBlockPosition,
+  attempts: number,
+  delayMs: number,
+): Effect.Effect<void, BeatGameDriverError> {
+  return driver.observe.pipe(
+    Effect.flatMap((observation) => {
+      const position = observation.player.position;
+      if (
+        position.dimension === target.dimension
+        && Math.floor(position.x) === target.x
+        && Math.floor(position.z) === target.z
+        && position.y >= target.y - 0.15
+        && position.y <= target.y + 0.75
+      ) {
+        return Effect.void;
+      }
+      if (
+        position.dimension !== target.dimension
+        || position.y < target.y - 0.5
+      ) {
+        return Effect.fail(behaviorError(
+          driver,
+          "Did not land safely on the next staircase tread",
+        ));
+      }
+      if (attempts <= 1) {
+        return Effect.fail(behaviorError(
+          driver,
+          "Did not settle on the next staircase tread",
+        ));
+      }
+      return Effect.sleep(delayMs).pipe(
+        Effect.zipRight(waitForStaircaseLanding(
+          driver,
+          target,
+          attempts - 1,
+          delayMs,
+        )),
+      );
+    }),
+  );
+}
+
+function placeStaircaseBlock(
+  driver: BeatGameDriver,
+  material: string,
+  against: BeatGameBlockPosition,
+  face: BeatGameBlockFace,
+  expected: BeatGameBlockPosition,
+  attemptsRemaining = 3,
+): Effect.Effect<void, BeatGameDriverError> {
+  return driver.act({
+    type: "select-item",
+    selector: { itemIds: [material] },
+  }).pipe(
+    Effect.zipRight(driver.act({
+      type: "place-block",
+      against,
+      face,
+      hand: "main",
+    })),
+    Effect.catchAll((cause) =>
+      waitForExactBlock(
+        driver,
+        expected,
+        { replaceable: false },
+        3,
+        50,
+      ).pipe(
+        Effect.flatMap((placed) => {
+          if (
+            placed !== undefined
+            && !isGravityAffectedBlock(placed.blockId)
+          ) {
+            return Effect.void;
+          }
+          if (attemptsRemaining <= 1) {
+            return Effect.fail(cause);
+          }
+          const clearUnstableBlock = placed !== undefined
+              && isGravityAffectedBlock(placed.blockId)
+            ? driver.act({
+              type: "dig-block",
+              position: expected,
+            }).pipe(
+              Effect.zipRight(Effect.sleep(150)),
+              Effect.zipRight(waitForExactBlock(
+                driver,
+                expected,
+                { replaceable: true },
+                10,
+                50,
+              )),
+              Effect.flatMap((cleared) =>
+                cleared === undefined
+                  ? Effect.fail(behaviorError(
+                    driver,
+                    "Could not clear an unstable staircase support block",
+                  ))
+                  : Effect.void
+              ),
+            )
+            : Effect.void;
+          return clearUnstableBlock.pipe(
+            Effect.zipRight(Effect.sleep(100)),
+            Effect.zipRight(placeStaircaseBlock(
+              driver,
+              material,
+              against,
+              face,
+              expected,
+              attemptsRemaining - 1,
+            )),
+          );
+        }),
+      )
+    ),
+  );
+}
+
+function staircaseSupportMaterial(
+  observation: BeatGameObservation,
+): string | undefined {
+  return [
+    "minecraft:cobblestone",
+    "minecraft:cobbled_deepslate",
+    "minecraft:dirt",
+    "minecraft:netherrack",
+    "minecraft:oak_log",
+    "minecraft:spruce_log",
+    "minecraft:birch_log",
+    "minecraft:jungle_log",
+    "minecraft:acacia_log",
+    "minecraft:dark_oak_log",
+    "minecraft:mangrove_log",
+    "minecraft:cherry_log",
+    "minecraft:pale_oak_log",
+    "minecraft:crimson_stem",
+    "minecraft:warped_stem",
+  ].find((itemId) => (observation.inventory.counts[itemId] ?? 0) > 0);
+}
+
+function isGravityAffectedBlock(blockId: string): boolean {
+  return blockId === "minecraft:sand"
+    || blockId === "minecraft:red_sand"
+    || blockId === "minecraft:gravel"
+    || blockId === "minecraft:dragon_egg"
+    || blockId.endsWith("_concrete_powder")
+    || blockId.endsWith("_anvil");
+}
+
+function queryExactBlock(
+  driver: BeatGameDriver,
+  position: BeatGameBlockPosition,
+): Effect.Effect<BeatGameBlockObservation | undefined, BeatGameDriverError> {
+  return driver.queryBlocks(exactBlockQuery(position, {})).pipe(
+    Effect.map((blocks) =>
+      blocks.find((block) => samePosition(block.position, position))
+    ),
+  );
+}
+
+function exactBlockQuery(
+  position: BeatGameBlockPosition,
+  selector: BeatGameQueryBlocks["selector"],
+): BeatGameQueryBlocks {
+  return {
+    center: {
+      x: position.x + 0.5,
+      y: position.y + 0.5,
+      z: position.z + 0.5,
+      dimension: position.dimension,
+    },
+    radius: 0.5,
+    selector,
+    maximumResults: 1,
+  };
+}
+
+function horizontalFace(
+  from: BeatGameBlockPosition,
+  to: BeatGameBlockPosition,
+): "north" | "south" | "east" | "west" {
+  const x = to.x - from.x;
+  const z = to.z - from.z;
+  if (x === 1 && z === 0) {
+    return "east";
+  }
+  if (x === -1 && z === 0) {
+    return "west";
+  }
+  if (x === 0 && z === 1) {
+    return "south";
+  }
+  if (x === 0 && z === -1) {
+    return "north";
+  }
+  throw new RangeError("Staircase steps must be horizontally adjacent");
+}
+
+function isEndDimension(dimension: string): boolean {
+  return dimension === "minecraft:the_end" || dimension.endsWith(":the_end");
+}
+
+function isNetherDimension(dimension: string): boolean {
+  return dimension === "minecraft:the_nether"
+    || dimension.endsWith(":the_nether");
+}
 
 function runControlled(
   driver: BeatGameDriver,
   task: BeatGameTask,
   path: Partial<BeatGamePathPolicy> | undefined,
 ): Effect.Effect<void, BeatGameDriverError> {
+  return runControlledResult(driver, task, path).pipe(Effect.asVoid);
+}
+
+function runControlledResult(
+  driver: BeatGameDriver,
+  task: BeatGameTask,
+  path: Partial<BeatGamePathPolicy> | undefined,
+): Effect.Effect<unknown, BeatGameDriverError> {
   return driver.withControl(
     driver.runTask(task, mergePathPolicy(path)).pipe(
-      Effect.asVoid,
       Effect.ensuring(driver.act({ type: "reset-movement" }).pipe(
         Effect.ignore,
       )),
     ),
   );
+}
+
+function formatDiagnostic(value: unknown): string {
+  try {
+    return JSON.stringify(value, (_, nested) =>
+      typeof nested === "bigint" ? nested.toString() : nested
+    );
+  } catch {
+    return String(value);
+  }
 }
 
 function throwSelectedItem(
@@ -1189,6 +3683,48 @@ function ignitePortal(
     }
   });
   return acquireControl ? driver.withControl(program) : program;
+}
+
+function clearPortalInterior(
+  driver: BeatGameDriver,
+  frame: PortalFrame,
+  path?: Partial<BeatGamePathPolicy>,
+): Effect.Effect<void, BeatGameDriverError> {
+  return Effect.forEach(
+    [...frame.interior].sort((left, right) => right.y - left.y),
+    (position) =>
+      driver.queryBlocks({
+        center: {
+          ...position,
+          x: position.x + 0.5,
+          y: position.y + 0.5,
+          z: position.z + 0.5,
+        },
+        radius: 0.25,
+        selector: {},
+        maximumResults: 1,
+      }).pipe(
+        Effect.flatMap((blocks) => {
+          const block = blocks.find((candidate) =>
+            samePosition(candidate.position, position)
+          );
+          if (
+            block === undefined
+            || block.blockId === "minecraft:air"
+            || block.blockId === "minecraft:nether_portal"
+          ) {
+            return Effect.void;
+          }
+          return driver.pathfind(position, 3, mergePathPolicy(path)).pipe(
+            Effect.zipRight(driver.act({
+              type: "dig-block",
+              position,
+            })),
+          );
+        }),
+      ),
+    { discard: true },
+  );
 }
 
 function castNetherPortalFromLavaPool(
@@ -1441,6 +3977,36 @@ function waitForBlock(
   );
 }
 
+function waitForExactBlock(
+  driver: BeatGameDriver,
+  position: BeatGameBlockPosition,
+  selector: BeatGameQueryBlocks["selector"],
+  attemptsRemaining: number,
+  delayMs: number,
+): Effect.Effect<BeatGameBlockObservation | undefined, BeatGameDriverError> {
+  return driver.queryBlocks(exactBlockQuery(position, selector)).pipe(
+    Effect.flatMap((blocks) => {
+      const block = blocks.find((candidate) =>
+        samePosition(candidate.position, position)
+      );
+      if (block !== undefined || attemptsRemaining <= 1) {
+        return Effect.succeed(block);
+      }
+      return Effect.sleep(delayMs).pipe(
+        Effect.zipRight(
+          waitForExactBlock(
+            driver,
+            position,
+            selector,
+            attemptsRemaining - 1,
+            delayMs,
+          ),
+        ),
+      );
+    }),
+  );
+}
+
 function castingWaterPosition(
   frame: PortalFrame,
   target: BeatGameBlockPosition,
@@ -1481,6 +4047,17 @@ function mergePathPolicy(
   return {
     ...defaultBeatGameStrategy.path,
     ...override,
+  };
+}
+
+function staircaseStepPathPolicy(
+  override: Partial<BeatGamePathPolicy> | undefined,
+): BeatGamePathPolicy {
+  return {
+    ...mergePathPolicy(override),
+    allowMining: false,
+    allowPlacing: false,
+    maxFallDistance: 1,
   };
 }
 

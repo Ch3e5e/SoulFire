@@ -89,9 +89,12 @@ public final class PathfindingSupport {
         validateDimension(currentDimension, near.getPosition().getDimension());
         var position = near.getPosition();
         var target = new Vec3(position.getX(), position.getY(), position.getZ());
+        var vector = SFVec3i.fromDouble(target);
         var radius = Math.max(1, Math.round(near.getRadius()));
         yield new ResolvedGoal(
-          new CloseToPosGoal(SFVec3i.fromDouble(target), radius),
+          near.getRadius() <= 0
+            ? new PosGoal(vector)
+            : new CloseToPosGoal(vector, radius),
           _ -> target
         );
       }

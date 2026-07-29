@@ -133,4 +133,55 @@ describe("beat-game planner", () => {
 
     expect(decision).toMatchObject({ type: "search-stronghold" });
   });
+
+  it("requires the egg and an observed End exit before completion", () => {
+    const collect = decideBeatGameAction({
+      checkpoint: checkpoint(BeatGamePhase.COLLECT_DRAGON_EGG),
+      observation: observation({
+        dimension: "minecraft:the_end",
+        counts: { "minecraft:torch": 1 },
+      }),
+      strategy: defaultBeatGameStrategy,
+    });
+    expect(collect).toMatchObject({ type: "collect-dragon-egg" });
+
+    const advanceToExit = decideBeatGameAction({
+      checkpoint: checkpoint(BeatGamePhase.COLLECT_DRAGON_EGG),
+      observation: observation({
+        dimension: "minecraft:the_end",
+        counts: {
+          "minecraft:torch": 1,
+          "minecraft:dragon_egg": 1,
+        },
+      }),
+      strategy: defaultBeatGameStrategy,
+    });
+    expect(advanceToExit).toMatchObject({
+      type: "advance-phase",
+      to: BeatGamePhase.EXIT_END,
+    });
+
+    const exit = decideBeatGameAction({
+      checkpoint: checkpoint(BeatGamePhase.EXIT_END),
+      observation: observation({
+        dimension: "minecraft:the_end",
+        counts: { "minecraft:dragon_egg": 1 },
+      }),
+      strategy: defaultBeatGameStrategy,
+    });
+    expect(exit).toMatchObject({ type: "exit-end" });
+
+    const complete = decideBeatGameAction({
+      checkpoint: checkpoint(BeatGamePhase.EXIT_END),
+      observation: observation({
+        dimension: "minecraft:overworld",
+        counts: { "minecraft:dragon_egg": 1 },
+      }),
+      strategy: defaultBeatGameStrategy,
+    });
+    expect(complete).toMatchObject({
+      type: "advance-phase",
+      to: BeatGamePhase.COMPLETE,
+    });
+  });
 });

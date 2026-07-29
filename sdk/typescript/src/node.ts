@@ -22,6 +22,10 @@ import { makeEffectHttpClientFetch } from "./platform.js";
 
 export * from "./index.js";
 
+const nodeHttpClientLayer = NodeHttpClient.layerUndiciWithoutDispatcher.pipe(
+  Layer.provide(NodeHttpClient.dispatcherLayerGlobal),
+);
+
 function connect(
   options: SoulFireOptions,
 ): Effect.Effect<
@@ -30,7 +34,7 @@ function connect(
   Scope.Scope
 > {
   return UniversalSoulFire.connectWithHttpClient(options).pipe(
-    Effect.provide(NodeHttpClient.layerUndici),
+    Effect.provide(nodeHttpClientLayer),
   );
 }
 
@@ -38,7 +42,7 @@ function layer(
   options: SoulFireOptions,
 ): Layer.Layer<SoulFireService, SoulFireConnectionError> {
   return UniversalSoulFire.layerWithHttpClient(options).pipe(
-    Layer.provide(NodeHttpClient.layerUndici),
+    Layer.provide(nodeHttpClientLayer),
   );
 }
 
@@ -78,7 +82,7 @@ function install(
         (client) => client.close(),
       ),
   ).pipe(
-    Effect.provide(NodeHttpClient.layerUndici),
+    Effect.provide(nodeHttpClientLayer),
   );
 }
 

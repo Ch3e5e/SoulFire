@@ -11,6 +11,16 @@ export interface SoulFireInstallOptions {
    */
   version?: string;
   /**
+   * Existing SoulFire dedicated server JAR to run instead of downloading a
+   * published release. This is useful for release-candidate and source-tree
+   * smoke tests.
+   */
+  jarPath?: string;
+  /**
+   * Existing Java 25 executable to use instead of downloading a managed JRE.
+   */
+  javaPath?: string;
+  /**
    * Java arguments added before the SoulFire JAR.
    */
   javaArgs?: string[];

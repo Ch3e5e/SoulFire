@@ -16,11 +16,15 @@ import {
   buildNetherPortal,
   buildStructure,
   castNetherPortal,
+  collectDragonEgg,
   collectBlocks,
   craftItem,
   eatWhenNeeded,
+  enterEndPortal,
   enterPortal,
   equipBestArmor,
+  exitEnd,
+  excavateStaircase,
   explore,
   flee,
   fightEnderDragon,
@@ -60,6 +64,7 @@ import {
   defaultBeatGameStrategy,
   emptyBeatGameWorldMemory,
   type BeatGameBlockPosition,
+  type BeatGameBlockObservation,
   type BeatGameCheckpoint,
   type BeatGameClaim,
   type BeatGameEntityObservation,
@@ -799,12 +804,6 @@ function executeDecision(
             Effect.as({} satisfies ActionResult),
           );
         }
-        const origin = {
-          x: Math.floor(observation.player.position.x) + 3,
-          y: Math.floor(observation.player.position.y),
-          z: Math.floor(observation.player.position.z),
-          dimension: observation.player.position.dimension,
-        };
         const useCastPortal =
           state.strategy.portalStrategy === PortalStrategy.CAST
           || (
@@ -813,15 +812,6 @@ function executeDecision(
               observation.inventory.counts["minecraft:obsidian"] ?? 0
             ) < state.strategy.targetObsidianCount
           );
-        const buildPortal = useCastPortal
-          ? castNetherPortal(state.driver, {
-            origin,
-            path: state.strategy.path,
-          })
-          : buildNetherPortal(state.driver, {
-            origin,
-            path: state.strategy.path,
-          });
         return enterKnownPortal(
           state,
           actionCheckpoint,
@@ -833,7 +823,18 @@ function executeDecision(
           > =>
             knownPortal
               ? Effect.succeed({})
-              : buildPortal.pipe(
+              : resolvePortalBuildOrigin(state.driver, observation).pipe(
+                Effect.flatMap((origin) =>
+                  useCastPortal
+                    ? castNetherPortal(state.driver, {
+                      origin,
+                      path: state.strategy.path,
+                    })
+                    : buildNetherPortal(state.driver, {
+                      origin,
+                      path: state.strategy.path,
+                    })
+                ),
                 Effect.tap((frame) => {
                   const observedAt = new Date().toISOString();
                   return state.coordinator.publishDiscovery(
@@ -1004,35 +1005,36 @@ function executeDecision(
         return activateEndPortal(state.driver, {
           path: state.strategy.path,
         }).pipe(
-          Effect.flatMap(() =>
-            state.driver.queryBlocks({
-              center: observation.player.position,
-              radius: 32,
-              selector: { blockIds: ["minecraft:end_portal"] },
-              maximumResults: 1,
-            })
-          ),
-          Effect.flatMap((portals) => {
-            const portal = portals[0];
-            return portal === undefined
-              ? Effect.void
-              : state.driver.pathfind(
-                portal.position,
-                0,
-                state.strategy.path,
-              );
-          }),
-          Effect.as({} satisfies ActionResult),
+          Effect.zipRight(enterEndPortal(state.driver, {
+            path: state.strategy.path,
+          })),
+          Effect.as({
+            phase: BeatGamePhase.FIGHT_ENDER_DRAGON,
+          } satisfies ActionResult),
         );
       case "fight-ender-dragon":
         if (state.hooks.fightEnderDragon !== undefined) {
           return state.hooks.fightEnderDragon(policyContext).pipe(
             Effect.map((defeated): ActionResult =>
-              defeated ? { phase: BeatGamePhase.COMPLETE } : {}
+              defeated ? { phase: BeatGamePhase.COLLECT_DRAGON_EGG } : {}
             ),
           );
         }
-        return fightDragon(state, observation);
+        return fightDragon(state);
+      case "collect-dragon-egg":
+        return (
+          state.hooks.collectDragonEgg?.(policyContext)
+            ?? collectDragonEgg(state.driver, {
+              path: state.strategy.path,
+            })
+        ).pipe(Effect.as({} satisfies ActionResult));
+      case "exit-end":
+        return (
+          state.hooks.exitEnd?.(policyContext)
+            ?? exitEnd(state.driver, {
+              path: state.strategy.path,
+            })
+        ).pipe(Effect.as({} satisfies ActionResult));
     }
   })();
   return Effect.raceFirst(
@@ -1353,6 +1355,12 @@ function satisfyRequirement(
           missing,
         )),
       );
+    case "torch":
+      return craftItem(state.driver, {
+        resultItemId: "minecraft:torch",
+        count: missing,
+        path: state.strategy.path,
+      });
     default:
       return acquire(state.driver, requirement, {
         searchRadius: state.strategy.blockSearchRadius,
@@ -1848,7 +1856,7 @@ function moveToEyeBaseline(
     if (latest === undefined) {
       return;
     }
-    const baseline = Math.max(64, Math.min(
+    const baseline = Math.max(32, Math.min(
       192,
       state.strategy.explorationRadius,
     ));
@@ -1929,6 +1937,37 @@ function searchStronghold(
     if (estimate === undefined) {
       return false;
     }
+    let approachObservation = yield* state.driver.observe;
+    const surveyPortalFrames = state.driver.queryBlocks({
+      center: {
+        ...estimate,
+        y: 32,
+      },
+      radius: Math.min(
+        128,
+        Math.max(64, state.strategy.blockSearchRadius),
+      ),
+      selector: { blockIds: ["minecraft:end_portal_frame"] },
+      maximumResults: 12,
+    });
+    let surveyedFrames = yield* surveyPortalFrames;
+    if (surveyedFrames.length === 0) {
+      yield* state.driver.pathfind({
+        ...estimate,
+        y: Math.floor(approachObservation.player.position.y),
+      }, 16, state.strategy.path);
+      approachObservation = yield* state.driver.observe;
+      surveyedFrames = yield* surveyPortalFrames;
+    }
+    if (surveyedFrames.length > 0) {
+      yield* approachStrongholdPortalRoom(
+        state,
+        surveyedFrames,
+        estimate,
+        approachObservation.player.position,
+      );
+      return true;
+    }
     const undergroundTarget = {
       ...estimate,
       y: Math.min(32, estimate.y - 24),
@@ -1946,6 +1985,12 @@ function searchStronghold(
       maximumResults: 12,
     });
     if (frames.length > 0) {
+      yield* approachStrongholdPortalRoom(
+        state,
+        frames,
+        estimate,
+        observation.player.position,
+      );
       return true;
     }
     yield* explore(state.driver, {
@@ -1964,39 +2009,138 @@ function searchStronghold(
   });
 }
 
+function approachStrongholdPortalRoom(
+  state: RunState,
+  frames: readonly BeatGameBlockObservation[],
+  estimate: BeatGamePosition,
+  currentPosition: BeatGamePosition,
+): Effect.Effect<void, BeatGameDriverError> {
+  const destination = strongholdEntryPosition(frames, estimate);
+  const current = floorBlockPosition(currentPosition);
+  const depth = current.y - destination.y;
+  if (depth <= 0) {
+    return state.driver.pathfind(
+      destination,
+      4,
+      state.strategy.path,
+    );
+  }
+  return excavateStaircase(state.driver, {
+    from: staircaseStartPosition(destination, current),
+    to: destination,
+    path: state.strategy.path,
+  });
+}
+
+function staircaseStartPosition(
+  destination: BeatGameBlockPosition,
+  current: BeatGameBlockPosition,
+): BeatGameBlockPosition {
+  const depth = current.y - destination.y;
+  let x = current.x;
+  let z = current.z;
+  let xDistance = Math.abs(destination.x - x);
+  let zDistance = Math.abs(destination.z - z);
+  let excessDistance = xDistance + zDistance - depth;
+  if (excessDistance > 0) {
+    const xReduction = Math.min(xDistance, excessDistance);
+    x += Math.sign(destination.x - x) * xReduction;
+    xDistance -= xReduction;
+    excessDistance -= xReduction;
+    const zReduction = Math.min(zDistance, excessDistance);
+    z += Math.sign(destination.z - z) * zReduction;
+    zDistance -= zReduction;
+  }
+  if ((depth - xDistance - zDistance) % 2 !== 0) {
+    if (xDistance > 0) {
+      x += Math.sign(destination.x - x);
+    } else if (zDistance > 0) {
+      z += Math.sign(destination.z - z);
+    } else {
+      x += 1;
+    }
+  }
+  return {
+    x,
+    y: current.y,
+    z,
+    dimension: destination.dimension,
+  };
+}
+
+function floorBlockPosition(
+  position: BeatGamePosition,
+): BeatGameBlockPosition {
+  return {
+    x: Math.floor(position.x),
+    y: Math.floor(position.y),
+    z: Math.floor(position.z),
+    dimension: position.dimension,
+  };
+}
+
+function strongholdEntryPosition(
+  frames: readonly BeatGameBlockObservation[],
+  origin: BeatGamePosition,
+): BeatGameBlockPosition {
+  const minimumX = Math.min(...frames.map(({ position }) => position.x));
+  const maximumX = Math.max(...frames.map(({ position }) => position.x));
+  const minimumY = Math.min(...frames.map(({ position }) => position.y));
+  const minimumZ = Math.min(...frames.map(({ position }) => position.z));
+  const maximumZ = Math.max(...frames.map(({ position }) => position.z));
+  const centerX = Math.round((minimumX + maximumX) / 2);
+  const centerZ = Math.round((minimumZ + maximumZ) / 2);
+  const dimension = frames[0]?.position.dimension ?? origin.dimension;
+  const candidates: readonly BeatGameBlockPosition[] = [
+    {
+      x: centerX,
+      y: minimumY + 1,
+      z: minimumZ - 2,
+      dimension,
+    },
+    {
+      x: centerX,
+      y: minimumY + 1,
+      z: maximumZ + 2,
+      dimension,
+    },
+    {
+      x: minimumX - 2,
+      y: minimumY + 1,
+      z: centerZ,
+      dimension,
+    },
+    {
+      x: maximumX + 2,
+      y: minimumY + 1,
+      z: centerZ,
+      dimension,
+    },
+  ];
+  return candidates.reduce((nearest, candidate) =>
+      horizontalDistanceSquared(candidate, origin)
+          < horizontalDistanceSquared(nearest, origin)
+        ? candidate
+        : nearest
+  );
+}
+
+function horizontalDistanceSquared(
+  left: Pick<BeatGamePosition, "x" | "z">,
+  right: Pick<BeatGamePosition, "x" | "z">,
+): number {
+  return (left.x - right.x) ** 2 + (left.z - right.z) ** 2;
+}
+
 function fightDragon(
   state: RunState,
-  observation: BeatGameObservation,
 ): Effect.Effect<ActionResult, BeatGameDriverError> {
   return Effect.gen(function* () {
-    const before = yield* state.driver.queryEntities({
-      origin: observation.player.position,
-      radius: 320,
-      selector: {
-        entityTypes: ["minecraft:ender_dragon"],
-        alive: true,
-      },
-      maximumResults: 1,
-    });
-    if (before.length === 0) {
-      return { phase: BeatGamePhase.COMPLETE };
-    }
     yield* fightEnderDragon(state.driver, {
       searchRadius: 320,
       path: state.strategy.path,
     });
-    const after = yield* state.driver.queryEntities({
-      origin: observation.player.position,
-      radius: 320,
-      selector: {
-        entityTypes: ["minecraft:ender_dragon"],
-        alive: true,
-      },
-      maximumResults: 1,
-    });
-    return after.length === 0
-      ? { phase: BeatGamePhase.COMPLETE }
-      : {};
+    return { phase: BeatGamePhase.COLLECT_DRAGON_EGG };
   });
 }
 
@@ -2737,6 +2881,10 @@ function actionObservedComplete(
       return !isNether(observation.player.position.dimension);
     case "activate-end-portal":
       return isEnd(observation.player.position.dimension);
+    case "collect-dragon-egg":
+      return (observation.inventory.counts["minecraft:dragon_egg"] ?? 0) > 0;
+    case "exit-end":
+      return !isEnd(observation.player.position.dimension);
     case "prepare-equipment":
     case "throw-eye":
     case "search-stronghold":
@@ -2747,6 +2895,61 @@ function actionObservedComplete(
 
 function backoffDuration(attempt: number): number {
   return Math.min(5_000, 250 * 2 ** Math.max(0, attempt - 1));
+}
+
+function resolvePortalBuildOrigin(
+  driver: BeatGameDriver,
+  observation: BeatGameObservation,
+): Effect.Effect<BeatGameBlockPosition, BeatGameDriverError> {
+  const player = observation.player.position;
+  const x = Math.floor(player.x) - 1;
+  const z = Math.floor(player.z) + 2;
+  const highestY = Math.floor(player.y);
+  const lowestY = highestY - 12;
+  const findFloor = (
+    y: number,
+  ): Effect.Effect<number, BeatGameDriverError> => {
+    if (y < lowestY) {
+      return Effect.fail(new BeatGameDriverError({
+        operation: "resolvePortalBuildOrigin",
+        retryable: true,
+        message:
+          `Could not find solid ground below the planned portal at ${x}, ${z}`,
+      }));
+    }
+    const candidate: BeatGameBlockPosition = {
+      x: x + 1,
+      y,
+      z,
+      dimension: player.dimension,
+    };
+    return driver.queryBlocks({
+      center: {
+        ...candidate,
+        x: candidate.x + 0.5,
+        y: candidate.y + 0.5,
+        z: candidate.z + 0.5,
+      },
+      radius: 0.25,
+      selector: { replaceable: false },
+      maximumResults: 1,
+    }).pipe(
+      Effect.flatMap((blocks) =>
+        blocks.some(({ position }) => samePosition(position, candidate))
+          ? Effect.succeed(y)
+          : findFloor(y - 1)
+      ),
+    );
+  };
+
+  return findFloor(highestY).pipe(
+    Effect.map((y) => ({
+      x,
+      y,
+      z,
+      dimension: player.dimension,
+    })),
+  );
 }
 
 function positionKey(
@@ -2818,6 +3021,7 @@ function withTaskIdempotency(
     queryEntities: driver.queryEntities,
     recipesFor: driver.recipesFor,
     canCraft: driver.canCraft,
+    waitForChunks: driver.waitForChunks,
     pathfind: driver.pathfind,
     runTask: (task, policy, execution = {}) =>
       driver.runTask(task, policy, {

@@ -36,6 +36,7 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -327,7 +328,10 @@ public final class PathExecutor implements ControlTask {
   ) {
     public PlannedRoute findPath() {
       var clientEntity = bot.minecraft().player;
-      var level = bot.minecraft().player.level();
+      var level = Objects.requireNonNull(
+        bot.minecraft().level,
+        "Bot level is not available"
+      );
       var inventory =
         new ProjectedInventory(clientEntity.getInventory(), clientEntity, pathConstraint);
       var start =

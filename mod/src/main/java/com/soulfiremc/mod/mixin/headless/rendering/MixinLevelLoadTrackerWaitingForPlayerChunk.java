@@ -15,25 +15,17 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-package com.soulfiremc.server.pathfinding.graph.constraint;
+package com.soulfiremc.mod.mixin.headless.rendering;
 
-import com.soulfiremc.server.pathfinding.SFVec3i;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
-public record NoBlockPlacingConstraint(PathConstraint delegate) implements DelegatePathConstraint {
-  @Override
-  public boolean canBlocksDropWhenBroken() {
-    // Prevents that blocks are collected for placing
-    return false;
-  }
-
-  @Override
-  public boolean canPlaceBlocks() {
-    // Prevents block placing
-    return false;
-  }
-
-  @Override
-  public boolean canPlaceBlock(SFVec3i pos) {
-    return false;
+@Mixin(targets = "net.minecraft.client.multiplayer.LevelLoadTracker$WaitingForPlayerChunk")
+public abstract class MixinLevelLoadTrackerWaitingForPlayerChunk {
+  @Inject(method = "isReady", at = @At("HEAD"), cancellable = true)
+  private void reportReadyInHeadlessMode(CallbackInfoReturnable<Boolean> cir) {
+    cir.setReturnValue(true);
   }
 }

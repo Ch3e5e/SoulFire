@@ -8,6 +8,7 @@ import {
   emptyBeatGameWorldMemory,
   objectiveForPhase,
   type BeatGameBlockObservation,
+  type BeatGameBlockPosition,
   type BeatGameCheckpoint,
   type BeatGameDriver,
   type BeatGameDriverError,
@@ -22,7 +23,24 @@ import {
   type BeatGameTask,
   type BeatGameCraftability,
   type BeatGameTaskExecutionOptions,
+  type BeatGameStrategyHooks,
 } from "../src/index.js";
+
+export function blockObservation(
+  position: BeatGameBlockPosition,
+  overrides: Partial<Omit<BeatGameBlockObservation, "position">> = {},
+): BeatGameBlockObservation {
+  return {
+    blockId: "minecraft:stone",
+    position,
+    properties: {},
+    diggable: true,
+    replaceable: false,
+    interactive: false,
+    observedAt: "2026-01-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
 
 export function observation(
   overrides: {
@@ -30,6 +48,7 @@ export function observation(
     readonly dead?: boolean;
     readonly counts?: Readonly<Record<string, number>>;
     readonly position?: Partial<BeatGamePosition>;
+    readonly rotation?: Partial<BeatGameObservation["player"]["rotation"]>;
     readonly connectionEpoch?: string;
     readonly food?: number;
     readonly health?: number;
@@ -45,7 +64,10 @@ export function observation(
         z: overrides.position?.z ?? 0,
         dimension: overrides.position?.dimension ?? dimension,
       },
-      rotation: { yaw: 0, pitch: 0 },
+      rotation: {
+        yaw: overrides.rotation?.yaw ?? 0,
+        pitch: overrides.rotation?.pitch ?? 0,
+      },
       velocity: { x: 0, y: 0, z: 0 },
       health: overrides.health ?? 20,
       maxHealth: 20,
@@ -125,6 +147,13 @@ export class FakeBeatGameDriver implements BeatGameDriver {
     missing: [],
   });
   public taskObserver: (task: BeatGameTask) => void = () => undefined;
+  public actionObserver: (action: BeatGamePrimitiveAction) => void =
+    () => undefined;
+  public actionResolver: BeatGameDriver["act"] = (action) =>
+    Effect.sync(() => {
+      this.actionObserver(action);
+      return {};
+    });
   public taskResolver: (
     task: BeatGameTask,
     execution: BeatGameTaskExecutionOptions,
@@ -141,6 +170,14 @@ export class FakeBeatGameDriver implements BeatGameDriver {
     BeatGameObservation,
     BeatGameDriverError
   > = () => Effect.succeed(this.currentObservation);
+  public pathResolver: BeatGameDriver["pathfind"] = (
+    position,
+    radius,
+    policy,
+  ) =>
+    Effect.sync(() => {
+      this.paths.push({ position, radius, policy });
+    });
 
   public constructor(
     instanceId = "instance-1",
@@ -171,14 +208,14 @@ export class FakeBeatGameDriver implements BeatGameDriver {
   public readonly canCraft: BeatGameDriver["canCraft"] = (recipeId, count) =>
     Effect.sync(() => this.craftabilityResolver(recipeId, count));
 
+  public readonly waitForChunks: BeatGameDriver["waitForChunks"] = () =>
+    Effect.void;
+
   public readonly pathfind: BeatGameDriver["pathfind"] = (
     position,
     radius,
     policy,
-  ) =>
-    Effect.sync(() => {
-      this.paths.push({ position, radius, policy });
-    });
+  ) => this.pathResolver(position, radius, policy);
 
   public readonly runTask: BeatGameDriver["runTask"] = (
     task,
@@ -191,9 +228,9 @@ export class FakeBeatGameDriver implements BeatGameDriver {
     });
 
   public readonly act: BeatGameDriver["act"] = (action) =>
-    Effect.sync(() => {
+    Effect.suspend(() => {
       this.actions.push(action);
-      return {};
+      return this.actionResolver(action);
     });
 
   public readonly withControl: BeatGameDriver["withControl"] = (effect) =>
@@ -207,4 +244,175 @@ export class FakeBeatGameDriver implements BeatGameDriver {
           this.activeControlScopes -= 1;
         }),
     );
+}
+
+export function installStaircaseMovementSimulation(
+  driver: FakeBeatGameDriver,
+  from: BeatGameBlockPosition,
+): void {
+  const resolveAction = driver.actionResolver;
+  const resolveObservation = driver.observationResolver;
+  const resolvePath = driver.pathResolver;
+  let movingForward = false;
+  let movementTick = 0;
+  let movementStart:
+    | Readonly<{ x: number; y: number; z: number }>
+    | undefined;
+  driver.currentObservation = observation({
+    counts: driver.currentObservation.inventory.counts,
+    position: {
+      x: from.x + 0.5,
+      y: from.y,
+      z: from.z + 0.5,
+      dimension: from.dimension,
+    },
+  });
+  driver.actionResolver = (action) =>
+    resolveAction(action).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const current = driver.currentObservation;
+          if (action.type === "look") {
+            driver.currentObservation = {
+              ...current,
+              player: {
+                ...current.player,
+                rotation: {
+                  yaw: action.yaw,
+                  pitch: action.pitch,
+                },
+              },
+            };
+            return;
+          }
+          if (action.type === "reset-movement") {
+            movingForward = false;
+            movementTick = 0;
+            movementStart = undefined;
+            return;
+          }
+          if (action.type === "set-movement" && action.forward !== undefined) {
+            movingForward = action.forward;
+            movementTick = 0;
+            movementStart = action.forward
+              ? current.player.position
+              : undefined;
+          }
+        })
+      ),
+    );
+  driver.observationResolver = () =>
+    resolveObservation().pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          if (!movingForward || movementStart === undefined) {
+            return;
+          }
+          movementTick += 1;
+          const current = driver.currentObservation;
+          const radians = current.player.rotation.yaw * Math.PI / 180;
+          const xDirection = Math.round(-Math.sin(radians));
+          const zDirection = Math.round(Math.cos(radians));
+          const targetX = Math.floor(movementStart.x) + xDirection;
+          const targetZ = Math.floor(movementStart.z) + zDirection;
+          const edgeFraction = movementTick === 1 ? 0.05 : 0.21;
+          const x = xDirection === 0
+            ? movementStart.x
+            : targetX + (xDirection > 0
+              ? edgeFraction
+              : 1 - edgeFraction);
+          const z = zDirection === 0
+            ? movementStart.z
+            : targetZ + (zDirection > 0
+              ? edgeFraction
+              : 1 - edgeFraction);
+          driver.currentObservation = {
+            ...current,
+            player: {
+              ...current.player,
+              position: {
+                x,
+                y: movementTick === 2
+                  ? Math.floor(movementStart.y) - 1
+                  : movementStart.y,
+                z,
+                dimension: current.player.position.dimension,
+              },
+            },
+          };
+        })
+      ),
+      Effect.map(() => driver.currentObservation),
+    );
+  driver.pathResolver = (position, radius, policy) =>
+    resolvePath(position, radius, policy).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const current = driver.currentObservation;
+          driver.currentObservation = {
+            ...current,
+            player: {
+              ...current.player,
+              position: {
+                ...position,
+                x: Number.isInteger(position.x)
+                  ? position.x + 0.5
+                  : position.x,
+                z: Number.isInteger(position.z)
+                  ? position.z + 0.5
+                  : position.z,
+              },
+            },
+          };
+        })
+      ),
+    );
+}
+
+export function postDragonHooks(
+  driver: FakeBeatGameDriver,
+): BeatGameStrategyHooks {
+  const updateObservation = (
+    counts: Readonly<Record<string, number>>,
+    dimension = driver.currentObservation.player.position.dimension,
+  ) => {
+    driver.currentObservation = observation({
+      counts,
+      dimension,
+      position: {
+        ...driver.currentObservation.player.position,
+        dimension,
+      },
+      connectionEpoch:
+        driver.currentObservation.player.connectionEpoch,
+    });
+  };
+  return {
+    fightEnderDragon: () => Effect.succeed(true),
+    satisfyRequirement: ({ requirement, observation: current }) =>
+      Effect.sync(() => {
+        const itemId = requirement.itemIds[0];
+        if (itemId === undefined) {
+          return;
+        }
+        updateObservation({
+          ...current.inventory.counts,
+          [itemId]: requirement.targetCount,
+        });
+      }),
+    collectDragonEgg: ({ observation: current }) =>
+      Effect.sync(() => {
+        updateObservation({
+          ...current.inventory.counts,
+          "minecraft:dragon_egg": 1,
+        });
+      }),
+    exitEnd: ({ observation: current }) =>
+      Effect.sync(() => {
+        updateObservation(
+          current.inventory.counts,
+          "minecraft:overworld",
+        );
+      }),
+  };
 }
