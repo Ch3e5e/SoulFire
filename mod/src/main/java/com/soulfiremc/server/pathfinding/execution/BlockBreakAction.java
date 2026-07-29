@@ -17,8 +17,7 @@
  */
 package com.soulfiremc.server.pathfinding.execution;
 
-import com.soulfiremc.mod.mixin.soulfire.BlockStatePredictionHandlerAccessor;
-import com.soulfiremc.mod.mixin.soulfire.ClientLevelAccessor;
+import com.soulfiremc.server.bot.BlockPredictionSupport;
 import com.soulfiremc.server.bot.BotConnection;
 import com.soulfiremc.server.pathfinding.SFVec3i;
 import com.soulfiremc.server.pathfinding.cost.Costs;
@@ -58,13 +57,23 @@ public final class BlockBreakAction implements WorldAction {
       return true;
     }
 
-    var pendingPrediction = hasPendingPrediction(connection);
+    var pendingPrediction = BlockPredictionSupport.hasPendingPrediction(
+      connection,
+      position
+    );
     predictedBroken |= pendingPrediction;
     return !pendingPrediction;
   }
 
   public boolean isRejected(BotConnection connection) {
-    if (!breakAttempted || !predictedBroken || hasPendingPrediction(connection)) {
+    if (
+      !breakAttempted
+        || !predictedBroken
+        || BlockPredictionSupport.hasPendingPrediction(
+        connection,
+        blockPosition.toBlockPos()
+      )
+    ) {
       return false;
     }
 
@@ -105,7 +114,10 @@ public final class BlockBreakAction implements WorldAction {
       return;
     }
     if (SFBlockHelpers.isEmptyBlock(optionalBlock.getBlock())) {
-      predictedBroken |= hasPendingPrediction(connection);
+      predictedBroken |= BlockPredictionSupport.hasPendingPrediction(
+        connection,
+        blockPosition.toBlockPos()
+      );
       return;
     }
 
@@ -137,15 +149,6 @@ public final class BlockBreakAction implements WorldAction {
 
   public boolean breakAttempted() {
     return breakAttempted;
-  }
-
-  private boolean hasPendingPrediction(BotConnection connection) {
-    var levelAccessor = (ClientLevelAccessor) connection.minecraft().level;
-    var predictionHandler =
-      levelAccessor.soulfire$getBlockStatePredictionHandler();
-    var accessor = (BlockStatePredictionHandlerAccessor) predictionHandler;
-    return accessor.soulfire$getServerVerifiedStates()
-      .containsKey(blockPosition.toBlockPos().asLong());
   }
 
   @Override

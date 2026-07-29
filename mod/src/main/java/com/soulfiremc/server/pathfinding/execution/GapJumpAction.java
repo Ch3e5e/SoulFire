@@ -19,7 +19,6 @@ package com.soulfiremc.server.pathfinding.execution;
 
 import com.soulfiremc.server.bot.BotConnection;
 import com.soulfiremc.server.pathfinding.SFVec3i;
-import com.soulfiremc.server.util.MathHelper;
 import com.soulfiremc.server.util.VectorHelper;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
@@ -30,8 +29,6 @@ import lombok.extern.slf4j.Slf4j;
 public final class GapJumpAction implements WorldAction {
   @Getter
   private final SFVec3i blockPosition;
-  private final int gapLength;
-  private int noJumpTicks;
 
   @Override
   public boolean isCompleted(BotConnection connection) {
@@ -41,13 +38,18 @@ public final class GapJumpAction implements WorldAction {
 
     var blockMeta = level.getBlockState(blockPosition.toBlockPos());
     var targetMiddleBlock = VectorHelper.topMiddleOfBlock(blockPosition, blockMeta);
-    if (MathHelper.isOutsideTolerance(botPosition.y, targetMiddleBlock.y, 0.2)) {
-      // We want to be on the same Y level
+    if (!MovementAction.hasReachedTargetHeight(
+      botPosition.y,
+      targetMiddleBlock.y,
+      clientEntity.onGround()
+        || clientEntity.isInWater()
+        || clientEntity.isInLava()
+        || clientEntity.onClimbable()
+    )) {
       return false;
-    } else {
-      var distance = botPosition.distanceTo(targetMiddleBlock);
-      return distance <= 0.3;
     }
+
+    return MovementAction.horizontalDistance(botPosition, targetMiddleBlock) <= 0.3;
   }
 
   @Override
@@ -69,20 +71,7 @@ public final class GapJumpAction implements WorldAction {
 
     connection.controlState().sprint(true);
     connection.controlState().up(true);
-
-    if (shouldJump()) {
-      connection.controlState().jump(true);
-    }
-  }
-
-  private boolean shouldJump() {
-    if (noJumpTicks < gapLength) {
-      noJumpTicks++;
-      return false;
-    } else {
-      noJumpTicks = 0;
-      return true;
-    }
+    connection.controlState().jump(true);
   }
 
   @Override

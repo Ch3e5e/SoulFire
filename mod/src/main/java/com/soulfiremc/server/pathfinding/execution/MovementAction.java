@@ -59,12 +59,28 @@ public final class MovementAction implements WorldAction {
 
     var blockMeta = level.getBlockState(blockPosition.toBlockPos());
     var targetMiddleBlock = VectorHelper.topMiddleOfBlock(blockPosition, blockMeta);
-    if (MathHelper.isOutsideTolerance(botPosition.y, targetMiddleBlock.y, 0.25)) {
+    if (!hasReachedTargetHeight(
+      botPosition.y,
+      targetMiddleBlock.y,
+      clientEntity.onGround()
+        || clientEntity.isInWater()
+        || clientEntity.isInLava()
+        || clientEntity.onClimbable()
+    )) {
       // We want to be on the same Y level
       return false;
     } else {
       return isAtTargetXZ(clientEntity, botPosition, targetMiddleBlock);
     }
+  }
+
+  static boolean hasReachedTargetHeight(
+    double currentY,
+    double targetY,
+    boolean verticallySupported
+  ) {
+    return verticallySupported
+      && !MathHelper.isOutsideTolerance(currentY, targetY, 0.25);
   }
 
   private boolean isAtTargetXZ(LocalPlayer clientEntity, Vec3 botPosition, Vec3 targetMiddleBlock) {

@@ -17,6 +17,7 @@
  */
 package com.soulfiremc.server.pathfinding.execution;
 
+import com.soulfiremc.server.bot.BlockPredictionSupport;
 import com.soulfiremc.server.bot.BotConnection;
 import com.soulfiremc.server.pathfinding.BlockPlaceAgainstData;
 import com.soulfiremc.server.pathfinding.SFVec3i;
@@ -41,8 +42,28 @@ public final class BlockPlaceAction implements WorldAction {
   @Override
   public boolean isCompleted(BotConnection connection) {
     var level = connection.minecraft().level;
+    var position = blockPosition.toBlockPos();
+    if (
+      !SFBlockHelpers.isCollisionShapeFullBlock(
+        level.getBlockState(position)
+      )
+    ) {
+      return false;
+    }
+    return !finishedPlacing
+      || !BlockPredictionSupport.hasPendingPrediction(
+      connection,
+      position
+    );
+  }
 
-    return SFBlockHelpers.isCollisionShapeFullBlock(level.getBlockState(blockPosition.toBlockPos()));
+  public boolean isRejected(BotConnection connection) {
+    var position = blockPosition.toBlockPos();
+    return finishedPlacing
+      && !BlockPredictionSupport.hasPendingPrediction(connection, position)
+      && !SFBlockHelpers.isCollisionShapeFullBlock(
+      connection.minecraft().level.getBlockState(position)
+    );
   }
 
   @Override

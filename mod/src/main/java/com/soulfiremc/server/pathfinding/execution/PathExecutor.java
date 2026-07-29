@@ -311,6 +311,27 @@ public final class PathExecutor implements ControlTask {
       );
       return;
     }
+    if (
+      worldAction instanceof BlockPlaceAction blockPlaceAction
+        && blockPlaceAction.isRejected(connection)
+    ) {
+      pathCompletionFuture.completeExceptionally(
+        new BlockPlaceRejectedException(blockPlaceAction.blockPosition())
+      );
+      return;
+    }
+    if (
+      worldAction
+        instanceof JumpAndPlaceBelowAction jumpAndPlaceBelowAction
+        && jumpAndPlaceBelowAction.isRejected(connection)
+    ) {
+      pathCompletionFuture.completeExceptionally(
+        new BlockPlaceRejectedException(
+          jumpAndPlaceBelowAction.blockPlacePosition()
+        )
+      );
+      return;
+    }
 
     if (worldAction.isCompleted(connection)) {
       if (

@@ -240,6 +240,78 @@ describe("beat-game run lifecycle", () => {
     });
   });
 
+  it("waits for a delayed block pickup before exploring", async () => {
+    const driver = new FakeBeatGameDriver();
+    const droppedLog = {
+      connectionEpoch: "epoch-1",
+      networkId: 10,
+      entityType: "minecraft:item",
+      itemId: "minecraft:oak_log",
+      position: {
+        x: 2,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    let collectingDrop = false;
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (task.type === "collect-blocks") {
+          driver.entityResults = [droppedLog];
+        }
+        return {};
+      });
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.gen(function* () {
+        driver.paths.push({ position, radius, policy });
+        if (
+          position.x === droppedLog.position.x
+          && position.y === droppedLog.position.y
+          && position.z === droppedLog.position.z
+        ) {
+          collectingDrop = true;
+          yield* Effect.forkDaemon(
+            Effect.sleep(75).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  driver.currentObservation = observation({
+                    counts: { "minecraft:oak_log": 1 },
+                  });
+                })
+              ),
+            ),
+          );
+        }
+      });
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: {
+          observationPollMs: 1,
+          targetLogCount: 1,
+        },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (!collectingDrop) {
+              yield* Effect.sleep(1);
+            }
+            yield* Effect.sleep(200);
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.tasks.some((task) => task.type === "explore")).toBe(false);
+  });
+
   it("honors a compact triangulation baseline", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
@@ -881,10 +953,6 @@ describe("beat-game run lifecycle", () => {
     });
     driver.taskResolver = (task) => {
       driver.tasks.push(task);
-      if (task.type === "build") {
-        localTablePlaced = true;
-        return Effect.void;
-      }
       if (
         task.type === "craft"
         && task.recipeId === "minecraft:stone_sword"
@@ -894,6 +962,13 @@ describe("beat-game run lifecycle", () => {
       }
       return Effect.void;
     };
+    driver.actionResolver = (action) =>
+      Effect.sync(() => {
+        if (action.type === "place-block") {
+          localTablePlaced = true;
+        }
+        return {};
+      });
 
     await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const run = yield* beatGameWithDriver(driver, {
@@ -911,6 +986,7 @@ describe("beat-game run lifecycle", () => {
       z: 0.5,
       dimension: "minecraft:overworld",
     });
+    expect(driver.paths[0]?.policy.allowMining).toBe(false);
     expect(driver.paths[0]?.policy.allowPlacing).toBe(false);
     expect(driver.tasks.map((task) => task.type === "craft"
       ? `${task.type}:${task.recipeId}`
@@ -921,6 +997,21 @@ describe("beat-game run lifecycle", () => {
     ]);
     expect(driver.tasks.at(-1)).toMatchObject({
       station: localTable.position,
+    });
+    expect(driver.actions).toContainEqual({
+      type: "select-item",
+      selector: { itemIds: ["minecraft:crafting_table"] },
+    });
+    expect(driver.actions).toContainEqual({
+      type: "place-block",
+      against: {
+        x: localTable.position.x,
+        y: localTable.position.y - 1,
+        z: localTable.position.z,
+        dimension: localTable.position.dimension,
+      },
+      face: "up",
+      hand: "main",
     });
   });
 

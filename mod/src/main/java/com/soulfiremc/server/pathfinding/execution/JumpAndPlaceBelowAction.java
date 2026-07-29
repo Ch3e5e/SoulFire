@@ -18,6 +18,7 @@
 package com.soulfiremc.server.pathfinding.execution;
 
 import com.google.common.math.DoubleMath;
+import com.soulfiremc.server.bot.BlockPredictionSupport;
 import com.soulfiremc.server.bot.BotConnection;
 import com.soulfiremc.server.pathfinding.BlockPlaceAgainstData;
 import com.soulfiremc.server.pathfinding.SFVec3i;
@@ -44,8 +45,28 @@ public final class JumpAndPlaceBelowAction implements WorldAction {
   @Override
   public boolean isCompleted(BotConnection connection) {
     var level = connection.minecraft().level;
+    var position = blockPlacePosition.toBlockPos();
+    if (
+      !SFBlockHelpers.isCollisionShapeFullBlock(
+        level.getBlockState(position)
+      )
+    ) {
+      return false;
+    }
+    return !finishedPlacing
+      || !BlockPredictionSupport.hasPendingPrediction(
+      connection,
+      position
+    );
+  }
 
-    return SFBlockHelpers.isCollisionShapeFullBlock(level.getBlockState(blockPlacePosition.toBlockPos()));
+  public boolean isRejected(BotConnection connection) {
+    var position = blockPlacePosition.toBlockPos();
+    return finishedPlacing
+      && !BlockPredictionSupport.hasPendingPrediction(connection, position)
+      && !SFBlockHelpers.isCollisionShapeFullBlock(
+      connection.minecraft().level.getBlockState(position)
+    );
   }
 
   @Override

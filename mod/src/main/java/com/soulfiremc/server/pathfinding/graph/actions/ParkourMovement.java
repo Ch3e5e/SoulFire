@@ -99,7 +99,7 @@ public final class ParkourMovement extends GraphAction implements Cloneable {
       false,
       actionDirection,
       Costs.gapJumpCost(gapLength),
-      List.of(new GapJumpAction(absoluteTargetFeetBlock, gapLength))
+      List.of(new GapJumpAction(absoluteTargetFeetBlock))
     ));
   }
 

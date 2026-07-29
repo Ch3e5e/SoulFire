@@ -34,6 +34,7 @@ import com.soulfiremc.server.pathfinding.execution.PathExecutor;
 import com.soulfiremc.server.pathfinding.execution.UnreachableGoalException;
 import com.soulfiremc.server.pathfinding.goals.BreakBlockPosGoal;
 import com.soulfiremc.server.pathfinding.goals.CompositeGoal;
+import com.soulfiremc.server.pathfinding.graph.constraint.BlockBreakBlacklistConstraint;
 import com.soulfiremc.server.pathfinding.graph.constraint.NoBlockPlacingConstraint;
 import com.soulfiremc.server.pathfinding.graph.constraint.PathConstraint;
 import com.soulfiremc.server.pathfinding.graph.constraint.PathConstraintImpl;
@@ -125,6 +126,7 @@ public final class CollectBlocksTaskProvider
     private final int searchRadius;
     private final boolean allowPlacing;
     private final CompletableFuture<CollectBlocksTaskResult> result;
+    private final Set<SFVec3i> rejectedTargets = new HashSet<>();
     private @Nullable PathExecutor activePath;
     private Set<SFVec3i> activeTargets = Set.of();
     private int blocksBroken;
@@ -167,13 +169,22 @@ public final class CollectBlocksTaskProvider
       var candidates = findCandidates();
       if (candidates.isEmpty()) {
         complete(
-          CollectBlocksCompletionReason
-            .COLLECT_BLOCKS_COMPLETION_REASON_NO_MATCHING_BLOCKS
+          rejectedTargets.isEmpty()
+            ? CollectBlocksCompletionReason
+              .COLLECT_BLOCKS_COMPLETION_REASON_NO_MATCHING_BLOCKS
+            : CollectBlocksCompletionReason
+              .COLLECT_BLOCKS_COMPLETION_REASON_NO_REACHABLE_BLOCKS
         );
         return;
       }
       context.reportProgress(progress("Planning route to matching block"));
       PathConstraint constraint = new PathConstraintImpl(context.bot());
+      if (!rejectedTargets.isEmpty()) {
+        constraint = new BlockBreakBlacklistConstraint(
+          constraint,
+          rejectedTargets
+        );
+      }
       if (!allowPlacing) {
         constraint = new NoBlockPlacingConstraint(constraint);
       }
@@ -232,7 +243,18 @@ public final class CollectBlocksTaskProvider
         );
         context.reportProgress(progress("Matching block mined"));
       } catch (CompletionException exception) {
+        blocksBroken += (int) Math.min(
+          confirmedBreaks(path),
+          targetCount - blocksBroken
+        );
         activeTargets = Set.of();
+        if (blocksBroken >= targetCount) {
+          complete(
+            CollectBlocksCompletionReason
+              .COLLECT_BLOCKS_COMPLETION_REASON_TARGET_REACHED
+          );
+          return;
+        }
         var cause = exception.getCause() == null
           ? exception
           : exception.getCause();
@@ -244,11 +266,13 @@ public final class CollectBlocksTaskProvider
           );
           return;
         }
-        if (cause instanceof BlockBreakRejectedException) {
-          complete(
-            CollectBlocksCompletionReason
-              .COLLECT_BLOCKS_COMPLETION_REASON_NO_REACHABLE_BLOCKS
-          );
+        if (
+          cause instanceof BlockBreakRejectedException rejection
+        ) {
+          rejectedTargets.add(rejection.blockPosition());
+          context.reportProgress(progress(
+            "Skipping a matching block rejected by the server"
+          ));
           return;
         }
         result.completeExceptionally(cause);
@@ -302,6 +326,9 @@ public final class CollectBlocksTaskProvider
     }
 
     private boolean matches(BlockPos position, BlockState state) {
+      if (rejectedTargets.contains(SFVec3i.fromInt(position))) {
+        return false;
+      }
       var blockId = BuiltInRegistries.BLOCK
         .getKey(state.getBlock())
         .toString();

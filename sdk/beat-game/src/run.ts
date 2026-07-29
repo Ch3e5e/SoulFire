@@ -1648,6 +1648,14 @@ function collectBlocksOrExplore(
         path: resourcePath,
       });
       current = yield* state.driver.observe;
+      for (
+        let attempt = 0;
+        attempt < 5 && countItems(current) <= beforeAttempt;
+        attempt += 1
+      ) {
+        yield* Effect.sleep(Math.max(50, state.strategy.observationPollMs));
+        current = yield* state.driver.observe;
+      }
       if (countItems(current) <= beforeAttempt) {
         yield* explore(state.driver, {
           origin: current.player.position,
@@ -2118,6 +2126,7 @@ function ensureWorkstation(
         3,
         {
           ...state.strategy.path,
+          allowMining: false,
           allowPlacing: false,
         },
       ).pipe(Effect.either);
@@ -2154,17 +2163,23 @@ function ensureWorkstation(
         }],
         path: state.strategy.path,
       });
-      const placed = (yield* state.driver.queryBlocks({
-        center: {
-          x: target.x + 0.5,
-          y: target.y + 0.5,
-          z: target.z + 0.5,
-          dimension: target.dimension,
-        },
-        radius: 0.25,
-        selector: { blockIds: [blockId] },
-        maximumResults: 1,
-      }))[0];
+      let placed = yield* queryExactWorkstation(
+        state.driver,
+        target,
+        blockId,
+      );
+      if (placed === undefined) {
+        yield* placeWorkstationDirectly(
+          state.driver,
+          target,
+          blockId,
+        ).pipe(Effect.ignore);
+        placed = yield* waitForWorkstation(
+          state.driver,
+          target,
+          blockId,
+        );
+      }
       if (
         placed !== undefined
         && placed.position.x === target.x
@@ -2181,6 +2196,115 @@ function ensureWorkstation(
       message: `${blockId} could not be placed on any nearby support`,
     }));
   });
+}
+
+function placeWorkstationDirectly(
+  driver: BeatGameDriver,
+  target: BeatGameBlockPosition,
+  blockId: "minecraft:crafting_table" | "minecraft:furnace",
+): Effect.Effect<void, BeatGameDriverError> {
+  return Effect.gen(function* () {
+    const targetBlock = (yield* driver.queryBlocks({
+      center: blockCenter(target),
+      radius: 0.25,
+      selector: {},
+      maximumResults: 1,
+    }))[0];
+    if (targetBlock !== undefined && !targetBlock.replaceable) {
+      yield* driver.act({ type: "dig-block", position: target });
+    }
+    const cleared = (yield* driver.queryBlocks({
+      center: blockCenter(target),
+      radius: 0.25,
+      selector: { replaceable: true },
+      maximumResults: 1,
+    })).some(({ position }) => sameBlockPosition(position, target));
+    if (!cleared) {
+      return yield* Effect.fail(new BeatGameDriverError({
+        operation: "place-workstation",
+        retryable: true,
+        message: `Could not clear a local position for ${blockId}`,
+      }));
+    }
+    yield* driver.act({
+      type: "select-item",
+      selector: { itemIds: [blockId] },
+    });
+    yield* driver.act({
+      type: "place-block",
+      against: {
+        ...target,
+        y: target.y - 1,
+      },
+      face: "up",
+      hand: "main",
+    });
+  });
+}
+
+function waitForWorkstation(
+  driver: BeatGameDriver,
+  target: BeatGameBlockPosition,
+  blockId: "minecraft:crafting_table" | "minecraft:furnace",
+): Effect.Effect<
+  BeatGameBlockObservation | undefined,
+  BeatGameDriverError
+> {
+  return Effect.gen(function* () {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const workstation = yield* queryExactWorkstation(
+        driver,
+        target,
+        blockId,
+      );
+      if (workstation !== undefined) {
+        return workstation;
+      }
+      yield* Effect.sleep(50);
+    }
+    return undefined;
+  });
+}
+
+function queryExactWorkstation(
+  driver: BeatGameDriver,
+  target: BeatGameBlockPosition,
+  blockId: "minecraft:crafting_table" | "minecraft:furnace",
+): Effect.Effect<
+  BeatGameBlockObservation | undefined,
+  BeatGameDriverError
+> {
+  return driver.queryBlocks({
+    center: blockCenter(target),
+    radius: 0.25,
+    selector: { blockIds: [blockId] },
+    maximumResults: 1,
+  }).pipe(
+    Effect.map((blocks) =>
+      blocks.find(({ position }) => sameBlockPosition(position, target))
+    ),
+  );
+}
+
+function blockCenter(
+  position: BeatGameBlockPosition,
+): BeatGamePosition {
+  return {
+    x: position.x + 0.5,
+    y: position.y + 0.5,
+    z: position.z + 0.5,
+    dimension: position.dimension,
+  };
+}
+
+function sameBlockPosition(
+  left: BeatGameBlockPosition,
+  right: BeatGameBlockPosition,
+): boolean {
+  return left.x === right.x
+    && left.y === right.y
+    && left.z === right.z
+    && left.dimension === right.dimension;
 }
 
 function findWorkstationTargets(
@@ -2213,6 +2337,7 @@ function findWorkstationTargets(
           && candidate.z === playerBlock.z
           && (
             candidate.y === playerBlock.y
+            || candidate.y === playerBlock.y - 1
             || candidate.y === playerBlock.y + 1
           )
         )

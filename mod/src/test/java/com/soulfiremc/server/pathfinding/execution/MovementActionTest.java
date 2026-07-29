@@ -21,6 +21,8 @@ import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class MovementActionTest {
   @Test
@@ -70,6 +72,25 @@ final class MovementActionTest {
         new Vec3(7.5, 20.0, 1.5)
       )
     );
+  }
+
+  @Test
+  void doesNotCompleteAVerticalStepWhilePassingThroughItInMidair() {
+    assertFalse(MovementAction.hasReachedTargetHeight(
+      66.0,
+      66.0,
+      false
+    ));
+    assertTrue(MovementAction.hasReachedTargetHeight(
+      66.0,
+      66.0,
+      true
+    ));
+    assertFalse(MovementAction.hasReachedTargetHeight(
+      65.5,
+      66.0,
+      true
+    ));
   }
 
   private static void assertInput(

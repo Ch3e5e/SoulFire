@@ -30,6 +30,7 @@ import com.soulfiremc.grpc.generated.BuildTaskResult;
 import com.soulfiremc.grpc.generated.WorldPosition;
 import com.soulfiremc.server.api.BotTaskExecution;
 import com.soulfiremc.server.api.BotTaskProvider;
+import com.soulfiremc.server.bot.BlockPredictionSupport;
 import com.soulfiremc.server.bot.BotInteractionSupport;
 import com.soulfiremc.server.bot.ControlPriority;
 import com.soulfiremc.server.bot.ControlResource;
@@ -423,8 +424,17 @@ public final class BuildTaskProvider implements BotTaskProvider<BuildTask> {
   private record Material(
     String blockId,
     Block block,
-    BlockState expectedState
+    BlockState expectedState,
+    Map<String, String> requestedProperties
   ) {
+    boolean matches(BlockState state) {
+      return matchesRequestedState(
+        state,
+        block,
+        expectedState,
+        requestedProperties.keySet()
+      );
+    }
   }
 
   private record Support(BlockPos position, Direction face) {
@@ -677,7 +687,13 @@ public final class BuildTaskProvider implements BotTaskProvider<BuildTask> {
         return;
       }
       var state = level.getBlockState(placement.position());
-      if (state.equals(material.expectedState())) {
+      if (
+        material.matches(state)
+          && !BlockPredictionSupport.hasPendingPrediction(
+          context.bot(),
+          placement.position()
+        )
+      ) {
         blocksPlaced++;
         outcome(
           BuildBlockStatus.BUILD_BLOCK_STATUS_PLACED,
@@ -703,7 +719,7 @@ public final class BuildTaskProvider implements BotTaskProvider<BuildTask> {
     ) {
       return placement.materialCandidates().stream()
         .map(id -> material(id, placement.properties()))
-        .filter(material -> currentState.equals(material.expectedState()))
+        .filter(material -> material.matches(currentState))
         .findFirst();
     }
 
@@ -728,7 +744,8 @@ public final class BuildTaskProvider implements BotTaskProvider<BuildTask> {
       return new Material(
         blockId,
         block,
-        applyProperties(block.defaultBlockState(), properties, blockId)
+        applyProperties(block.defaultBlockState(), properties, blockId),
+        properties
       );
     }
 
@@ -923,6 +940,33 @@ public final class BuildTaskProvider implements BotTaskProvider<BuildTask> {
       state = state.setValue(property, (Comparable) value.orElseThrow());
     }
     return state;
+  }
+
+  static boolean matchesRequestedState(
+    BlockState state,
+    Block requestedBlock,
+    BlockState requestedState,
+    Set<String> requestedProperties
+  ) {
+    if (state.getBlock() != requestedBlock) {
+      return false;
+    }
+    for (var propertyName : requestedProperties) {
+      var property = requestedBlock.getStateDefinition().getProperty(propertyName);
+      if (property == null
+        || !matchesProperty(state, requestedState, property)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private static <T extends Comparable<T>> boolean matchesProperty(
+    BlockState state,
+    BlockState requestedState,
+    Property<T> property
+  ) {
+    return state.getValue(property).equals(requestedState.getValue(property));
   }
 
   private static String blockId(BlockState state) {

@@ -35,6 +35,7 @@ import com.soulfiremc.server.api.event.bot.BotPacketPreReceiveEvent;
 import com.soulfiremc.server.api.event.bot.BotPostEntityTickEvent;
 import com.soulfiremc.server.api.event.bot.BotPostTickEvent;
 import com.soulfiremc.server.api.event.bot.ChatMessageReceiveEvent;
+import com.soulfiremc.server.bot.BlockPredictionSupport;
 import com.soulfiremc.server.bot.BotConnection;
 import com.soulfiremc.server.bot.BotControlLeaseManager;
 import com.soulfiremc.server.bot.BotInteractionSupport;
@@ -1878,6 +1879,7 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
     private final boolean cancel;
     private Direction face = Direction.UP;
     private boolean started;
+    private boolean predictedBroken;
     private boolean done;
     private int ticks;
 
@@ -1903,9 +1905,21 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
         done = true;
         return;
       }
+      var pendingPrediction =
+        BlockPredictionSupport.hasPendingPrediction(bot, position);
       if (level.getBlockState(position).isAir()) {
-        done = true;
+        if (!started) {
+          done = true;
+          return;
+        }
+        predictedBroken = true;
+        done = !pendingPrediction;
         return;
+      }
+      if (started && predictedBroken && !pendingPrediction) {
+        throw Status.FAILED_PRECONDITION
+          .withDescription("The server rejected breaking the target block")
+          .asRuntimeException();
       }
       requireReach(player, position);
       if (!started) {
@@ -1927,7 +1941,8 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
       player.swing(InteractionHand.MAIN_HAND);
       ticks++;
       if (level.getBlockState(position).isAir()) {
-        done = true;
+        predictedBroken = true;
+        done = !BlockPredictionSupport.hasPendingPrediction(bot, position);
       } else if (ticks >= DIG_ACTION_TIMEOUT.toSeconds() * 20) {
         throw Status.DEADLINE_EXCEEDED
           .withDescription("Block breaking timed out")
@@ -1971,20 +1986,68 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
     var hand = toMcHand(request.getHand());
     submitAction(
       bot,
-      ControlTask.once("SDK place block", () -> {
-        var gameMode = bot.minecraft().gameMode;
-        var player = bot.minecraft().player;
-        var level = bot.minecraft().level;
-        if (gameMode == null || player == null || level == null) {
-          throw Status.FAILED_PRECONDITION
-            .withDescription("Bot player, level, or game mode is not available")
-            .asRuntimeException();
-        }
+      new PlaceBlockTask(bot, against, direction, hand),
+      DEFAULT_ACTION_TIMEOUT,
+      result -> PlaceBlockResponse.newBuilder().setResult(result).build(),
+      responseObserver);
+  }
+
+  private static final class PlaceBlockTask implements ControlTask {
+    private final BotConnection bot;
+    private final BlockPos against;
+    private final Direction direction;
+    private final InteractionHand hand;
+    private final BlockPos target;
+    private @Nullable BlockState previousState;
+    private boolean started;
+    private boolean predictedPlacement;
+    private boolean done;
+    private int ticks;
+
+    private PlaceBlockTask(
+      BotConnection bot,
+      BlockPos against,
+      Direction direction,
+      InteractionHand hand
+    ) {
+      this.bot = bot;
+      this.against = against;
+      this.direction = direction;
+      this.hand = hand;
+      this.target = against.relative(direction);
+    }
+
+    @Override
+    public void tick() {
+      var minecraft = bot.minecraft();
+      var gameMode = minecraft.gameMode;
+      var player = minecraft.player;
+      var level = minecraft.level;
+      if (gameMode == null || player == null || level == null) {
+        throw Status.FAILED_PRECONDITION
+          .withDescription("Bot player, level, or game mode is not available")
+          .asRuntimeException();
+      }
+      if (!started) {
         requireReach(player, against);
+        previousState = level.getBlockState(target);
         var hitPos = Vec3.atCenterOf(against)
-          .add(direction.getStepX() * 0.5, direction.getStepY() * 0.5, direction.getStepZ() * 0.5);
-        var hit = new BlockHitResult(hitPos, direction, against, false);
-        var result = gameMode.useItemOn(player, hand, hit);
+          .add(
+            direction.getStepX() * 0.5,
+            direction.getStepY() * 0.5,
+            direction.getStepZ() * 0.5
+          );
+        var hit = new BlockHitResult(
+          hitPos,
+          direction,
+          against,
+          false
+        );
+        var result = BotInteractionSupport.withSneaking(
+          player,
+          true,
+          () -> gameMode.useItemOn(player, hand, hit)
+        );
         if (!(result instanceof InteractionResult.Success success)) {
           throw Status.FAILED_PRECONDITION
             .withDescription("The held item could not be used on the target block")
@@ -1993,10 +2056,49 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
         if (success.swingSource() == InteractionResult.SwingSource.CLIENT) {
           player.swing(hand);
         }
-      }),
-      DEFAULT_ACTION_TIMEOUT,
-      result -> PlaceBlockResponse.newBuilder().setResult(result).build(),
-      responseObserver);
+        started = true;
+        return;
+      }
+
+      var currentState = level.getBlockState(target);
+      var changed = !currentState.equals(previousState);
+      var pendingPrediction =
+        BlockPredictionSupport.hasPendingPrediction(bot, target);
+      predictedPlacement |= changed || pendingPrediction;
+      if (!pendingPrediction && changed) {
+        done = true;
+        return;
+      }
+      if (!pendingPrediction && predictedPlacement) {
+        throw Status.FAILED_PRECONDITION
+          .withDescription("The server rejected placing the target block")
+          .asRuntimeException();
+      }
+      ticks++;
+      if (ticks >= DEFAULT_ACTION_TIMEOUT.toSeconds() * 20) {
+        throw Status.DEADLINE_EXCEEDED
+          .withDescription("Block placement confirmation timed out")
+          .asRuntimeException();
+      }
+    }
+
+    @Override
+    public boolean isDone() {
+      return done;
+    }
+
+    @Override
+    public void onStopped(
+      ControlStopReason reason,
+      @Nullable Throwable cause
+    ) {
+      done = true;
+    }
+
+    @Override
+    public String description() {
+      return "SDK place block";
+    }
   }
 
   // =====================================================================
