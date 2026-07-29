@@ -178,7 +178,7 @@ describe("beat-game run lifecycle", () => {
     ));
 
     expect(driver.paths[0]?.position).toEqual(currentPosition);
-    expect(driver.paths[0]?.radius).toBe(0);
+    expect(driver.paths[0]?.radius).toBe(0.5);
     expect(driver.paths).not.toContainEqual(expect.objectContaining({
       position: {
         x: 15,
@@ -282,14 +282,22 @@ describe("beat-game run lifecycle", () => {
     expect(portalFrameQueries).toBeGreaterThanOrEqual(3);
     expect(driver.paths).toContainEqual(expect.objectContaining({
       position: currentPosition,
-      radius: 0,
+      radius: 0.5,
     }));
-    expect(driver.actions).toContainEqual({
-      type: "set-movement",
-      forward: true,
-      sneak: false,
-      sprint: false,
-    });
+    expect(driver.paths).toContainEqual(expect.objectContaining({
+      position: {
+        x: 2,
+        y: 9,
+        z: -2,
+        dimension: "minecraft:overworld",
+      },
+      radius: 0.5,
+      policy: expect.objectContaining({
+        allowMining: false,
+        allowPlacing: false,
+        maxFallDistance: 1,
+      }),
+    }));
   });
 
   it("resumes a checkpoint and completes after policy confirms the fight", async () => {

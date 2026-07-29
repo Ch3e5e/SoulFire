@@ -99,6 +99,7 @@ export class SoulFireConnectionError extends SoulFireConnectionErrorBase {}
 interface SoulFireRpcErrorFields {
   readonly operation: string;
   readonly cause: unknown;
+  readonly message: string;
   readonly code?: Code;
   readonly requestId?: string;
   readonly retryable: boolean;
@@ -116,6 +117,7 @@ export class SoulFireRpcError extends SoulFireRpcErrorBase {}
 interface SoulFireTaskFailedFields {
   readonly task: PromiseSoulFireTaskError["task"];
   readonly cause: PromiseSoulFireTaskError;
+  readonly message: string;
 }
 
 const SoulFireTaskFailedBase: TaggedErrorConstructor<
@@ -631,7 +633,11 @@ function taskRpc<T>(
     try: call,
     catch: (cause) =>
       cause instanceof PromiseSoulFireTaskError
-        ? new SoulFireTaskFailed({ task: cause.task, cause })
+        ? new SoulFireTaskFailed({
+          task: cause.task,
+          cause,
+          message: cause.message,
+        })
         : rpcError(operation, cause),
   });
 }
@@ -830,6 +836,7 @@ function rpcError(operation: string, cause: unknown): SoulFireRpcError {
     return new SoulFireRpcError({
       operation,
       cause,
+      message: errorMessage(cause, operation),
       retryable: false,
     });
   }
@@ -840,10 +847,17 @@ function rpcError(operation: string, cause: unknown): SoulFireRpcError {
   return new SoulFireRpcError({
     operation,
     cause,
+    message: cause.message,
     code: cause.code,
     retryable: isRetryableCode(cause.code),
     ...(requestId === undefined ? {} : { requestId }),
   });
+}
+
+function errorMessage(cause: unknown, operation: string): string {
+  return cause instanceof Error && cause.message.length > 0
+    ? cause.message
+    : `SoulFire RPC ${operation} failed`;
 }
 
 function isRetryableCode(code: Code): boolean {

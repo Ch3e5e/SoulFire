@@ -31,7 +31,7 @@ import { promisify } from "node:util";
 import {
   Duration,
   Effect,
-  Fiber,
+  Ref,
   Stream,
 } from "effect";
 
@@ -45,11 +45,15 @@ const artifactDirectory = path.resolve(
   ),
 );
 const botName = environment("SOULFIRE_E2E_BOT_NAME", "SFSmokeBot");
+const smokeMode = booleanEnvironment("SOULFIRE_E2E_CONTROLLED", false)
+  ? "controlled"
+  : "survival";
 const timeoutMs = positiveIntegerEnvironment(
   "SOULFIRE_E2E_TIMEOUT_MS",
-  45 * 60 * 1_000,
+  smokeMode === "controlled" ? 45 * 60 * 1_000 : 8 * 60 * 60 * 1_000,
 );
 const fixtureConfiguration = {
+  mode: smokeMode,
   image: environment(
     "SOULFIRE_E2E_IMAGE",
     "itzg/minecraft-server:2026.3.2-java25",
@@ -58,21 +62,37 @@ const fixtureConfiguration = {
     "SOULFIRE_E2E_MINECRAFT_VERSION",
     "1.21.11",
   ),
-  seed: environment("SOULFIRE_E2E_SEED", "SoulFire SDK e2e"),
+  seed: smokeMode === "controlled"
+    ? environment("SOULFIRE_E2E_SEED", "SoulFire SDK controlled e2e")
+    : optionalEnvironment("SOULFIRE_E2E_SEED"),
   keepContainer: booleanEnvironment("SOULFIRE_E2E_KEEP_CONTAINER", false),
-};
+} as const;
 
 interface CommandResult {
   readonly stdout: string;
   readonly stderr: string;
 }
 
-interface MinecraftFixture {
+interface BaseMinecraftFixture {
   readonly containerName: string;
   readonly port: number;
+}
+
+interface SurvivalMinecraftFixture extends BaseMinecraftFixture {
+  readonly mode: "survival";
+  readonly seed: string | undefined;
+}
+
+interface ControlledMinecraftFixture extends BaseMinecraftFixture {
+  readonly mode: "controlled";
+  readonly seed: string;
   readonly stronghold: Readonly<{ x: number; z: number }>;
   readonly spawn: Readonly<{ x: number; y: number; z: number }>;
 }
+
+type MinecraftFixture =
+  | SurvivalMinecraftFixture
+  | ControlledMinecraftFixture;
 
 const program = Effect.scoped(Effect.gen(function* () {
   yield* fromPromise("create artifact directory", () =>
@@ -180,18 +200,20 @@ const program = Effect.scoped(Effect.gen(function* () {
   yield* bot.waitForOnline().pipe(
     Effect.timeout(Duration.minutes(2)),
   );
-  yield* poll(
-    rcon(fixture.containerName, "list").pipe(
-      Effect.flatMap((result) =>
-        result.stdout.includes(botName)
-          ? Effect.succeed(result)
-          : Effect.fail(new Error(`${botName} is not listed by Minecraft`))
+  if (fixture.mode === "controlled") {
+    yield* poll(
+      rcon(fixture, "list").pipe(
+        Effect.flatMap((result) =>
+          result.stdout.includes(botName)
+            ? Effect.succeed(result)
+            : Effect.fail(new Error(`${botName} is not listed by Minecraft`))
+        ),
       ),
-    ),
-    "Minecraft player join",
-    120,
-    500,
-  );
+      "Minecraft player join",
+      120,
+      500,
+    );
+  }
   yield* poll(
     bot.world.player().pipe(
       Effect.mapError((cause) => new Error("read bot readiness", { cause })),
@@ -207,31 +229,56 @@ const program = Effect.scoped(Effect.gen(function* () {
   );
   yield* record("bot-online", { instanceId: instance.id, profileId });
 
-  yield* provisionBot(fixture, botName);
-  yield* poll(
-    bot.world.player().pipe(
-      Effect.mapError((cause) =>
-        new Error("read prepared bot position", { cause })
-      ),
-      Effect.flatMap((preparedPlayer) =>
-        preparedPlayer.onGround
-          && Math.abs((preparedPlayer.position?.y ?? 0) - fixture.spawn.y) < 1
-          ? Effect.succeed(preparedPlayer)
-          : Effect.fail(new Error("Bot has not reached the prepared arena"))
-      ),
-    ),
-    "prepared arena arrival",
-    120,
-    250,
+  const joinedPlayer = yield* bot.world.player();
+  const initialInventory = yield* bot.inventory.snapshot();
+  const initialItems = initialInventory.slots.flatMap((slot) =>
+    slot.item === undefined || slot.item.count < 1
+      ? []
+      : [{
+        slot: slot.slot,
+        itemId: slot.item.itemId,
+        count: slot.item.count,
+      }]
   );
-  const player = yield* bot.world.player();
-  yield* record("bot-provisioned", { player });
+  yield* record("bot-initial-state", {
+    mode: fixture.mode,
+    player: joinedPlayer,
+    inventory: initialInventory,
+  });
+  if (fixture.mode === "survival" && initialItems.length > 0) {
+    return yield* Effect.fail(new Error(
+      `Authoritative smoke bot joined with a non-empty inventory: ${
+        json(initialItems)
+      }`,
+    ));
+  }
 
-  const encounterController = yield* controlEndEncounter(
-    fixture,
-    botName,
-    bot,
-  ).pipe(Effect.forkScoped);
+  if (fixture.mode === "controlled") {
+    yield* provisionBot(fixture, botName);
+    yield* poll(
+      bot.world.player().pipe(
+        Effect.mapError((cause) =>
+          new Error("read prepared bot position", { cause })
+        ),
+        Effect.flatMap((preparedPlayer) =>
+          preparedPlayer.onGround
+            && Math.abs((preparedPlayer.position?.y ?? 0) - fixture.spawn.y) < 1
+            ? Effect.succeed(preparedPlayer)
+            : Effect.fail(new Error("Bot has not reached the prepared arena"))
+        ),
+      ),
+      "prepared arena arrival",
+      120,
+      250,
+    );
+    const player = yield* bot.world.player();
+    yield* record("bot-provisioned", { player });
+    yield* controlEndEncounter(
+      fixture,
+      botName,
+      bot,
+    ).pipe(Effect.forkScoped);
+  }
   const checkpointStore = new JsonFileBeatGameCheckpointStore(
     path.join(artifactDirectory, "checkpoints"),
   );
@@ -314,7 +361,6 @@ const program = Effect.scoped(Effect.gen(function* () {
   const result = yield* run.awaitCompletion.pipe(
     Effect.timeout(Duration.millis(timeoutMs)),
   );
-  yield* Fiber.interrupt(encounterController);
   const finalPlayer = yield* bot.world.player();
   const finalInventory = yield* bot.inventory.snapshot();
   const eggCount = finalInventory.slots.reduce(
@@ -347,6 +393,9 @@ const program = Effect.scoped(Effect.gen(function* () {
       "Beat-game run completed while the bot was still in the End",
     ));
   }
+  if (fixture.mode === "survival") {
+    yield* assertNoAdminCommands(fixture);
+  }
   yield* record("beat-game-completed", {
     result,
     finalPlayer,
@@ -359,179 +408,240 @@ const program = Effect.scoped(Effect.gen(function* () {
   ),
 ));
 
-const startMinecraftFixture = Effect.gen(function* () {
+const startMinecraftFixture = Effect.suspend(() => {
   const containerName = `soulfire-beat-game-${randomUUID().slice(0, 12)}`;
-  yield* docker([
-    "run",
-    "--detach",
-    "--rm",
-    "--name",
-    containerName,
-    "--publish",
-    "127.0.0.1::25565",
-    "--env",
-    "EULA=TRUE",
-    "--env",
-    "TYPE=VANILLA",
-    "--env",
-    `VERSION=${fixtureConfiguration.minecraftVersion}`,
-    "--env",
-    "MEMORY=4G",
-    "--env",
-    "ONLINE_MODE=FALSE",
-    "--env",
-    "ENABLE_RCON=true",
-    "--env",
-    "RCON_PASSWORD=soulfire-smoke",
-    "--env",
-    "DIFFICULTY=easy",
-    "--env",
-    "MODE=survival",
-    "--env",
-    "SPAWN_PROTECTION=0",
-    "--env",
-    "VIEW_DISTANCE=10",
-    "--env",
-    "SIMULATION_DISTANCE=10",
-    "--env",
-    `SEED=${fixtureConfiguration.seed}`,
-    fixtureConfiguration.image,
-  ]);
+  const start = Effect.gen(function* () {
+    const commonArguments = [
+      "run",
+      "--detach",
+      "--rm",
+      "--name",
+      containerName,
+      "--publish",
+      "127.0.0.1::25565",
+      "--env",
+      "EULA=TRUE",
+      "--env",
+      "TYPE=PAPER",
+      "--env",
+      `VERSION=${fixtureConfiguration.minecraftVersion}`,
+      "--env",
+      "MEMORY=4G",
+      "--env",
+      "ONLINE_MODE=FALSE",
+      "--env",
+      "MODE=survival",
+      "--env",
+      "VIEW_DISTANCE=10",
+      "--env",
+      "SIMULATION_DISTANCE=10",
+    ];
 
-  yield* poll(
-    rcon(containerName, "list"),
-    "Minecraft RCON readiness",
-    120,
-    1_000,
-  );
-  const portOutput = yield* docker([
-    "port",
-    containerName,
-    "25565/tcp",
-  ]);
-  const port = parsePublishedPort(portOutput.stdout);
-  yield* rcon(containerName, "gamerule keep_inventory true");
-  yield* rcon(containerName, "gamerule respawn_radius 0");
-  yield* rcon(containerName, "time set day");
-  yield* rcon(containerName, "weather clear");
-  const locate = yield* rcon(
-    containerName,
-    "locate structure minecraft:stronghold",
-  );
-  const stronghold = parseStronghold(locate.stdout);
-  const spawnCoordinates = { x: stronghold.x + 32, z: stronghold.z };
-  yield* rcon(
-    containerName,
-    `forceload add ${spawnCoordinates.x - 16} ${
-      spawnCoordinates.z - 16
-    } ${spawnCoordinates.x + 16} ${spawnCoordinates.z + 16}`,
-  );
-  const worldSpawn = yield* rcon(
-    containerName,
-    `execute positioned ${spawnCoordinates.x} 0 ${
-      spawnCoordinates.z
-    } positioned over motion_blocking_no_leaves run setworldspawn ~ ~ ~`,
-  );
-  const naturalSpawn = parseWorldSpawn(worldSpawn.stdout);
-  const spawn = { ...naturalSpawn, y: 49 };
-  const testCorridor = {
-    minimumX: stronghold.x - 16,
-    maximumX: spawn.x + 63,
-    minimumZ: spawn.z - 80,
-    maximumZ: spawn.z + 80,
-  };
-  yield* rcon(
-    containerName,
-    `forceload add ${testCorridor.minimumX} ${testCorridor.minimumZ} ${
-      testCorridor.maximumX
-    } ${testCorridor.maximumZ}`,
-  );
-  for (
-    let minimumZ = testCorridor.minimumZ;
-    minimumZ <= testCorridor.maximumZ;
-    minimumZ += 16
-  ) {
-    const maximumZ = Math.min(minimumZ + 15, testCorridor.maximumZ);
+    if (fixtureConfiguration.mode === "survival") {
+      const serverArguments = [
+        ...commonArguments,
+        "--env",
+        "ENABLE_RCON=false",
+      ];
+      if (fixtureConfiguration.seed !== undefined) {
+        serverArguments.push("--env", `SEED=${fixtureConfiguration.seed}`);
+      }
+      serverArguments.push(fixtureConfiguration.image);
+      yield* docker(serverArguments);
+      yield* waitForMinecraftServer(containerName);
+      const port = yield* publishedMinecraftPort(containerName);
+      const fixture = {
+        mode: "survival",
+        containerName,
+        port,
+        seed: fixtureConfiguration.seed,
+      } satisfies SurvivalMinecraftFixture;
+      yield* record("minecraft-ready", {
+        ...fixture,
+        serverType: "PAPER",
+        rconEnabled: false,
+        seed: fixture.seed ?? "server-generated",
+      });
+      return fixture;
+    }
+
+    const seed = fixtureConfiguration.seed;
+    if (seed === undefined) {
+      return yield* Effect.fail(new Error(
+        "The controlled smoke fixture requires a seed",
+      ));
+    }
+    yield* docker([
+      ...commonArguments,
+      "--env",
+      "ENABLE_RCON=true",
+      "--env",
+      "RCON_PASSWORD=soulfire-smoke",
+      "--env",
+      "DIFFICULTY=peaceful",
+      "--env",
+      "SPAWN_PROTECTION=0",
+      "--env",
+      `SEED=${seed}`,
+      fixtureConfiguration.image,
+    ]);
+    yield* waitForMinecraftServer(containerName);
+    yield* poll(
+      rcon(containerName, "list"),
+      "Minecraft RCON readiness",
+      120,
+      1_000,
+    );
+    const port = yield* publishedMinecraftPort(containerName);
+    yield* rcon(containerName, "gamerule keep_inventory true");
+    yield* rcon(containerName, "gamerule mob_griefing false");
+    yield* rcon(containerName, "gamerule respawn_radius 0");
+    yield* rcon(containerName, "time set day");
+    yield* rcon(containerName, "weather clear");
+    const locate = yield* rcon(
+      containerName,
+      "locate structure minecraft:stronghold",
+    );
+    const stronghold = parseStronghold(locate.stdout);
+    const spawnCoordinates = { x: stronghold.x + 32, z: stronghold.z };
     yield* rcon(
       containerName,
-      `fill ${testCorridor.minimumX} ${spawn.y + 9} ${minimumZ} ${
+      `forceload add ${spawnCoordinates.x - 16} ${
+        spawnCoordinates.z - 16
+      } ${spawnCoordinates.x + 16} ${spawnCoordinates.z + 16}`,
+    );
+    const worldSpawn = yield* rcon(
+      containerName,
+      `execute positioned ${spawnCoordinates.x} 0 ${
+        spawnCoordinates.z
+      } positioned over motion_blocking_no_leaves run setworldspawn ~ ~ ~`,
+    );
+    const naturalSpawn = parseWorldSpawn(worldSpawn.stdout);
+    const spawn = { ...naturalSpawn, y: 49 };
+    const testCorridor = {
+      minimumX: stronghold.x - 16,
+      maximumX: spawn.x + 63,
+      minimumZ: spawn.z - 80,
+      maximumZ: spawn.z + 80,
+    };
+    yield* rcon(
+      containerName,
+      `forceload add ${testCorridor.minimumX} ${testCorridor.minimumZ} ${
         testCorridor.maximumX
-      } ${spawn.y + 9} ${maximumZ} stone`,
+      } ${testCorridor.maximumZ}`,
+    );
+    for (
+      let minimumZ = testCorridor.minimumZ;
+      minimumZ <= testCorridor.maximumZ;
+      minimumZ += 16
+    ) {
+      const maximumZ = Math.min(minimumZ + 15, testCorridor.maximumZ);
+      yield* rcon(
+        containerName,
+        `fill ${testCorridor.minimumX} ${spawn.y + 9} ${minimumZ} ${
+          testCorridor.maximumX
+        } ${spawn.y + 9} ${maximumZ} stone`,
+      );
+      yield* rcon(
+        containerName,
+        `fill ${testCorridor.minimumX} ${spawn.y - 1} ${minimumZ} ${
+          testCorridor.maximumX
+        } ${spawn.y + 8} ${maximumZ} air`,
+      );
+      yield* rcon(
+        containerName,
+        `fill ${testCorridor.minimumX} ${spawn.y - 16} ${minimumZ} ${
+          testCorridor.maximumX
+        } ${spawn.y - 1} ${maximumZ} stone`,
+      );
+    }
+    yield* rcon(
+      containerName,
+      `setworldspawn ${spawn.x} ${spawn.y} ${spawn.z}`,
+    );
+    const netherPortal = {
+      x: Math.floor(spawn.x / 8),
+      y: 49,
+      z: Math.floor(spawn.z / 8),
+    };
+    yield* rcon(
+      containerName,
+      `execute in minecraft:the_nether run forceload add ${
+        netherPortal.x - 16
+      } ${netherPortal.z - 16} ${netherPortal.x + 16} ${
+        netherPortal.z + 16
+      }`,
     );
     yield* rcon(
       containerName,
-      `fill ${testCorridor.minimumX} ${spawn.y - 1} ${minimumZ} ${
-        testCorridor.maximumX
-      } ${spawn.y + 8} ${maximumZ} air`,
+      `execute in minecraft:the_nether run fill ${netherPortal.x - 16} ${
+        netherPortal.y + 1
+      } ${netherPortal.z - 16} ${netherPortal.x + 16} ${
+        netherPortal.y + 12
+      } ${netherPortal.z + 16} air`,
     );
     yield* rcon(
       containerName,
-      `fill ${testCorridor.minimumX} ${spawn.y - 16} ${minimumZ} ${
-        testCorridor.maximumX
-      } ${spawn.y - 1} ${maximumZ} stone`,
+      `execute in minecraft:the_nether run fill ${netherPortal.x - 16} ${
+        netherPortal.y
+      } ${netherPortal.z - 16} ${netherPortal.x + 16} ${
+        netherPortal.y
+      } ${netherPortal.z + 16} stone`,
     );
-  }
-  yield* rcon(
-    containerName,
-    `setworldspawn ${spawn.x} ${spawn.y} ${spawn.z}`,
-  );
-  const netherPortal = {
-    x: Math.floor(spawn.x / 8),
-    y: 49,
-    z: Math.floor(spawn.z / 8),
-  };
-  yield* rcon(
-    containerName,
-    `execute in minecraft:the_nether run forceload add ${
-      netherPortal.x - 16
-    } ${netherPortal.z - 16} ${netherPortal.x + 16} ${netherPortal.z + 16}`,
-  );
-  yield* rcon(
-    containerName,
-    `execute in minecraft:the_nether run fill ${netherPortal.x - 16} ${
-      netherPortal.y + 1
-    } ${netherPortal.z - 16} ${netherPortal.x + 16} ${
-      netherPortal.y + 12
-    } ${netherPortal.z + 16} air`,
-  );
-  yield* rcon(
-    containerName,
-    `execute in minecraft:the_nether run fill ${netherPortal.x - 16} ${
-      netherPortal.y
-    } ${netherPortal.z - 16} ${netherPortal.x + 16} ${
-      netherPortal.y
-    } ${netherPortal.z + 16} stone`,
-  );
-  for (const command of [
-    `fill ${netherPortal.x} ${netherPortal.y} ${netherPortal.z - 1} ${
-      netherPortal.x
-    } ${netherPortal.y} ${netherPortal.z + 2} obsidian`,
-    `fill ${netherPortal.x} ${netherPortal.y + 4} ${netherPortal.z - 1} ${
-      netherPortal.x
-    } ${netherPortal.y + 4} ${netherPortal.z + 2} obsidian`,
-    `fill ${netherPortal.x} ${netherPortal.y + 1} ${netherPortal.z - 1} ${
-      netherPortal.x
-    } ${netherPortal.y + 3} ${netherPortal.z - 1} obsidian`,
-    `fill ${netherPortal.x} ${netherPortal.y + 1} ${netherPortal.z + 2} ${
-      netherPortal.x
-    } ${netherPortal.y + 3} ${netherPortal.z + 2} obsidian`,
-    `fill ${netherPortal.x} ${netherPortal.y + 1} ${netherPortal.z} ${
-      netherPortal.x
-    } ${netherPortal.y + 3} ${netherPortal.z + 1} nether_portal[axis=z]`,
-  ]) {
-    yield* rcon(
+    for (const command of [
+      `fill ${netherPortal.x} ${netherPortal.y} ${netherPortal.z - 1} ${
+        netherPortal.x
+      } ${netherPortal.y} ${netherPortal.z + 2} obsidian`,
+      `fill ${netherPortal.x} ${netherPortal.y + 4} ${
+        netherPortal.z - 1
+      } ${netherPortal.x} ${netherPortal.y + 4} ${
+        netherPortal.z + 2
+      } obsidian`,
+      `fill ${netherPortal.x} ${netherPortal.y + 1} ${
+        netherPortal.z - 1
+      } ${netherPortal.x} ${netherPortal.y + 3} ${
+        netherPortal.z - 1
+      } obsidian`,
+      `fill ${netherPortal.x} ${netherPortal.y + 1} ${
+        netherPortal.z + 2
+      } ${netherPortal.x} ${netherPortal.y + 3} ${
+        netherPortal.z + 2
+      } obsidian`,
+      `fill ${netherPortal.x} ${netherPortal.y + 1} ${netherPortal.z} ${
+        netherPortal.x
+      } ${netherPortal.y + 3} ${
+        netherPortal.z + 1
+      } nether_portal[axis=z]`,
+    ]) {
+      yield* rcon(
+        containerName,
+        `execute in minecraft:the_nether run ${command}`,
+      );
+    }
+    const fixture = {
+      mode: "controlled",
       containerName,
-      `execute in minecraft:the_nether run ${command}`,
-    );
-  }
-  yield* record("minecraft-ready", {
-    containerName,
-    port,
-    stronghold,
-    spawn,
-    netherPortal,
+      port,
+      seed,
+      stronghold,
+      spawn,
+    } satisfies ControlledMinecraftFixture;
+    yield* record("minecraft-ready", {
+      ...fixture,
+      serverType: "PAPER",
+      rconEnabled: true,
+      netherPortal,
+    });
+    return fixture;
   });
-  return { containerName, port, stronghold, spawn } satisfies MinecraftFixture;
+
+  return start.pipe(
+    Effect.onError(() =>
+      fixtureConfiguration.keepContainer
+        ? Effect.void
+        : docker(["rm", "--force", containerName]).pipe(Effect.ignore)
+    ),
+  );
 });
 
 function stopMinecraftFixture(
@@ -561,7 +671,7 @@ function stopMinecraftFixture(
 }
 
 function provisionBot(
-  fixture: MinecraftFixture,
+  fixture: ControlledMinecraftFixture,
   username: string,
 ): Effect.Effect<void, Error> {
   const commands = [
@@ -616,30 +726,59 @@ function provisionBot(
 }
 
 function controlEndEncounter(
-  fixture: MinecraftFixture,
+  fixture: ControlledMinecraftFixture,
   username: string,
   bot: SoulFireBot,
 ): Effect.Effect<never> {
-  const tick = bot.world.player().pipe(
-    Effect.flatMap((player) => {
-      if (!isEnd(player.position?.dimension ?? "")) {
-        return Effect.void;
-      }
-      return Effect.all([
-        rcon(
-          fixture.containerName,
-          `execute in minecraft:the_end as @a[name=${username}] at @s run kill @e[type=minecraft:end_crystal,distance=..320]`,
-        ),
-        rcon(
-          fixture.containerName,
-          `execute in minecraft:the_end as @a[name=${username}] at @s run data merge entity @e[type=minecraft:ender_dragon,limit=1,distance=..320] {Health:1.0f}`,
-        ),
-      ], { discard: true }).pipe(Effect.ignore);
-    }),
-    Effect.catchAll(() => Effect.void),
-    Effect.zipRight(Effect.sleep(1_000)),
-  );
-  return Effect.forever(tick);
+  return Effect.gen(function* () {
+    const prepared = yield* Ref.make(false);
+    const tick = bot.world.player().pipe(
+      Effect.flatMap((player) => {
+        if (!isEnd(player.position?.dimension ?? "")) {
+          return Effect.void;
+        }
+        return Ref.get(prepared).pipe(
+          Effect.flatMap((isPrepared) => {
+            if (isPrepared) {
+              return Effect.void;
+            }
+            return Effect.gen(function* () {
+              yield* rcon(
+                fixture.containerName,
+                "execute in minecraft:the_end run kill @e[type=minecraft:end_crystal]",
+              );
+              yield* rcon(
+                fixture.containerName,
+                "execute in minecraft:the_end run fill 0 48 -8 105 48 8 minecraft:end_stone",
+              );
+              const dragon = yield* rcon(
+                fixture.containerName,
+                "execute in minecraft:the_end run data merge entity @e[type=minecraft:ender_dragon,limit=1] {Health:1.0f,NoAI:1b}",
+              );
+              if (!dragon.stdout.includes("Modified entity data")) {
+                return;
+              }
+              const teleported = yield* rcon(
+                fixture.containerName,
+                `execute in minecraft:the_end at @a[name=${username},limit=1] run tp @e[type=minecraft:ender_dragon,limit=1] ~-20 ~3 ~`,
+              );
+              if (!teleported.stdout.includes("Teleported")) {
+                return;
+              }
+              yield* Ref.set(prepared, true);
+              yield* record("end-encounter-prepared", {
+                dragon: dragon.stdout.trim(),
+                teleported: teleported.stdout.trim(),
+              });
+            });
+          }),
+        );
+      }),
+      Effect.catchAll(() => Effect.void),
+      Effect.zipRight(Effect.sleep(1_000)),
+    );
+    return yield* Effect.forever(tick);
+  });
 }
 
 const findDedicatedJar = fromPromise("find dedicated SoulFire JAR", async () => {
@@ -675,13 +814,70 @@ function docker(args: readonly string[]): Effect.Effect<CommandResult, Error> {
 }
 
 function rcon(
-  containerName: string,
+  target: string | ControlledMinecraftFixture,
   command: string,
 ): Effect.Effect<CommandResult, Error> {
+  const containerName = typeof target === "string"
+    ? target
+    : target.containerName;
   return docker(["exec", containerName, "rcon-cli", command]).pipe(
     Effect.tap((result) =>
       record("rcon", { command, output: result.stdout.trim() })
     ),
+  );
+}
+
+function waitForMinecraftServer(
+  containerName: string,
+): Effect.Effect<CommandResult, Error> {
+  return poll(
+    docker(["logs", containerName]).pipe(
+      Effect.flatMap((result) =>
+        /Done \([^)]+\)! For help/iu.test(
+            `${result.stdout}\n${result.stderr}`,
+          )
+          ? Effect.succeed(result)
+          : Effect.fail(new Error("Minecraft has not finished starting"))
+      ),
+    ),
+    "Minecraft server readiness",
+    300,
+    1_000,
+  );
+}
+
+function publishedMinecraftPort(
+  containerName: string,
+): Effect.Effect<number, Error> {
+  return docker([
+    "port",
+    containerName,
+    "25565/tcp",
+  ]).pipe(Effect.map((result) => parsePublishedPort(result.stdout)));
+}
+
+function assertNoAdminCommands(
+  fixture: SurvivalMinecraftFixture,
+): Effect.Effect<void, Error> {
+  return docker(["logs", fixture.containerName]).pipe(
+    Effect.flatMap((result) => {
+      const logs = `${result.stdout}\n${result.stderr}`;
+      const adminLines = logs.split(/\r?\n/u).filter((line) =>
+        /\[Rcon:|issued server command:|made .* a server operator/iu.test(line)
+      );
+      if (adminLines.length > 0) {
+        return Effect.fail(new Error(
+          `Authoritative smoke used administrative commands:\n${
+            adminLines.join("\n")
+          }`,
+        ));
+      }
+      return record("admin-command-audit", {
+        passed: true,
+        rconEnabled: false,
+        commandsObserved: 0,
+      });
+    }),
   );
 }
 
@@ -728,11 +924,13 @@ function record(
   kind: string,
   value: Readonly<Record<string, unknown>>,
 ): Effect.Effect<void, Error> {
-  const line = json({ observedAt: new Date().toISOString(), kind, ...value });
-  process.stdout.write(`${line}\n`);
-  return fromPromise(`record ${kind}`, () =>
-    appendFile(path.join(artifactDirectory, "events.ndjson"), `${line}\n`)
-  );
+  return Effect.suspend(() => {
+    const line = json({ observedAt: new Date().toISOString(), kind, ...value });
+    process.stdout.write(`${line}\n`);
+    return fromPromise(`record ${kind}`, () =>
+      appendFile(path.join(artifactDirectory, "events.ndjson"), `${line}\n`)
+    );
+  });
 }
 
 function writeJson(
@@ -817,6 +1015,11 @@ function isEnd(dimension: string): boolean {
 function environment(name: string, fallback: string): string {
   const value = process.env[name]?.trim();
   return value === undefined || value.length === 0 ? fallback : value;
+}
+
+function optionalEnvironment(name: string): string | undefined {
+  const value = process.env[name]?.trim();
+  return value === undefined || value.length === 0 ? undefined : value;
 }
 
 function minMaxValue(min: number, max: number) {

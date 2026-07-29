@@ -135,6 +135,7 @@ export class FakeBeatGameDriver implements BeatGameDriver {
     readonly policy: BeatGamePathPolicy;
   }[] = [];
   public activeControlScopes = 0;
+  public maximumActiveControlScopes = 0;
   public recipeResolver: (
     resultItemId: string,
   ) => readonly BeatGameRecipe[] = () => [];
@@ -237,6 +238,10 @@ export class FakeBeatGameDriver implements BeatGameDriver {
     Effect.acquireUseRelease(
       Effect.sync(() => {
         this.activeControlScopes += 1;
+        this.maximumActiveControlScopes = Math.max(
+          this.maximumActiveControlScopes,
+          this.activeControlScopes,
+        );
       }),
       () => effect,
       () =>
@@ -254,10 +259,6 @@ export function installStaircaseMovementSimulation(
   const resolveObservation = driver.observationResolver;
   const resolvePath = driver.pathResolver;
   let movingForward = false;
-  let movementTick = 0;
-  let movementStart:
-    | Readonly<{ x: number; y: number; z: number }>
-    | undefined;
   driver.currentObservation = observation({
     counts: driver.currentObservation.inventory.counts,
     position: {
@@ -287,16 +288,10 @@ export function installStaircaseMovementSimulation(
           }
           if (action.type === "reset-movement") {
             movingForward = false;
-            movementTick = 0;
-            movementStart = undefined;
             return;
           }
           if (action.type === "set-movement" && action.forward !== undefined) {
             movingForward = action.forward;
-            movementTick = 0;
-            movementStart = action.forward
-              ? current.player.position
-              : undefined;
           }
         })
       ),
@@ -305,38 +300,25 @@ export function installStaircaseMovementSimulation(
     resolveObservation().pipe(
       Effect.tap(() =>
         Effect.sync(() => {
-          if (!movingForward || movementStart === undefined) {
+          if (!movingForward) {
             return;
           }
-          movementTick += 1;
           const current = driver.currentObservation;
           const radians = current.player.rotation.yaw * Math.PI / 180;
-          const xDirection = Math.round(-Math.sin(radians));
-          const zDirection = Math.round(Math.cos(radians));
-          const targetX = Math.floor(movementStart.x) + xDirection;
-          const targetZ = Math.floor(movementStart.z) + zDirection;
-          const edgeFraction = movementTick === 1 ? 0.05 : 0.21;
-          const x = xDirection === 0
-            ? movementStart.x
-            : targetX + (xDirection > 0
-              ? edgeFraction
-              : 1 - edgeFraction);
-          const z = zDirection === 0
-            ? movementStart.z
-            : targetZ + (zDirection > 0
-              ? edgeFraction
-              : 1 - edgeFraction);
+          const position = current.player.position;
+          const x = position.x - Math.sin(radians) * 0.6;
+          const z = position.z + Math.cos(radians) * 0.6;
+          const enteredNextTread = Math.floor(x) !== Math.floor(position.x)
+            || Math.floor(z) !== Math.floor(position.z);
           driver.currentObservation = {
             ...current,
             player: {
               ...current.player,
               position: {
                 x,
-                y: movementTick === 2
-                  ? Math.floor(movementStart.y) - 1
-                  : movementStart.y,
+                y: enteredNextTread ? position.y - 1 : position.y,
                 z,
-                dimension: current.player.position.dimension,
+                dimension: position.dimension,
               },
             },
           };

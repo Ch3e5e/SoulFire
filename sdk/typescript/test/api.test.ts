@@ -54,6 +54,7 @@ import {
 import { resolveRelease } from "../src/local-server.js";
 import {
   BotTaskEventSchema,
+  BotTaskFailureSchema,
   BotTaskSchema,
   BotTaskService,
   BotTaskStatus,
@@ -154,6 +155,67 @@ describe("SoulFire", () => {
       code: Code.Unavailable,
       requestId: "request-42",
       retryable: true,
+    });
+    expect(error.message).toBe("[unavailable] temporarily unavailable");
+    await Effect.runPromise(soulfire.close());
+  });
+
+  it("preserves task failure messages in the Effect error channel", async () => {
+    const transport = createRouterTransport(({ service }) => {
+      service(BotTaskService, {
+        startBotTask(request) {
+          return create(BotTaskSchema, {
+            taskId: "task-id",
+            instanceId: request.instanceId,
+            botId: request.botId,
+            status: BotTaskStatus.RUNNING,
+            revision: 1n,
+          });
+        },
+        async *watchBotTask() {
+          yield create(BotTaskEventSchema, {
+            task: create(BotTaskSchema, {
+              taskId: "task-id",
+              instanceId: "instance-id",
+              botId: "bot-id",
+              status: BotTaskStatus.FAILED,
+              revision: 2n,
+              failure: create(BotTaskFailureSchema, {
+                code: "INVALID_ARGUMENT",
+                message: "radius must not exceed 128.0",
+                retryable: false,
+              }),
+            }),
+          });
+        },
+      });
+    });
+    const kernel = KernelSoulFire.unauthenticated({
+      baseUrl: "https://soulfire.example.com",
+      transport,
+    });
+    const soulfire = new EffectSoulFireClient(kernel);
+    const task = await Effect.runPromise(
+      soulfire
+        .instance("instance-id")
+        .bot("bot-id")
+        .tasks
+        .start(GoToTaskSchema, {}, GoToTaskResultSchema),
+    );
+
+    const error = await Effect.runPromise(Effect.flip(task.result()));
+
+    expect(error).toMatchObject({
+      _tag: "SoulFireTaskFailed",
+      message: "radius must not exceed 128.0",
+      task: {
+        taskId: "task-id",
+        status: BotTaskStatus.FAILED,
+        failure: {
+          code: "INVALID_ARGUMENT",
+          message: "radius must not exceed 128.0",
+        },
+      },
     });
     await Effect.runPromise(soulfire.close());
   });

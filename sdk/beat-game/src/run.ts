@@ -2029,6 +2029,7 @@ function approachStrongholdPortalRoom(
     from: staircaseStartPosition(destination, current),
     to: destination,
     path: state.strategy.path,
+    openSpaceHandoffRadius: 1,
   });
 }
 

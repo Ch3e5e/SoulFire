@@ -35,6 +35,8 @@ import type {
 } from "./driver.js";
 
 const NETHER_PORTAL_REENTRY_COOLDOWN_MS = 10_500;
+const MAXIMUM_ATTACK_NEAREST_RADIUS = 128;
+const MAXIMUM_OPEN_SPACE_HANDOFF_DEPTH = 8;
 
 export interface BeatGameBehaviorOptions {
   readonly path?: Partial<BeatGamePathPolicy>;
@@ -111,6 +113,12 @@ export interface ExcavateStaircaseOptions extends BeatGameBehaviorOptions {
   readonly from: BeatGameBlockPosition;
   readonly to: BeatGameBlockPosition;
   readonly tool?: BeatGameItemSelector;
+  /**
+   * Hands control back to ordinary pathfinding when the staircase opens into
+   * traversable space near the destination depth. If pathfinding cannot reach
+   * the destination, excavation continues and bridges the opening instead.
+   */
+  readonly openSpaceHandoffRadius?: number;
 }
 
 /**
@@ -125,9 +133,33 @@ export function excavateStaircase(
   driver: BeatGameDriver,
   options: ExcavateStaircaseOptions,
 ): Effect.Effect<void, BeatGameDriverError> {
-  const steps = staircaseSteps(options.from, options.to);
   return driver.withControl(Effect.gen(function* () {
-    yield* driver.pathfind(options.from, 0, mergePathPolicy(options.path));
+    const approachObservation = yield* waitForVerticalSettlement(driver);
+    const approachPosition = approachObservation.player.position;
+    const stagingObservation = approachPosition.dimension
+        === options.from.dimension
+        && approachPosition.y < options.from.y - 1
+      ? approachObservation
+      : yield* driver.pathfind(
+        options.from,
+        0.5,
+        mergePathPolicy(options.path),
+      ).pipe(Effect.zipRight(waitForVerticalSettlement(driver)));
+    const stagingPosition = stagingObservation.player.position;
+    if (stagingPosition.dimension !== options.from.dimension) {
+      return yield* Effect.fail(behaviorError(
+        driver,
+        "Changed dimensions while approaching the staircase",
+      ));
+    }
+    const actualFrom: BeatGameBlockPosition = {
+      x: Math.floor(stagingPosition.x),
+      y: Math.floor(stagingPosition.y + 0.01),
+      z: Math.floor(stagingPosition.z),
+      dimension: stagingPosition.dimension,
+    };
+    const staircaseTo = adjustedStaircaseDestination(actualFrom, options.to);
+    const steps = staircaseSteps(actualFrom, staircaseTo);
     yield* driver.act({
       type: "select-item",
       selector: options.tool ?? {
@@ -141,15 +173,29 @@ export function excavateStaircase(
         ],
       },
     });
-    let previousStep = options.from;
-    let retreatStep: BeatGameBlockPosition | undefined;
+    let previousStep = actualFrom;
     for (const step of steps) {
+      if (
+        options.openSpaceHandoffRadius !== undefined
+        && step.y - options.to.y <= MAXIMUM_OPEN_SPACE_HANDOFF_DEPTH
+        && (yield* isOpenStaircaseStep(driver, step))
+      ) {
+        const handoff = yield* driver.pathfind(
+          options.to,
+          positiveFiniteNumber(
+            options.openSpaceHandoffRadius,
+            "openSpaceHandoffRadius",
+          ),
+          mergePathPolicy(options.path),
+        ).pipe(Effect.either);
+        if (handoff._tag === "Right") {
+          return;
+        }
+      }
       const placedSupport = yield* ensureStaircaseSupport(
         driver,
         previousStep,
         step,
-        retreatStep,
-        options.path,
       );
       if (placedSupport) {
         yield* driver.act({
@@ -175,9 +221,30 @@ export function excavateStaircase(
         position: { ...step, y: step.y + 1 },
       });
       yield* driver.act({ type: "dig-block", position: step });
-      yield* walkStaircaseStep(driver, step);
-      retreatStep = previousStep;
+      const traversal = yield* walkStaircaseStep(
+        driver,
+        step,
+        options.path,
+      ).pipe(Effect.either);
+      if (traversal._tag === "Left") {
+        const displaced = yield* driver.observe;
+        if (
+          displaced.player.position.dimension === step.dimension
+          && displaced.player.position.y < step.y - 1
+        ) {
+          yield* driver.pathfind(
+            options.to,
+            4,
+            mergePathPolicy(options.path),
+          );
+          return;
+        }
+        return yield* Effect.fail(traversal.left);
+      }
       previousStep = step;
+    }
+    if (!samePosition(staircaseTo, options.to)) {
+      yield* driver.pathfind(options.to, 2, mergePathPolicy(options.path));
     }
   }).pipe(
     Effect.ensuring(driver.act({ type: "reset-movement" }).pipe(
@@ -253,7 +320,13 @@ export function attackNearest(
   return runControlled(driver, {
     type: "attack-nearest",
     selector: options.selector,
-    radius: options.radius ?? defaultBeatGameStrategy.entitySearchRadius,
+    radius: Math.min(
+      positiveFiniteNumber(
+        options.radius ?? defaultBeatGameStrategy.entitySearchRadius,
+        "radius",
+      ),
+      MAXIMUM_ATTACK_NEAREST_RADIUS,
+    ),
     ...(options.attackRange === undefined
       ? {}
       : { attackRange: options.attackRange }),
@@ -1307,10 +1380,10 @@ export function enterPortal(
     );
     const directEntry = isNetherDimension(
       approachObservation.player.position.dimension,
-    ) && distanceSquared(
+    ) && distanceFromPortalPassage(
       approachObservation.player.position,
-      approachTarget,
-    ) <= 64
+      passage,
+    ) <= 2
       && Math.abs(
         approachObservation.player.position.y - approachTarget.y,
       ) <= 0.5;
@@ -1337,60 +1410,48 @@ export function enterPortal(
       yield* driver.waitForChunks(0, 60_000);
       return;
     }
-    const contactTarget = portalContactTarget(
-      target,
-      passage,
-    );
-    const changedWhileEntering = yield* navigateUntilDimensionChange(
-      driver,
-      observation.player.position.dimension,
-      driver.pathfind(
-        contactTarget,
-        0,
-        mergePathPolicy(options.path),
-      ),
-    );
-    if (changedWhileEntering) {
-      yield* driver.waitForChunks(0, 60_000);
-      return;
-    }
-    const contactObservation = yield* driver.observe;
-    if (
-      contactObservation.player.position.dimension
-      !== observation.player.position.dimension
-    ) {
-      yield* driver.waitForChunks(0, 60_000);
-      return;
-    }
-    if (!hasPortalContact(contactObservation.player.position, passage)) {
-      return yield* Effect.fail(behaviorError(
-        driver,
-        "Could not make contact with the Nether portal",
-      ));
-    }
     yield* driver.withControl(
-      driver.act({ type: "reset-movement" }).pipe(
-        Effect.zipRight(
-          waitForDimensionChange(
-            driver,
-            observation.player.position.dimension,
-            100,
-          ).pipe(
-            Effect.timeoutFail({
-              duration: 45_000,
-              onTimeout: () => behaviorError(
-                driver,
-                "The Nether portal did not change dimensions after contact",
-              ),
-            }),
-          ),
-        ),
-      ),
+      Effect.gen(function* () {
+        const changedBeforeContact = yield* walkToPortalContact(
+          driver,
+          passage,
+          observation.player.position.dimension,
+        );
+        yield* driver.act({ type: "reset-movement" });
+        if (changedBeforeContact) {
+          return;
+        }
+        yield* holdPortalContactUntilDimensionChange(
+          driver,
+          passage,
+          observation.player.position.dimension,
+          180,
+          250,
+        ).pipe(
+          Effect.timeoutFail({
+            duration: 45_000,
+            onTimeout: () => behaviorError(
+              driver,
+              "The Nether portal did not change dimensions after contact",
+            ),
+          }),
+        );
+      }),
     ).pipe(
       Effect.ensuring(driver.act({ type: "reset-movement" }).pipe(
         Effect.ignore,
       )),
     );
+    const enteredObservation = yield* driver.observe;
+    if (
+      enteredObservation.player.position.dimension
+      === observation.player.position.dimension
+    ) {
+      return yield* Effect.fail(behaviorError(
+        driver,
+        "The Nether portal did not change dimensions after entry",
+      ));
+    }
     yield* driver.waitForChunks(0, 60_000);
   });
 }
@@ -1612,10 +1673,9 @@ export function enterEndPortal(
       const changedOnApproach = yield* navigateUntilDimensionChange(
         driver,
         initialDimension,
-        driver.pathfind(
+        climbEndPortalRim(
+          driver,
           rimTarget,
-          0,
-          mergePathPolicy(options.path),
         ),
       );
       if (changedOnApproach) {
@@ -1623,6 +1683,11 @@ export function enterEndPortal(
       }
 
       const entryObservation = yield* driver.observe;
+      if (
+        entryObservation.player.position.dimension !== initialDimension
+      ) {
+        return;
+      }
       const rotation = rotationToward(
         entryObservation.player.position,
         {
@@ -1662,6 +1727,98 @@ export function enterEndPortal(
   }));
 }
 
+function climbEndPortalRim(
+  driver: BeatGameDriver,
+  rim: BeatGameBlockPosition,
+): Effect.Effect<void, BeatGameDriverError> {
+  return Effect.gen(function* () {
+    const observation = yield* driver.observe;
+    if (
+      Math.floor(observation.player.position.x) === rim.x
+      && Math.floor(observation.player.position.z) === rim.z
+      && observation.player.position.y >= rim.y - 0.15
+    ) {
+      return;
+    }
+    const rotation = rotationToward(
+      observation.player.position,
+      {
+        ...rim,
+        x: rim.x + 0.5,
+        z: rim.z + 0.5,
+      },
+    );
+    yield* driver.act({ type: "reset-movement" });
+    yield* driver.act({
+      type: "look",
+      yaw: rotation.yaw,
+      pitch: 0,
+    });
+    yield* waitForRotation(driver, rotation.yaw, 0, 40, 50);
+    yield* driver.act({
+      type: "set-movement",
+      forward: true,
+      jump: true,
+      sprint: false,
+    });
+    yield* waitForEndPortalRim(driver, rim, 150, 10);
+  }).pipe(
+    Effect.timeoutFail({
+      duration: 5_000,
+      onTimeout: () => behaviorError(
+        driver,
+        "Could not climb onto the End portal rim",
+      ),
+    }),
+    Effect.ensuring(driver.act({ type: "reset-movement" }).pipe(
+      Effect.ignore,
+    )),
+  );
+}
+
+function waitForEndPortalRim(
+  driver: BeatGameDriver,
+  rim: BeatGameBlockPosition,
+  attempts: number,
+  delayMs: number,
+): Effect.Effect<void, BeatGameDriverError> {
+  return driver.observe.pipe(
+    Effect.flatMap((observation) => {
+      const position = observation.player.position;
+      if (position.dimension !== rim.dimension) {
+        return Effect.void;
+      }
+      if (
+        Math.floor(position.x) === rim.x
+        && Math.floor(position.z) === rim.z
+        && position.y >= rim.y - 0.15
+      ) {
+        return Effect.void;
+      }
+      if (position.y < rim.y - 1.5) {
+        return Effect.fail(behaviorError(
+          driver,
+          "Fell below the End portal rim",
+        ));
+      }
+      if (attempts <= 1) {
+        return Effect.fail(behaviorError(
+          driver,
+          "Could not climb onto the End portal rim",
+        ));
+      }
+      return Effect.sleep(delayMs).pipe(
+        Effect.zipRight(waitForEndPortalRim(
+          driver,
+          rim,
+          attempts - 1,
+          delayMs,
+        )),
+      );
+    }),
+  );
+}
+
 function ensureEndPortalRimReachable(
   driver: BeatGameDriver,
   player: BeatGamePosition,
@@ -1688,7 +1845,37 @@ function ensureEndPortalRimReachable(
   };
 
   return Effect.gen(function* () {
-    yield* driver.pathfind(retreat, 1, pathPolicy);
+    const approach = Array.from(
+      { length: Math.max(0, rise - 1) },
+      (_, index) => {
+        const feetY = playerY + index + 1;
+        const distanceFromRim = rim.y - feetY;
+        const support = {
+          ...rim,
+          x: rim.x + direction.x * distanceFromRim,
+          y: feetY - 1,
+          z: rim.z + direction.z * distanceFromRim,
+        };
+        return {
+          support,
+          feet: { ...support, y: feetY },
+        };
+      },
+    );
+    const firstSupport = approach[0]?.support;
+    const currentObservation = yield* driver.observe;
+    if (
+      firstSupport !== undefined
+      && (
+        !portalBlockWithinReach(currentObservation, firstSupport)
+        || !portalBlockWithinReach(
+          currentObservation,
+          { ...firstSupport, y: playerY - 1 },
+        )
+      )
+    ) {
+      yield* driver.pathfind(retreat, 1, pathPolicy);
+    }
     const material = staircaseSupportMaterial(yield* driver.observe);
     if (material === undefined) {
       return yield* Effect.fail(behaviorError(
@@ -1697,26 +1884,14 @@ function ensureEndPortalRimReachable(
       ));
     }
 
-    const treads: BeatGameBlockPosition[] = [];
-    for (let feetY = playerY + 1; feetY < rim.y; feetY += 1) {
-      const distanceFromRim = rim.y - feetY;
-      const tread = {
-        ...rim,
-        x: rim.x + direction.x * distanceFromRim,
-        y: feetY - 1,
-        z: rim.z + direction.z * distanceFromRim,
-      };
+    for (const step of approach) {
       yield* ensureEndPortalApproachColumn(
         driver,
-        tread,
-        playerY - 1,
+        step.support,
+        playerY - 2,
         material,
       );
-      treads.push({ ...tread, y: feetY });
-    }
-
-    for (const tread of treads) {
-      yield* driver.pathfind(tread, 0, pathPolicy);
+      yield* driver.pathfind(step.feet, 0, pathPolicy);
     }
   });
 }
@@ -1932,6 +2107,7 @@ export function fightEnderDragon(
           target: crystal,
           maximumShots: crystalShots,
           targetUnavailableTimeoutSeconds: 2,
+          strafe: false,
           ...(options.path === undefined ? {} : { path: options.path }),
         }).pipe(Effect.either);
         if (ranged._tag === "Left") {
@@ -1983,6 +2159,7 @@ export function fightEnderDragon(
         "dragonRangedShotsPerPass",
       ),
       targetUnavailableTimeoutSeconds: 3,
+      strafe: false,
       ...(options.path === undefined ? {} : { path: options.path }),
     }).pipe(Effect.catchAll(() =>
       attackEntity(driver, {
@@ -2503,6 +2680,129 @@ function portalContactTarget(
   };
 }
 
+function walkToPortalContact(
+  driver: BeatGameDriver,
+  passage: PortalPassage,
+  initialDimension: string,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  return Effect.gen(function* () {
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const observation = yield* driver.observe;
+      const position = observation.player.position;
+      if (position.dimension !== initialDimension) {
+        return true;
+      }
+      if (hasPortalEntryContact(position, passage)) {
+        return false;
+      }
+      if (distanceFromPortalPassage(position, passage) > 3) {
+        return yield* Effect.fail(behaviorError(
+          driver,
+          "Moved away from the Nether portal while approaching it",
+        ));
+      }
+
+      const rotation = rotationToward(
+        position,
+        portalContactTarget(position, passage),
+      );
+      yield* driver.act({ type: "reset-movement" });
+      yield* driver.act({
+        type: "look",
+        yaw: rotation.yaw,
+        pitch: 0,
+      });
+      yield* waitForRotation(driver, rotation.yaw, 0, 40, 50);
+      yield* driver.act({
+        type: "set-movement",
+        forward: true,
+        sprint: false,
+      });
+      yield* Effect.sleep(75);
+    }
+    return yield* Effect.fail(behaviorError(
+      driver,
+      "Could not make controlled contact with the Nether portal",
+    ));
+  });
+}
+
+function holdPortalContactUntilDimensionChange(
+  driver: BeatGameDriver,
+  passage: PortalPassage,
+  initialDimension: string,
+  attempts: number,
+  delayMs: number,
+): Effect.Effect<void, BeatGameDriverError> {
+  return Effect.gen(function* () {
+    const observation = yield* driver.observe;
+    const position = observation.player.position;
+    if (position.dimension !== initialDimension) {
+      return;
+    }
+    if (attempts <= 0) {
+      return yield* Effect.fail(behaviorError(
+        driver,
+        "The Nether portal did not change dimensions while contact was held",
+      ));
+    }
+    if (distanceFromPortalPassage(position, passage) > 3) {
+      return yield* Effect.fail(behaviorError(
+        driver,
+        "Moved away from the Nether portal while waiting for it to activate",
+      ));
+    }
+
+    yield* driver.act({ type: "reset-movement" });
+    if (!hasPortalEntryContact(position, passage)) {
+      const changedDimension = yield* walkToPortalContact(
+        driver,
+        passage,
+        initialDimension,
+      );
+      if (changedDimension) {
+        return;
+      }
+    }
+    yield* Effect.sleep(delayMs);
+    yield* holdPortalContactUntilDimensionChange(
+      driver,
+      passage,
+      initialDimension,
+      attempts - 1,
+      delayMs,
+    );
+  });
+}
+
+function distanceFromPortalPassage(
+  position: BeatGamePosition,
+  passage: PortalPassage,
+): number {
+  if (passage.axis === "x") {
+    return Math.hypot(
+      Math.abs(position.z - passage.z),
+      Math.max(
+        0,
+        Math.abs(position.x - passage.x) - passage.horizontalRadius,
+      ),
+    );
+  }
+  if (passage.axis === "z") {
+    return Math.hypot(
+      Math.abs(position.x - passage.x),
+      Math.max(
+        0,
+        Math.abs(position.z - passage.z) - passage.horizontalRadius,
+      ),
+    );
+  }
+  return Math.hypot(
+    position.x - passage.x,
+    position.z - passage.z,
+  );
+}
+
 function leavePortalForReentry(
   driver: BeatGameDriver,
   passage: PortalPassage,
@@ -2641,27 +2941,6 @@ function waitForPortalExit(
   );
 }
 
-function waitForPortalContact(
-  driver: BeatGameDriver,
-  passage: PortalPassage,
-  delayMs: number,
-): Effect.Effect<void, BeatGameDriverError> {
-  return driver.observe.pipe(
-    Effect.flatMap((observation) => {
-      const position = observation.player.position;
-      return hasPortalContact(position, passage)
-        ? Effect.void
-        : Effect.sleep(delayMs).pipe(
-          Effect.zipRight(waitForPortalContact(
-            driver,
-            passage,
-            delayMs,
-          )),
-        );
-    }),
-  );
-}
-
 function hasPortalContact(
   position: BeatGamePosition,
   passage: PortalPassage,
@@ -2672,13 +2951,20 @@ function hasPortalContact(
   const verticalContact = position.y >= passage.y - 1.81
     && position.y <= passage.y + 3;
   const horizontalContact = passage.axis === "x"
-    ? Math.abs(position.z - passage.z) <= 0.65
+    ? Math.abs(position.z - passage.z) < 0.8
       && Math.abs(position.x - passage.x) <= passage.horizontalRadius + 0.1
     : passage.axis === "z"
-    ? Math.abs(position.x - passage.x) <= 0.65
+    ? Math.abs(position.x - passage.x) < 0.8
       && Math.abs(position.z - passage.z) <= passage.horizontalRadius + 0.1
     : distanceSquared(position, passage) <= 3;
   return verticalContact && horizontalContact;
+}
+
+function hasPortalEntryContact(
+  position: BeatGamePosition,
+  passage: PortalPassage,
+): boolean {
+  return hasPortalContact(position, passage);
 }
 
 function portalApproachTarget(
@@ -3041,6 +3327,42 @@ function staircaseSteps(
   return steps;
 }
 
+function adjustedStaircaseDestination(
+  from: BeatGameBlockPosition,
+  requested: BeatGameBlockPosition,
+): BeatGameBlockPosition {
+  const depth = from.y - requested.y;
+  if (depth < 1 || from.dimension !== requested.dimension) {
+    return requested;
+  }
+  let x = requested.x;
+  let z = requested.z;
+  let xDistance = Math.abs(x - from.x);
+  let zDistance = Math.abs(z - from.z);
+  let directDistance = xDistance + zDistance;
+  let excess = Math.max(0, directDistance - depth);
+  if (excess > 0) {
+    const xAdjustment = Math.min(xDistance, excess);
+    x += Math.sign(from.x - x) * xAdjustment;
+    xDistance -= xAdjustment;
+    excess -= xAdjustment;
+    const zAdjustment = Math.min(zDistance, excess);
+    z += Math.sign(from.z - z) * zAdjustment;
+    zDistance -= zAdjustment;
+  }
+  directDistance = xDistance + zDistance;
+  if ((depth - directDistance) % 2 !== 0) {
+    if (xDistance > 0) {
+      x += Math.sign(from.x - x);
+    } else if (zDistance > 0) {
+      z += Math.sign(from.z - z);
+    } else {
+      x += 1;
+    }
+  }
+  return { ...requested, x, z };
+}
+
 function appendHorizontalSteps(
   route: Array<Readonly<{ x: number; z: number }>>,
   direction: Readonly<{ x: number; z: number }>,
@@ -3061,8 +3383,6 @@ function ensureStaircaseSupport(
   driver: BeatGameDriver,
   previous: BeatGameBlockPosition,
   target: BeatGameBlockPosition,
-  retreat: BeatGameBlockPosition | undefined,
-  path: Partial<BeatGamePathPolicy> | undefined,
 ): Effect.Effect<boolean, BeatGameDriverError> {
   const support = below(target);
   return Effect.gen(function* () {
@@ -3177,13 +3497,6 @@ function ensureStaircaseSupport(
           "Could not anchor a temporary staircase tread",
         ));
       }
-      if (retreat !== undefined) {
-        yield* driver.pathfind(
-          retreat,
-          0,
-          staircaseStepPathPolicy(path),
-        );
-      }
       yield* placeStaircaseBlock(
         driver,
         material,
@@ -3206,9 +3519,6 @@ function ensureStaircaseSupport(
           driver,
           "Could not place a temporary staircase tread",
         ));
-      }
-      if (retreat !== undefined) {
-        yield* walkStaircaseStep(driver, previous);
       }
     }
 
@@ -3236,35 +3546,28 @@ function ensureStaircaseSupport(
   });
 }
 
+function isOpenStaircaseStep(
+  driver: BeatGameDriver,
+  target: BeatGameBlockPosition,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  return Effect.all([
+    queryExactBlock(driver, target),
+    queryExactBlock(driver, below(target)),
+  ]).pipe(
+    Effect.map(([targetBlock, supportBlock]) =>
+      targetBlock?.replaceable === true
+      && supportBlock?.replaceable === true
+    ),
+  );
+}
+
 function walkStaircaseStep(
   driver: BeatGameDriver,
   target: BeatGameBlockPosition,
+  path: Partial<BeatGamePathPolicy> | undefined,
 ): Effect.Effect<void, BeatGameDriverError> {
   return Effect.gen(function* () {
-    const observation = yield* driver.observe;
-    const movementTarget = staircaseMovementTarget(
-      observation.player.position,
-      target,
-    );
-    const rotation = rotationToward(
-      observation.player.position,
-      movementTarget,
-    );
-    yield* driver.act({ type: "reset-movement" });
-    yield* driver.act({
-      type: "look",
-      yaw: rotation.yaw,
-      pitch: 0,
-    });
-    yield* waitForRotation(driver, rotation.yaw, 0, 40, 50);
-    yield* driver.act({
-      type: "set-movement",
-      forward: true,
-      sneak: false,
-      sprint: false,
-    });
-    yield* advanceToStaircaseCenter(driver, target, 100, false);
-    yield* driver.act({ type: "reset-movement" });
+    yield* driver.pathfind(target, 0.5, staircaseStepPathPolicy(path));
     yield* Effect.sleep(150);
     yield* waitForStaircaseLanding(driver, target, 40, 50);
     yield* driver.act({ type: "reset-movement" });
@@ -3272,91 +3575,6 @@ function walkStaircaseStep(
     Effect.ensuring(driver.act({ type: "reset-movement" }).pipe(
       Effect.ignore,
     )),
-  );
-}
-
-function staircaseMovementTarget(
-  position: BeatGamePosition,
-  target: BeatGameBlockPosition,
-): BeatGamePosition {
-  const currentX = Math.floor(position.x);
-  const currentZ = Math.floor(position.z);
-  if (target.x !== currentX && target.z === currentZ) {
-    return {
-      ...target,
-      x: target.x + 0.5,
-      z: position.z,
-    };
-  }
-  if (target.z !== currentZ && target.x === currentX) {
-    return {
-      ...target,
-      x: position.x,
-      z: target.z + 0.5,
-    };
-  }
-  return {
-    ...target,
-    x: target.x + 0.5,
-    z: target.z + 0.5,
-  };
-}
-
-function advanceToStaircaseCenter(
-  driver: BeatGameDriver,
-  target: BeatGameBlockPosition,
-  attempts: number,
-  enteredTarget: boolean,
-): Effect.Effect<void, BeatGameDriverError> {
-  return driver.observe.pipe(
-    Effect.flatMap((observation) => {
-    const position = observation.player.position;
-    if (position.dimension !== target.dimension) {
-      return Effect.fail(behaviorError(
-        driver,
-        "Changed dimensions while walking a staircase step",
-      ));
-    }
-    if (position.y < target.y - 0.5) {
-      return Effect.fail(behaviorError(
-        driver,
-        "Fell below the next staircase tread",
-      ));
-    }
-    const insideTarget = Math.floor(position.x) === target.x
-      && Math.floor(position.z) === target.z;
-    const centerX = target.x + 0.5;
-    const centerZ = target.z + 0.5;
-    if (
-      insideTarget
-      && Math.max(
-        Math.abs(position.x - centerX),
-        Math.abs(position.z - centerZ),
-      ) <= 0.3
-    ) {
-      return Effect.void;
-    }
-    if (enteredTarget && !insideTarget) {
-      return Effect.fail(behaviorError(
-        driver,
-        "Walked past the next staircase tread",
-      ));
-    }
-    if (attempts <= 1) {
-      return Effect.fail(behaviorError(
-        driver,
-        "Could not walk onto the next staircase tread",
-      ));
-    }
-    return Effect.sleep(10).pipe(
-      Effect.zipRight(advanceToStaircaseCenter(
-        driver,
-        target,
-        attempts - 1,
-        enteredTarget || insideTarget,
-      )),
-    );
-  }),
   );
 }
 
@@ -3399,6 +3617,41 @@ function waitForStaircaseLanding(
           target,
           attempts - 1,
           delayMs,
+        )),
+      );
+    }),
+  );
+}
+
+function waitForVerticalSettlement(
+  driver: BeatGameDriver,
+  previousY?: number,
+  stableObservations = 0,
+  attempts = 40,
+): Effect.Effect<BeatGameObservation, BeatGameDriverError> {
+  return driver.observe.pipe(
+    Effect.flatMap((observation) => {
+      const position = observation.player.position;
+      const yChanged = previousY !== undefined
+        && Math.abs(position.y - previousY) > 0.05;
+      const nextStableObservations = yChanged
+        ? 0
+        : stableObservations + 1;
+      if (nextStableObservations >= 2) {
+        return Effect.succeed(observation);
+      }
+      if (attempts <= 1) {
+        return Effect.fail(behaviorError(
+          driver,
+          "Did not settle before excavating the staircase",
+        ));
+      }
+      return Effect.sleep(50).pipe(
+        Effect.zipRight(waitForVerticalSettlement(
+          driver,
+          position.y,
+          nextStableObservations,
+          attempts - 1,
         )),
       );
     }),
@@ -4068,6 +4321,13 @@ function positionKey(position: BeatGameBlockPosition): string {
 function positiveInteger(value: number, name: string): number {
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new RangeError(`${name} must be a positive safe integer`);
+  }
+  return value;
+}
+
+function positiveFiniteNumber(value: number, name: string): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new RangeError(`${name} must be a positive finite number`);
   }
   return value;
 }

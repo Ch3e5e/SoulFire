@@ -26,7 +26,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
-import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.phys.BlockHitResult;
 
 @Slf4j
 @RequiredArgsConstructor
@@ -59,13 +59,16 @@ public final class InteractBlockAction implements WorldAction {
     }
 
     var hand = InteractionHand.MAIN_HAND;
-    if (connection.minecraft().gameMode.useItemOn(clientEntity, hand, clientEntity.level().clipIncludingBorder(new ClipContext(
-      clientEntity.getEyePosition(),
-      interactTarget,
-      ClipContext.Block.COLLIDER,
-      ClipContext.Fluid.NONE,
-      clientEntity
-    ))) instanceof InteractionResult.Success success && success.swingSource() == InteractionResult.SwingSource.CLIENT) {
+    if (connection.minecraft().gameMode.useItemOn(
+      clientEntity,
+      hand,
+      new BlockHitResult(
+        interactTarget,
+        interactFace.toDirection(),
+        blockPosition.toBlockPos(),
+        false
+      )
+    ) instanceof InteractionResult.Success success && success.swingSource() == InteractionResult.SwingSource.CLIENT) {
       clientEntity.swing(hand);
     }
   }
