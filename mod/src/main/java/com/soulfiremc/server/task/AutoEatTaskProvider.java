@@ -23,6 +23,7 @@ import com.soulfiremc.grpc.generated.AutoEatTaskResult;
 import com.soulfiremc.grpc.generated.BotTaskProgress;
 import com.soulfiremc.server.api.BotTaskExecution;
 import com.soulfiremc.server.api.BotTaskProvider;
+import com.soulfiremc.server.bot.BotConnection;
 import com.soulfiremc.server.bot.CompletableControlTask;
 import com.soulfiremc.server.bot.ControlPriority;
 import com.soulfiremc.server.bot.ControlResource;
@@ -33,6 +34,7 @@ import com.soulfiremc.server.util.SFItemHelpers;
 import io.grpc.Status;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
 import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.inventory.InventoryMenu;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -337,7 +339,15 @@ public final class AutoEatTaskProvider
       steps.add(ControlTask.action(player::closeContainer));
       steps.add(ControlTask.waitMillis(50L));
     }
-    steps.add(ControlTask.action(() -> gameMode.useItem(player, hand)));
+    steps.add(ControlTask.action(() ->
+      bot.minecraft().options.keyUse.setDown(true)));
+    steps.add(ControlTask.action(() -> {
+      if (!(gameMode.useItem(player, hand) instanceof InteractionResult.Success)) {
+        throw new IllegalStateException(
+          "The selected meal could not be used"
+        );
+      }
+    }));
     steps.add(ControlTask.waitMillis(
       consumeMillis + CONSUMPTION_CONFIRMATION_GRACE_MILLIS
     ));
@@ -378,12 +388,87 @@ public final class AutoEatTaskProvider
       steps.add(ControlTask.action(() ->
         player.getInventory().setSelectedSlot(originalHotbar)));
     }
-    return ControlTask.sequence(
-      "SDK auto eat meal",
-      ControlPriority.HIGH,
-      EAT_RESOURCES,
-      steps
+    return new HeldUseControlTask(
+      bot,
+      ControlTask.sequence(
+        "SDK auto eat meal",
+        ControlPriority.HIGH,
+        EAT_RESOURCES,
+        steps
+      )
     );
+  }
+
+  private static final class HeldUseControlTask implements ControlTask {
+    private final BotConnection bot;
+    private final ControlTask delegate;
+    private boolean cleanedUp;
+
+    private HeldUseControlTask(
+      BotConnection bot,
+      ControlTask delegate
+    ) {
+      this.bot = bot;
+      this.delegate = delegate;
+    }
+
+    @Override
+    public void tick() {
+      try {
+        delegate.tick();
+      } catch (RuntimeException | Error cause) {
+        cleanUp();
+        throw cause;
+      }
+      if (delegate.isDone()) {
+        cleanUp();
+      }
+    }
+
+    @Override
+    public boolean isDone() {
+      return delegate.isDone();
+    }
+
+    @Override
+    public ControlPriority priority() {
+      return delegate.priority();
+    }
+
+    @Override
+    public Set<ControlResource> resources() {
+      return delegate.resources();
+    }
+
+    @Override
+    public void onStopped(
+      ControlStopReason reason,
+      @Nullable Throwable cause
+    ) {
+      try {
+        delegate.onStopped(reason, cause);
+      } finally {
+        cleanUp();
+      }
+    }
+
+    @Override
+    public @Nullable String description() {
+      return delegate.description();
+    }
+
+    private void cleanUp() {
+      if (cleanedUp) {
+        return;
+      }
+      cleanedUp = true;
+      bot.minecraft().options.keyUse.setDown(false);
+      var player = bot.minecraft().player;
+      var gameMode = bot.minecraft().gameMode;
+      if (player != null && gameMode != null && player.isUsingItem()) {
+        gameMode.releaseUsingItem(player);
+      }
+    }
   }
 
   private static void click(BotTaskContext context, int slot) {

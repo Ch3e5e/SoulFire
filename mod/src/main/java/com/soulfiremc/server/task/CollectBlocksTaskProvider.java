@@ -29,6 +29,7 @@ import com.soulfiremc.server.bot.ControlResource;
 import com.soulfiremc.server.bot.ControlStopReason;
 import com.soulfiremc.server.bot.ControlTask;
 import com.soulfiremc.server.pathfinding.SFVec3i;
+import com.soulfiremc.server.pathfinding.execution.BlockBreakRejectedException;
 import com.soulfiremc.server.pathfinding.execution.PathExecutor;
 import com.soulfiremc.server.pathfinding.execution.UnreachableGoalException;
 import com.soulfiremc.server.pathfinding.goals.BreakBlockPosGoal;
@@ -194,6 +195,19 @@ public final class CollectBlocksTaskProvider
       }
       if (!path.isDone()) {
         path.tick();
+        var confirmedBreaks = confirmedBreaks(path);
+        var remaining = targetCount - blocksBroken;
+        if (confirmedBreaks >= remaining) {
+          blocksBroken = targetCount;
+          activeTargets = Set.of();
+          activePath = null;
+          path.completeEarly();
+          complete(
+            CollectBlocksCompletionReason
+              .COLLECT_BLOCKS_COMPLETION_REASON_TARGET_REACHED
+          );
+          return;
+        }
         var pathProgress = path.progress();
         context.reportProgress(progress(pathProgress.planning()
           ? "Planning collection route"
@@ -204,9 +218,7 @@ public final class CollectBlocksTaskProvider
       try {
         path.completion().join();
         path.onStopped(ControlStopReason.COMPLETED, null);
-        var confirmedBreaks = path.completedBlockBreaks().stream()
-          .filter(activeTargets::contains)
-          .count();
+        var confirmedBreaks = confirmedBreaks(path);
         activeTargets = Set.of();
         if (confirmedBreaks == 0) {
           context.reportProgress(progress(
@@ -232,8 +244,21 @@ public final class CollectBlocksTaskProvider
           );
           return;
         }
+        if (cause instanceof BlockBreakRejectedException) {
+          complete(
+            CollectBlocksCompletionReason
+              .COLLECT_BLOCKS_COMPLETION_REASON_NO_REACHABLE_BLOCKS
+          );
+          return;
+        }
         result.completeExceptionally(cause);
       }
+    }
+
+    private long confirmedBreaks(PathExecutor path) {
+      return path.completedBlockBreaks().stream()
+        .filter(activeTargets::contains)
+        .count();
     }
 
     private List<SFVec3i> findCandidates() {

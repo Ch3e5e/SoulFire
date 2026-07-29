@@ -128,6 +128,7 @@ export class FakeBeatGameDriver implements BeatGameDriver {
   public readonly entityQueries: BeatGameQueryEntities[] = [];
   public readonly tasks: BeatGameTask[] = [];
   public readonly taskExecutions: BeatGameTaskExecutionOptions[] = [];
+  public readonly taskPolicies: BeatGamePathPolicy[] = [];
   public readonly actions: BeatGamePrimitiveAction[] = [];
   public readonly paths: {
     readonly position: BeatGamePosition;
@@ -220,11 +221,12 @@ export class FakeBeatGameDriver implements BeatGameDriver {
 
   public readonly runTask: BeatGameDriver["runTask"] = (
     task,
-    _policy,
+    policy,
     execution = {},
   ) =>
     Effect.suspend(() => {
       this.taskExecutions.push(execution);
+      this.taskPolicies.push(policy);
       return this.taskResolver(task, execution);
     });
 

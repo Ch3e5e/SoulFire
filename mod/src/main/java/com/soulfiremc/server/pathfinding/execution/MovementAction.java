@@ -37,7 +37,6 @@ import java.util.concurrent.ThreadLocalRandom;
 @RequiredArgsConstructor
 public final class MovementAction implements WorldAction {
   private static final double STEP_HEIGHT = 0.6;
-  private static final double PRECISE_APPROACH_DISTANCE = 0.75;
   @Getter
   private final SFVec3i blockPosition;
   // Corner jumps normally require you to stand closer to the block to jump
@@ -110,7 +109,7 @@ public final class MovementAction implements WorldAction {
         ThreadLocalRandom.current().nextFloat((float) pathConstraint.xRotJitter().min(), (float) pathConstraint.xRotJitter().max());
     }
 
-    connection.rotationControl().lookAt(targetMiddleBlock, yRot, xRot);
+    connection.rotationControl().lookHorizontallyAt(targetMiddleBlock, yRot, xRot);
 
     var botPosition = clientEntity.position();
     var needsJump = targetMiddleBlock.y - STEP_HEIGHT > botPosition.y;
@@ -145,23 +144,7 @@ public final class MovementAction implements WorldAction {
       controlState.down(movementInput.backward());
       controlState.left(movementInput.left());
       controlState.right(movementInput.right());
-      if (shouldUsePreciseApproach(
-        botPosition,
-        targetMiddleBlock,
-        movementInput.horizontalDistance()
-      )) {
-        controlState.shift(true);
-      }
     }
-  }
-
-  static boolean shouldUsePreciseApproach(
-    Vec3 currentPosition,
-    Vec3 targetPosition,
-    double horizontalDistance
-  ) {
-    return horizontalDistance < PRECISE_APPROACH_DISTANCE
-      && targetPosition.y >= currentPosition.y - 0.25;
   }
 
   static MovementInput movementInputFor(

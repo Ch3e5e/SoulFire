@@ -37,6 +37,7 @@ import com.soulfiremc.server.api.event.bot.BotPostTickEvent;
 import com.soulfiremc.server.api.event.bot.ChatMessageReceiveEvent;
 import com.soulfiremc.server.bot.BotConnection;
 import com.soulfiremc.server.bot.BotControlLeaseManager;
+import com.soulfiremc.server.bot.BotInteractionSupport;
 import com.soulfiremc.server.bot.CompletableControlTask;
 import com.soulfiremc.server.bot.ControlResource;
 import com.soulfiremc.server.bot.ControlStopReason;
@@ -2037,10 +2038,10 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
           direction.getStepY() * 0.5,
           direction.getStepZ() * 0.5
         );
-        var wasSneaking = player.isShiftKeyDown();
-        player.setShiftKeyDown(request.getSneaking());
-        try {
-          var result = gameMode.useItemOn(
+        var result = BotInteractionSupport.withSneaking(
+          player,
+          request.getSneaking(),
+          () -> gameMode.useItemOn(
             player,
             hand,
             new BlockHitResult(
@@ -2049,20 +2050,18 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
               position,
               false
             )
-          );
-          if (!(result instanceof InteractionResult.Success success)) {
-            throw Status.FAILED_PRECONDITION
-              .withDescription("The target block rejected the interaction")
-              .asRuntimeException();
-          }
-          if (
-            success.swingSource()
-              == InteractionResult.SwingSource.CLIENT
-          ) {
-            player.swing(hand);
-          }
-        } finally {
-          player.setShiftKeyDown(wasSneaking);
+          )
+        );
+        if (!(result instanceof InteractionResult.Success success)) {
+          throw Status.FAILED_PRECONDITION
+            .withDescription("The target block rejected the interaction")
+            .asRuntimeException();
+        }
+        if (
+          success.swingSource()
+            == InteractionResult.SwingSource.CLIENT
+        ) {
+          player.swing(hand);
         }
       }),
       DEFAULT_ACTION_TIMEOUT,
@@ -2241,20 +2240,23 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
             .withDescription("Target entity is outside the bot's interaction reach")
             .asRuntimeException();
         }
-        var wasSneaking = player.isShiftKeyDown();
-        player.setShiftKeyDown(request.getSneaking());
-        try {
-          var result = gameMode.interact(player, target, new EntityHitResult(target), hand);
-          if (!(result instanceof InteractionResult.Success success)) {
-            throw Status.FAILED_PRECONDITION
-              .withDescription("The target entity rejected the interaction")
-              .asRuntimeException();
-          }
-          if (success.swingSource() == InteractionResult.SwingSource.CLIENT) {
-            player.swing(hand);
-          }
-        } finally {
-          player.setShiftKeyDown(wasSneaking);
+        var result = BotInteractionSupport.withSneaking(
+          player,
+          request.getSneaking(),
+          () -> gameMode.interact(
+            player,
+            target,
+            new EntityHitResult(target),
+            hand
+          )
+        );
+        if (!(result instanceof InteractionResult.Success success)) {
+          throw Status.FAILED_PRECONDITION
+            .withDescription("The target entity rejected the interaction")
+            .asRuntimeException();
+        }
+        if (success.swingSource() == InteractionResult.SwingSource.CLIENT) {
+          player.swing(hand);
         }
       }),
       DEFAULT_ACTION_TIMEOUT,

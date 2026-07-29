@@ -30,6 +30,7 @@ import com.soulfiremc.grpc.generated.BuildTaskResult;
 import com.soulfiremc.grpc.generated.WorldPosition;
 import com.soulfiremc.server.api.BotTaskExecution;
 import com.soulfiremc.server.api.BotTaskProvider;
+import com.soulfiremc.server.bot.BotInteractionSupport;
 import com.soulfiremc.server.bot.ControlPriority;
 import com.soulfiremc.server.bot.ControlResource;
 import com.soulfiremc.server.bot.ControlStopReason;
@@ -642,10 +643,14 @@ public final class BuildTaskProvider implements BotTaskProvider<BuildTask> {
         selectedSupport.position(),
         false
       );
-      var interaction = gameMode.useItemOn(
+      var interaction = BotInteractionSupport.withSneaking(
         player,
-        InteractionHand.MAIN_HAND,
-        hit
+        true,
+        () -> gameMode.useItemOn(
+          player,
+          InteractionHand.MAIN_HAND,
+          hit
+        )
       );
       if (!(interaction instanceof InteractionResult.Success success)) {
         fail(

@@ -33,23 +33,44 @@ export const RAW_FOOD_TO_COOKED = {
   "minecraft:potato": "minecraft:baked_potato",
 } as const;
 
+export const LOG_ITEM_IDS = [
+  "minecraft:oak_log",
+  "minecraft:spruce_log",
+  "minecraft:birch_log",
+  "minecraft:jungle_log",
+  "minecraft:acacia_log",
+  "minecraft:dark_oak_log",
+  "minecraft:mangrove_log",
+  "minecraft:cherry_log",
+  "minecraft:pale_oak_log",
+  "minecraft:crimson_stem",
+  "minecraft:warped_stem",
+] as const;
+
+export const PLANK_ITEM_IDS = [
+  "minecraft:oak_planks",
+  "minecraft:spruce_planks",
+  "minecraft:birch_planks",
+  "minecraft:jungle_planks",
+  "minecraft:acacia_planks",
+  "minecraft:dark_oak_planks",
+  "minecraft:mangrove_planks",
+  "minecraft:cherry_planks",
+  "minecraft:pale_oak_planks",
+  "minecraft:crimson_planks",
+  "minecraft:warped_planks",
+] as const;
+
 const REQUIREMENTS: Readonly<
   Record<BeatGamePhase, readonly BeatGameRequirementDefinition[]>
 > = {
   [BeatGamePhase.PREPARE_OVERWORLD]: [
-    itemRequirement("logs", [
-      "minecraft:oak_log",
-      "minecraft:spruce_log",
-      "minecraft:birch_log",
-      "minecraft:jungle_log",
-      "minecraft:acacia_log",
-      "minecraft:dark_oak_log",
-      "minecraft:mangrove_log",
-      "minecraft:cherry_log",
-      "minecraft:pale_oak_log",
-      "minecraft:crimson_stem",
-      "minecraft:warped_stem",
-    ], ({ targetLogCount }) => targetLogCount, 120),
+    itemRequirement(
+      "logs",
+      LOG_ITEM_IDS,
+      ({ targetLogCount }) => targetLogCount,
+      120,
+    ),
     itemRequirement(
       "cobblestone",
       ["minecraft:cobblestone"],
@@ -194,6 +215,8 @@ export function requirementsForPhase(
 ): readonly BeatGameItemRequirement[] {
   const definitions = phase === BeatGamePhase.ENTER_NETHER
     ? portalRequirements(inventory, strategy)
+    : phase === BeatGamePhase.PREPARE_OVERWORLD
+    ? prepareOverworldRequirements(inventory)
     : REQUIREMENTS[phase];
   return definitions
     .map((definition) =>
@@ -202,6 +225,47 @@ export function requirementsForPhase(
     .sort((left, right) =>
       right.priority - left.priority || left.key.localeCompare(right.key)
     );
+}
+
+function prepareOverworldRequirements(
+  inventory: BeatGameInventory,
+): readonly BeatGameRequirementDefinition[] {
+  const definitions = REQUIREMENTS[BeatGamePhase.PREPARE_OVERWORLD];
+  const logTarget = overworldLogTarget(inventory);
+  return definitions.map((definition) =>
+    definition.key === "logs"
+      ? {
+        ...definition,
+        target: ({ targetLogCount }) => Math.min(targetLogCount, logTarget),
+      }
+      : definition
+  );
+}
+
+function overworldLogTarget(inventory: BeatGameInventory): number {
+  if ((inventory.counts["minecraft:shield"] ?? 0) > 0) {
+    return 0;
+  }
+  if (
+    (inventory.counts["minecraft:raw_iron"] ?? 0) > 0
+    || (inventory.counts["minecraft:iron_ingot"] ?? 0) > 0
+  ) {
+    return 2;
+  }
+  const hasCookedFood = COOKED_FOOD_ITEM_IDS.some((itemId) =>
+    (inventory.counts[itemId] ?? 0) > 0
+  );
+  if (hasCookedFood) {
+    return 3;
+  }
+  const hasMiningPickaxe = [
+    "minecraft:wooden_pickaxe",
+    "minecraft:stone_pickaxe",
+    "minecraft:iron_pickaxe",
+    "minecraft:diamond_pickaxe",
+    "minecraft:netherite_pickaxe",
+  ].some((itemId) => (inventory.counts[itemId] ?? 0) > 0);
+  return hasMiningPickaxe ? 4 : Number.POSITIVE_INFINITY;
 }
 
 function portalRequirements(

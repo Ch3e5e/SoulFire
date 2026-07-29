@@ -94,6 +94,8 @@ import type {
   BeatGameStrategyHooks,
 } from "./policy.js";
 import {
+  LOG_ITEM_IDS,
+  PLANK_ITEM_IDS,
   RAW_FOOD_TO_COOKED,
   requirementCount,
 } from "./requirements.js";
@@ -1331,27 +1333,22 @@ function satisfyRequirement(
           "minecraft:furnace",
         ).pipe(
           Effect.flatMap((station) =>
-            smelt(state.driver, {
-              input: { itemIds: ["minecraft:raw_iron"] },
-              count: missing,
-              fuel: {
-                itemIds: [
-                  "minecraft:coal",
-                  "minecraft:charcoal",
-                  "minecraft:oak_log",
-                  "minecraft:spruce_log",
-                  "minecraft:birch_log",
-                  "minecraft:jungle_log",
-                  "minecraft:acacia_log",
-                  "minecraft:dark_oak_log",
-                  "minecraft:mangrove_log",
-                  "minecraft:cherry_log",
-                  "minecraft:pale_oak_log",
-                ],
-              },
+            ensureEfficientFurnaceFuel(
+              state,
+              observation,
               station,
-              path: state.strategy.path,
-            })
+              missing,
+            ).pipe(
+              Effect.zipRight(smelt(state.driver, {
+                input: { itemIds: ["minecraft:raw_iron"] },
+                count: missing,
+                fuel: {
+                  itemIds: ["minecraft:coal", "minecraft:charcoal"],
+                },
+                station,
+                path: state.strategy.path,
+              })),
+            )
           ),
         );
       }
@@ -1547,38 +1544,52 @@ function satisfyFoodRequirement(
     "minecraft:furnace",
   ).pipe(
     Effect.flatMap((station) =>
-      smelt(state.driver, {
-        input: { itemIds: [batch.rawItemId] },
-        count: Math.min(batch.count, missingCookedFood),
-        fuel: {
-          itemIds: [
-            "minecraft:coal",
-            "minecraft:charcoal",
-            "minecraft:oak_log",
-            "minecraft:spruce_log",
-            "minecraft:birch_log",
-            "minecraft:jungle_log",
-            "minecraft:acacia_log",
-            "minecraft:dark_oak_log",
-            "minecraft:mangrove_log",
-            "minecraft:cherry_log",
-            "minecraft:pale_oak_log",
-            "minecraft:oak_planks",
-            "minecraft:spruce_planks",
-            "minecraft:birch_planks",
-            "minecraft:jungle_planks",
-            "minecraft:acacia_planks",
-            "minecraft:dark_oak_planks",
-            "minecraft:mangrove_planks",
-            "minecraft:cherry_planks",
-            "minecraft:pale_oak_planks",
-          ],
-        },
+      ensureEfficientFurnaceFuel(
+        state,
+        observation,
         station,
-        path: state.strategy.path,
-      })
+        Math.min(batch.count, missingCookedFood),
+      ).pipe(
+        Effect.zipRight(smelt(state.driver, {
+          input: { itemIds: [batch.rawItemId] },
+          count: Math.min(batch.count, missingCookedFood),
+          fuel: {
+            itemIds: ["minecraft:coal", "minecraft:charcoal"],
+          },
+          station,
+          path: state.strategy.path,
+        })),
+      )
     ),
   );
+}
+
+function ensureEfficientFurnaceFuel(
+  state: RunState,
+  observation: BeatGameObservation,
+  station: BeatGameBlockPosition,
+  outputCount: number,
+): Effect.Effect<void, BeatGameDriverError> {
+  const requiredFuel = Math.ceil(outputCount / 8);
+  const availableFuel = [
+    "minecraft:coal",
+    "minecraft:charcoal",
+  ].reduce(
+    (count, itemId) =>
+      count + (observation.inventory.counts[itemId] ?? 0),
+    0,
+  );
+  const missingFuel = Math.max(0, requiredFuel - availableFuel);
+  if (missingFuel === 0) {
+    return Effect.void;
+  }
+  return smelt(state.driver, {
+    input: { itemIds: LOG_ITEM_IDS },
+    count: missingFuel,
+    fuel: { itemIds: [...PLANK_ITEM_IDS, ...LOG_ITEM_IDS] },
+    station,
+    path: state.strategy.path,
+  });
 }
 
 function ensureMiningPickaxe(
@@ -1617,12 +1628,16 @@ function collectBlocksOrExplore(
       ...state.strategy.path,
       allowPlacing: false,
     };
+    const explorationPath = {
+      ...resourcePath,
+      allowMining: false,
+    };
     while (countItems(current) < targetCount) {
       const beforeAttempt = countItems(current);
       yield* collectBlocks(state.driver, {
         blockIds: options.blockIds,
         ...(options.tags === undefined ? {} : { tags: options.tags }),
-        count: 1,
+        count: targetCount - beforeAttempt,
         searchRadius: state.strategy.blockSearchRadius,
         path: resourcePath,
       });
@@ -1642,7 +1657,7 @@ function collectBlocksOrExplore(
             options.purpose,
             current.player.position,
           ),
-          path: resourcePath,
+          path: explorationPath,
         });
         return;
       }
@@ -2086,14 +2101,29 @@ function ensureWorkstation(
   BeatGameDriverError
 > {
   return Effect.gen(function* () {
-    const existing = (yield* state.driver.queryBlocks({
+    const existing = yield* state.driver.queryBlocks({
       center: observation.player.position,
       radius: WORKSTATION_REUSE_RADIUS,
       selector: { blockIds: [blockId] },
-      maximumResults: 1,
-    }))[0];
-    if (existing !== undefined) {
-      return existing.position;
+      maximumResults: 8,
+    });
+    for (const candidate of existing) {
+      const approached = yield* state.driver.pathfind(
+        {
+          x: candidate.position.x + 0.5,
+          y: candidate.position.y,
+          z: candidate.position.z + 0.5,
+          dimension: candidate.position.dimension,
+        },
+        3,
+        {
+          ...state.strategy.path,
+          allowPlacing: false,
+        },
+      ).pipe(Effect.either);
+      if (approached._tag === "Right") {
+        return candidate.position;
+      }
     }
     const craftingTable = blockId === "minecraft:furnace"
       ? yield* ensureWorkstation(
@@ -2102,11 +2132,12 @@ function ensureWorkstation(
         "minecraft:crafting_table",
       )
       : undefined;
+    const current = yield* state.driver.observe;
     const targets = yield* findWorkstationTargets(
       state.driver,
-      observation.player.position,
+      current.player.position,
     );
-    if ((observation.inventory.counts[blockId] ?? 0) === 0) {
+    if ((current.inventory.counts[blockId] ?? 0) === 0) {
       yield* craftItem(state.driver, {
         resultItemId: blockId,
         count: 1,

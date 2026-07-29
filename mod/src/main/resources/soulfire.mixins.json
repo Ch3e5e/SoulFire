@@ -63,6 +63,8 @@
     "headless.sound.MixinSoundEngineExecutor",
     "headless.sound.MixinSoundManager",
     "soulfire.ClientRecipeBookAccessor",
+    "soulfire.BlockStatePredictionHandlerAccessor",
+    "soulfire.ClientLevelAccessor",
     "soulfire.MixinMinecraft",
     "soulfire.api.MixinKeyboardInput",
     "soulfire.api.event.MixinChatComponent",

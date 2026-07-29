@@ -17,6 +17,8 @@
  */
 package com.soulfiremc.server.pathfinding.execution;
 
+import com.soulfiremc.mod.mixin.soulfire.BlockStatePredictionHandlerAccessor;
+import com.soulfiremc.mod.mixin.soulfire.ClientLevelAccessor;
 import com.soulfiremc.server.bot.BotConnection;
 import com.soulfiremc.server.pathfinding.SFVec3i;
 import com.soulfiremc.server.pathfinding.cost.Costs;
@@ -37,7 +39,7 @@ public final class BlockBreakAction implements WorldAction {
   private final BlockFace blockBreakSideHint;
   private boolean putInHand;
   private boolean breakAttempted;
-  private int remainingTicks = -1;
+  private boolean predictedBroken;
   private int totalTicks = -1;
 
   public BlockBreakAction(MovementMiningCost movementMiningCost) {
@@ -47,9 +49,29 @@ public final class BlockBreakAction implements WorldAction {
   @Override
   public boolean isCompleted(BotConnection connection) {
     var level = connection.minecraft().level;
-    var blockType = level.getBlockState(blockPosition.toBlockPos()).getBlock();
+    var position = blockPosition.toBlockPos();
+    var blockType = level.getBlockState(position).getBlock();
+    if (!SFBlockHelpers.isEmptyBlock(blockType)) {
+      return false;
+    }
+    if (!breakAttempted) {
+      return true;
+    }
 
-    return SFBlockHelpers.isEmptyBlock(blockType);
+    var pendingPrediction = hasPendingPrediction(connection);
+    predictedBroken |= pendingPrediction;
+    return !pendingPrediction;
+  }
+
+  public boolean isRejected(BotConnection connection) {
+    if (!breakAttempted || !predictedBroken || hasPendingPrediction(connection)) {
+      return false;
+    }
+
+    var blockType = connection.minecraft().level
+      .getBlockState(blockPosition.toBlockPos())
+      .getBlock();
+    return !SFBlockHelpers.isEmptyBlock(blockType);
   }
 
   @Override
@@ -82,24 +104,48 @@ public final class BlockBreakAction implements WorldAction {
       log.warn("Block at {} is not loaded!", blockPosition);
       return;
     }
-
-    if (remainingTicks == -1) {
-      remainingTicks = totalTicks =
-        Costs.getRequiredMiningTicks(
-            clientEntity,
-            clientEntity.getInventory().getSelectedItem(),
-            optionalBlock)
-          .ticks();
+    if (SFBlockHelpers.isEmptyBlock(optionalBlock.getBlock())) {
+      predictedBroken |= hasPendingPrediction(connection);
+      return;
     }
 
-    breakAttempted = true;
-    if (connection.minecraft().gameMode.continueDestroyBlock(blockPosition.toBlockPos(), blockBreakSideHint.toDirection())) {
-      connection.minecraft().player.swing(InteractionHand.MAIN_HAND);
+    if (totalTicks == -1) {
+      totalTicks = Costs.getRequiredMiningTicks(
+          clientEntity,
+          clientEntity.getInventory().getSelectedItem(),
+          optionalBlock)
+        .ticks();
+    }
+
+    var gameMode = connection.minecraft().gameMode;
+    var target = blockPosition.toBlockPos();
+    var direction = blockBreakSideHint.toDirection();
+    if (!breakAttempted) {
+      if (gameMode.startDestroyBlock(target, direction)) {
+        breakAttempted = true;
+        clientEntity.swing(InteractionHand.MAIN_HAND);
+      }
+      return;
+    }
+
+    if (gameMode.continueDestroyBlock(target, direction)) {
+      predictedBroken |=
+        SFBlockHelpers.isEmptyBlock(level.getBlockState(target).getBlock());
+      clientEntity.swing(InteractionHand.MAIN_HAND);
     }
   }
 
   public boolean breakAttempted() {
     return breakAttempted;
+  }
+
+  private boolean hasPendingPrediction(BotConnection connection) {
+    var levelAccessor = (ClientLevelAccessor) connection.minecraft().level;
+    var predictionHandler =
+      levelAccessor.soulfire$getBlockStatePredictionHandler();
+    var accessor = (BlockStatePredictionHandlerAccessor) predictionHandler;
+    return accessor.soulfire$getServerVerifiedStates()
+      .containsKey(blockPosition.toBlockPos().asLong());
   }
 
   @Override

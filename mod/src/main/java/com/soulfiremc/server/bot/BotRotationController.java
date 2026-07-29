@@ -50,7 +50,15 @@ public final class BotRotationController {
   }
 
   public void lookHorizontallyAt(Vec3 target) {
-    request = new RotationRequest(new HorizontalLookAtTarget(target), DEFAULT_MAX_YAW_STEP, DEFAULT_MAX_PITCH_STEP, DEFAULT_TOLERANCE);
+    lookHorizontallyAt(target, 0.0F, 0.0F);
+  }
+
+  public void lookHorizontallyAt(Vec3 target, float yawOffset, float pitchOffset) {
+    request = new RotationRequest(
+      new HorizontalLookAtTarget(target, yawOffset, pitchOffset),
+      DEFAULT_MAX_YAW_STEP,
+      DEFAULT_MAX_PITCH_STEP,
+      DEFAULT_TOLERANCE);
     requestRevision++;
   }
 
@@ -207,11 +215,13 @@ public final class BotRotationController {
     }
   }
 
-  private record HorizontalLookAtTarget(Vec3 target) implements RotationTarget {
+  private record HorizontalLookAtTarget(Vec3 target, float yawOffset, float pitchOffset) implements RotationTarget {
     @Override
     public RotationAngles resolve(LocalPlayer player) {
       var rotation = calculateLookAtRotation(player.getEyePosition(), target);
-      return new RotationAngles(rotation.yaw(), 0.0F);
+      return new RotationAngles(
+        normalizeYaw(rotation.yaw() + yawOffset),
+        Mth.clamp(pitchOffset, -90.0F, 90.0F));
     }
   }
 

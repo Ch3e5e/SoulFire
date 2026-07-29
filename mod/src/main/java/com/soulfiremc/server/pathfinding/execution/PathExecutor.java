@@ -142,6 +142,18 @@ public final class PathExecutor implements ControlTask {
     return Set.copyOf(completedBlockBreaks);
   }
 
+  public void completeEarly() {
+    if (isDone()) {
+      return;
+    }
+
+    awaitingPath = false;
+    stopActiveBlockBreak();
+    worldActionQueue.clear();
+    connection.controlState().resetAll();
+    pathCompletionFuture.complete(null);
+  }
+
   @Override
   public void onStarted() {
     submitForPathCalculation(true);
@@ -168,6 +180,7 @@ public final class PathExecutor implements ControlTask {
     }
 
     awaitingPath = true;
+    stopActiveBlockBreak();
     worldActionQueue.clear();
     connection.controlState().resetAll();
 
@@ -289,6 +302,16 @@ public final class PathExecutor implements ControlTask {
       return;
     }
 
+    if (
+      worldAction instanceof BlockBreakAction blockBreakAction
+        && blockBreakAction.isRejected(connection)
+    ) {
+      pathCompletionFuture.completeExceptionally(
+        new BlockBreakRejectedException(blockBreakAction.blockPosition())
+      );
+      return;
+    }
+
     if (worldAction.isCompleted(connection)) {
       if (
         worldAction instanceof BlockBreakAction blockBreakAction
@@ -327,6 +350,7 @@ public final class PathExecutor implements ControlTask {
 
   @Override
   public void onSuspended() {
+    stopActiveBlockBreak();
     connection.controlState().resetAll();
   }
 
@@ -345,8 +369,21 @@ public final class PathExecutor implements ControlTask {
     }
 
     awaitingPath = false;
+    stopActiveBlockBreak();
     worldActionQueue.clear();
     connection.controlState().resetAll();
+  }
+
+  private void stopActiveBlockBreak() {
+    if (
+      worldActionQueue.peek() instanceof BlockBreakAction blockBreakAction
+        && blockBreakAction.breakAttempted()
+    ) {
+      var gameMode = connection.minecraft().gameMode;
+      if (gameMode != null) {
+        gameMode.stopDestroyBlock();
+      }
+    }
   }
 
   public void recalculatePath() {

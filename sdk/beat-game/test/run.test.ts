@@ -41,7 +41,7 @@ describe("beat-game run lifecycle", () => {
       type: "bot-died",
       observedAt: "2026-01-01T00:00:01.000Z",
       message: "Bot was shot by Skeleton",
-    });
+    } as const);
     const store = new InMemoryBeatGameCheckpointStore();
     await Effect.runPromise(store.save(checkpoint(
       BeatGamePhase.FIGHT_ENDER_DRAGON,
@@ -201,6 +201,43 @@ describe("beat-game run lifecycle", () => {
       /^beat-game:[0-9a-f-]{36}:[0-9a-f]{16}:2:[0-9a-f]{16}$/u,
     );
     expect(keys[0]).not.toBe(keys[1]);
+  });
+
+  it("explores for resources without mining through protected terrain", async () => {
+    const driver = new FakeBeatGameDriver();
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (!driver.tasks.some((task) => task.type === "explore")) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    const collectionIndex = driver.tasks.findIndex((task) =>
+      task.type === "collect-blocks"
+    );
+    const explorationIndex = driver.tasks.findIndex((task) =>
+      task.type === "explore"
+    );
+    expect(collectionIndex).toBeGreaterThanOrEqual(0);
+    expect(explorationIndex).toBeGreaterThan(collectionIndex);
+    expect(driver.taskPolicies[collectionIndex]).toMatchObject({
+      allowMining: true,
+      allowPlacing: false,
+    });
+    expect(driver.taskPolicies[explorationIndex]).toMatchObject({
+      allowMining: false,
+      allowPlacing: false,
+    });
   });
 
   it("honors a compact triangulation baseline", async () => {
@@ -722,6 +759,7 @@ describe("beat-game run lifecycle", () => {
         }
         if (task.type === "collect-blocks") {
           expect(task.blockIds).toEqual(["minecraft:stone"]);
+          expect(task.count).toBe(20);
           expect(
             driver.currentObservation.inventory.counts[
               "minecraft:wooden_pickaxe"
@@ -757,6 +795,204 @@ describe("beat-game run lifecycle", () => {
     expect(driver.blockQueries).toContainEqual(expect.objectContaining({
       selector: { diggable: true, interactive: false },
     }));
+  });
+
+  it("replaces a remembered workstation that cannot be reached", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      position: { y: 54 },
+      counts: {
+        "minecraft:cooked_beef": 8,
+        "minecraft:oak_log": 5,
+        "minecraft:oak_planks": 3,
+        "minecraft:stick": 2,
+        "minecraft:wooden_pickaxe": 1,
+        "minecraft:cobblestone": 20,
+      },
+    });
+    const surfaceTable = blockObservation({
+      x: 0,
+      y: 70,
+      z: 0,
+      dimension: "minecraft:overworld",
+    }, { blockId: "minecraft:crafting_table" });
+    const localTable = blockObservation({
+      x: 1,
+      y: 54,
+      z: 0,
+      dimension: "minecraft:overworld",
+    }, { blockId: "minecraft:crafting_table" });
+    let localTablePlaced = false;
+    driver.recipeResolver = (resultItemId) => [{
+      recipeId: resultItemId,
+      recipeType: "minecraft:crafting",
+      resultItemId,
+      resultCount: 1,
+      ingredients: [],
+    }];
+    driver.craftabilityResolver = (recipeId) => ({
+      canCraft: true,
+      maximumCraftCount: 1,
+      ...(recipeId === "minecraft:stone_sword"
+        ? { requiredStation: "minecraft:crafting_table" }
+        : {}),
+      missing: [],
+    });
+    driver.blockQueryResolver = ({ center, selector }) => {
+      if (selector.blockIds?.includes("minecraft:crafting_table") === true) {
+        return localTablePlaced ? [localTable] : [surfaceTable];
+      }
+      if (selector.replaceable === false) {
+        return [blockObservation({
+          x: 1,
+          y: 53,
+          z: 0,
+          dimension: "minecraft:overworld",
+        })];
+      }
+      if (selector.replaceable === true) {
+        return [blockObservation({
+          x: Math.floor(center.x),
+          y: Math.floor(center.y),
+          z: Math.floor(center.z),
+          dimension: center.dimension,
+        }, { replaceable: true })];
+      }
+      return [];
+    };
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+      }).pipe(
+        Effect.zipRight(
+          position.y > 60
+            ? Effect.fail(new BeatGameDriverError({
+              operation: "pathfind",
+              code: "unreachable_goal",
+              retryable: false,
+              message: "No route found to the goal",
+            }))
+            : Effect.void,
+        ),
+      );
+    let resolveSwordCraft!: () => void;
+    const swordCraftStarted = new Promise<void>((resolve) => {
+      resolveSwordCraft = resolve;
+    });
+    driver.taskResolver = (task) => {
+      driver.tasks.push(task);
+      if (task.type === "build") {
+        localTablePlaced = true;
+        return Effect.void;
+      }
+      if (
+        task.type === "craft"
+        && task.recipeId === "minecraft:stone_sword"
+      ) {
+        resolveSwordCraft();
+        return Effect.never;
+      }
+      return Effect.void;
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      yield* Effect.promise(() => swordCraftStarted).pipe(
+        Effect.timeout("5 seconds"),
+      );
+      yield* run.stop;
+    })));
+
+    expect(driver.paths[0]?.position).toEqual({
+      x: 0.5,
+      y: 70,
+      z: 0.5,
+      dimension: "minecraft:overworld",
+    });
+    expect(driver.paths[0]?.policy.allowPlacing).toBe(false);
+    expect(driver.tasks.map((task) => task.type === "craft"
+      ? `${task.type}:${task.recipeId}`
+      : task.type)).toEqual([
+      "craft:minecraft:crafting_table",
+      "build",
+      "craft:minecraft:stone_sword",
+    ]);
+    expect(driver.tasks.at(-1)).toMatchObject({
+      station: localTable.position,
+    });
+  });
+
+  it("makes charcoal before cooking a full food batch", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      counts: {
+        "minecraft:oak_log": 4,
+        "minecraft:oak_planks": 3,
+        "minecraft:cobblestone": 20,
+        "minecraft:stone_sword": 1,
+        "minecraft:beef": 8,
+        "minecraft:iron_ingot": 7,
+        "minecraft:iron_pickaxe": 1,
+        "minecraft:water_bucket": 1,
+        "minecraft:flint_and_steel": 1,
+        "minecraft:shield": 1,
+      },
+    });
+    driver.blockQueryResolver = ({ selector }) =>
+      selector.blockIds?.includes("minecraft:furnace") === true
+        ? [blockObservation({
+          x: 1,
+          y: 64,
+          z: 0,
+          dimension: "minecraft:overworld",
+        }, { blockId: "minecraft:furnace" })]
+        : [];
+    let resolveFoodSmelt!: () => void;
+    const foodSmeltStarted = new Promise<void>((resolve) => {
+      resolveFoodSmelt = resolve;
+    });
+    driver.taskResolver = (task) => {
+      driver.tasks.push(task);
+      if (
+        task.type !== "smelt"
+        || !task.input.itemIds?.includes("minecraft:beef")
+      ) {
+        return Effect.void;
+      }
+      resolveFoodSmelt();
+      return Effect.never;
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      yield* Effect.promise(() => foodSmeltStarted).pipe(
+        Effect.timeout("5 seconds"),
+      );
+      yield* run.stop;
+    })));
+
+    expect(driver.tasks.filter((task) => task.type === "smelt")).toEqual([
+      expect.objectContaining({
+        input: {
+          itemIds: expect.arrayContaining(["minecraft:oak_log"]),
+        },
+        count: 1,
+        fuel: {
+          itemIds: expect.arrayContaining(["minecraft:oak_planks"]),
+        },
+      }),
+      expect.objectContaining({
+        input: { itemIds: ["minecraft:beef"] },
+        count: 8,
+        fuel: {
+          itemIds: ["minecraft:coal", "minecraft:charcoal"],
+        },
+      }),
+    ]);
   });
 
   it("runs custom Effect policy inside the normal planner lifecycle", async () => {

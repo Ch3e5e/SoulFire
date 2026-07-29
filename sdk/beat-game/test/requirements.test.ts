@@ -66,6 +66,51 @@ describe("beat-game requirements", () => {
     ]);
   });
 
+  it("shrinks the bootstrap log reserve as durable equipment comes online", () => {
+    const logRequirement = (
+      counts: Readonly<Record<string, number>>,
+    ) =>
+      requirementsForPhase(
+        BeatGamePhase.PREPARE_OVERWORLD,
+        observation({ counts }).inventory,
+        defaultBeatGameStrategy,
+      ).find(({ key }) => key === "logs");
+
+    expect(logRequirement({})).toMatchObject({
+      targetCount: 8,
+      satisfied: false,
+    });
+    expect(logRequirement({
+      "minecraft:wooden_pickaxe": 1,
+      "minecraft:oak_log": 4,
+    })).toMatchObject({
+      targetCount: 4,
+      satisfied: true,
+    });
+    expect(logRequirement({
+      "minecraft:stone_pickaxe": 1,
+      "minecraft:raw_iron": 7,
+      "minecraft:oak_log": 2,
+    })).toMatchObject({
+      targetCount: 2,
+      satisfied: true,
+    });
+    expect(logRequirement({
+      "minecraft:wooden_pickaxe": 1,
+      "minecraft:cooked_chicken": 8,
+      "minecraft:oak_log": 3,
+    })).toMatchObject({
+      targetCount: 3,
+      satisfied: true,
+    });
+    expect(logRequirement({
+      "minecraft:shield": 1,
+    })).toMatchObject({
+      targetCount: 0,
+      satisfied: true,
+    });
+  });
+
   it("requires a diamond pickaxe before mining an obsidian frame", () => {
     const strategy = {
       ...defaultBeatGameStrategy,

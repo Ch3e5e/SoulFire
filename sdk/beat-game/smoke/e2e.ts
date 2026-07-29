@@ -31,7 +31,9 @@ import { promisify } from "node:util";
 import {
   Duration,
   Effect,
+  Fiber,
   Ref,
+  Scope,
   Stream,
 } from "effect";
 
@@ -48,6 +50,22 @@ const botName = environment("SOULFIRE_E2E_BOT_NAME", "SFSmokeBot");
 const smokeMode = booleanEnvironment("SOULFIRE_E2E_CONTROLLED", false)
   ? "controlled"
   : "survival";
+const debugBlockBreak = booleanEnvironment(
+  "SOULFIRE_E2E_DEBUG_BLOCK_BREAK",
+  false,
+);
+const minecraftPort = 25_565;
+const inspectorUsername = optionalEnvironment(
+  "SOULFIRE_E2E_INSPECTOR_USERNAME",
+);
+if (
+  inspectorUsername !== undefined
+  && !/^[A-Za-z0-9_]{1,16}$/u.test(inspectorUsername)
+) {
+  throw new Error(
+    "SOULFIRE_E2E_INSPECTOR_USERNAME must be a valid Minecraft username",
+  );
+}
 const timeoutMs = positiveIntegerEnvironment(
   "SOULFIRE_E2E_TIMEOUT_MS",
   smokeMode === "controlled" ? 45 * 60 * 1_000 : 8 * 60 * 60 * 1_000,
@@ -65,6 +83,9 @@ const fixtureConfiguration = {
   seed: smokeMode === "controlled"
     ? environment("SOULFIRE_E2E_SEED", "SoulFire SDK controlled e2e")
     : optionalEnvironment("SOULFIRE_E2E_SEED"),
+  inspectorUsername: smokeMode === "survival"
+    ? inspectorUsername
+    : undefined,
   keepContainer: booleanEnvironment("SOULFIRE_E2E_KEEP_CONTAINER", false),
 } as const;
 
@@ -81,6 +102,7 @@ interface BaseMinecraftFixture {
 interface SurvivalMinecraftFixture extends BaseMinecraftFixture {
   readonly mode: "survival";
   readonly seed: string | undefined;
+  readonly inspectorUsername: string | undefined;
 }
 
 interface ControlledMinecraftFixture extends BaseMinecraftFixture {
@@ -105,32 +127,54 @@ const program = Effect.scoped(Effect.gen(function* () {
     fixtureConfiguration,
   });
 
-  const fixture = yield* Effect.acquireRelease(
-    startMinecraftFixture,
-    stopMinecraftFixture,
+  const smokeScope = yield* Effect.scope;
+  const fixtureFiber = yield* Effect.fork(Scope.extend(
+    Effect.acquireRelease(
+      startMinecraftFixture,
+      stopMinecraftFixture,
+    ),
+    smokeScope,
+  ));
+  const soulfireFiber = yield* Effect.fork(Scope.extend(Effect.gen(function* () {
+    const [dedicatedJar, javaPath] = yield* Effect.all(
+      [findDedicatedJar, findJava],
+      { concurrency: "unbounded" },
+    );
+    const soulfire = yield* SoulFire.install({
+      directory: path.join(artifactDirectory, "soulfire"),
+      jarPath: dedicatedJar,
+      javaPath,
+      javaArgs: [
+        "-Xms1G",
+        "-Xmx4G",
+        ...(debugBlockBreak
+          ? [
+            "-DMC_DEBUG_ENABLED=true",
+            "-DMC_DEBUG_BLOCK_BREAK=true",
+          ]
+          : []),
+      ],
+      startupTimeoutMs: 180_000,
+      defaultTimeoutMs: 10 * 60_000,
+      onLog: (line) => {
+        process.stdout.write(`[soulfire] ${line}\n`);
+        void appendFile(
+          path.join(artifactDirectory, "soulfire.log"),
+          `${line}\n`,
+        );
+      },
+    });
+    return { dedicatedJar, javaPath, soulfire };
+  }), smokeScope));
+  const [fixture, soulfireRuntime] = yield* Effect.all(
+    [Fiber.join(fixtureFiber), Fiber.join(soulfireFiber)],
+    { concurrency: "unbounded" },
   );
-  const dedicatedJar = yield* findDedicatedJar;
-  const javaPath = yield* findJava;
+  const { dedicatedJar, javaPath, soulfire } = soulfireRuntime;
   yield* record("fixture-ready", {
     ...fixture,
     dedicatedJar,
     javaPath,
-  });
-
-  const soulfire = yield* SoulFire.install({
-    directory: path.join(artifactDirectory, "soulfire"),
-    jarPath: dedicatedJar,
-    javaPath,
-    javaArgs: ["-Xms1G", "-Xmx4G"],
-    startupTimeoutMs: 180_000,
-    defaultTimeoutMs: 10 * 60_000,
-    onLog: (line) => {
-      process.stdout.write(`[soulfire] ${line}\n`);
-      void appendFile(
-        path.join(artifactDirectory, "soulfire.log"),
-        `${line}\n`,
-      );
-    },
   });
   yield* record("soulfire-ready", {
     server: soulfire.server,
@@ -433,9 +477,7 @@ const program = Effect.scoped(Effect.gen(function* () {
     strategy: {
       actionTimeoutMs: 600_000,
       observationPollMs: 250,
-      blockSearchRadius: 96,
       entitySearchRadius: 320,
-      explorationRadius: 32,
       path: {
         maxSearchTimeMs: 120_000,
       },
@@ -481,7 +523,7 @@ const program = Effect.scoped(Effect.gen(function* () {
     ));
   }
   if (fixture.mode === "survival") {
-    yield* assertNoAdminCommands(fixture);
+    yield* assertAdminCommandPolicy(fixture);
   }
   yield* record("beat-game-completed", {
     result,
@@ -505,7 +547,7 @@ const startMinecraftFixture = Effect.suspend(() => {
       "--name",
       containerName,
       "--publish",
-      "127.0.0.1::25565",
+      `127.0.0.1:${minecraftPort}:25565`,
       "--env",
       "EULA=TRUE",
       "--env",
@@ -525,28 +567,42 @@ const startMinecraftFixture = Effect.suspend(() => {
     ];
 
     if (fixtureConfiguration.mode === "survival") {
+      const rconEnabled = fixtureConfiguration.inspectorUsername !== undefined;
       const serverArguments = [
         ...commonArguments,
         "--env",
-        "ENABLE_RCON=false",
+        `ENABLE_RCON=${String(rconEnabled)}`,
       ];
+      if (rconEnabled) {
+        serverArguments.push(
+          "--env",
+          "RCON_PASSWORD=soulfire-smoke",
+        );
+      }
       if (fixtureConfiguration.seed !== undefined) {
         serverArguments.push("--env", `SEED=${fixtureConfiguration.seed}`);
       }
       serverArguments.push(fixtureConfiguration.image);
       yield* docker(serverArguments);
       yield* waitForMinecraftServer(containerName);
+      if (fixtureConfiguration.inspectorUsername !== undefined) {
+        yield* rcon(
+          containerName,
+          `op ${fixtureConfiguration.inspectorUsername}`,
+        );
+      }
       const port = yield* publishedMinecraftPort(containerName);
       const fixture = {
         mode: "survival",
         containerName,
         port,
         seed: fixtureConfiguration.seed,
+        inspectorUsername: fixtureConfiguration.inspectorUsername,
       } satisfies SurvivalMinecraftFixture;
       yield* record("minecraft-ready", {
         ...fixture,
         serverType: "PAPER",
-        rconEnabled: false,
+        rconEnabled,
         seed: fixture.seed ?? "server-generated",
       });
       return fixture;
@@ -943,7 +999,7 @@ function publishedMinecraftPort(
   ]).pipe(Effect.map((result) => parsePublishedPort(result.stdout)));
 }
 
-function assertNoAdminCommands(
+function assertAdminCommandPolicy(
   fixture: SurvivalMinecraftFixture,
 ): Effect.Effect<void, Error> {
   return docker(["logs", fixture.containerName]).pipe(
@@ -952,17 +1008,35 @@ function assertNoAdminCommands(
       const adminLines = logs.split(/\r?\n/u).filter((line) =>
         /\[Rcon:|issued server command:|made .* a server operator/iu.test(line)
       );
-      if (adminLines.length > 0) {
+      const allowedOperatorLines = fixture.inspectorUsername === undefined
+        ? []
+        : adminLines.filter((line) =>
+          line.includes(
+            `[Rcon: Made ${fixture.inspectorUsername} a server operator]`,
+          )
+        );
+      const unexpectedLines = adminLines.filter((line) =>
+        !allowedOperatorLines.includes(line)
+      );
+      const expectedOperatorCommands =
+        fixture.inspectorUsername === undefined ? 0 : 1;
+      if (
+        unexpectedLines.length > 0
+        || allowedOperatorLines.length !== expectedOperatorCommands
+      ) {
         return Effect.fail(new Error(
-          `Authoritative smoke used administrative commands:\n${
-            adminLines.join("\n")
+          `Authoritative smoke violated its administrative command policy:\n${
+            adminLines.join("\n") || "expected inspector op command was absent"
           }`,
         ));
       }
       return record("admin-command-audit", {
         passed: true,
-        rconEnabled: false,
-        commandsObserved: 0,
+        rconEnabled: fixture.inspectorUsername !== undefined,
+        commandsObserved: allowedOperatorLines.length,
+        allowedCommand: fixture.inspectorUsername === undefined
+          ? undefined
+          : `op ${fixture.inspectorUsername}`,
       });
     }),
   );

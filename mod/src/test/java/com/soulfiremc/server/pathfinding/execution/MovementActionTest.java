@@ -21,8 +21,6 @@ import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class MovementActionTest {
   @Test
@@ -52,22 +50,6 @@ final class MovementActionTest {
       MovementAction.movementInputFor(origin, 0.0F, new Vec3(-1.0, 0.0, -1.0)));
     assertInput(false, false, false, false,
       MovementAction.movementInputFor(origin, 135.0F, origin));
-  }
-
-  @Test
-  void preciseApproachDoesNotSneakAtARequiredDrop() {
-    var currentPosition = new Vec3(0.5, 2.0, 0.5);
-
-    assertFalse(MovementAction.shouldUsePreciseApproach(
-      currentPosition,
-      new Vec3(0.5, 1.0, 1.5),
-      0.7
-    ));
-    assertTrue(MovementAction.shouldUsePreciseApproach(
-      currentPosition,
-      new Vec3(0.5, 2.0, 1.5),
-      0.7
-    ));
   }
 
   @Test
