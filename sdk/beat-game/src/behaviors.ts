@@ -156,7 +156,7 @@ export function collectNearbyDrops(
       }
       yield* driver.pathfind(
         drop.position,
-        0.5,
+        1.5,
         mergePathPolicy(options.path),
       ).pipe(Effect.catchAll(() => Effect.void));
     }

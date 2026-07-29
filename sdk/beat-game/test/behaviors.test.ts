@@ -283,7 +283,7 @@ describe("beat-game behavior programs", () => {
     }]);
     expect(driver.paths).toEqual([expect.objectContaining({
       position: driver.entityResults[0]?.position,
-      radius: 0.5,
+      radius: 1.5,
     })]);
     expect(driver.maximumActiveControlScopes).toBe(1);
   });

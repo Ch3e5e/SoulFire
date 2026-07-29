@@ -65,7 +65,7 @@ import java.util.concurrent.CompletionException;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
 
-/// Executes furnace, blast-furnace, and smoker recipes one input at a time.
+/// Executes furnace, blast-furnace, and smoker recipes in stack-sized batches.
 public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
   private static final int MAX_SMELT_OPERATIONS = 4_096;
   private static final int MENU_TIMEOUT_TICKS = 100;
@@ -114,11 +114,11 @@ public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
         )
         .asRuntimeException();
     }
-    var selection = selectRecipe(context, input.getInput(), count);
-    validateFuel(context, input);
-
     BlockPos station = null;
-    if (!(player.containerMenu instanceof AbstractFurnaceMenu)) {
+    String stationId;
+    if (player.containerMenu instanceof AbstractFurnaceMenu menu) {
+      stationId = menuStation(menu);
+    } else {
       if (!input.hasStation()) {
         throw Status.FAILED_PRECONDITION
           .withDescription(
@@ -146,7 +146,17 @@ public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
         requested.getY(),
         requested.getZ()
       );
+      stationId = BuiltInRegistries.BLOCK
+        .getKey(level.getBlockState(station).getBlock())
+        .toString();
     }
+    var selection = selectRecipe(
+      context,
+      input.getInput(),
+      count,
+      stationId
+    );
+    validateFuel(context, input);
 
     var result = new CompletableFuture<SmeltTaskResult>();
     return new BotTaskExecution(
@@ -166,7 +176,8 @@ public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
   private static RecipeSelection selectRecipe(
     BotTaskContext context,
     ItemSelector selector,
-    int count
+    int count,
+    String stationId
   ) {
     var player = Objects.requireNonNull(context.bot().minecraft().player);
     var inventory = Stream.concat(
@@ -175,6 +186,9 @@ public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
     ).toList();
     var recipes = RecipeSupport.recipes(context.bot()).stream()
       .filter(entry -> entry.display() instanceof FurnaceRecipeDisplay)
+      .filter(entry ->
+        RecipeSupport.requiredStation(context.bot(), entry).equals(stationId)
+      )
       .sorted(Comparator.comparingInt(entry -> entry.id().index()))
       .toList();
     for (var recipe : recipes) {
@@ -197,7 +211,8 @@ public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
     }
     throw Status.FAILED_PRECONDITION
       .withDescription(
-        "No known cooking recipe has enough matching input items"
+        "No known %s recipe has enough matching input items"
+          .formatted(stationId)
       )
       .asRuntimeException();
   }
@@ -244,6 +259,7 @@ public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
     private Stage stage;
     private int stageTicks;
     private int operationsCompleted;
+    private int batchOperations;
 
     private SmeltControl(
       BotTaskContext context,
@@ -421,30 +437,96 @@ public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
         transition(Stage.LOAD_FUEL, "Checking furnace fuel");
         return;
       }
-      moveOne(
+      var source = findSource(
         menu,
-        0,
         stack -> InventoryServiceImpl.matches(stack, inputSelector)
-          && recipe.acceptsInput.test(stack),
-        "No matching smelting input remains"
+          && recipe.acceptsInput.test(stack)
+      );
+      if (source.isEmpty()) {
+        throw Status.FAILED_PRECONDITION
+          .withDescription("No matching smelting input remains")
+          .asRuntimeException();
+      }
+      var sourceStack = menu.getSlot(source.getAsInt()).getItem();
+      var expectedOutput = expectedOutput();
+      batchOperations = batchOperationCount(
+        targetCount - operationsCompleted,
+        Math.min(
+          sourceStack.getCount(),
+          menu.getSlot(0).getMaxStackSize(sourceStack)
+        ),
+        menu.getSlot(2).getMaxStackSize(expectedOutput),
+        expectedOutput.getCount()
+      );
+      moveAmount(
+        menu,
+        source.getAsInt(),
+        0,
+        batchOperations
       );
       transition(Stage.LOAD_FUEL, "Checking furnace fuel");
     }
 
     private void loadFuel() {
       var menu = requireFurnaceMenu();
-      if (menu.isLit() || hasUsableFuel(menu)) {
+      var level = Objects.requireNonNull(context.bot().minecraft().level);
+      Predicate<ItemStack> matchesFuel = stack ->
+        level.fuelValues().isFuel(stack)
+          && (fuelSelector == null
+          || InventoryServiceImpl.matches(stack, fuelSelector));
+      var existingFuel = menu.getSlot(1).getItem();
+      if (!existingFuel.isEmpty() && !matchesFuel.test(existingFuel)) {
+        throw Status.FAILED_PRECONDITION
+          .withDescription(
+            "Existing station fuel does not match the task fuel policy"
+          )
+          .asRuntimeException();
+      }
+      var source = findSource(
+        menu,
+        stack -> matchesFuel.test(stack)
+          && (existingFuel.isEmpty()
+          || ItemStack.isSameItemSameComponents(stack, existingFuel))
+      );
+      if (source.isEmpty()) {
+        if (menu.isLit() || !existingFuel.isEmpty()) {
+          transition(Stage.WAIT_FOR_OUTPUT, "Smelting");
+          return;
+        }
+        throw Status.FAILED_PRECONDITION
+          .withDescription("No matching valid furnace fuel remains")
+          .asRuntimeException();
+      }
+      var sourceStack = menu.getSlot(source.getAsInt()).getItem();
+      var fuelPrototype = existingFuel.isEmpty()
+        ? sourceStack
+        : existingFuel;
+      var fuelTicks = level.fuelValues().burnDuration(fuelPrototype);
+      var additionalFuel = additionalFuelItems(
+        batchOperations,
+        recipe.display.duration(),
+        existingFuel.getCount(),
+        fuelTicks
+      );
+      if (additionalFuel == 0) {
         transition(Stage.WAIT_FOR_OUTPUT, "Smelting");
         return;
       }
-      var level = Objects.requireNonNull(context.bot().minecraft().level);
-      moveOne(
+      var capacity = menu.getSlot(1).getMaxStackSize(sourceStack)
+        - existingFuel.getCount();
+      var transferAmount = Math.min(
+        additionalFuel,
+        Math.min(sourceStack.getCount(), capacity)
+      );
+      if (transferAmount == 0) {
+        transition(Stage.WAIT_FOR_OUTPUT, "Smelting");
+        return;
+      }
+      moveAmount(
         menu,
+        source.getAsInt(),
         1,
-        stack -> level.fuelValues().isFuel(stack)
-          && (fuelSelector == null
-          || InventoryServiceImpl.matches(stack, fuelSelector)),
-        "No matching valid furnace fuel remains"
+        transferAmount
       );
       transition(Stage.WAIT_FOR_OUTPUT, "Smelting");
     }
@@ -465,9 +547,15 @@ public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
             )
             .asRuntimeException();
         }
-        outputs.add(stack.copy());
-        transition(Stage.TAKE_OUTPUT, "Collecting smelted output");
-        return;
+        var expectedCount = Math.multiplyExact(
+          batchOperations,
+          expectedOutput().getCount()
+        );
+        if (stack.getCount() >= expectedCount) {
+          outputs.add(stack.copy());
+          transition(Stage.TAKE_OUTPUT, "Collecting smelted output");
+          return;
+        }
       }
       if (!menu.isLit() && !hasUsableFuel(menu)) {
         transition(Stage.LOAD_FUEL, "Refueling smelting station");
@@ -509,7 +597,8 @@ public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
       var menu = requireFurnaceMenu();
       var carried = menu.getCarried();
       if (carried.isEmpty()) {
-        operationsCompleted++;
+        operationsCompleted += batchOperations;
+        batchOperations = 0;
         transition(
           operationsCompleted >= targetCount
             ? Stage.WAIT_FOR_OUTPUT
@@ -544,16 +633,32 @@ public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
       }
     }
 
-    private void moveOne(
+    private void moveAmount(
       AbstractFurnaceMenu menu,
+      int source,
       int destination,
-      Predicate<ItemStack> selector,
-      String missingMessage
+      int amount
     ) {
-      var source = findSource(menu, selector);
-      if (source.isEmpty()) {
+      if (amount <= 0) {
         throw Status.FAILED_PRECONDITION
-          .withDescription(missingMessage)
+          .withDescription("No room remains for the requested furnace batch")
+          .asRuntimeException();
+      }
+      var sourceStack = menu.getSlot(source).getItem();
+      var sourceCount = sourceStack.getCount();
+      var destinationStack = menu.getSlot(destination).getItem();
+      var destinationCapacity =
+        menu.getSlot(destination).getMaxStackSize(sourceStack)
+          - destinationStack.getCount();
+      var transferCount = Math.min(
+        amount,
+        Math.min(sourceCount, destinationCapacity)
+      );
+      if (transferCount != amount) {
+        throw Status.FAILED_PRECONDITION
+          .withDescription(
+            "The selected furnace slot cannot hold the requested batch"
+          )
           .asRuntimeException();
       }
       var player = requirePlayer();
@@ -562,27 +667,45 @@ public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
       );
       gameMode.handleContainerInput(
         menu.containerId,
-        source.getAsInt(),
+        source,
         0,
         ContainerInput.PICKUP,
         player
       );
-      gameMode.handleContainerInput(
-        menu.containerId,
-        destination,
-        1,
-        ContainerInput.PICKUP,
-        player
-      );
+      if (transferCount == sourceCount) {
+        gameMode.handleContainerInput(
+          menu.containerId,
+          destination,
+          0,
+          ContainerInput.PICKUP,
+          player
+        );
+      } else {
+        for (var i = 0; i < transferCount; i++) {
+          gameMode.handleContainerInput(
+            menu.containerId,
+            destination,
+            1,
+            ContainerInput.PICKUP,
+            player
+          );
+        }
+      }
       if (!menu.getCarried().isEmpty()) {
         gameMode.handleContainerInput(
           menu.containerId,
-          source.getAsInt(),
+          source,
           0,
           ContainerInput.PICKUP,
           player
         );
       }
+    }
+
+    private ItemStack expectedOutput() {
+      return recipe.display.result().resolveForFirstStack(
+        RecipeSupport.displayContext(context.bot())
+      );
     }
 
     private OptionalInt findSource(
@@ -767,6 +890,52 @@ public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
     FurnaceRecipeDisplay display,
     Predicate<ItemStack> acceptsInput
   ) {
+  }
+
+  static int batchOperationCount(
+    int remainingOperations,
+    int inputCapacity,
+    int outputCapacity,
+    int outputPerOperation
+  ) {
+    if (
+      remainingOperations <= 0
+        || inputCapacity <= 0
+        || outputCapacity <= 0
+        || outputPerOperation <= 0
+    ) {
+      throw new IllegalArgumentException(
+        "Batch capacities and operation counts must be positive"
+      );
+    }
+    return Math.min(
+      remainingOperations,
+      Math.min(inputCapacity, outputCapacity / outputPerOperation)
+    );
+  }
+
+  static int additionalFuelItems(
+    int operations,
+    int cookingTimeTicks,
+    int existingFuelItems,
+    int fuelTicksPerItem
+  ) {
+    if (
+      operations <= 0
+        || cookingTimeTicks <= 0
+        || existingFuelItems < 0
+        || fuelTicksPerItem <= 0
+    ) {
+      throw new IllegalArgumentException(
+        "Fuel calculation inputs must be positive"
+      );
+    }
+    var requiredTicks = (long) operations * cookingTimeTicks;
+    var availableTicks = (long) existingFuelItems * fuelTicksPerItem;
+    return (int) Math.max(
+      0,
+      Math.ceilDiv(requiredTicks - availableTicks, fuelTicksPerItem)
+    );
   }
 
   private enum Stage {

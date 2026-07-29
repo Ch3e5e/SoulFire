@@ -748,6 +748,104 @@ describe("beat-game run lifecycle", () => {
       .toBe(BeatGameRunStatus.COMPLETED);
   });
 
+  it("selects the nearest fresh hunting target after every kill", async () => {
+    const driver = new FakeBeatGameDriver();
+    const preparedItems = {
+      "minecraft:cobblestone": 20,
+      "minecraft:stone_sword": 1,
+      "minecraft:iron_ingot": 7,
+      "minecraft:iron_pickaxe": 1,
+      "minecraft:water_bucket": 1,
+      "minecraft:flint_and_steel": 1,
+      "minecraft:shield": 1,
+    };
+    const targets = [
+      {
+        connectionEpoch: "epoch-1",
+        networkId: 1,
+        entityType: "minecraft:cow",
+        position: {
+          x: 10,
+          y: 64,
+          z: 0,
+          dimension: "minecraft:overworld",
+        },
+        velocity: { x: 0, y: 0, z: 0 },
+        alive: true,
+        observedAt: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        connectionEpoch: "epoch-1",
+        networkId: 2,
+        entityType: "minecraft:cow",
+        position: {
+          x: -11,
+          y: 64,
+          z: 0,
+          dimension: "minecraft:overworld",
+        },
+        velocity: { x: 0, y: 0, z: 0 },
+        alive: true,
+        observedAt: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        connectionEpoch: "epoch-1",
+        networkId: 3,
+        entityType: "minecraft:cow",
+        position: {
+          x: 20,
+          y: 64,
+          z: 0,
+          dimension: "minecraft:overworld",
+        },
+        velocity: { x: 0, y: 0, z: 0 },
+        alive: true,
+        observedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ] as const;
+    driver.currentObservation = observation({ counts: preparedItems });
+    driver.entityResults = targets;
+    const attackOrder: number[] = [];
+    driver.taskObserver = (task) => {
+      if (task.type !== "attack-entity") {
+        return;
+      }
+      attackOrder.push(task.target.networkId);
+      const target = targets.find(({ networkId }) =>
+        networkId === task.target.networkId
+      );
+      if (target !== undefined) {
+        driver.currentObservation = observation({
+          counts: preparedItems,
+          position: target.position,
+        });
+      }
+    };
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (attackOrder.length < targets.length) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(attackOrder).toEqual([1, 3, 2]);
+    const huntQueries = driver.entityQueries.filter(({ selector }) =>
+      selector.entityTypes?.includes("minecraft:cow") === true
+    );
+    expect(huntQueries.slice(0, 3).map(({ origin }) => origin?.x))
+      .toEqual([0, 10, 20]);
+  });
+
   it("crafts the minimum pickaxe before mining cobblestone", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
@@ -831,7 +929,7 @@ describe("beat-game run lifecycle", () => {
         }
         if (task.type === "collect-blocks") {
           expect(task.blockIds).toEqual(["minecraft:stone"]);
-          expect(task.count).toBe(20);
+          expect(task.count).toBe(32);
           expect(
             driver.currentObservation.inventory.counts[
               "minecraft:wooden_pickaxe"
@@ -1015,7 +1113,7 @@ describe("beat-game run lifecycle", () => {
     });
   });
 
-  it("makes charcoal before cooking a full food batch", async () => {
+  it("makes spare charcoal before cooking a full food batch", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
       counts: {
@@ -1071,7 +1169,7 @@ describe("beat-game run lifecycle", () => {
         input: {
           itemIds: expect.arrayContaining(["minecraft:oak_log"]),
         },
-        count: 1,
+        count: 2,
         fuel: {
           itemIds: expect.arrayContaining(["minecraft:oak_planks"]),
         },
@@ -1082,6 +1180,104 @@ describe("beat-game run lifecycle", () => {
         fuel: {
           itemIds: ["minecraft:coal", "minecraft:charcoal"],
         },
+      }),
+    ]);
+  });
+
+  it("mines a visible coal vein before falling back to charcoal", async () => {
+    const driver = new FakeBeatGameDriver();
+    const initialCounts = {
+      "minecraft:oak_log": 4,
+      "minecraft:oak_planks": 3,
+      "minecraft:cobblestone": 20,
+      "minecraft:stone_sword": 1,
+      "minecraft:beef": 8,
+      "minecraft:iron_ingot": 7,
+      "minecraft:iron_pickaxe": 1,
+      "minecraft:water_bucket": 1,
+      "minecraft:flint_and_steel": 1,
+      "minecraft:shield": 1,
+    };
+    driver.currentObservation = observation({ counts: initialCounts });
+    driver.blockQueryResolver = ({ selector }) => {
+      if (selector.blockIds?.includes("minecraft:furnace") === true) {
+        return [blockObservation({
+          x: 1,
+          y: 64,
+          z: 0,
+          dimension: "minecraft:overworld",
+        }, { blockId: "minecraft:furnace" })];
+      }
+      if (selector.blockIds?.includes("minecraft:coal_ore") === true) {
+        return [blockObservation({
+          x: 3,
+          y: 63,
+          z: 0,
+          dimension: "minecraft:overworld",
+        }, { blockId: "minecraft:coal_ore" })];
+      }
+      return [];
+    };
+    let resolveFoodSmelt!: () => void;
+    const foodSmeltStarted = new Promise<void>((resolve) => {
+      resolveFoodSmelt = resolve;
+    });
+    driver.taskResolver = (task) => {
+      driver.tasks.push(task);
+      if (task.type === "collect-blocks") {
+        driver.currentObservation = observation({
+          counts: {
+            ...initialCounts,
+            "minecraft:coal": 4,
+          },
+        });
+      }
+      if (
+        task.type === "smelt"
+        && task.input.itemIds?.includes("minecraft:beef")
+      ) {
+        resolveFoodSmelt();
+        return Effect.never;
+      }
+      return Effect.void;
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      yield* Effect.promise(() => foodSmeltStarted).pipe(
+        Effect.timeout("5 seconds"),
+      );
+      yield* run.stop;
+    })));
+
+    expect(driver.blockQueries).toContainEqual({
+      center: expect.objectContaining({ dimension: "minecraft:overworld" }),
+      radius: 16,
+      selector: {
+        blockIds: [
+          "minecraft:coal_ore",
+          "minecraft:deepslate_coal_ore",
+        ],
+        diggable: true,
+        requireLineOfSight: true,
+      },
+      maximumResults: 4,
+    });
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "collect-blocks",
+      blockIds: [
+        "minecraft:coal_ore",
+        "minecraft:deepslate_coal_ore",
+      ],
+      count: 4,
+      searchRadius: 16,
+    }));
+    expect(driver.tasks.filter((task) => task.type === "smelt")).toEqual([
+      expect.objectContaining({
+        input: { itemIds: ["minecraft:beef"] },
+        count: 8,
       }),
     ]);
   });

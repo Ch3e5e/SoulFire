@@ -112,6 +112,28 @@ type EventInput<T extends BeatGameEvent = BeatGameEvent> =
     : never;
 
 const WORKSTATION_REUSE_RADIUS = 32;
+const FURNACE_FUEL_SEARCH_RADIUS = 16;
+const COAL_ORE_BLOCK_IDS = [
+  "minecraft:coal_ore",
+  "minecraft:deepslate_coal_ore",
+] as const;
+const FURNACE_FUEL_ITEM_IDS = [
+  "minecraft:coal",
+  "minecraft:charcoal",
+] as const;
+const RESOURCE_COLLECTION_BUFFERS = {
+  "blaze-rods": 2,
+  cobblestone: 12,
+  diamond: 2,
+  "ender-pearls": 2,
+  food: 4,
+  fuel: 2,
+  gold: 8,
+  iron: 3,
+  logs: 4,
+} as const;
+type BufferedResource = keyof typeof RESOURCE_COLLECTION_BUFFERS;
+
 const DANGEROUS_NEUTRAL_ENTITY_TYPES = [
   "minecraft:bee",
   "minecraft:dolphin",
@@ -1288,7 +1310,7 @@ function satisfyRequirement(
       return collectBlocksOrExplore(state, observation, {
         blockIds: requirement.itemIds,
         tags: requirement.tags,
-        count: missing,
+        count: bufferedCollectionCount("logs", missing),
         progressItemIds: requirement.itemIds,
         purpose: "find-logs",
       });
@@ -1307,7 +1329,7 @@ function satisfyRequirement(
       ).pipe(
         Effect.zipRight(collectBlocksOrExplore(state, observation, {
           blockIds: ["minecraft:stone"],
-          count: missing,
+          count: bufferedCollectionCount("cobblestone", missing),
           progressItemIds: ["minecraft:cobblestone"],
           purpose: "find-stone",
         })),
@@ -1327,6 +1349,10 @@ function satisfyRequirement(
     case "iron": {
       const rawIron = observation.inventory.counts["minecraft:raw_iron"] ?? 0;
       if (rawIron >= missing) {
+        const batchCount = Math.min(
+          rawIron,
+          bufferedCollectionCount("iron", missing),
+        );
         return ensureWorkstation(
           state,
           observation,
@@ -1337,11 +1363,11 @@ function satisfyRequirement(
               state,
               observation,
               station,
-              missing,
+              batchCount,
             ).pipe(
               Effect.zipRight(smelt(state.driver, {
                 input: { itemIds: ["minecraft:raw_iron"] },
-                count: missing,
+                count: batchCount,
                 fuel: {
                   itemIds: ["minecraft:coal", "minecraft:charcoal"],
                 },
@@ -1368,7 +1394,7 @@ function satisfyRequirement(
             "minecraft:iron_ore",
             "minecraft:deepslate_iron_ore",
           ],
-          count: missing - rawIron,
+          count: bufferedCollectionCount("iron", missing - rawIron),
           searchRadius: state.strategy.blockSearchRadius,
           path: state.strategy.path,
         })),
@@ -1392,7 +1418,7 @@ function satisfyRequirement(
             "minecraft:diamond_ore",
             "minecraft:deepslate_diamond_ore",
           ],
-          count: 3 - diamonds,
+          count: bufferedCollectionCount("diamond", 3 - diamonds),
           searchRadius: state.strategy.blockSearchRadius,
           path: state.strategy.path,
         });
@@ -1428,11 +1454,15 @@ function satisfyRequirement(
         state,
         observation,
         { entityTypes: ["minecraft:blaze"], alive: true },
-        missing,
+        bufferedCollectionCount("blaze-rods", missing),
         "find-nether-fortress",
       );
     case "ender-pearls":
-      return acquireEnderPearls(state, observation, missing);
+      return acquireEnderPearls(
+        state,
+        observation,
+        bufferedCollectionCount("ender-pearls", missing),
+      );
     case "gold":
       return collectBlocks(state.driver, {
         blockIds: [
@@ -1440,7 +1470,7 @@ function satisfyRequirement(
           "minecraft:gold_ore",
           "minecraft:deepslate_gold_ore",
         ],
-        count: missing,
+        count: bufferedCollectionCount("gold", missing),
         searchRadius: state.strategy.blockSearchRadius,
         path: state.strategy.path,
       });
@@ -1526,11 +1556,13 @@ function satisfyFoodRequirement(
           "minecraft:pig",
           "minecraft:sheep",
           "minecraft:chicken",
-          "minecraft:rabbit",
         ],
         alive: true,
       },
-      missingCookedFood - rawFoodCount,
+      bufferedCollectionCount(
+        "food",
+        missingCookedFood - rawFoodCount,
+      ),
       "find-food-animals",
     );
   }
@@ -1538,6 +1570,10 @@ function satisfyFoodRequirement(
   if (batch === undefined) {
     return Effect.void;
   }
+  const batchCount = Math.min(
+    batch.count,
+    bufferedCollectionCount("food", missingCookedFood),
+  );
   return ensureWorkstation(
     state,
     observation,
@@ -1548,11 +1584,11 @@ function satisfyFoodRequirement(
         state,
         observation,
         station,
-        Math.min(batch.count, missingCookedFood),
+        batchCount,
       ).pipe(
         Effect.zipRight(smelt(state.driver, {
           input: { itemIds: [batch.rawItemId] },
-          count: Math.min(batch.count, missingCookedFood),
+          count: batchCount,
           fuel: {
             itemIds: ["minecraft:coal", "minecraft:charcoal"],
           },
@@ -1570,26 +1606,84 @@ function ensureEfficientFurnaceFuel(
   station: BeatGameBlockPosition,
   outputCount: number,
 ): Effect.Effect<void, BeatGameDriverError> {
-  const requiredFuel = Math.ceil(outputCount / 8);
-  const availableFuel = [
-    "minecraft:coal",
-    "minecraft:charcoal",
-  ].reduce(
+  return Effect.gen(function* () {
+    const requiredFuel = Math.ceil(outputCount / 8) + 1;
+    let currentObservation = observation;
+    let missingFuel = Math.max(
+      0,
+      requiredFuel - furnaceFuelCount(currentObservation),
+    );
+    if (missingFuel === 0) {
+      return;
+    }
+
+    currentObservation = yield* state.driver.observe;
+    missingFuel = Math.max(
+      0,
+      requiredFuel - furnaceFuelCount(currentObservation),
+    );
+    if (missingFuel === 0) {
+      return;
+    }
+
+    const visibleCoal = yield* state.driver.queryBlocks({
+      center: currentObservation.player.position,
+      radius: Math.min(
+        FURNACE_FUEL_SEARCH_RADIUS,
+        state.strategy.blockSearchRadius,
+      ),
+      selector: {
+        blockIds: COAL_ORE_BLOCK_IDS,
+        diggable: true,
+        requireLineOfSight: true,
+      },
+      maximumResults: bufferedCollectionCount("fuel", missingFuel),
+    });
+    if (visibleCoal.length > 0) {
+      yield* collectBlocks(state.driver, {
+        blockIds: COAL_ORE_BLOCK_IDS,
+        count: bufferedCollectionCount("fuel", missingFuel),
+        searchRadius: FURNACE_FUEL_SEARCH_RADIUS,
+        path: state.strategy.path,
+      });
+      yield* collectNearbyDrops(state.driver, {
+        radius: 8,
+        maximumDrops: 16,
+        path: state.strategy.path,
+      });
+      currentObservation = yield* state.driver.observe;
+      missingFuel = Math.max(
+        0,
+        requiredFuel - furnaceFuelCount(currentObservation),
+      );
+      if (missingFuel === 0) {
+        return;
+      }
+    }
+
+    yield* smelt(state.driver, {
+      input: { itemIds: LOG_ITEM_IDS },
+      count: missingFuel,
+      fuel: { itemIds: [...PLANK_ITEM_IDS, ...LOG_ITEM_IDS] },
+      station,
+      path: state.strategy.path,
+    });
+  });
+}
+
+function furnaceFuelCount(observation: BeatGameObservation): number {
+  return FURNACE_FUEL_ITEM_IDS.reduce(
     (count, itemId) =>
       count + (observation.inventory.counts[itemId] ?? 0),
     0,
   );
-  const missingFuel = Math.max(0, requiredFuel - availableFuel);
-  if (missingFuel === 0) {
-    return Effect.void;
-  }
-  return smelt(state.driver, {
-    input: { itemIds: LOG_ITEM_IDS },
-    count: missingFuel,
-    fuel: { itemIds: [...PLANK_ITEM_IDS, ...LOG_ITEM_IDS] },
-    station,
-    path: state.strategy.path,
-  });
+}
+
+function bufferedCollectionCount(
+  resource: BufferedResource,
+  missing: number,
+): number {
+  return Math.max(1, missing) + RESOURCE_COLLECTION_BUFFERS[resource];
 }
 
 function ensureMiningPickaxe(
@@ -1812,39 +1906,73 @@ function huntOrExplore(
       ...state.strategy.path,
       allowPlacing: false,
     };
-    const targets = yield* state.driver.queryEntities({
-      origin: observation.player.position,
-      radius: state.strategy.entitySearchRadius,
-      selector,
-      maximumResults: Math.max(1, maximumTargets),
-    });
-    const checkpoint = yield* Ref.get(state.checkpoint);
-    const now = Date.now();
-    const unreachable = new Set(
-      checkpoint.memory.unreachable
-        .filter(({ expiresAt }) =>
-          expiresAt === undefined || Date.parse(expiresAt) > now
-        )
-        .map(({ value }) => positionKey(value)),
-    );
-    const candidates = targets.filter(({ position }) =>
-      !unreachable.has(positionKey(position))
-    );
-    if (candidates.length === 0) {
-      yield* explore(state.driver, {
-        origin: observation.player.position,
-        radius: state.strategy.explorationRadius,
-        maximumWaypoints: 1,
-        purpose: explorationPurpose(
-          purpose,
-          observation.player.position,
-        ),
-        path: huntingPath,
-      });
-      return;
-    }
+    const attemptedTargets = new Set<string>();
+    const locallyUnreachable = new Set<string>();
     let attacked = 0;
-    for (const target of candidates) {
+    let observedCandidate = false;
+    while (attacked < maximumTargets) {
+      const current = yield* state.driver.observe;
+      const checkpoint = yield* Ref.get(state.checkpoint);
+      const now = Date.now();
+      const unreachable = new Set([
+        ...locallyUnreachable,
+        ...checkpoint.memory.unreachable
+          .filter(({ expiresAt }) =>
+            expiresAt === undefined || Date.parse(expiresAt) > now
+          )
+          .map(({ value }) => positionKey(value)),
+      ]);
+      const targets = yield* state.driver.queryEntities({
+        origin: current.player.position,
+        radius: state.strategy.entitySearchRadius,
+        selector,
+        maximumResults: Math.min(
+          256,
+          Math.max(16, maximumTargets + attemptedTargets.size),
+        ),
+      });
+      const candidates = targets.filter((target) =>
+        !unreachable.has(positionKey(target.position))
+        && !attemptedTargets.has(
+          `${target.connectionEpoch}:${target.networkId}`,
+        )
+      );
+      const target = candidates.reduce<BeatGameEntityObservation | undefined>(
+        (nearest, candidate) =>
+          nearest === undefined
+            || horizontalDistanceSquared(
+                candidate.position,
+                current.player.position,
+              )
+                < horizontalDistanceSquared(
+                  nearest.position,
+                  current.player.position,
+                )
+            ? candidate
+            : nearest,
+        undefined,
+      );
+      if (target === undefined) {
+        if (attacked === 0 && !observedCandidate) {
+          yield* explore(state.driver, {
+            origin: current.player.position,
+            radius: state.strategy.explorationRadius,
+            maximumWaypoints: 1,
+            purpose: explorationPurpose(
+              purpose,
+              current.player.position,
+            ),
+            path: huntingPath,
+          });
+        } else if (attacked === 0) {
+          yield* Effect.sleep(state.strategy.observationPollMs);
+        }
+        return;
+      }
+      observedCandidate = true;
+      attemptedTargets.add(
+        `${target.connectionEpoch}:${target.networkId}`,
+      );
       const targetKey =
         `target:${target.connectionEpoch}:${target.networkId}`;
       const claim = yield* state.coordinator.claim({
@@ -1910,7 +2038,9 @@ function huntOrExplore(
         ),
         Effect.catchTag("BeatGameDriverError", (cause) =>
           cause.code === "not_found"
-            ? Effect.void
+            ? Effect.sync(() => {
+              locallyUnreachable.add(positionKey(target.position));
+            })
             : Effect.fail(cause)
         ),
         Effect.ensuring(releaseActionClaim(state, claim)),
@@ -1922,12 +2052,6 @@ function huntOrExplore(
         path: huntingPath,
       });
       attacked += 1;
-      if (attacked >= maximumTargets) {
-        break;
-      }
-    }
-    if (attacked === 0) {
-      yield* Effect.sleep(state.strategy.observationPollMs);
     }
   });
 }
