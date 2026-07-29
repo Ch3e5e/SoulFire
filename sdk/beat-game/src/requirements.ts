@@ -14,6 +14,25 @@ export interface BeatGameRequirementDefinition {
   readonly priority: number;
 }
 
+export const COOKED_FOOD_ITEM_IDS = [
+  "minecraft:cooked_beef",
+  "minecraft:cooked_porkchop",
+  "minecraft:cooked_mutton",
+  "minecraft:cooked_chicken",
+  "minecraft:cooked_rabbit",
+  "minecraft:bread",
+  "minecraft:baked_potato",
+] as const;
+
+export const RAW_FOOD_TO_COOKED = {
+  "minecraft:beef": "minecraft:cooked_beef",
+  "minecraft:porkchop": "minecraft:cooked_porkchop",
+  "minecraft:mutton": "minecraft:cooked_mutton",
+  "minecraft:chicken": "minecraft:cooked_chicken",
+  "minecraft:rabbit": "minecraft:cooked_rabbit",
+  "minecraft:potato": "minecraft:baked_potato",
+} as const;
+
 const REQUIREMENTS: Readonly<
   Record<BeatGamePhase, readonly BeatGameRequirementDefinition[]>
 > = {
@@ -48,23 +67,12 @@ const REQUIREMENTS: Readonly<
       () => 1,
       105,
     ),
-    itemRequirement("food", [
-      "minecraft:cooked_beef",
-      "minecraft:cooked_porkchop",
-      "minecraft:cooked_mutton",
-      "minecraft:cooked_chicken",
-      "minecraft:cooked_rabbit",
-      "minecraft:bread",
-      "minecraft:beef",
-      "minecraft:porkchop",
-      "minecraft:mutton",
-      "minecraft:chicken",
-      "minecraft:rabbit",
-      "minecraft:carrot",
-      "minecraft:baked_potato",
-      "minecraft:potato",
-      "minecraft:apple",
-    ], ({ targetFoodCount }) => targetFoodCount, 100),
+    itemRequirement(
+      "food",
+      COOKED_FOOD_ITEM_IDS,
+      ({ targetFoodCount }) => Math.min(targetFoodCount, 8),
+      100,
+    ),
     itemRequirement(
       "iron",
       ["minecraft:iron_ingot"],
@@ -142,12 +150,12 @@ const REQUIREMENTS: Readonly<
     ),
   ],
   [BeatGamePhase.FIGHT_ENDER_DRAGON]: [
-    itemRequirement("food", [
-      "minecraft:cooked_beef",
-      "minecraft:cooked_porkchop",
-      "minecraft:cooked_mutton",
-      "minecraft:bread",
-    ], ({ targetFoodCount }) => targetFoodCount, 100),
+    itemRequirement(
+      "food",
+      COOKED_FOOD_ITEM_IDS,
+      ({ targetFoodCount }) => targetFoodCount,
+      100,
+    ),
     itemRequirement(
       "ranged-weapon",
       ["minecraft:bow", "minecraft:crossbow"],

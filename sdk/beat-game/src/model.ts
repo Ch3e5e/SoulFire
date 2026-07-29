@@ -128,7 +128,7 @@ export const defaultBeatGameStrategy: BeatGameStrategy = {
   targetEnderPearlCount: 14,
   targetEyeCount: 12,
   targetObsidianCount: 10,
-  minimumHealth: 8,
+  minimumHealth: 14,
   eatBelowFood: 14,
   blockSearchRadius: 48,
   entitySearchRadius: 48,

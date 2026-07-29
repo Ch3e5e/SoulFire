@@ -27,6 +27,25 @@ describe("beat-game requirements", () => {
     expect(food?.satisfied).toBe(false);
   });
 
+  it("requires a compact cooked reserve before leaving initial preparation", () => {
+    const food = requirementsForPhase(
+      BeatGamePhase.PREPARE_OVERWORLD,
+      observation({
+        counts: {
+          "minecraft:cooked_mutton": 7,
+          "minecraft:mutton": 64,
+        },
+      }).inventory,
+      defaultBeatGameStrategy,
+    ).find(({ key }) => key === "food");
+
+    expect(food).toMatchObject({
+      currentCount: 7,
+      targetCount: 8,
+      satisfied: false,
+    });
+  });
+
   it("orders missing requirements by explicit planner priority", () => {
     const requirements = requirementsForPhase(
       BeatGamePhase.PREPARE_OVERWORLD,

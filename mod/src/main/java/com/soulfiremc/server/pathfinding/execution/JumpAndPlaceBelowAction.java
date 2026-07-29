@@ -26,7 +26,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
-import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 
 @Slf4j
@@ -94,13 +94,16 @@ public final class JumpAndPlaceBelowAction implements WorldAction {
       return;
     }
 
-    if (connection.minecraft().gameMode.useItemOn(clientEntity, hand, clientEntity.level().clipIncludingBorder(new ClipContext(
-      clientEntity.getEyePosition(),
-      placeTarget,
-      ClipContext.Block.COLLIDER,
-      ClipContext.Fluid.NONE,
-      clientEntity
-    ))) instanceof InteractionResult.Success success) {
+    if (connection.minecraft().gameMode.useItemOn(
+      clientEntity,
+      hand,
+      new BlockHitResult(
+        placeTarget,
+        blockPlaceAgainstData.blockFace().toDirection(),
+        blockPlaceAgainstData.againstPos().toBlockPos(),
+        false
+      )
+    ) instanceof InteractionResult.Success success) {
       if (success.swingSource() == InteractionResult.SwingSource.CLIENT) {
         clientEntity.swing(hand);
       }

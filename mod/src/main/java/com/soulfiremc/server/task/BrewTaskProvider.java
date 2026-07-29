@@ -293,6 +293,7 @@ public final class BrewTaskProvider implements BotTaskProvider<BrewTask> {
       var stationPosition = Objects.requireNonNull(station);
       var player = requirePlayer();
       if (player.position().distanceToSqr(Vec3.atCenterOf(stationPosition)) <= 9) {
+        stopPath(ControlStopReason.CANCELLED, null);
         transition(Stage.OPEN_MENU, "Opening brewing stand");
         return;
       }
@@ -699,6 +700,17 @@ public final class BrewTaskProvider implements BotTaskProvider<BrewTask> {
       return Objects.requireNonNull(context.bot().minecraft().player);
     }
 
+    private void stopPath(
+      ControlStopReason reason,
+      @Nullable Throwable cause
+    ) {
+      var path = activePath;
+      activePath = null;
+      if (path != null) {
+        path.onStopped(reason, cause);
+      }
+    }
+
     private void transition(Stage next, String message) {
       stage = next;
       stageTicks = 0;
@@ -759,11 +771,7 @@ public final class BrewTaskProvider implements BotTaskProvider<BrewTask> {
       ControlStopReason reason,
       @Nullable Throwable cause
     ) {
-      var path = activePath;
-      activePath = null;
-      if (path != null) {
-        path.onStopped(reason, cause);
-      }
+      stopPath(reason, cause);
       var player = context.bot().minecraft().player;
       if (player != null && !(player.containerMenu instanceof InventoryMenu)) {
         player.closeContainer();

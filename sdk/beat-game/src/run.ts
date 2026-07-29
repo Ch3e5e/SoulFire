@@ -93,7 +93,10 @@ import type {
   BeatGamePolicyContext,
   BeatGameStrategyHooks,
 } from "./policy.js";
-import { requirementCount } from "./requirements.js";
+import {
+  RAW_FOOD_TO_COOKED,
+  requirementCount,
+} from "./requirements.js";
 import {
   assertValidCheckpoint,
   InMemoryBeatGameCheckpointStore,
@@ -105,6 +108,8 @@ type EventInput<T extends BeatGameEvent = BeatGameEvent> =
     ? Omit<T, "sequence" | "timestamp" | "runId" | "instanceId" | "botId"
       | "phase">
     : never;
+
+const WORKSTATION_REUSE_RADIUS = 8;
 
 export interface BeatGameRun {
   readonly id: string;
@@ -708,6 +713,11 @@ function executeDecision(
       state.driver,
       actionCheckpoint.planner.currentActionId ?? crypto.randomUUID(),
       new Date(Date.now() + state.strategy.actionTimeoutMs),
+      stableFingerprint({
+        connectionEpoch: observation.player.connectionEpoch,
+        playerRevision: observation.player.revision.toString(),
+        inventoryRevision: observation.inventory.revision.toString(),
+      }),
     ),
   };
   const policyContext = policyContextFor(
@@ -1160,13 +1170,22 @@ function retreatAndRecover(
       categories: [2],
       alive: true,
     },
+    triggerRadius: 12,
+    safeDistance: 24,
     completeWhenSafe: true,
     maximumEscapes: 1,
-    path: state.strategy.path,
+    path: {
+      ...state.strategy.path,
+      maxSearchTimeMs: Math.min(
+        state.strategy.path.maxSearchTimeMs,
+        3_000,
+      ),
+    },
   }).pipe(
     Effect.zipRight(eatWhenNeeded(state.driver, {
       foodLevel: Math.max(18, state.strategy.eatBelowFood),
-      maximumMeals: 2,
+      maximumMeals: 8,
+      completeWhenNoFood: true,
       path: state.strategy.path,
     })),
     Effect.zipRight(waitForRecovery(20)),
@@ -1197,20 +1216,10 @@ function satisfyRequirement(
   );
   switch (requirement.key) {
     case "food":
-      return huntOrExplore(
+      return satisfyFoodRequirement(
         state,
+        requirement,
         observation,
-        {
-          entityTypes: [
-            "minecraft:cow",
-            "minecraft:pig",
-            "minecraft:sheep",
-            "minecraft:chicken",
-          ],
-          alive: true,
-        },
-        missing,
-        "find-food-animals",
       );
     case "logs":
       return collectBlocksOrExplore(state, observation, {
@@ -1429,6 +1438,88 @@ function satisfyRequirement(
   }
 }
 
+function satisfyFoodRequirement(
+  state: RunState,
+  requirement: BeatGameItemRequirement,
+  observation: BeatGameObservation,
+): Effect.Effect<void, BeatGameError | BeatGameDriverError> {
+  const missingCookedFood = Math.max(
+    1,
+    requirement.targetCount - requirement.currentCount,
+  );
+  const rawFood = Object.entries(RAW_FOOD_TO_COOKED)
+    .map(([rawItemId, cookedItemId]) => ({
+      rawItemId,
+      cookedItemId,
+      count: observation.inventory.counts[rawItemId] ?? 0,
+    }))
+    .filter(({ count }) => count > 0);
+  const rawFoodCount = rawFood.reduce(
+    (total, { count }) => total + count,
+    0,
+  );
+  if (rawFoodCount < missingCookedFood) {
+    return huntOrExplore(
+      state,
+      observation,
+      {
+        entityTypes: [
+          "minecraft:cow",
+          "minecraft:pig",
+          "minecraft:sheep",
+          "minecraft:chicken",
+          "minecraft:rabbit",
+        ],
+        alive: true,
+      },
+      missingCookedFood - rawFoodCount,
+      "find-food-animals",
+    );
+  }
+  const batch = rawFood[0];
+  if (batch === undefined) {
+    return Effect.void;
+  }
+  return ensureWorkstation(
+    state,
+    observation,
+    "minecraft:furnace",
+  ).pipe(
+    Effect.flatMap((station) =>
+      smelt(state.driver, {
+        input: { itemIds: [batch.rawItemId] },
+        count: Math.min(batch.count, missingCookedFood),
+        fuel: {
+          itemIds: [
+            "minecraft:coal",
+            "minecraft:charcoal",
+            "minecraft:oak_log",
+            "minecraft:spruce_log",
+            "minecraft:birch_log",
+            "minecraft:jungle_log",
+            "minecraft:acacia_log",
+            "minecraft:dark_oak_log",
+            "minecraft:mangrove_log",
+            "minecraft:cherry_log",
+            "minecraft:pale_oak_log",
+            "minecraft:oak_planks",
+            "minecraft:spruce_planks",
+            "minecraft:birch_planks",
+            "minecraft:jungle_planks",
+            "minecraft:acacia_planks",
+            "minecraft:dark_oak_planks",
+            "minecraft:mangrove_planks",
+            "minecraft:cherry_planks",
+            "minecraft:pale_oak_planks",
+          ],
+        },
+        station,
+        path: state.strategy.path,
+      })
+    ),
+  );
+}
+
 function ensureMiningPickaxe(
   state: RunState,
   observation: BeatGameObservation,
@@ -1458,28 +1549,44 @@ function collectBlocksOrExplore(
       (total, itemId) => total + (current.inventory.counts[itemId] ?? 0),
       0,
     );
-  const before = countItems(observation);
-  return collectBlocks(state.driver, {
-    blockIds: options.blockIds,
-    ...(options.tags === undefined ? {} : { tags: options.tags }),
-    count: options.count,
-    searchRadius: state.strategy.blockSearchRadius,
-    path: state.strategy.path,
-  }).pipe(
-    Effect.zipRight(Effect.sleep(250)),
-    Effect.zipRight(state.driver.observe),
-    Effect.flatMap((after) =>
-      countItems(after) > before
-        ? Effect.void
-        : explore(state.driver, {
-          origin: after.player.position,
+  return Effect.gen(function* () {
+    let current = observation;
+    const targetCount = countItems(observation) + options.count;
+    const resourcePath = {
+      ...state.strategy.path,
+      allowPlacing: false,
+    };
+    while (countItems(current) < targetCount) {
+      const beforeAttempt = countItems(current);
+      yield* collectBlocks(state.driver, {
+        blockIds: options.blockIds,
+        ...(options.tags === undefined ? {} : { tags: options.tags }),
+        count: 1,
+        searchRadius: state.strategy.blockSearchRadius,
+        path: resourcePath,
+      });
+      yield* collectNearbyDrops(state.driver, {
+        radius: 12,
+        maximumDrops: 32,
+        settleDelayMs: 250,
+        path: resourcePath,
+      });
+      current = yield* state.driver.observe;
+      if (countItems(current) <= beforeAttempt) {
+        yield* explore(state.driver, {
+          origin: current.player.position,
           radius: state.strategy.explorationRadius,
           maximumWaypoints: 1,
-          purpose: options.purpose,
-          path: state.strategy.path,
-        })
-    ),
-  );
+          purpose: explorationPurpose(
+            options.purpose,
+            current.player.position,
+          ),
+          path: resourcePath,
+        });
+        return;
+      }
+    }
+  });
 }
 
 function fillLiquidBucket(
@@ -1510,7 +1617,10 @@ function fillLiquidBucket(
         origin: observation.player.position,
         radius: state.strategy.explorationRadius,
         maximumWaypoints: 1,
-        purpose: `find-${liquid}`,
+        purpose: explorationPurpose(
+          `find-${liquid}`,
+          observation.player.position,
+        ),
         path: state.strategy.path,
       });
     }
@@ -1614,6 +1724,10 @@ function huntOrExplore(
   purpose: string,
 ): Effect.Effect<void, BeatGameError | BeatGameDriverError> {
   return Effect.gen(function* () {
+    const huntingPath = {
+      ...state.strategy.path,
+      allowPlacing: false,
+    };
     const targets = yield* state.driver.queryEntities({
       origin: observation.player.position,
       radius: state.strategy.entitySearchRadius,
@@ -1636,9 +1750,12 @@ function huntOrExplore(
       yield* explore(state.driver, {
         origin: observation.player.position,
         radius: state.strategy.explorationRadius,
-        maximumWaypoints: 3,
-        purpose,
-        path: state.strategy.path,
+        maximumWaypoints: 1,
+        purpose: explorationPurpose(
+          purpose,
+          observation.player.position,
+        ),
+        path: huntingPath,
       });
       return;
     }
@@ -1687,7 +1804,7 @@ function huntOrExplore(
         target,
         targetUnavailableTimeoutSeconds: 3,
         selectBestWeapon: true,
-        path: state.strategy.path,
+        path: huntingPath,
       }).pipe(
         Effect.tapError(() =>
           persist(state, (current) => ({
@@ -1718,7 +1835,7 @@ function huntOrExplore(
         radius: 8,
         maximumDrops: 16,
         settleDelayMs: 250,
-        path: state.strategy.path,
+        path: huntingPath,
       });
       attacked += 1;
       if (attacked >= maximumTargets) {
@@ -1729,6 +1846,15 @@ function huntOrExplore(
       yield* Effect.sleep(state.strategy.observationPollMs);
     }
   });
+}
+
+function explorationPurpose(
+  purpose: string,
+  position: BeatGamePosition,
+): string {
+  const cellX = Math.floor(position.x / 32);
+  const cellZ = Math.floor(position.z / 32);
+  return `${purpose.slice(0, 40)}:${cellX}:${cellZ}`;
 }
 
 function acquireEnderPearls(
@@ -1901,7 +2027,7 @@ function ensureWorkstation(
   return Effect.gen(function* () {
     const existing = (yield* state.driver.queryBlocks({
       center: observation.player.position,
-      radius: 24,
+      radius: WORKSTATION_REUSE_RADIUS,
       selector: { blockIds: [blockId] },
       maximumResults: 1,
     }))[0];
@@ -1915,45 +2041,60 @@ function ensureWorkstation(
         "minecraft:crafting_table",
       )
       : undefined;
-    const target = yield* findWorkstationTarget(
+    const targets = yield* findWorkstationTargets(
       state.driver,
       observation.player.position,
     );
-    yield* craftItem(state.driver, {
-      resultItemId: blockId,
-      count: 1,
-      ...(craftingTable === undefined ? {} : { station: craftingTable }),
-      path: state.strategy.path,
-    });
-    yield* buildStructure(state.driver, {
-      origin: target,
-      blocks: [{
-        offset: { x: 0, y: 0, z: 0 },
-        blockId,
-      }],
-      path: state.strategy.path,
-    });
-    const placed = (yield* state.driver.queryBlocks({
-      center: target,
-      radius: 2,
-      selector: { blockIds: [blockId] },
-      maximumResults: 1,
-    }))[0];
-    if (placed === undefined) {
-      return yield* Effect.fail(new BeatGameDriverError({
-        operation: "ensure-workstation",
-        retryable: true,
-        message: `${blockId} was not observable after placement`,
-      }));
+    if ((observation.inventory.counts[blockId] ?? 0) === 0) {
+      yield* craftItem(state.driver, {
+        resultItemId: blockId,
+        count: 1,
+        ...(craftingTable === undefined ? {} : { station: craftingTable }),
+        path: state.strategy.path,
+      });
     }
-    return placed.position;
+    for (const target of targets) {
+      yield* buildStructure(state.driver, {
+        origin: target,
+        blocks: [{
+          offset: { x: 0, y: 0, z: 0 },
+          blockId,
+        }],
+        path: state.strategy.path,
+      });
+      const placed = (yield* state.driver.queryBlocks({
+        center: {
+          x: target.x + 0.5,
+          y: target.y + 0.5,
+          z: target.z + 0.5,
+          dimension: target.dimension,
+        },
+        radius: 0.25,
+        selector: { blockIds: [blockId] },
+        maximumResults: 1,
+      }))[0];
+      if (
+        placed !== undefined
+        && placed.position.x === target.x
+        && placed.position.y === target.y
+        && placed.position.z === target.z
+        && placed.position.dimension === target.dimension
+      ) {
+        return placed.position;
+      }
+    }
+    return yield* Effect.fail(new BeatGameDriverError({
+      operation: "ensure-workstation",
+      retryable: true,
+      message: `${blockId} could not be placed on any nearby support`,
+    }));
   });
 }
 
-function findWorkstationTarget(
+function findWorkstationTargets(
   driver: BeatGameDriver,
   position: BeatGamePosition,
-): Effect.Effect<BeatGameBlockPosition, BeatGameDriverError> {
+): Effect.Effect<readonly BeatGameBlockPosition[], BeatGameDriverError> {
   return Effect.gen(function* () {
     const playerBlock = {
       x: Math.floor(position.x),
@@ -1988,6 +2129,7 @@ function findWorkstationTarget(
         workstationDistanceSquared(left, position)
         - workstationDistanceSquared(right, position)
       );
+    const available: BeatGameBlockPosition[] = [];
     for (const candidate of candidates) {
       const replaceable = yield* driver.queryBlocks({
         center: {
@@ -2006,14 +2148,19 @@ function findWorkstationTarget(
         && observed.z === candidate.z
         && observed.dimension === candidate.dimension
       )) {
-        return candidate;
+        available.push(candidate);
+        if (available.length >= 16) {
+          break;
+        }
       }
     }
-    return yield* Effect.fail(new BeatGameDriverError({
-      operation: "find-workstation-target",
-      retryable: true,
-      message: "No supported open block is available for a workstation",
-    }));
+    return available.length > 0
+      ? available
+      : yield* Effect.fail(new BeatGameDriverError({
+        operation: "find-workstation-targets",
+        retryable: true,
+        message: "No supported open block is available for a workstation",
+      }));
   });
 }
 
@@ -3192,7 +3339,9 @@ function withTaskIdempotency(
   driver: BeatGameDriver,
   actionId: string,
   deadline: Date,
+  observationFingerprint: string,
 ): BeatGameDriver {
+  let taskInvocation = 0;
   return {
     instanceId: driver.instanceId,
     botId: driver.botId,
@@ -3208,7 +3357,9 @@ function withTaskIdempotency(
       driver.runTask(task, policy, {
         idempotencyKey:
           execution.idempotencyKey
-            ?? `beat-game:${actionId}:${taskFingerprint(task)}`,
+            ?? `beat-game:${actionId}:${observationFingerprint}:${
+              ++taskInvocation
+            }:${stableFingerprint(task)}`,
         deadline: execution.deadline ?? deadline,
       }),
     act: driver.act,
@@ -3216,8 +3367,8 @@ function withTaskIdempotency(
   };
 }
 
-function taskFingerprint(task: Parameters<BeatGameDriver["runTask"]>[0]): string {
-  const source = JSON.stringify(task);
+function stableFingerprint(value: unknown): string {
+  const source = JSON.stringify(value);
   let hash = 0xcbf29ce484222325n;
   for (let index = 0; index < source.length; index += 1) {
     hash ^= BigInt(source.charCodeAt(index));

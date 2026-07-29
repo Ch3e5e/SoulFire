@@ -12,6 +12,7 @@ import {
   collectNearbyDrops,
   craftItem,
   createNetherPortalFrame,
+  eatWhenNeeded,
   enterEndPortal,
   enterPortal,
   exitEnd,
@@ -155,6 +156,26 @@ function queriedBlockPosition(
 }
 
 describe("beat-game behavior programs", () => {
+  it("bounds recovery eating and completes when supplies run out", async () => {
+    const driver = new FakeBeatGameDriver();
+
+    await Effect.runPromise(eatWhenNeeded(driver, {
+      foodLevel: 18,
+      maximumMeals: 8,
+      completeWhenNoFood: true,
+      restoreSelectedSlot: true,
+    }));
+
+    expect(driver.tasks).toEqual([{
+      type: "auto-eat",
+      foodItemIds: [],
+      foodLevel: 18,
+      maximumMeals: 8,
+      completeWhenNoFood: true,
+      restoreSelectedSlot: true,
+    }]);
+  });
+
   it("sweeps nearby item entities into pickup range", async () => {
     const driver = new FakeBeatGameDriver();
     const position = {

@@ -41,15 +41,21 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.inventory.AbstractCraftingMenu;
 import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.inventory.CraftingMenu;
 import net.minecraft.world.inventory.InventoryMenu;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.crafting.display.RecipeDisplayEntry;
+import net.minecraft.world.item.crafting.display.ShapedCraftingRecipeDisplay;
+import net.minecraft.world.item.crafting.display.ShapelessCraftingRecipeDisplay;
+import net.minecraft.world.item.crafting.display.SlotDisplay;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -179,6 +185,7 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
     private final @Nullable BlockPos station;
     private final CompletableFuture<CraftTaskResult> result;
     private @Nullable PathExecutor activePath;
+    private @Nullable IngredientPlacement activePlacement;
     private Stage stage;
     private int stageTicks;
     private int crafted;
@@ -217,7 +224,10 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
         switch (stage) {
           case NAVIGATE -> navigate();
           case OPEN_MENU -> openMenu();
-          case PLACE_RECIPE -> placeRecipe();
+          case CLEAR_GRID -> clearGrid();
+          case PICKUP_INGREDIENT -> pickupIngredient();
+          case PLACE_INGREDIENT -> placeIngredient();
+          case RETURN_INGREDIENT -> returnIngredient();
           case WAIT_FOR_RESULT -> waitForResult();
           case TAKE_RESULT -> takeResult();
           case DEPOSIT_RESULT -> depositResult();
@@ -231,6 +241,7 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
       var stationPosition = Objects.requireNonNull(station);
       var player = requirePlayer();
       if (player.position().distanceToSqr(Vec3.atCenterOf(stationPosition)) <= 9) {
+        stopPath(ControlStopReason.CANCELLED, null);
         transition(Stage.OPEN_MENU, "Opening crafting table");
         return;
       }
@@ -278,12 +289,11 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
         if (!(player.containerMenu instanceof InventoryMenu)) {
           player.closeContainer();
         }
-        player.sendOpenInventory();
-        transition(Stage.PLACE_RECIPE, "Preparing recipe");
+        transition(Stage.CLEAR_GRID, "Preparing recipe");
         return;
       }
       if (player.containerMenu instanceof CraftingMenu) {
-        transition(Stage.PLACE_RECIPE, "Preparing recipe");
+        transition(Stage.CLEAR_GRID, "Preparing recipe");
         return;
       }
       var stationPosition = Objects.requireNonNull(station);
@@ -330,19 +340,106 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
       }
     }
 
-    private void placeRecipe() {
+    private void clearGrid() {
       var player = requirePlayer();
       var menu = requireCraftingMenu(player.containerMenu);
       if (!menu.getCarried().isEmpty()) {
-        transition(Stage.DEPOSIT_RESULT, "Storing crafted result");
+        throw Status.FAILED_PRECONDITION
+          .withDescription(
+            "The inventory cursor must be empty before preparing a recipe"
+          )
+          .asRuntimeException();
+      }
+      var occupiedInput = craftingMenu(menu).getInputGridSlots().stream()
+        .mapToInt(menu.slots::indexOf)
+        .filter(slotIndex -> !menu.getSlot(slotIndex).getItem().isEmpty())
+        .findFirst();
+      if (occupiedInput.isEmpty()) {
+        transition(Stage.PICKUP_INGREDIENT, "Placing recipe ingredients");
         return;
       }
-      var gameMode = Objects.requireNonNull(
-        context.bot().minecraft().gameMode,
-        "Bot game mode is not available"
+      handleContainerInput(
+        menu,
+        occupiedInput.getAsInt(),
+        0,
+        ContainerInput.QUICK_MOVE,
+        player
       );
-      gameMode.handlePlaceRecipe(menu.containerId, recipe.id(), false);
-      transition(Stage.WAIT_FOR_RESULT, "Placing recipe ingredients");
+      stageTicks++;
+      if (stageTicks > MENU_TIMEOUT_TICKS) {
+        throw Status.DEADLINE_EXCEEDED
+          .withDescription("Timed out clearing the crafting grid")
+          .asRuntimeException();
+      }
+    }
+
+    private void pickupIngredient() {
+      var player = requirePlayer();
+      var menu = requireCraftingMenu(player.containerMenu);
+      if (!menu.getCarried().isEmpty()) {
+        throw Status.FAILED_PRECONDITION
+          .withDescription(
+            "The inventory cursor was not cleared after placing an ingredient"
+          )
+          .asRuntimeException();
+      }
+      var placement = missingIngredientPlacement(menu);
+      if (placement == null) {
+        transition(Stage.WAIT_FOR_RESULT, "Waiting for crafted result");
+        return;
+      }
+      activePlacement = placement;
+      handleContainerInput(
+        menu,
+        placement.sourceSlot(),
+        0,
+        ContainerInput.PICKUP,
+        player
+      );
+      transition(Stage.PLACE_INGREDIENT, "Placing recipe ingredient");
+    }
+
+    private void placeIngredient() {
+      var player = requirePlayer();
+      var menu = requireCraftingMenu(player.containerMenu);
+      var placement = Objects.requireNonNull(activePlacement);
+      var carried = menu.getCarried();
+      if (carried.isEmpty()) {
+        transition(Stage.PICKUP_INGREDIENT, "Retrying recipe ingredient");
+        return;
+      }
+      if (!placement.matches(carried)) {
+        throw Status.FAILED_PRECONDITION
+          .withDescription(
+            "The selected inventory item no longer matches the recipe ingredient"
+          )
+          .asRuntimeException();
+      }
+      handleContainerInput(
+        menu,
+        placement.targetSlot(),
+        1,
+        ContainerInput.PICKUP,
+        player
+      );
+      transition(Stage.RETURN_INGREDIENT, "Returning unused ingredients");
+    }
+
+    private void returnIngredient() {
+      var player = requirePlayer();
+      var menu = requireCraftingMenu(player.containerMenu);
+      var placement = Objects.requireNonNull(activePlacement);
+      if (!menu.getCarried().isEmpty()) {
+        handleContainerInput(
+          menu,
+          placement.sourceSlot(),
+          0,
+          ContainerInput.PICKUP,
+          player
+        );
+      }
+      activePlacement = null;
+      transition(Stage.PICKUP_INGREDIENT, "Placing recipe ingredients");
     }
 
     private void waitForResult() {
@@ -369,15 +466,134 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
       }
     }
 
+    private @Nullable IngredientPlacement missingIngredientPlacement(
+      AbstractContainerMenu menu
+    ) {
+      var placements = ingredientPlacements(craftingMenu(menu), menu);
+      for (var ingredient : placements) {
+        var target = menu.getSlot(ingredient.targetSlot()).getItem();
+        if (ingredient.matches(target)) {
+          continue;
+        }
+        if (!target.isEmpty()) {
+          throw Status.FAILED_PRECONDITION
+            .withDescription(
+              "The crafting grid contains an item that does not match the recipe"
+            )
+            .asRuntimeException();
+        }
+        var source = SFInventoryHelpers.playerInventorySlots(menu)
+          .filter(slotIndex ->
+            ingredient.matches(menu.getSlot(slotIndex).getItem()))
+          .findFirst();
+        if (source.isEmpty()) {
+          throw Status.FAILED_PRECONDITION
+            .withDescription(
+              "A recipe ingredient is no longer available in the player inventory"
+            )
+            .asRuntimeException();
+        }
+        return new IngredientPlacement(
+          source.getAsInt(),
+          ingredient.targetSlot(),
+          ingredient.acceptedStacks()
+        );
+      }
+      return null;
+    }
+
+    private List<TargetIngredient> ingredientPlacements(
+      AbstractCraftingMenu craftingMenu,
+      AbstractContainerMenu menu
+    ) {
+      var displayContext = RecipeSupport.displayContext(context.bot());
+      var inputSlots = craftingMenu.getInputGridSlots();
+      var gridWidth = craftingMenu.getGridWidth();
+      var result = new ArrayList<TargetIngredient>();
+      switch (recipe.display()) {
+        case ShapedCraftingRecipeDisplay shaped -> {
+          for (var index = 0; index < shaped.ingredients().size(); index++) {
+            var accepted = acceptedStacks(
+              shaped.ingredients().get(index),
+              displayContext
+            );
+            if (accepted.isEmpty()) {
+              continue;
+            }
+            var row = index / shaped.width();
+            var column = index % shaped.width();
+            var gridIndex = row * gridWidth + column;
+            result.add(new TargetIngredient(
+              menu.slots.indexOf(inputSlots.get(gridIndex)),
+              accepted
+            ));
+          }
+        }
+        case ShapelessCraftingRecipeDisplay shapeless -> {
+          var gridIndex = 0;
+          for (var ingredient : shapeless.ingredients()) {
+            var accepted = acceptedStacks(ingredient, displayContext);
+            if (accepted.isEmpty()) {
+              continue;
+            }
+            result.add(new TargetIngredient(
+              menu.slots.indexOf(inputSlots.get(gridIndex)),
+              accepted
+            ));
+            gridIndex++;
+          }
+        }
+        default -> throw Status.FAILED_PRECONDITION
+          .withDescription("The selected recipe is not a crafting recipe")
+          .asRuntimeException();
+      }
+      return List.copyOf(result);
+    }
+
+    private static List<ItemStack> acceptedStacks(
+      SlotDisplay ingredient,
+      net.minecraft.util.context.ContextMap displayContext
+    ) {
+      return ingredient.resolveForStacks(displayContext).stream()
+        .filter(stack -> !stack.isEmpty())
+        .toList();
+    }
+
+    private static AbstractCraftingMenu craftingMenu(
+      AbstractContainerMenu menu
+    ) {
+      if (menu instanceof AbstractCraftingMenu craftingMenu) {
+        return craftingMenu;
+      }
+      throw Status.FAILED_PRECONDITION
+        .withDescription("The required crafting menu was closed")
+        .asRuntimeException();
+    }
+
+    private void handleContainerInput(
+      AbstractContainerMenu menu,
+      int slot,
+      int button,
+      ContainerInput input,
+      net.minecraft.client.player.LocalPlayer player
+    ) {
+      Objects.requireNonNull(
+        context.bot().minecraft().gameMode,
+        "Bot game mode is not available"
+      ).handleContainerInput(
+        menu.containerId,
+        slot,
+        button,
+        input,
+        player
+      );
+    }
+
     private void takeResult() {
       var player = requirePlayer();
       var menu = requireCraftingMenu(player.containerMenu);
-      var gameMode = Objects.requireNonNull(
-        context.bot().minecraft().gameMode,
-        "Bot game mode is not available"
-      );
-      gameMode.handleContainerInput(
-        menu.containerId,
+      handleContainerInput(
+        menu,
         0,
         0,
         ContainerInput.PICKUP,
@@ -392,7 +608,7 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
       var carried = menu.getCarried();
       if (carried.isEmpty()) {
         crafted++;
-        transition(Stage.PLACE_RECIPE, "Preparing next craft");
+        transition(Stage.CLEAR_GRID, "Preparing next craft");
         return;
       }
       var target = SFInventoryHelpers.playerInventorySlots(menu)
@@ -403,12 +619,8 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
           .withDescription("Inventory has no room for the crafted result")
           .asRuntimeException();
       }
-      var gameMode = Objects.requireNonNull(
-        context.bot().minecraft().gameMode,
-        "Bot game mode is not available"
-      );
-      gameMode.handleContainerInput(
-        menu.containerId,
+      handleContainerInput(
+        menu,
         target.getAsInt(),
         0,
         ContainerInput.PICKUP,
@@ -459,6 +671,17 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
         context.bot().minecraft().player,
         "Bot player is not available"
       );
+    }
+
+    private void stopPath(
+      ControlStopReason reason,
+      @Nullable Throwable cause
+    ) {
+      var path = activePath;
+      activePath = null;
+      if (path != null) {
+        path.onStopped(reason, cause);
+      }
     }
 
     private void transition(Stage next, String message) {
@@ -521,11 +744,7 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
       ControlStopReason reason,
       @Nullable Throwable cause
     ) {
-      var path = activePath;
-      activePath = null;
-      if (path != null) {
-        path.onStopped(reason, cause);
-      }
+      stopPath(reason, cause);
       var player = context.bot().minecraft().player;
       if (player != null && !(player.containerMenu instanceof InventoryMenu)) {
         player.closeContainer();
@@ -544,9 +763,35 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
   private enum Stage {
     NAVIGATE,
     OPEN_MENU,
-    PLACE_RECIPE,
+    CLEAR_GRID,
+    PICKUP_INGREDIENT,
+    PLACE_INGREDIENT,
+    RETURN_INGREDIENT,
     WAIT_FOR_RESULT,
     TAKE_RESULT,
     DEPOSIT_RESULT
+  }
+
+  private record TargetIngredient(
+    int targetSlot,
+    List<ItemStack> acceptedStacks
+  ) {
+    private boolean matches(ItemStack stack) {
+      return !stack.isEmpty() && acceptedStacks.stream()
+        .anyMatch(accepted ->
+          ItemStack.isSameItemSameComponents(accepted, stack));
+    }
+  }
+
+  private record IngredientPlacement(
+    int sourceSlot,
+    int targetSlot,
+    List<ItemStack> acceptedStacks
+  ) {
+    private boolean matches(ItemStack stack) {
+      return !stack.isEmpty() && acceptedStacks.stream()
+        .anyMatch(accepted ->
+          ItemStack.isSameItemSameComponents(accepted, stack));
+    }
   }
 }

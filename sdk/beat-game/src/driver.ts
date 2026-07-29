@@ -236,6 +236,8 @@ export type BeatGameTask =
     readonly foodItemIds?: readonly string[];
     readonly foodLevel: number;
     readonly maximumMeals?: number;
+    readonly completeWhenNoFood?: boolean;
+    readonly restoreSelectedSlot?: boolean;
   }
   | {
     readonly type: "auto-respawn";
@@ -768,6 +770,12 @@ export function makeSoulFireBeatGameDriver(
             ...(task.maximumMeals === undefined
               ? {}
               : { maximumMeals: task.maximumMeals }),
+            ...(task.completeWhenNoFood === undefined
+              ? {}
+              : { completeWhenNoFood: task.completeWhenNoFood }),
+            ...(task.restoreSelectedSlot === undefined
+              ? {}
+              : { restoreSelectedSlot: task.restoreSelectedSlot }),
           });
         case "auto-respawn":
           return bot.tasks.autoRespawn({

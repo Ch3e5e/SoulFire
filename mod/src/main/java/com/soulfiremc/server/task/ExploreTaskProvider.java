@@ -130,7 +130,8 @@ public final class ExploreTaskProvider
       Collections.rotate(
         offsets,
         Math.floorMod(
-          context.bot().accountProfileId().hashCode(),
+          31 * context.bot().accountProfileId().hashCode()
+            + purpose.hashCode(),
           offsets.size()
         )
       );

@@ -20,6 +20,54 @@ import {
 } from "./fixtures.js";
 
 describe("beat-game run lifecycle", () => {
+  it("uses a distinct idempotency key for repeated task invocations", async () => {
+    const driver = new FakeBeatGameDriver();
+    const task = {
+      type: "collect-blocks" as const,
+      blockIds: ["minecraft:oak_log"],
+      count: 1,
+      searchRadius: 32,
+    };
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        runId: "task-invocation-run",
+        team: { teamId: "task-invocation-team" },
+        strategy: { observationPollMs: 1 },
+        hooks: {
+          satisfyRequirement: ({ driver: actionDriver, strategy }) =>
+            Effect.gen(function* () {
+              yield* actionDriver.runTask(task, strategy.path);
+              yield* actionDriver.runTask(task, strategy.path);
+              return yield* Effect.never;
+            }),
+        },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (driver.taskExecutions.length < 2) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    const keys = driver.taskExecutions.map(({ idempotencyKey }) =>
+      idempotencyKey
+    );
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toMatch(
+      /^beat-game:[0-9a-f-]{36}:[0-9a-f]{16}:1:[0-9a-f]{16}$/u,
+    );
+    expect(keys[1]).toMatch(
+      /^beat-game:[0-9a-f-]{36}:[0-9a-f]{16}:2:[0-9a-f]{16}$/u,
+    );
+    expect(keys[0]).not.toBe(keys[1]);
+  });
+
   it("honors a compact triangulation baseline", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
@@ -559,11 +607,15 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks.map((task) => task.type === "craft"
       ? `${task.type}:${task.recipeId}`
       : task.type)).toEqual([
-        "craft:minecraft:crafting_table",
-        "build",
-        "craft:minecraft:wooden_pickaxe",
-        "collect-blocks",
-      ]);
+      "craft:minecraft:crafting_table",
+      "build",
+      "craft:minecraft:wooden_pickaxe",
+      "collect-blocks",
+    ]);
+    expect(driver.blockQueries).toContainEqual(expect.objectContaining({
+      radius: 8,
+      selector: { blockIds: ["minecraft:crafting_table"] },
+    }));
   });
 
   it("runs custom Effect policy inside the normal planner lifecycle", async () => {
@@ -880,7 +932,7 @@ describe("beat-game run lifecycle", () => {
     ));
 
     expect(driver.taskExecutions[0]?.idempotencyKey).toMatch(
-      /^beat-game:restored-action-id:[0-9a-f]{16}$/u,
+      /^beat-game:restored-action-id:[0-9a-f]{16}:1:[0-9a-f]{16}$/u,
     );
     expect(driver.taskExecutions[0]?.deadline).toBeInstanceOf(Date);
   });

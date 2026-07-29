@@ -36,6 +36,7 @@ public final class BlockBreakAction implements WorldAction {
   private final SFVec3i blockPosition;
   private final BlockFace blockBreakSideHint;
   private boolean putInHand;
+  private boolean breakAttempted;
   private int remainingTicks = -1;
   private int totalTicks = -1;
 
@@ -91,9 +92,14 @@ public final class BlockBreakAction implements WorldAction {
           .ticks();
     }
 
+    breakAttempted = true;
     if (connection.minecraft().gameMode.continueDestroyBlock(blockPosition.toBlockPos(), blockBreakSideHint.toDirection())) {
       connection.minecraft().player.swing(InteractionHand.MAIN_HAND);
     }
+  }
+
+  public boolean breakAttempted() {
+    return breakAttempted;
   }
 
   @Override

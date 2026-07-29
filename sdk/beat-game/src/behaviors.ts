@@ -585,6 +585,8 @@ export interface EatWhenNeededOptions extends BeatGameBehaviorOptions {
   readonly foodItemIds?: readonly string[];
   readonly foodLevel?: number;
   readonly maximumMeals?: number;
+  readonly completeWhenNoFood?: boolean;
+  readonly restoreSelectedSlot?: boolean;
 }
 
 export function eatWhenNeeded(
@@ -598,6 +600,12 @@ export function eatWhenNeeded(
     ...(options.maximumMeals === undefined
       ? {}
       : { maximumMeals: options.maximumMeals }),
+    ...(options.completeWhenNoFood === undefined
+      ? {}
+      : { completeWhenNoFood: options.completeWhenNoFood }),
+    ...(options.restoreSelectedSlot === undefined
+      ? {}
+      : { restoreSelectedSlot: options.restoreSelectedSlot }),
   }, options.path);
 }
 

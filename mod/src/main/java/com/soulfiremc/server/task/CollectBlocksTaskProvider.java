@@ -124,6 +124,7 @@ public final class CollectBlocksTaskProvider
     private final boolean allowPlacing;
     private final CompletableFuture<CollectBlocksTaskResult> result;
     private @Nullable PathExecutor activePath;
+    private Set<SFVec3i> activeTargets = Set.of();
     private int blocksBroken;
 
     private CollectBlocksControl(
@@ -174,6 +175,7 @@ public final class CollectBlocksTaskProvider
       if (!allowPlacing) {
         constraint = new NoBlockPlacingConstraint(constraint);
       }
+      activeTargets = Set.copyOf(candidates);
       activePath = PathExecutor.createPathfinding(
         context.bot(),
         new CompositeGoal(candidates.stream()
@@ -201,9 +203,23 @@ public final class CollectBlocksTaskProvider
       try {
         path.completion().join();
         path.onStopped(ControlStopReason.COMPLETED, null);
-        blocksBroken++;
+        var confirmedBreaks = path.completedBlockBreaks().stream()
+          .filter(activeTargets::contains)
+          .count();
+        activeTargets = Set.of();
+        if (confirmedBreaks == 0) {
+          context.reportProgress(progress(
+            "Route completed without mining a matching block"
+          ));
+          return;
+        }
+        blocksBroken += (int) Math.min(
+          confirmedBreaks,
+          targetCount - blocksBroken
+        );
         context.reportProgress(progress("Matching block mined"));
       } catch (CompletionException exception) {
+        activeTargets = Set.of();
         var cause = exception.getCause() == null
           ? exception
           : exception.getCause();
@@ -338,6 +354,7 @@ public final class CollectBlocksTaskProvider
     ) {
       var path = activePath;
       activePath = null;
+      activeTargets = Set.of();
       if (path != null) {
         path.onStopped(reason, cause);
       }

@@ -28,6 +28,7 @@ function effectBot(
     explore?: Readonly<Record<string, unknown>>;
     goTo?: readonly unknown[];
     armor?: Readonly<Record<string, unknown>>;
+    eat?: readonly unknown[];
     cancellations: number;
   } = { cancellations: 0 };
   const taskHandle = {
@@ -116,6 +117,10 @@ function effectBot(
         calls.armor = options;
         return Effect.succeed(taskHandle);
       },
+      autoEat: (...args: readonly unknown[]) => {
+        calls.eat = args;
+        return Effect.succeed(taskHandle);
+      },
       explore: (options: Readonly<Record<string, unknown>>) => {
         calls.explore = options;
         return Effect.succeed(taskHandle);
@@ -191,6 +196,30 @@ describe("production SoulFire beat-game driver", () => {
           searchTimeoutSeconds: 30,
         },
       },
+    ]);
+  });
+
+  it("forwards bounded auto-eat completion controls", async () => {
+    const { bot, calls } = effectBot();
+    const driver = makeSoulFireBeatGameDriver(bot);
+
+    await Effect.runPromise(driver.runTask({
+      type: "auto-eat",
+      foodItemIds: ["minecraft:cooked_mutton"],
+      foodLevel: 18,
+      maximumMeals: 8,
+      completeWhenNoFood: true,
+      restoreSelectedSlot: false,
+    }, defaultBeatGameStrategy.path));
+
+    expect(calls.eat).toEqual([
+      ["minecraft:cooked_mutton"],
+      expect.objectContaining({
+        foodLevel: 18,
+        maximumMeals: 8,
+        completeWhenNoFood: true,
+        restoreSelectedSlot: false,
+      }),
     ]);
   });
 

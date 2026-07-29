@@ -35,6 +35,7 @@ import com.soulfiremc.server.util.TimeUtil;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Queue;
@@ -54,6 +55,7 @@ public final class PathExecutor implements ControlTask {
   private static final int MAX_ERROR_DISTANCE = 20;
   private static final int MAX_CONSECUTIVE_EMPTY_PARTIAL_ROUTES = 5;
   private final Queue<WorldAction> worldActionQueue = new LinkedBlockingQueue<>();
+  private final Set<SFVec3i> completedBlockBreaks = new HashSet<>();
   private final BotConnection connection;
   private final LiveRouteFinder findPath;
   private final CompletableFuture<Void> pathCompletionFuture;
@@ -134,6 +136,10 @@ public final class PathExecutor implements ControlTask {
 
   public Progress progress() {
     return new Progress(awaitingPath, movementNumber, totalMovements);
+  }
+
+  public Set<SFVec3i> completedBlockBreaks() {
+    return Set.copyOf(completedBlockBreaks);
   }
 
   @Override
@@ -285,6 +291,12 @@ public final class PathExecutor implements ControlTask {
     }
 
     if (worldAction.isCompleted(connection)) {
+      if (
+        worldAction instanceof BlockBreakAction blockBreakAction
+          && blockBreakAction.breakAttempted()
+      ) {
+        completedBlockBreaks.add(blockBreakAction.blockPosition());
+      }
       worldActionQueue.remove();
       log.info("Reached goal {}/{} in {} ticks!", movementNumber, totalMovements, ticks);
       movementNumber++;
