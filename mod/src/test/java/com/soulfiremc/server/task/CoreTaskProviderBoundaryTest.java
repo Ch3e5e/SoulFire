@@ -17,6 +17,7 @@
  */
 package com.soulfiremc.server.task;
 
+import io.grpc.Status;
 import org.junit.jupiter.api.Test;
 
 import java.util.Set;
@@ -84,5 +85,25 @@ class CoreTaskProviderBoundaryTest {
         removedType
       );
     }
+  }
+
+  @Test
+  void preservesGrpcStatusCodesInDurableTaskFailures() {
+    assertEquals(
+      "not_found",
+      BotTaskManager.failureCode(
+        "task_failed",
+        Status.NOT_FOUND
+          .withDescription("Target entity is not observable")
+          .asRuntimeException()
+      )
+    );
+    assertEquals(
+      "task_failed",
+      BotTaskManager.failureCode(
+        "task_failed",
+        new IllegalStateException("Unexpected provider failure")
+      )
+    );
   }
 }

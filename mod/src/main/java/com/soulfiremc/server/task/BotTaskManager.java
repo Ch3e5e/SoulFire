@@ -50,6 +50,7 @@ import java.util.Comparator;
 import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -805,13 +806,20 @@ public final class BotTaskManager implements AutoCloseable {
     boolean retryable
   ) {
     return BotTaskFailure.newBuilder()
-      .setCode(code)
+      .setCode(failureCode(code, throwable))
       .setMessage(Objects.requireNonNullElse(
         throwable.getMessage(),
         throwable.getClass().getSimpleName()
       ))
       .setRetryable(retryable)
       .build();
+  }
+
+  static String failureCode(String fallback, Throwable throwable) {
+    var status = Status.fromThrowable(throwable);
+    return status.getCode() == Status.Code.UNKNOWN
+      ? fallback
+      : status.getCode().name().toLowerCase(Locale.ROOT);
   }
 
   private static UUID parseUuid(String value, String field) {

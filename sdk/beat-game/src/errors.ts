@@ -4,6 +4,7 @@ import type { BeatGamePhase } from "./model.js";
 
 interface BeatGameDriverErrorFields {
   readonly operation: string;
+  readonly code?: string;
   readonly retryable: boolean;
   readonly message: string;
   readonly cause?: unknown;

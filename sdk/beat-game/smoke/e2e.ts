@@ -324,6 +324,24 @@ const program = Effect.scoped(Effect.gen(function* () {
           }).pipe(Effect.orDie)
         ),
       ),
+    runTask: (
+      task: Parameters<typeof baseDriver.runTask>[0],
+      policy: Parameters<typeof baseDriver.runTask>[1],
+      execution: Parameters<typeof baseDriver.runTask>[2],
+    ) =>
+      record("task-started", { task, policy, execution }).pipe(
+        Effect.orDie,
+        Effect.zipRight(baseDriver.runTask(task, policy, execution)),
+        Effect.tap((result) =>
+          record("task-completed", { task, result }).pipe(Effect.orDie)
+        ),
+        Effect.tapErrorCause((cause) =>
+          record("task-failed", {
+            task,
+            cause: String(cause),
+          }).pipe(Effect.orDie)
+        ),
+      ),
     act: (action: Parameters<typeof baseDriver.act>[0]) =>
       record("primitive-started", { action }).pipe(
         Effect.orDie,

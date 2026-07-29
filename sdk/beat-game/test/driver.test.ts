@@ -1,8 +1,15 @@
 import {
   BotTaskConflictPolicy,
   BotTaskReconnectPolicy,
+  SoulFireTaskError,
+  SoulFireTaskFailed,
   type SoulFireBot,
 } from "@soulfiremc/sdk";
+import { create } from "@bufbuild/protobuf";
+import {
+  BotTaskFailureSchema,
+  BotTaskSchema,
+} from "@soulfiremc/sdk/generated/soulfire/task_pb";
 import { Effect, Fiber, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
@@ -12,11 +19,12 @@ import {
 } from "../src/index.js";
 
 function effectBot(
-  taskResult: Effect.Effect<unknown> = Effect.succeed({}),
+  taskResult: Effect.Effect<unknown, unknown> = Effect.succeed({}),
 ) {
   const calls: {
     attack?: Readonly<Record<string, unknown>>;
     collect?: readonly unknown[];
+    explore?: Readonly<Record<string, unknown>>;
     goTo?: readonly unknown[];
     armor?: Readonly<Record<string, unknown>>;
     cancellations: number;
@@ -84,6 +92,10 @@ function effectBot(
       },
       autoArmor: (options: Readonly<Record<string, unknown>>) => {
         calls.armor = options;
+        return Effect.succeed(taskHandle);
+      },
+      explore: (options: Readonly<Record<string, unknown>>) => {
+        calls.explore = options;
         return Effect.succeed(taskHandle);
       },
     },
@@ -157,6 +169,61 @@ describe("production SoulFire beat-game driver", () => {
         },
       },
     ]);
+  });
+
+  it("normalizes precise player coordinates for block-position tasks", async () => {
+    const { bot, calls } = effectBot();
+    const driver = makeSoulFireBeatGameDriver(bot);
+
+    await Effect.runPromise(driver.runTask({
+      type: "explore",
+      origin: {
+        x: 8.5,
+        y: 86,
+        z: -3.5,
+        dimension: "minecraft:overworld",
+      },
+      radius: 32,
+      maximumWaypoints: 3,
+    }, defaultBeatGameStrategy.path));
+
+    expect(calls.explore).toMatchObject({
+      origin: {
+        x: 8,
+        y: 86,
+        z: -4,
+        dimension: "minecraft:overworld",
+      },
+      radius: 32,
+      maximumWaypoints: 3,
+    });
+  });
+
+  it("preserves durable task failure codes", async () => {
+    const task = create(BotTaskSchema, {
+      taskId: "missing-target",
+      failure: create(BotTaskFailureSchema, {
+        code: "not_found",
+        message: "Target entity is not observable",
+        retryable: false,
+      }),
+    });
+    const cause = new SoulFireTaskError(task);
+    const { bot } = effectBot(Effect.fail(new SoulFireTaskFailed({
+      task,
+      cause,
+      message: cause.message,
+    })));
+    const driver = makeSoulFireBeatGameDriver(bot);
+
+    const error = await Effect.runPromise(Effect.flip(driver.runTask({
+      type: "collect-blocks",
+      blockIds: ["minecraft:oak_log"],
+      count: 1,
+      searchRadius: 16,
+    }, defaultBeatGameStrategy.path)));
+
+    expect(error.code).toBe("not_found");
   });
 
   it("forwards the observation epoch with direct entity actions", async () => {

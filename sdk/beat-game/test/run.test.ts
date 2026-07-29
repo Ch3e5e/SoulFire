@@ -339,6 +339,117 @@ describe("beat-game run lifecycle", () => {
     expect(result.finalCheckpoint.revision).toBeGreaterThan(1);
   });
 
+  it("replans when a queued hunting target is no longer observable", async () => {
+    const driver = new FakeBeatGameDriver();
+    const allRequiredItems = {
+      "minecraft:cooked_beef": 16,
+      "minecraft:oak_log": 8,
+      "minecraft:cobblestone": 20,
+      "minecraft:iron_ingot": 7,
+      "minecraft:iron_pickaxe": 1,
+      "minecraft:water_bucket": 1,
+      "minecraft:lava_bucket": 1,
+      "minecraft:flint_and_steel": 1,
+      "minecraft:shield": 1,
+      "minecraft:obsidian": 10,
+      "minecraft:blaze_rod": 7,
+      "minecraft:ender_pearl": 14,
+      "minecraft:ender_eye": 12,
+      "minecraft:bow": 1,
+      "minecraft:arrow": 32,
+      "minecraft:torch": 1,
+    };
+    driver.currentObservation = observation();
+    driver.entityResults = [{
+      connectionEpoch: "epoch-1",
+      networkId: 42,
+      entityType: "minecraft:cow",
+      position: {
+        x: 5,
+        y: 64,
+        z: 5,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    }];
+    let attackAttempts = 0;
+    driver.taskResolver = (task) => {
+      if (task.type !== "attack-entity") {
+        return Effect.succeed({});
+      }
+      attackAttempts += 1;
+      driver.currentObservation = observation({ counts: allRequiredItems });
+      return Effect.fail(new BeatGameDriverError({
+        operation: "run-task",
+        code: "not_found",
+        retryable: false,
+        message: "Target entity is not observable",
+      }));
+    };
+    const updateDimension = (dimension: string) =>
+      Effect.sync(() => {
+        driver.currentObservation = observation({
+          dimension,
+          counts: driver.currentObservation.inventory.counts,
+        });
+      });
+    const store = new InMemoryBeatGameCheckpointStore();
+    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
+      runId: "missing-hunt-target-run",
+      teamId: "missing-hunt-target-team",
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        strongholdEstimate: {
+          x: 100,
+          y: 32,
+          z: 100,
+          dimension: "minecraft:overworld",
+        },
+      },
+    }, undefined));
+
+    const result = await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        runId: "missing-hunt-target-run",
+        team: { teamId: "missing-hunt-target-team" },
+        checkpointStore: store,
+        strategy: {
+          observationPollMs: 1,
+          portalStrategy: "OBSIDIAN",
+        },
+        hooks: {
+          buildAndEnterNether: () =>
+            updateDimension("minecraft:the_nether"),
+          returnThroughPortal: () =>
+            updateDimension("minecraft:overworld"),
+          searchStronghold: () => Effect.succeed(true),
+          activateEndPortal: () => updateDimension("minecraft:the_end"),
+          fightEnderDragon: () => Effect.succeed(true),
+          collectDragonEgg: ({ observation: current }) =>
+            Effect.sync(() => {
+              driver.currentObservation = observation({
+                dimension: "minecraft:the_end",
+                counts: {
+                  ...current.inventory.counts,
+                  "minecraft:dragon_egg": 1,
+                },
+              });
+            }),
+          exitEnd: () => updateDimension("minecraft:overworld"),
+        },
+      }).pipe(Effect.flatMap(({ awaitCompletion }) => awaitCompletion)),
+    ));
+
+    expect(attackAttempts).toBe(1);
+    expect(result.finalCheckpoint.planner.status)
+      .toBe(BeatGameRunStatus.COMPLETED);
+  });
+
   it("runs custom Effect policy inside the normal planner lifecycle", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({

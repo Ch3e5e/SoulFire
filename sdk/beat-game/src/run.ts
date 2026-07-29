@@ -1607,6 +1607,11 @@ function huntOrExplore(
             },
           })).pipe(Effect.ignore)
         ),
+        Effect.catchTag("BeatGameDriverError", (cause) =>
+          cause.code === "not_found"
+            ? Effect.void
+            : Effect.fail(cause)
+        ),
         Effect.ensuring(releaseActionClaim(state, claim)),
       );
       attacked += 1;

@@ -496,13 +496,17 @@ export function makeSoulFireBeatGameDriver(
             path,
           });
         case "excavate":
-          return bot.tasks.excavate(task.from, task.to, {
-            ...taskStart,
-            path,
-            ...(task.maximumBlocks === undefined
-              ? {}
-              : { maximumBlocks: task.maximumBlocks }),
-          });
+          return bot.tasks.excavate(
+            blockPosition(task.from),
+            blockPosition(task.to),
+            {
+              ...taskStart,
+              path,
+              ...(task.maximumBlocks === undefined
+                ? {}
+                : { maximumBlocks: task.maximumBlocks }),
+            },
+          );
         case "attack-entity":
           return bot.tasks.attackEntity(task.target, {
             ...taskStart,
@@ -623,7 +627,7 @@ export function makeSoulFireBeatGameDriver(
           });
         case "guard":
           return bot.tasks.guard(
-            task.position,
+            blockPosition(task.position),
             entitySelector(task.selector),
             {
               ...taskStart,
@@ -680,7 +684,9 @@ export function makeSoulFireBeatGameDriver(
           return bot.tasks.farm({
             ...taskStart,
             cropIds: task.cropIds ?? [],
-            ...(task.center === undefined ? {} : { center: task.center }),
+            ...(task.center === undefined
+              ? {}
+              : { center: blockPosition(task.center) }),
             ...(task.radius === undefined ? {} : { radius: task.radius }),
             ...(task.maximumHarvests === undefined
               ? {}
@@ -704,7 +710,9 @@ export function makeSoulFireBeatGameDriver(
         case "explore":
           return bot.tasks.explore({
             ...taskStart,
-            ...(task.origin === undefined ? {} : { origin: task.origin }),
+            ...(task.origin === undefined
+              ? {}
+              : { origin: blockPosition(task.origin) }),
             radius: task.radius,
             ...(task.maximumWaypoints === undefined
               ? {}
@@ -723,18 +731,18 @@ export function makeSoulFireBeatGameDriver(
               : { allowPartial: operation.allowPartial }),
           }));
           return task.direction === "deposit"
-            ? bot.tasks.stash(task.container, operations, {
+            ? bot.tasks.stash(blockPosition(task.container), operations, {
               ...taskStart,
               path,
             })
-            : bot.tasks.withdraw(task.container, operations, {
+            : bot.tasks.withdraw(blockPosition(task.container), operations, {
               ...taskStart,
               path,
             });
         }
         case "maintain-loadout":
           return bot.tasks.maintainLoadout(
-            task.container,
+            blockPosition(task.container),
             task.requirements.map((requirement) => ({
               selector: itemSelector(requirement.selector),
               minimumCount: requirement.minimumCount,
@@ -774,7 +782,7 @@ export function makeSoulFireBeatGameDriver(
           });
         case "build":
           return bot.tasks.build(
-            task.origin,
+            blockPosition(task.origin),
             task.blocks.map((block): SchematicBlock => ({
               offset: { ...block.offset },
               blockId: block.blockId,
@@ -796,7 +804,9 @@ export function makeSoulFireBeatGameDriver(
         case "craft":
           return bot.tasks.craft(task.recipeId, task.count, {
             ...taskStart,
-            ...(task.station === undefined ? {} : { station: task.station }),
+            ...(task.station === undefined
+              ? {}
+              : { station: blockPosition(task.station) }),
           });
         case "smelt":
           return bot.tasks.smelt(itemSelector(task.input), task.count, {
@@ -804,7 +814,9 @@ export function makeSoulFireBeatGameDriver(
             ...(task.fuel === undefined
               ? {}
               : { fuel: itemSelector(task.fuel) }),
-            ...(task.station === undefined ? {} : { station: task.station }),
+            ...(task.station === undefined
+              ? {}
+              : { station: blockPosition(task.station) }),
           });
         case "brew":
           return bot.tasks.brew(
@@ -818,7 +830,7 @@ export function makeSoulFireBeatGameDriver(
                 : { fuel: itemSelector(task.fuel) }),
               ...(task.station === undefined
                 ? {}
-                : { station: task.station }),
+                : { station: blockPosition(task.station) }),
               ...(task.expectedResult === undefined
                 ? {}
                 : { expectedResult: itemSelector(task.expectedResult) }),
@@ -1049,16 +1061,16 @@ function executePrimitive(
     case "release-item":
       return bot.releaseItem();
     case "dig-block":
-      return bot.digBlock({ position: action.position });
+      return bot.digBlock({ position: blockPosition(action.position) });
     case "place-block":
       return bot.placeBlock({
-        against: action.against,
+        against: blockPosition(action.against),
         face: blockFace(action.face),
         hand: hand(action.hand),
       });
     case "interact-block":
       return bot.interactBlock({
-        position: action.position,
+        position: blockPosition(action.position),
         face: blockFace(action.face),
         hand: hand(action.hand),
         sneaking: action.sneaking ?? false,
@@ -1173,7 +1185,18 @@ function toPosition(
 function toBlockPosition(
   value: Readonly<{ x: number; y: number; z: number; dimension: string }>,
 ): BeatGameBlockPosition {
-  return toPosition(value);
+  return blockPosition(value);
+}
+
+function blockPosition(
+  value: Readonly<{ x: number; y: number; z: number; dimension: string }>,
+): BeatGameBlockPosition {
+  return {
+    x: Math.floor(value.x),
+    y: Math.floor(value.y),
+    z: Math.floor(value.z),
+    dimension: value.dimension,
+  };
 }
 
 function required<T>(value: T | undefined, name: string): T {
@@ -1187,14 +1210,38 @@ function driverError(
   operation: string,
   cause: unknown,
 ): BeatGameDriverError {
+  const code = taskFailureCode(cause);
   return new BeatGameDriverError({
     operation,
+    ...(code === undefined ? {} : { code }),
     retryable: isRetryable(cause),
     message: cause instanceof Error
       ? cause.message
       : `SoulFire ${operation} failed`,
     cause,
   });
+}
+
+function taskFailureCode(cause: unknown): string | undefined {
+  if (typeof cause !== "object" || cause === null) {
+    return undefined;
+  }
+  if (
+    "task" in cause
+    && typeof cause.task === "object"
+    && cause.task !== null
+    && "failure" in cause.task
+    && typeof cause.task.failure === "object"
+    && cause.task.failure !== null
+    && "code" in cause.task.failure
+    && typeof cause.task.failure.code === "string"
+    && cause.task.failure.code.length > 0
+  ) {
+    return cause.task.failure.code;
+  }
+  return "cause" in cause && cause.cause !== cause
+    ? taskFailureCode(cause.cause)
+    : undefined;
 }
 
 function isRetryable(cause: unknown): boolean {
