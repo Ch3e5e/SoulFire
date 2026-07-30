@@ -3134,8 +3134,12 @@ function huntOrExplore(
           > HUNT_ATTACK_APPROACH_RADIUS * HUNT_ATTACK_APPROACH_RADIUS
       ) {
         const targetDistance = Math.sqrt(targetDistanceSquared);
+        const maximumApproachDistance =
+          current.player.health < state.strategy.minimumHealth
+            ? 12
+            : HUNT_MAXIMUM_APPROACH_DISTANCE;
         const approachDistance = Math.min(
-          HUNT_MAXIMUM_APPROACH_DISTANCE,
+          maximumApproachDistance,
           targetDistance - HUNT_ATTACK_APPROACH_RADIUS,
         );
         const approachRatio = approachDistance / targetDistance;
