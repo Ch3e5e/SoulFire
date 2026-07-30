@@ -1882,23 +1882,26 @@ function defendAgainstTarget(
   state: RunState,
   target: BeatGameEntityObservation,
 ): Effect.Effect<void, BeatGameDriverError> {
-  const attack = attackEntity(state.driver, {
-    target,
-    sprinting: true,
-    targetUnavailableTimeoutSeconds: 3,
-    selectBestWeapon: true,
-    path: {
-      ...state.strategy.path,
-      allowMining: false,
-      allowPlacing: false,
-      maxSearchTimeMs: Math.min(
-        state.strategy.path.maxSearchTimeMs,
-        3_000,
-      ),
-    },
-  });
+  const combatPath = {
+    ...state.strategy.path,
+    allowMining: false,
+    allowPlacing: false,
+    maxSearchTimeMs: Math.min(
+      state.strategy.path.maxSearchTimeMs,
+      3_000,
+    ),
+  };
   return state.driver.observe.pipe(
     Effect.flatMap((observation) => {
+      const hitAndRetreat = shouldHitAndRetreat(observation, target);
+      const attack = attackEntity(state.driver, {
+        target,
+        sprinting: true,
+        ...(hitAndRetreat ? { maximumAttacks: 1 } : {}),
+        targetUnavailableTimeoutSeconds: 3,
+        selectBestWeapon: true,
+        path: combatPath,
+      });
       const canBlockWithShield =
         SHIELD_BLOCKING_HOSTILE_ENTITY_TYPES.has(target.entityType)
         && (observation.inventory.counts["minecraft:shield"] ?? 0) > 0;
@@ -1936,9 +1939,24 @@ function defendAgainstTarget(
           ),
         ))
         : Effect.void;
-      return prepareShield.pipe(Effect.zipRight(attack));
+      return prepareShield.pipe(
+        Effect.zipRight(attack),
+        Effect.zipRight(
+          hitAndRetreat ? escapeFromTarget(state, target) : Effect.void,
+        ),
+      );
     }),
   );
+}
+
+function shouldHitAndRetreat(
+  observation: BeatGameObservation,
+  target: BeatGameEntityObservation,
+): boolean {
+  const targetHealth = target.health ?? observation.player.maxHealth;
+  return PROACTIVE_MELEE_HOSTILE_ENTITY_TYPES.has(target.entityType)
+    && observation.player.health < observation.player.maxHealth
+    && targetHealth >= observation.player.health;
 }
 
 function retreatAndRecover(
