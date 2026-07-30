@@ -1509,30 +1509,37 @@ function escapeFromTarget(
     Effect.flatMap((observation) =>
       observation.player.dead
         ? Effect.void
-        : isDeepOverworld(observation.player.position)
-        ? state.driver.pathfind(
-          surfaceEscapeTarget(
-            observation.player.position,
-            target.position,
+        : needsOverworldSurfaceRecovery(
+          state,
+          observation.player.position,
+        ).pipe(
+          Effect.flatMap((needsRecovery) =>
+            needsRecovery
+              ? state.driver.pathfind(
+                surfaceEscapeTarget(
+                  observation.player.position,
+                  target.position,
+                ),
+                17,
+                {
+                  ...escapePath,
+                  allowMining: true,
+                  allowPlacing: true,
+                },
+              )
+              : flee(state.driver, {
+                selector: {
+                  networkId: target.networkId,
+                  alive: true,
+                },
+                triggerRadius: 12,
+                safeDistance: 16,
+                completeWhenSafe: true,
+                maximumEscapes: 1,
+                path: escapePath,
+              })
           ),
-          17,
-          {
-            ...escapePath,
-            allowMining: true,
-            allowPlacing: true,
-          },
         )
-        : flee(state.driver, {
-          selector: {
-            networkId: target.networkId,
-            alive: true,
-          },
-          triggerRadius: 12,
-          safeDistance: 16,
-          completeWhenSafe: true,
-          maximumEscapes: 1,
-          path: escapePath,
-        })
     ),
   );
   return Effect.raceFirst(
@@ -2629,7 +2636,12 @@ function collectBlocksOrExplore(
         current = yield* state.driver.observe;
       }
       if (countItems(current) <= beforeAttempt) {
-        if (isDeepOverworld(current.player.position)) {
+        if (
+          yield* needsOverworldSurfaceRecovery(
+            state,
+            current.player.position,
+          )
+        ) {
           yield* returnToOverworldSurface(
             state,
             current.player.position,
@@ -3047,7 +3059,12 @@ function huntOrExplore(
       );
       if (target === undefined) {
         if (attacked === 0) {
-          if (isDeepOverworld(current.player.position)) {
+          if (
+            yield* needsOverworldSurfaceRecovery(
+              state,
+              current.player.position,
+            )
+          ) {
             yield* returnToOverworldSurface(
               state,
               current.player.position,
@@ -3272,10 +3289,6 @@ function survivalPathPolicy(
   return health < minimumHealth && path.maxFallDistance > 1
     ? { ...path, maxFallDistance: 1 }
     : path;
-}
-
-function isDeepOverworld(position: BeatGamePosition): boolean {
-  return position.dimension === "minecraft:overworld" && position.y < 58;
 }
 
 function needsOverworldSurfaceRecovery(

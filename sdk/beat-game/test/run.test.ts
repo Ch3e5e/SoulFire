@@ -575,6 +575,16 @@ describe("beat-game run lifecycle", () => {
 
   it("escapes underground threats toward the Overworld surface", async () => {
     const driver = new FakeBeatGameDriver();
+    driver.surfaceColumns = [{
+      x: 0,
+      z: 0,
+      loaded: true,
+      surfaceY: 64,
+      blockId: "minecraft:grass_block",
+      biomeId: "minecraft:plains",
+      skyLight: 15,
+      blockLight: 0,
+    }];
     driver.currentObservation = observation({
       health: 4,
       position: {
@@ -2046,7 +2056,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks.some((task) => task.type === "explore")).toBe(false);
   });
 
-  it("recovers from a shallow underground pocket after exploration is blocked", async () => {
+  it("recovers from a shallow underground pocket before exploring", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
       position: {
@@ -2066,17 +2076,6 @@ describe("beat-game run lifecycle", () => {
       skyLight: 15,
       blockLight: 0,
     }];
-    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
-      Effect.sync(() => {
-        driver.xzPaths.push({ x, z, dimension, radius, policy });
-      }).pipe(
-        Effect.zipRight(Effect.fail(new BeatGameDriverError({
-          operation: "pathfindXZ",
-          code: "unreachable",
-          retryable: true,
-          message: "No route leaves the underground pocket",
-        }))),
-      );
     driver.pathResolver = (position, radius, policy) =>
       Effect.sync(() => {
         driver.paths.push({ position, radius, policy });
@@ -2098,7 +2097,7 @@ describe("beat-game run lifecycle", () => {
       ),
     ));
 
-    expect(driver.xzPaths).toHaveLength(1);
+    expect(driver.xzPaths).toHaveLength(0);
     expect(driver.paths[0]).toEqual({
       position: {
         x: 58.5,
@@ -2112,6 +2111,56 @@ describe("beat-game run lifecycle", () => {
         allowPlacing: true,
       }),
     });
+  });
+
+  it("continues exploring from natural low-elevation terrain", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      position: {
+        x: 107.5,
+        y: 39,
+        z: 39.5,
+        dimension: "minecraft:overworld",
+      },
+    });
+    driver.surfaceColumns = [{
+      x: 107,
+      z: 39,
+      loaded: true,
+      surfaceY: 38,
+      blockId: "minecraft:grass_block",
+      biomeId: "minecraft:plains",
+      skyLight: 15,
+      blockLight: 0,
+    }];
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (driver.xzPaths.length === 0) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.paths).toHaveLength(0);
+    expect(driver.xzPaths).toHaveLength(1);
+    expect(driver.xzPaths[0]).toEqual(expect.objectContaining({
+      x: 131.5,
+      z: 39.5,
+      radius: 2,
+    }));
   });
 
   it("moves on after an animal remains unreachable", async () => {
