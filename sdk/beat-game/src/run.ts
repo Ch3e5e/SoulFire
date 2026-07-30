@@ -3103,7 +3103,7 @@ function needsOverworldSurfaceRecovery(
   if (position.dimension !== "minecraft:overworld") {
     return Effect.succeed(false);
   }
-  return state.driver.sampleSurface(position).pipe(
+  return state.driver.sampleSurface(position, 4, 1).pipe(
     Effect.map((columns) => selectSurfaceColumn(columns, position)),
     Effect.map((surface) =>
       surface !== undefined && surface.surfaceY - position.y > 2
@@ -3115,7 +3115,7 @@ function returnToOverworldSurface(
   state: RunState,
   position: BeatGamePosition,
 ): Effect.Effect<void, BeatGameDriverError> {
-  return state.driver.sampleSurface(position).pipe(
+  return state.driver.sampleSurface(position, 4, 1).pipe(
     Effect.map((columns) => selectSurfaceColumn(columns, position)),
     Effect.flatMap((surface) =>
       state.driver.pathfind(
@@ -3155,7 +3155,6 @@ function selectSurfaceColumn(
   const candidates = columns.flatMap((column) =>
     column.loaded
       && column.surfaceY !== undefined
-      && column.surfaceY > position.y + 2
       && !isUnsafeSurfaceBlock(column.blockId)
       ? [{ x: column.x, z: column.z, surfaceY: column.surfaceY }]
       : []
@@ -3238,6 +3237,12 @@ function advanceExplorationFrontier(
         position.dimension,
         2,
         path,
+      ).pipe(
+        Effect.catchAll((cause) =>
+          cause.operation === "pathfindXZ"
+            ? Effect.void
+            : Effect.fail(cause)
+        ),
       )
     ),
   );

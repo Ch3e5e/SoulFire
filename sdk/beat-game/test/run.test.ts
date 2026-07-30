@@ -1253,6 +1253,46 @@ describe("beat-game run lifecycle", () => {
     ]);
   });
 
+  it("rotates resource exploration after a blocked frontier", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+      }).pipe(
+        Effect.zipRight(
+          driver.xzPaths.length === 0
+            ? Effect.fail(new BeatGameDriverError({
+              operation: "pathfindXZ",
+              code: "unreachable",
+              retryable: true,
+              message: "The frontier route made no progress",
+            }))
+            : Effect.never,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (driver.xzPaths.length < 2) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.xzPaths.slice(0, 2).map(({ x, z }) => ({ x, z }))).toEqual([
+      { x: 24, z: 0 },
+      { x: 24, z: 24 },
+    ]);
+  });
+
   it("returns to the Overworld surface before exploring for animals", async () => {
     const driver = new FakeBeatGameDriver();
     driver.surfaceColumns = [{
@@ -1317,6 +1357,90 @@ describe("beat-game run lifecycle", () => {
       }),
     });
     expect(driver.tasks.some((task) => task.type === "explore")).toBe(false);
+  });
+
+  it("does not mistake an adjacent hillside for overhead terrain", async () => {
+    const driver = new FakeBeatGameDriver();
+    const preparedItems = {
+      "minecraft:cobblestone": 20,
+      "minecraft:oak_log": 8,
+      "minecraft:stone_sword": 1,
+    };
+    driver.currentObservation = observation({
+      counts: preparedItems,
+      position: {
+        x: 0.5,
+        y: 64,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+    });
+    driver.surfaceColumns = [
+      {
+        x: 0,
+        z: 0,
+        loaded: true,
+        surfaceY: 63,
+        blockId: "minecraft:grass_block",
+        biomeId: "minecraft:plains",
+        skyLight: 15,
+        blockLight: 0,
+      },
+      {
+        x: 2,
+        z: 0,
+        loaded: true,
+        surfaceY: 80,
+        blockId: "minecraft:grass_block",
+        biomeId: "minecraft:plains",
+        skyLight: 15,
+        blockLight: 0,
+      },
+    ];
+    driver.entityResults = [{
+      connectionEpoch: "epoch-1",
+      networkId: 1,
+      entityType: "minecraft:cow",
+      position: {
+        x: 100,
+        y: 64,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    }];
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: {
+          observationPollMs: 1,
+          entitySearchRadius: 320,
+        },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (driver.xzPaths.length === 0) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.paths).toHaveLength(0);
+    expect(driver.xzPaths[0]).toEqual(expect.objectContaining({
+      x: 48.5,
+      z: 0.5,
+      radius: 4,
+    }));
   });
 
   it("climbs to the sampled surface before exploring for missing blocks", async () => {
