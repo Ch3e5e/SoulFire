@@ -118,6 +118,15 @@ type EventInput<T extends BeatGameEvent = BeatGameEvent> =
     : never;
 
 const WORKSTATION_REUSE_RADIUS = 32;
+const DISPOSABLE_DEATH_RECOVERY_ITEM_IDS = new Set([
+  "minecraft:coarse_dirt",
+  "minecraft:dirt",
+  "minecraft:grass_block",
+  "minecraft:mud",
+  "minecraft:mycelium",
+  "minecraft:podzol",
+  "minecraft:rooted_dirt",
+]);
 const FURNACE_FUEL_SEARCH_RADIUS = 16;
 const HUNT_ATTACK_APPROACH_RADIUS = 24;
 const HUNT_MAXIMUM_APPROACH_DISTANCE = 48;
@@ -191,6 +200,12 @@ const SHIELD_BLOCKING_HOSTILE_ENTITY_TYPES = new Set([
   "minecraft:skeleton",
   "minecraft:stray",
 ]);
+const PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES = new Set([
+  "minecraft:bogged",
+  "minecraft:pillager",
+  "minecraft:skeleton",
+  "minecraft:stray",
+]);
 const ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES = new Set([
   "minecraft:creeper",
   "minecraft:enderman",
@@ -232,6 +247,7 @@ interface RunState {
   readonly hooks: BeatGameStrategyHooks;
   readonly checkpoint: Ref.Ref<BeatGameCheckpoint>;
   readonly observation: Ref.Ref<BeatGameObservation>;
+  readonly lastLivingObservation: Ref.Ref<BeatGameObservation>;
   readonly pendingDeaths: Ref.Ref<readonly PendingDeath[]>;
   readonly explorationFrontiers: Ref.Ref<
     Readonly<Record<string, ExplorationFrontier>>
@@ -256,6 +272,7 @@ interface ExplorationFrontier {
 interface PendingDeath {
   readonly observedAt: string;
   readonly position: BeatGamePosition;
+  readonly recoverItems: boolean;
   readonly message?: string;
 }
 
@@ -355,6 +372,7 @@ export function beatGameWithDriver(
     const stored = restored ?? (yield* store.save(initial, undefined));
     const checkpointRef = yield* Ref.make(stored);
     const observationRef = yield* Ref.make(observation);
+    const lastLivingObservation = yield* Ref.make(observation);
     const pendingDeaths = yield* Ref.make<readonly PendingDeath[]>([]);
     const explorationFrontiers = yield* Ref.make<
       Readonly<Record<string, ExplorationFrontier>>
@@ -377,6 +395,7 @@ export function beatGameWithDriver(
       hooks: options.hooks ?? {},
       checkpoint: checkpointRef,
       observation: observationRef,
+      lastLivingObservation,
       pendingDeaths,
       explorationFrontiers,
       checkedRecoveryContainers,
@@ -857,41 +876,48 @@ function executeDecision(
   > = (() => {
     switch (decision.type) {
       case "recover-death": {
-        const pendingDeath: PendingDeath = {
-          observedAt: observation.observedAt,
-          position: observation.player.position,
-        };
-        const recovery = state.hooks.recoverDeath?.(policyContext)
-          ?? respawnAndRecover(state.driver, {
-            deathPosition: observation.player.position,
-            path: state.strategy.path,
-          });
-        return enqueuePendingDeath(state, pendingDeath).pipe(
-          Effect.zipRight(Effect.all([
-          emit(state, {
-            type: "death-observed",
-            detail: positionKey(observation.player.position),
-          }),
-          state.coordinator.publishDiscovery(
-            actionCheckpoint.teamId,
-            {
-              key: `death:${actionCheckpoint.botId}:${observation.observedAt}`,
-              kind: "death",
-              botId: actionCheckpoint.botId,
-              position: observation.player.position,
-              observedAt: observation.observedAt,
-              confidence: 1,
-            },
-          ),
-          ], { discard: true })),
-          Effect.zipRight(recovery),
-          Effect.tap(() =>
+        return Effect.gen(function* () {
+          const pendingDeaths = yield* Ref.get(state.pendingDeaths);
+          const pendingDeath = pendingDeaths.find((candidate) =>
+            candidate.observedAt === observation.observedAt
+          ) ?? {
+            observedAt: observation.observedAt,
+            position: observation.player.position,
+            recoverItems: hasMeaningfulRecoveryInventory(observation),
+          };
+          yield* enqueuePendingDeath(state, pendingDeath);
+          yield* Effect.all([
             emit(state, {
-              type: "items-recovered",
-              detail: "Death recovery completed",
-            })
-          ),
-          Effect.map((): ActionResult => ({
+              type: "death-observed",
+              detail: positionKey(pendingDeath.position),
+            }),
+            state.coordinator.publishDiscovery(
+              actionCheckpoint.teamId,
+              {
+                key:
+                  `death:${actionCheckpoint.botId}:${pendingDeath.observedAt}`,
+                kind: "death",
+                botId: actionCheckpoint.botId,
+                position: pendingDeath.position,
+                observedAt: pendingDeath.observedAt,
+                confidence: 1,
+              },
+            ),
+          ], { discard: true });
+          yield* (state.hooks.recoverDeath?.(policyContext)
+            ?? respawnAndRecover(state.driver, {
+              ...(pendingDeath.recoverItems
+                ? { deathPosition: pendingDeath.position }
+                : {}),
+              path: state.strategy.path,
+            }));
+          yield* emit(state, {
+            type: "items-recovered",
+            detail: pendingDeath.recoverItems
+              ? "Death recovery completed"
+              : "Respawn completed without a risky corpse recovery",
+          });
+          return {
             checkpoint: (checkpoint) => ({
               ...checkpoint,
               memory: {
@@ -899,16 +925,16 @@ function executeDecision(
                 deathPositions: [
                   ...checkpoint.memory.deathPositions,
                   {
-                    key: `death:${observation.observedAt}`,
-                    value: observation.player.position,
-                    observedAt: observation.observedAt,
+                    key: `death:${pendingDeath.observedAt}`,
+                    value: pendingDeath.position,
+                    observedAt: pendingDeath.observedAt,
                     confidence: 1,
                   },
                 ].slice(-16),
               },
             }),
-          })),
-        );
+          } satisfies ActionResult;
+        });
       }
       case "eat":
         return (
@@ -1203,7 +1229,23 @@ function executeDecision(
         Effect.catchTag("BeatGameDriverError", () => Effect.void),
         Effect.flatMap(() =>
           decision.type === "recover-death" && interruptedForSafety
-            ? execute
+            ? Effect.all([
+              observeDriverFresh(state),
+              Ref.get(state.pendingDeaths),
+            ]).pipe(
+              Effect.flatMap(([latest, pendingDeaths]) => {
+                const latestDeath = pendingDeaths.at(-1);
+                return latest.player.dead
+                    || (
+                      latestDeath !== undefined
+                      && latestDeath.observedAt !== observation.observedAt
+                    )
+                  ? Effect.succeed({
+                    replanReason: "bot died again during recovery",
+                  } satisfies ActionResult)
+                  : execute;
+              }),
+            )
             : Effect.succeed(result)
         ),
       );
@@ -1274,6 +1316,12 @@ function monitorActionSafety(
                 && decision.type !== "fight-ender-dragon"
                 && !observation.player.dead
               ) {
+                if (hasUnsafeAir(observation)) {
+                  return Effect.succeed({
+                    replanReason: "air fell below the safety threshold",
+                    airEscapePosition: observation.player.position,
+                  } satisfies ActionResult);
+                }
                 return findImmediateThreat(state, observation).pipe(
                   Effect.flatMap((threat) =>
                     threat === undefined
@@ -1393,6 +1441,7 @@ function findImmediateThreat(
     selector: {
       categories: [2],
       alive: true,
+      requireLineOfSight: true,
     },
     maximumResults: 32,
   }).pipe(
@@ -1416,7 +1465,7 @@ function findImmediateThreat(
         return { target: explosive.target, response: "flee" };
       }
       const ranged = candidates.find(({ target, distanceSquared }) =>
-        SHIELD_BLOCKING_HOSTILE_ENTITY_TYPES.has(target.entityType)
+        PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
         && distanceSquared <= 144
       );
       if (ranged !== undefined) {
@@ -1799,6 +1848,7 @@ function retreatAndRecover(
             selector: {
               categories: [2],
               alive: true,
+              requireLineOfSight: true,
             },
             maximumResults: 16,
           }).pipe(
@@ -1813,7 +1863,9 @@ function retreatAndRecover(
                 }))
                 .filter(({ target, distanceSquared: targetDistanceSquared }) => {
                   const engagementRadius =
-                    SHIELD_BLOCKING_HOSTILE_ENTITY_TYPES.has(target.entityType)
+                    PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(
+                      target.entityType,
+                    )
                       || ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(
                         target.entityType,
                       )
@@ -4190,6 +4242,27 @@ function observeFresh(
   );
 }
 
+function hasMeaningfulRecoveryInventory(
+  observation: BeatGameObservation,
+): boolean {
+  return Object.entries(observation.inventory.counts).some(
+    ([itemId, count]) =>
+      count > 0 && !DISPOSABLE_DEATH_RECOVERY_ITEM_IDS.has(itemId),
+  );
+}
+
+function updateObservedState(
+  state: RunState,
+  observation: BeatGameObservation,
+): Effect.Effect<void> {
+  return Effect.all([
+    Ref.set(state.observation, observation),
+    observation.player.dead
+      ? Effect.void
+      : Ref.set(state.lastLivingObservation, observation),
+  ], { discard: true });
+}
+
 function observeDriverFresh(
   state: RunState,
 ): Effect.Effect<BeatGameObservation, BeatGameError> {
@@ -4204,7 +4277,7 @@ function observeDriverFresh(
           cause,
         )
       ),
-      Effect.tap((observation) => Ref.set(state.observation, observation)),
+      Effect.tap((observation) => updateObservedState(state, observation)),
     );
   });
 }
@@ -4217,11 +4290,28 @@ function monitorDriverEvents(
       if (event.type !== "bot-died") {
         return Effect.void;
       }
-      return Ref.get(state.observation).pipe(
-        Effect.flatMap((observation) =>
+      return Ref.get(state.lastLivingObservation).pipe(
+        Effect.flatMap((lastLivingObservation) =>
+          state.driver.observe.pipe(
+            Effect.tap((observation) =>
+              updateObservedState(state, observation)
+            ),
+            Effect.catchAll(() => Ref.get(state.observation)),
+            Effect.map((observation) => ({
+              lastLivingObservation,
+              observation,
+            })),
+          )
+        ),
+        Effect.flatMap(({ lastLivingObservation, observation }) =>
           enqueuePendingDeath(state, {
             observedAt: event.observedAt,
-            position: observation.player.position,
+            position: observation.player.dead
+              ? observation.player.position
+              : lastLivingObservation.player.position,
+            recoverItems: hasMeaningfulRecoveryInventory(
+              lastLivingObservation,
+            ),
             ...(event.message === undefined
               ? {}
               : { message: event.message }),
@@ -4238,11 +4328,26 @@ function enqueuePendingDeath(
   pendingDeath: PendingDeath,
 ): Effect.Effect<void> {
   return Ref.update(state.pendingDeaths, (pendingDeaths) => {
-    const duplicate = pendingDeaths.some((candidate) =>
+    const duplicateIndex = pendingDeaths.findIndex((candidate) =>
       candidate.observedAt === pendingDeath.observedAt
       || samePosition(candidate.position, pendingDeath.position)
     );
-    return duplicate ? pendingDeaths : [...pendingDeaths, pendingDeath];
+    if (duplicateIndex === -1) {
+      return [...pendingDeaths, pendingDeath];
+    }
+    const duplicate = pendingDeaths[duplicateIndex];
+    if (
+      duplicate === undefined
+      || duplicate.recoverItems
+      || !pendingDeath.recoverItems
+    ) {
+      return pendingDeaths;
+    }
+    return pendingDeaths.map((candidate, index) =>
+      index === duplicateIndex
+        ? { ...candidate, recoverItems: true }
+        : candidate
+    );
   });
 }
 

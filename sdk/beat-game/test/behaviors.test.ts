@@ -227,6 +227,29 @@ describe("beat-game behavior programs", () => {
     });
   });
 
+  it("continues when a death position is no longer reachable", async () => {
+    const driver = new FakeBeatGameDriver();
+    const deathPosition = {
+      x: 24,
+      y: 63,
+      z: -48,
+      dimension: "minecraft:overworld",
+    };
+    driver.pathResolver = () =>
+      Effect.fail(new BeatGameDriverError({
+        operation: "pathfind",
+        code: "unreachable",
+        retryable: false,
+        message: "No route found to the goal",
+      }));
+
+    await expect(Effect.runPromise(respawnAndRecover(driver, {
+      deathPosition,
+    }))).resolves.toBeUndefined();
+
+    expect(driver.entityQueries).toHaveLength(0);
+  });
+
   it("sweeps nearby item entities into pickup range", async () => {
     const driver = new FakeBeatGameDriver();
     const position = {

@@ -642,11 +642,17 @@ export function respawnAndRecover(
     if (options.deathPosition === undefined) {
       return;
     }
-    yield* driver.pathfind(
+    const reachedDeathPosition = yield* driver.pathfind(
       options.deathPosition,
       2,
       mergePathPolicy(options.path),
+    ).pipe(
+      Effect.as(true),
+      Effect.catchTag("BeatGameDriverError", () => Effect.succeed(false)),
     );
+    if (!reachedDeathPosition) {
+      return;
+    }
     const drops = yield* driver.queryEntities({
       origin: options.deathPosition,
       radius: options.searchRadius ?? 24,
@@ -658,6 +664,8 @@ export function respawnAndRecover(
         drop.position,
         1,
         mergePathPolicy(options.path),
+      ).pipe(
+        Effect.catchTag("BeatGameDriverError", () => Effect.void),
       );
     }
   });
