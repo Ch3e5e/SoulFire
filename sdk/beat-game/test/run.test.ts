@@ -199,11 +199,12 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks).toContainEqual(expect.objectContaining({
       type: "flee",
       selector: {
-        categories: [2],
+        networkId: 41,
         alive: true,
       },
-      triggerRadius: 24,
-      safeDistance: 36,
+      triggerRadius: 12,
+      safeDistance: 16,
+      maximumEscapes: 1,
     }));
     expect(driver.tasks).not.toContainEqual(expect.objectContaining({
       type: "attack-entity",
@@ -514,11 +515,12 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks).toContainEqual(expect.objectContaining({
       type: "flee",
       selector: {
-        categories: [2],
+        networkId: 14,
         alive: true,
       },
-      triggerRadius: 24,
-      safeDistance: 36,
+      triggerRadius: 12,
+      safeDistance: 16,
+      maximumEscapes: 1,
     }));
     expect(driver.tasks.some((task) => task.type === "attack-entity"))
       .toBe(false);
@@ -654,9 +656,12 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks).toContainEqual(expect.objectContaining({
       type: "flee",
       selector: {
-        categories: [2],
+        networkId: 26,
         alive: true,
       },
+      triggerRadius: 12,
+      safeDistance: 16,
+      maximumEscapes: 1,
     }));
     expect(driver.tasks.some((task) => task.type === "attack-entity"))
       .toBe(false);
@@ -714,11 +719,12 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks).toContainEqual(expect.objectContaining({
       type: "flee",
       selector: {
-        categories: [2],
+        networkId: 24,
         alive: true,
       },
-      triggerRadius: 24,
-      safeDistance: 36,
+      triggerRadius: 12,
+      safeDistance: 16,
+      maximumEscapes: 1,
     }));
     expect(driver.tasks.some((task) => task.type === "attack-entity"))
       .toBe(false);
@@ -754,7 +760,7 @@ describe("beat-game run lifecycle", () => {
               driver.entityResults = [];
             }).pipe(
               Effect.zipRight(Effect.fail(new BeatGameDriverError({
-                operation: "run-task",
+                operation: "task.attack-entity",
                 code: "unreachable",
                 retryable: true,
                 message: "Unable to reach the target entity",
@@ -1679,7 +1685,7 @@ describe("beat-game run lifecycle", () => {
       attackAttempts += 1;
       driver.currentObservation = observation({ counts: allRequiredItems });
       return Effect.fail(new BeatGameDriverError({
-        operation: "run-task",
+        operation: "task.attack-entity",
         code: "unreachable",
         retryable: false,
         message: "Target entity is not observable",
@@ -2285,7 +2291,7 @@ describe("beat-game run lifecycle", () => {
     ]);
   });
 
-  it("makes spare charcoal before cooking a full food batch", async () => {
+  it("makes only the required charcoal before cooking a food batch", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
       counts: {
@@ -2341,14 +2347,89 @@ describe("beat-game run lifecycle", () => {
         input: {
           itemIds: expect.arrayContaining(["minecraft:oak_log"]),
         },
-        count: 2,
+        count: 1,
         fuel: {
-          itemIds: expect.arrayContaining(["minecraft:oak_planks"]),
+          itemIds: [
+            "minecraft:oak_planks",
+            "minecraft:spruce_planks",
+            "minecraft:birch_planks",
+            "minecraft:jungle_planks",
+            "minecraft:acacia_planks",
+            "minecraft:dark_oak_planks",
+            "minecraft:mangrove_planks",
+            "minecraft:cherry_planks",
+            "minecraft:pale_oak_planks",
+            "minecraft:crimson_planks",
+            "minecraft:warped_planks",
+          ],
         },
       }),
       expect.objectContaining({
         input: { itemIds: ["minecraft:beef"] },
         count: 8,
+        fuel: {
+          itemIds: ["minecraft:coal", "minecraft:charcoal"],
+        },
+      }),
+    ]);
+  });
+
+  it("uses existing efficient fuel without manufacturing a spare", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      counts: {
+        "minecraft:oak_log": 4,
+        "minecraft:oak_planks": 3,
+        "minecraft:cobblestone": 20,
+        "minecraft:stone_sword": 1,
+        "minecraft:porkchop": 1,
+        "minecraft:charcoal": 1,
+        "minecraft:iron_ingot": 7,
+        "minecraft:iron_pickaxe": 1,
+        "minecraft:water_bucket": 1,
+        "minecraft:flint_and_steel": 1,
+        "minecraft:shield": 1,
+      },
+    });
+    driver.blockQueryResolver = ({ selector }) =>
+      selector.blockIds?.includes("minecraft:furnace") === true
+        ? [blockObservation({
+          x: 1,
+          y: 64,
+          z: 0,
+          dimension: "minecraft:overworld",
+        }, { blockId: "minecraft:furnace" })]
+        : [];
+    let resolveFoodSmelt!: () => void;
+    const foodSmeltStarted = new Promise<void>((resolve) => {
+      resolveFoodSmelt = resolve;
+    });
+    driver.taskResolver = (task) => {
+      driver.tasks.push(task);
+      if (
+        task.type === "smelt"
+        && task.input.itemIds?.includes("minecraft:porkchop")
+      ) {
+        resolveFoodSmelt();
+        return Effect.never;
+      }
+      return Effect.void;
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      yield* Effect.promise(() => foodSmeltStarted).pipe(
+        Effect.timeout("5 seconds"),
+      );
+      yield* run.stop;
+    })));
+
+    expect(driver.tasks.filter((task) => task.type === "smelt")).toEqual([
+      expect.objectContaining({
+        input: { itemIds: ["minecraft:porkchop"] },
+        count: 1,
         fuel: {
           itemIds: ["minecraft:coal", "minecraft:charcoal"],
         },
@@ -2435,7 +2516,7 @@ describe("beat-game run lifecycle", () => {
         diggable: true,
         requireLineOfSight: true,
       },
-      maximumResults: 4,
+      maximumResults: 3,
     });
     expect(driver.tasks).toContainEqual(expect.objectContaining({
       type: "collect-blocks",
@@ -2443,7 +2524,7 @@ describe("beat-game run lifecycle", () => {
         "minecraft:coal_ore",
         "minecraft:deepslate_coal_ore",
       ],
-      count: 4,
+      count: 3,
       searchRadius: 16,
     }));
     expect(driver.tasks.filter((task) => task.type === "smelt")).toEqual([

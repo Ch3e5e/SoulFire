@@ -1459,13 +1459,13 @@ function escapeFromTarget(
         )
         : flee(state.driver, {
           selector: {
-            categories: [2],
+            networkId: target.networkId,
             alive: true,
           },
-          triggerRadius: 24,
-          safeDistance: 36,
+          triggerRadius: 12,
+          safeDistance: 16,
           completeWhenSafe: true,
-          maximumEscapes: 4,
+          maximumEscapes: 1,
           path: escapePath,
         })
     ),
@@ -2254,7 +2254,7 @@ function ensureEfficientFurnaceFuel(
   outputCount: number,
 ): Effect.Effect<void, BeatGameDriverError> {
   return Effect.gen(function* () {
-    const requiredFuel = Math.ceil(outputCount / 8) + 1;
+    const requiredFuel = Math.ceil(outputCount / 8);
     let currentObservation = observation;
     let missingFuel = Math.max(
       0,
@@ -2308,10 +2308,16 @@ function ensureEfficientFurnaceFuel(
       }
     }
 
+    const charcoalFuelItemIds = PLANK_ITEM_IDS.some(
+        (itemId) =>
+          (currentObservation.inventory.counts[itemId] ?? 0) > 0,
+      )
+      ? PLANK_ITEM_IDS
+      : LOG_ITEM_IDS;
     yield* smelt(state.driver, {
       input: { itemIds: LOG_ITEM_IDS },
       count: missingFuel,
-      fuel: { itemIds: [...PLANK_ITEM_IDS, ...LOG_ITEM_IDS] },
+      fuel: { itemIds: charcoalFuelItemIds },
       station,
       path: state.strategy.path,
     });
@@ -2901,7 +2907,8 @@ function huntOrExplore(
         ),
         Effect.as(true),
         Effect.catchTag("BeatGameDriverError", (cause) =>
-          cause.code === "not_found" || cause.operation === "run-task"
+          cause.code === "not_found"
+            || cause.operation === "task.attack-entity"
             ? Effect.sync(() => {
               locallyUnreachable.add(positionKey(target.position));
             }).pipe(

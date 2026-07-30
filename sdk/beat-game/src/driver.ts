@@ -35,6 +35,8 @@ export interface BeatGameEntitySelector {
   readonly entityTypes?: readonly string[];
   readonly tags?: readonly string[];
   readonly categories?: readonly number[];
+  readonly uuid?: string;
+  readonly networkId?: number;
   readonly alive?: boolean;
   readonly requireLineOfSight?: boolean;
 }
@@ -1201,6 +1203,10 @@ function entitySelector(selector: BeatGameEntitySelector) {
     entityTypes: [...(selector.entityTypes ?? [])],
     tags: [...(selector.tags ?? [])],
     categories: [...(selector.categories ?? [])],
+    ...(selector.uuid === undefined ? {} : { uuid: selector.uuid }),
+    ...(selector.networkId === undefined
+      ? {}
+      : { networkId: selector.networkId }),
     ...(selector.alive === undefined ? {} : { alive: selector.alive }),
     requireLineOfSight: selector.requireLineOfSight ?? false,
   };

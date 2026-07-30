@@ -26,6 +26,7 @@ function effectBot(
     attack?: Readonly<Record<string, unknown>>;
     collect?: readonly unknown[];
     explore?: Readonly<Record<string, unknown>>;
+    flee?: readonly unknown[];
     goTo?: readonly unknown[];
     armor?: Readonly<Record<string, unknown>>;
     eat?: readonly unknown[];
@@ -136,6 +137,10 @@ function effectBot(
         calls.explore = options;
         return Effect.succeed(taskHandle);
       },
+      flee: (...args: readonly unknown[]) => {
+        calls.flee = args;
+        return Effect.succeed(taskHandle);
+      },
     },
     events: () => Stream.empty,
     attackEntity: (request: Readonly<Record<string, unknown>>) => {
@@ -231,6 +236,42 @@ describe("production SoulFire beat-game driver", () => {
         maximumMeals: 8,
         completeWhenNoFood: true,
         restoreSelectedSlot: false,
+      }),
+    ]);
+  });
+
+  it("preserves exact entity selectors for targeted evasion", async () => {
+    const { bot, calls } = effectBot();
+    const driver = makeSoulFireBeatGameDriver(bot);
+
+    await Effect.runPromise(driver.runTask({
+      type: "flee",
+      selector: {
+        networkId: 42,
+        uuid: "00000000-0000-0000-0000-000000000042",
+        alive: true,
+      },
+      triggerRadius: 12,
+      safeDistance: 16,
+      completeWhenSafe: true,
+      maximumEscapes: 1,
+    }, defaultBeatGameStrategy.path));
+
+    expect(calls.flee).toEqual([
+      {
+        entityTypes: [],
+        tags: [],
+        categories: [],
+        networkId: 42,
+        uuid: "00000000-0000-0000-0000-000000000042",
+        alive: true,
+        requireLineOfSight: false,
+      },
+      expect.objectContaining({
+        triggerRadius: 12,
+        safeDistance: 16,
+        completeWhenSafe: true,
+        maximumEscapes: 1,
       }),
     ]);
   });
