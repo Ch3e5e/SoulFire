@@ -56,6 +56,29 @@ describe("beat-game planner", () => {
     });
   });
 
+  it("recovers in place when current hunger or emergency food can heal", () => {
+    const base = checkpoint(BeatGamePhase.PREPARE_OVERWORLD);
+
+    expect(decideBeatGameAction({
+      checkpoint: base,
+      observation: observation({
+        food: 18,
+        health: 12,
+      }),
+      strategy: defaultBeatGameStrategy,
+    })).toMatchObject({ type: "retreat" });
+
+    expect(decideBeatGameAction({
+      checkpoint: base,
+      observation: observation({
+        counts: { "minecraft:rotten_flesh": 1 },
+        food: 17,
+        health: 12,
+      }),
+      strategy: defaultBeatGameStrategy,
+    })).toMatchObject({ type: "retreat" });
+  });
+
   it("advances only after a fresh observation satisfies preparation", () => {
     const base = checkpoint(BeatGamePhase.PREPARE_OVERWORLD);
     const decision = decideBeatGameAction({

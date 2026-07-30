@@ -236,6 +236,8 @@ describe("beat-game run lifecycle", () => {
       health: 20,
       observedAt: "2026-01-01T00:00:01.000Z",
     }];
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2) ? driver.entityResults : [];
     driver.taskResolver = (task) =>
       Effect.sync(() => {
         driver.tasks.push(task);
@@ -1077,6 +1079,66 @@ describe("beat-game run lifecycle", () => {
       radius: 24,
       maximumWaypoints: 1,
     });
+  });
+
+  it("rotates resource exploration after a threat interrupts a frontier", async () => {
+    const driver = new FakeBeatGameDriver();
+    const creeper = {
+      connectionEpoch: "epoch-1",
+      networkId: 42,
+      entityType: "minecraft:creeper",
+      position: {
+        x: 6,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    let explorations = 0;
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (task.type === "explore") {
+          explorations += 1;
+          if (explorations === 1) {
+            driver.entityResults = [creeper];
+          }
+        } else if (task.type === "flee") {
+          driver.entityResults = [];
+        }
+      }).pipe(
+        Effect.zipRight(
+          task.type === "explore" ? Effect.never : Effect.void,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (explorations < 2) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    const purposes = driver.tasks.flatMap((task) =>
+      task.type === "explore" && task.purpose !== undefined
+        ? [task.purpose]
+        : []
+    );
+    expect(purposes).toHaveLength(2);
+    expect(new Set(purposes).size).toBe(2);
   });
 
   it("returns to the Overworld surface before exploring for animals", async () => {
@@ -2026,6 +2088,7 @@ describe("beat-game run lifecycle", () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
       health: 8,
+      food: 17,
       counts: {
         "minecraft:porkchop": 1,
         "minecraft:coal": 2,
@@ -2110,6 +2173,37 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks.some((task) =>
       task.type === "craft" || task.type === "smelt"
     )).toBe(false);
+  });
+
+  it("uses rotten flesh for emergency recovery instead of traveling for food", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      health: 8,
+      food: 17,
+      counts: { "minecraft:rotten_flesh": 1 },
+    });
+    driver.taskResolver = (task) => {
+      driver.tasks.push(task);
+      return task.type === "auto-eat" ? Effect.never : Effect.void;
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some((task) => task.type === "auto-eat")) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    })));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "auto-eat",
+      foodItemIds: ["minecraft:rotten_flesh"],
+      foodLevel: 18,
+      completeWhenNoFood: true,
+    }));
+    expect(driver.tasks.some((task) => task.type === "explore")).toBe(false);
   });
 
   it("makes spare charcoal before cooking a full food batch", async () => {

@@ -7,6 +7,7 @@ import {
   type BeatGameStrategy,
 } from "./model.js";
 import {
+  EMERGENCY_FOOD_ITEM_IDS,
   requirementsForPhase,
 } from "./requirements.js";
 
@@ -194,12 +195,15 @@ function hasFood(
   observation: BeatGameObservation,
   strategy: BeatGameStrategy,
 ): boolean {
+  if (observation.player.food >= 18) {
+    return true;
+  }
   const foodIds = requirementsForPhase(
     BeatGamePhase.PREPARE_OVERWORLD,
     observation.inventory,
     strategy,
   ).find(({ key }) => key === "food")?.itemIds ?? [];
-  return foodIds.some((itemId) =>
+  return [...foodIds, ...EMERGENCY_FOOD_ITEM_IDS].some((itemId) =>
     (observation.inventory.counts[itemId] ?? 0) > 0
   );
 }

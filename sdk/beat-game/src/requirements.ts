@@ -40,6 +40,10 @@ export const EDIBLE_FOOD_ITEM_IDS = [
   "minecraft:apple",
 ] as const;
 
+export const EMERGENCY_FOOD_ITEM_IDS = [
+  "minecraft:rotten_flesh",
+] as const;
+
 export const LOG_ITEM_IDS = [
   "minecraft:oak_log",
   "minecraft:spruce_log",

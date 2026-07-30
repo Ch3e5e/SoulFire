@@ -98,6 +98,7 @@ import type {
 import {
   COOKED_FOOD_ITEM_IDS,
   EDIBLE_FOOD_ITEM_IDS,
+  EMERGENCY_FOOD_ITEM_IDS,
   LOG_ITEM_IDS,
   PLANK_ITEM_IDS,
   RAW_FOOD_TO_COOKED,
@@ -905,6 +906,7 @@ function executeDecision(
         return (
           state.hooks.eat?.(policyContext)
             ?? eatWhenNeeded(state.driver, {
+              foodItemIds: preferredUsableFoodItemIds(observation),
               foodLevel: state.strategy.eatBelowFood,
               maximumMeals: 1,
               path: state.strategy.path,
@@ -1501,15 +1503,27 @@ function surfaceEscapeTarget(
 }
 
 function hasUsableFood(observation: BeatGameObservation): boolean {
-  return EDIBLE_FOOD_ITEM_IDS.some((itemId) =>
-    (observation.inventory.counts[itemId] ?? 0) > 0
-  );
+  return preferredUsableFoodItemIds(observation).length > 0;
 }
 
 function hasRecoveryFood(observation: BeatGameObservation): boolean {
-  return COOKED_FOOD_ITEM_IDS.some((itemId) =>
+  return observation.player.food >= 18
+    || [...COOKED_FOOD_ITEM_IDS, ...EMERGENCY_FOOD_ITEM_IDS].some((itemId) =>
+      (observation.inventory.counts[itemId] ?? 0) > 0
+    );
+}
+
+function preferredUsableFoodItemIds(
+  observation: BeatGameObservation,
+): readonly string[] {
+  const regularFood = EDIBLE_FOOD_ITEM_IDS.filter((itemId) =>
     (observation.inventory.counts[itemId] ?? 0) > 0
   );
+  return regularFood.length > 0
+    ? regularFood
+    : EMERGENCY_FOOD_ITEM_IDS.filter((itemId) =>
+      (observation.inventory.counts[itemId] ?? 0) > 0
+    );
 }
 
 function hasUnsafeAir(observation: BeatGameObservation): boolean {
@@ -1802,6 +1816,7 @@ function retreatAndRecover(
     Effect.flatMap((observation) =>
       hasUsableFood(observation)
         ? eatWhenNeeded(state.driver, {
+          foodItemIds: preferredUsableFoodItemIds(observation),
           foodLevel: Math.max(18, state.strategy.eatBelowFood),
           maximumMeals: 8,
           completeWhenNoFood: true,
@@ -2378,6 +2393,7 @@ function collectBlocksOrExplore(
         current = yield* state.driver.observe;
       }
       if (countItems(current) <= beforeAttempt) {
+        const checkpoint = yield* Ref.get(state.checkpoint);
         yield* explore(state.driver, {
           origin: current.player.position,
           radius: discoveryHopRadius(
@@ -2388,6 +2404,7 @@ function collectBlocksOrExplore(
           purpose: explorationPurpose(
             options.purpose,
             current.player.position,
+            checkpoint.revision,
           ),
           path: explorationPath,
         });
@@ -2937,10 +2954,14 @@ function returnToOverworldSurface(
 function explorationPurpose(
   purpose: string,
   position: BeatGamePosition,
+  rotation?: number,
 ): string {
   const cellX = Math.floor(position.x / 32);
   const cellZ = Math.floor(position.z / 32);
-  return `${purpose.slice(0, 40)}:${cellX}:${cellZ}`;
+  const prefix = `${purpose.slice(0, 40)}:${cellX}:${cellZ}`;
+  return rotation === undefined
+    ? prefix
+    : `${purpose.slice(0, 24)}:${cellX}:${cellZ}:${rotation}`;
 }
 
 function discoveryHopRadius(
