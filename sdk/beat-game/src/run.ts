@@ -877,13 +877,18 @@ function executeDecision(
     switch (decision.type) {
       case "recover-death": {
         return Effect.gen(function* () {
-          const pendingDeaths = yield* Ref.get(state.pendingDeaths);
+          const [pendingDeaths, lastLivingObservation] = yield* Effect.all([
+            Ref.get(state.pendingDeaths),
+            Ref.get(state.lastLivingObservation),
+          ]);
           const pendingDeath = pendingDeaths.find((candidate) =>
             candidate.observedAt === observation.observedAt
           ) ?? {
             observedAt: observation.observedAt,
             position: observation.player.position,
-            recoverItems: hasMeaningfulRecoveryInventory(observation),
+            recoverItems: hasMeaningfulRecoveryInventory(
+              lastLivingObservation,
+            ),
           };
           yield* enqueuePendingDeath(state, pendingDeath);
           yield* Effect.all([
@@ -1888,9 +1893,16 @@ function retreatAndRecover(
                 ? escapeFromTarget(state, target)
                 : defendAgainstTarget(state, target)
             ).pipe(
-              Effect.zipRight(
-                defendAgainstNearbyHostiles(defensesRemaining - 1),
-              ),
+              Effect.matchEffect({
+                onFailure: (error) =>
+                  error.operation === "task.attack-entity"
+                      || error.code === "not_found"
+                      || error.code === "unreachable"
+                    ? Effect.void
+                    : Effect.fail(error),
+                onSuccess: () =>
+                  defendAgainstNearbyHostiles(defensesRemaining - 1),
+              }),
             )
         ),
       );
@@ -1907,7 +1919,7 @@ function retreatAndRecover(
             Effect.zipRight(waitForRecovery(attemptsRemaining - 1)),
           )
       ),
-  );
+    );
   return fleeFromNearbyNeutralThreat.pipe(
     Effect.zipRight(defendAgainstNearbyHostiles(8)),
     Effect.zipRight(eatAvailableFood),
@@ -2387,6 +2399,7 @@ function ensureEfficientFurnaceFuel(
         path: state.strategy.path,
       });
       yield* collectNearbyDrops(state.driver, {
+        itemIds: FURNACE_FUEL_ITEM_IDS,
         radius: 8,
         maximumDrops: 16,
         path: state.strategy.path,
@@ -2479,6 +2492,7 @@ function collectBlocksOrExplore(
         path: resourcePath,
       });
       yield* collectNearbyDrops(state.driver, {
+        itemIds: options.progressItemIds,
         radius: 12,
         maximumDrops: 32,
         settleDelayMs: 500,

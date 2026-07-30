@@ -313,6 +313,61 @@ describe("beat-game behavior programs", () => {
     expect(driver.maximumActiveControlScopes).toBe(1);
   });
 
+  it("limits a drop sweep to requested resource items", async () => {
+    const driver = new FakeBeatGameDriver();
+    const position = {
+      x: 4,
+      y: 64,
+      z: -2,
+      dimension: "minecraft:overworld",
+    };
+    const cobblestonePosition = {
+      x: 6,
+      y: 64,
+      z: -2,
+      dimension: "minecraft:overworld",
+    };
+    driver.currentObservation = observation({ position });
+    driver.entityResults = [
+      {
+        connectionEpoch: "epoch-1",
+        networkId: 10,
+        entityType: "minecraft:item",
+        itemId: "minecraft:cobblestone",
+        position: cobblestonePosition,
+        velocity: { x: 0, y: 0, z: 0 },
+        alive: true,
+        observedAt: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        connectionEpoch: "epoch-1",
+        networkId: 11,
+        entityType: "minecraft:item",
+        itemId: "minecraft:dirt",
+        position: {
+          x: 7,
+          y: 64,
+          z: -2,
+          dimension: "minecraft:overworld",
+        },
+        velocity: { x: 0, y: 0, z: 0 },
+        alive: true,
+        observedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ];
+
+    await Effect.runPromise(collectNearbyDrops(driver, {
+      itemIds: ["minecraft:cobblestone"],
+      settleDelayMs: 0,
+    }));
+
+    expect(driver.paths).toEqual(Array.from({ length: 2 }, () =>
+      expect.objectContaining({
+        position: cobblestonePosition,
+        radius: 0,
+      })));
+  });
+
   it("delegates reusable collection to the durable generic task", async () => {
     const driver = new FakeBeatGameDriver();
 

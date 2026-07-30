@@ -116,6 +116,7 @@ export function collectBlocks(
 }
 
 export interface CollectNearbyDropsOptions extends BeatGameBehaviorOptions {
+  readonly itemIds?: readonly string[];
   readonly radius?: number;
   readonly maximumDrops?: number;
   readonly settleDelayMs?: number;
@@ -138,6 +139,9 @@ export function collectNearbyDrops(
       options.maximumDrops ?? 16,
       "maximumDrops",
     );
+    const requestedItemIds = options.itemIds === undefined
+      ? undefined
+      : new Set(options.itemIds);
     const requestedPath = mergePathPolicy(options.path);
     const pickupPath = {
       ...requestedPath,
@@ -161,6 +165,10 @@ export function collectNearbyDrops(
         drop.entityType === "minecraft:item"
         && drop.alive
         && drop.itemId !== undefined
+        && (
+          requestedItemIds === undefined
+          || requestedItemIds.has(drop.itemId)
+        )
       );
       if (collectibleDrops.length === 0) {
         return;

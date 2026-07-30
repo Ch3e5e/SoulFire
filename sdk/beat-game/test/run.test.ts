@@ -1,4 +1,4 @@
-import { Effect, Either, Stream } from "effect";
+import { Effect, Either, Option, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -155,6 +155,62 @@ describe("beat-game run lifecycle", () => {
               Stream.filter((event) => event.type === "items-recovered"),
               Stream.runHead,
             );
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.paths).toContainEqual(expect.objectContaining({
+      position: deathPosition,
+      radius: 2,
+    }));
+  });
+
+  it("values a corpse from the last living inventory snapshot", async () => {
+    const driver = new FakeBeatGameDriver();
+    const deathPosition = {
+      x: 24,
+      y: 64,
+      z: -12,
+      dimension: "minecraft:overworld",
+    };
+    const livingObservation = observation({
+      position: deathPosition,
+      counts: {
+        "minecraft:cobblestone": 24,
+        "minecraft:stone_pickaxe": 1,
+      },
+    });
+    driver.currentObservation = observation({
+      dead: true,
+      health: 0,
+      position: deathPosition,
+    });
+    let observations = 0;
+    driver.observationResolver = () =>
+      Effect.sync(() => {
+        observations += 1;
+        return observations === 1
+          ? livingObservation
+          : driver.currentObservation;
+      });
+    driver.taskObserver = (task) => {
+      if (task.type === "auto-respawn") {
+        driver.currentObservation = observation();
+      }
+    };
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (driver.paths.length === 0) {
+              yield* Effect.sleep(1);
+            }
             yield* run.stop;
             yield* run.awaitCompletion.pipe(Effect.either);
           })
@@ -448,6 +504,73 @@ describe("beat-game run lifecycle", () => {
     ));
 
     expect(driver.tasks.filter((task) => task.type === "flee")).toHaveLength(1);
+  });
+
+  it("replans when a retreat target cannot be reached", async () => {
+    const driver = new FakeBeatGameDriver();
+    const zombie = {
+      connectionEpoch: "epoch-1",
+      networkId: 45,
+      entityType: "minecraft:zombie",
+      position: {
+        x: 2,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 8,
+      observedAt: "2026-01-01T00:00:01.000Z",
+    } as const;
+    driver.currentObservation = observation({ health: 8 });
+    driver.entityResults = [zombie];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (task.type === "attack-entity") {
+          driver.entityResults = [];
+          driver.currentObservation = observation({ health: 20 });
+        }
+      }).pipe(
+        Effect.zipRight(
+          task.type === "attack-entity"
+            ? Effect.fail(new BeatGameDriverError({
+              operation: "task.attack-entity",
+              code: "unreachable",
+              retryable: true,
+              message: "Unable to reach the target entity",
+            }))
+            : Effect.void,
+        ),
+      );
+
+    const retreatCompleted = await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            const event = yield* run.events.pipe(
+              Stream.filter((candidate) =>
+                candidate.type === "action-succeeded"
+                && candidate.action === "retreat"
+              ),
+              Stream.runHead,
+            );
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+            return event;
+          })
+        ),
+      ),
+    ));
+
+    expect(Option.isSome(retreatCompleted)).toBe(true);
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+      target: expect.objectContaining({ networkId: zombie.networkId }),
+    }));
   });
 
   it("escapes underground threats toward the Overworld surface", async () => {
