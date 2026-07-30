@@ -862,6 +862,85 @@ describe("beat-game run lifecycle", () => {
     ).toBe(false);
   });
 
+  it("escapes an entire close hostile cluster while critically hurt", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      health: 8,
+      counts: {
+        "minecraft:cooked_beef": 1,
+      },
+    });
+    driver.entityResults = [
+      {
+        connectionEpoch: "epoch-1",
+        networkId: 16,
+        entityType: "minecraft:zombie",
+        position: {
+          x: 2,
+          y: 64,
+          z: 0,
+          dimension: "minecraft:overworld",
+        },
+        velocity: { x: 0, y: 0, z: 0 },
+        alive: true,
+        health: 20,
+        observedAt: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        connectionEpoch: "epoch-1",
+        networkId: 17,
+        entityType: "minecraft:spider",
+        position: {
+          x: 4,
+          y: 64,
+          z: 0,
+          dimension: "minecraft:overworld",
+        },
+        velocity: { x: 0, y: 0, z: 0 },
+        alive: true,
+        health: 16,
+        observedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ];
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2) ? driver.entityResults : [];
+    driver.taskObserver = (task) => {
+      if (task.type === "flee") {
+        driver.entityResults = [];
+      }
+    };
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (!driver.tasks.some((task) => task.type === "flee")) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "flee",
+      selector: {
+        categories: [2],
+        alive: true,
+      },
+      triggerRadius: 16,
+      safeDistance: 24,
+      maximumEscapes: 4,
+    }));
+    expect(
+      driver.tasks.some((task) => task.type === "attack-entity"),
+    ).toBe(false);
+  });
+
   it("closes distance and attacks ranged hostiles bare-handed", async () => {
     const driver = new FakeBeatGameDriver();
     driver.entityResults = [{
@@ -1002,6 +1081,97 @@ describe("beat-game run lifecycle", () => {
       maxSearchTimeMs: 3_000,
     }));
     expect(driver.maximumActiveControlScopes).toBe(1);
+  });
+
+  it("interrupts work to escape multiple attackers after taking damage", async () => {
+    const driver = new FakeBeatGameDriver();
+    const attackers = [
+      {
+        connectionEpoch: "epoch-1",
+        networkId: 27,
+        entityType: "minecraft:zombie",
+        position: {
+          x: 2,
+          y: 64,
+          z: 0,
+          dimension: "minecraft:overworld",
+        },
+        velocity: { x: 0, y: 0, z: 0 },
+        alive: true,
+        health: 20,
+        observedAt: "2026-01-01T00:00:01.000Z",
+      },
+      {
+        connectionEpoch: "epoch-1",
+        networkId: 28,
+        entityType: "minecraft:spider",
+        position: {
+          x: 3,
+          y: 64,
+          z: 0,
+          dimension: "minecraft:overworld",
+        },
+        velocity: { x: 0, y: 0, z: 0 },
+        alive: true,
+        health: 16,
+        observedAt: "2026-01-01T00:00:01.000Z",
+      },
+    ] as const;
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2) ? driver.entityResults : [];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        driver.taskObserver(task);
+      }).pipe(
+        Effect.zipRight(
+          task.type === "collect-blocks"
+            ? Effect.never
+            : Effect.succeed({}),
+        ),
+      );
+    driver.taskObserver = (task) => {
+      if (task.type === "flee") {
+        driver.entityResults = [];
+      }
+    };
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (
+              !driver.tasks.some((task) => task.type === "collect-blocks")
+            ) {
+              yield* Effect.sleep(1);
+            }
+            driver.entityResults = [...attackers];
+            driver.currentObservation = observation({ health: 11 });
+            while (!driver.tasks.some((task) => task.type === "flee")) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "flee",
+      selector: {
+        categories: [2],
+        alive: true,
+      },
+      triggerRadius: 16,
+      safeDistance: 24,
+      maximumEscapes: 4,
+    }));
+    expect(
+      driver.tasks.some((task) => task.type === "attack-entity"),
+    ).toBe(false);
   });
 
   it("escapes an attacking Enderman instead of trading bare-handed", async () => {

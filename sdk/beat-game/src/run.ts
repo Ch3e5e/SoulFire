@@ -219,6 +219,8 @@ const ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES = new Set([
   "minecraft:enderman",
 ]);
 const PROACTIVE_CREEPER_EVASION_RADIUS = 12;
+const WOUNDED_HOSTILE_CLUSTER_RADIUS = 8;
+const WOUNDED_HOSTILE_CLUSTER_SIZE = 2;
 const MINIMUM_SAFE_AIR_TICKS = 200;
 
 export interface BeatGameRun {
@@ -1399,20 +1401,17 @@ function monitorObservedSafety(
     && observation.player.health < previousObservation.player.health
   ) {
     return findNearbyAttackThreat(state, observation).pipe(
-      Effect.flatMap((target) => {
-        if (target === undefined) {
+      Effect.flatMap((threat) => {
+        if (threat === undefined) {
           return Effect.suspend(() => monitor(observation));
         }
-        const shouldEscape =
-          ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(target.entityType)
-          || shouldEvadeRangedThreat(state, observation, target);
         return Effect.succeed({
-          replanReason: shouldEscape
+          replanReason: threat.response === "flee"
             ? "interrupted an action to escape a dangerous attacker"
             : "interrupted an action to defend against an attacker",
-          ...(shouldEscape
-            ? { escapeTarget: target }
-            : { defenseTarget: target }),
+          ...(threat.response === "flee"
+            ? { escapeTarget: threat.target }
+            : { defenseTarget: threat.target }),
         } satisfies ActionResult);
       }),
     );
@@ -1482,6 +1481,27 @@ function findImmediateThreat(
       if (explosive !== undefined) {
         return { target: explosive.target, response: "flee" };
       }
+      const hostileCluster = candidates.filter(({ distanceSquared }) =>
+        distanceSquared
+          <= WOUNDED_HOSTILE_CLUSTER_RADIUS
+            * WOUNDED_HOSTILE_CLUSTER_RADIUS
+      );
+      if (
+        shouldEvadeHostileCluster(
+          state,
+          observation,
+          hostileCluster.map(({ target }) => target),
+        )
+      ) {
+        const nearestClusterTarget = hostileCluster[0];
+        if (nearestClusterTarget === undefined) {
+          return undefined;
+        }
+        return {
+          target: nearestClusterTarget.target,
+          response: "flee",
+        };
+      }
       const ranged = candidates.find(({ target, distanceSquared }) =>
         PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
         && distanceSquared <= 144
@@ -1512,6 +1532,15 @@ function findImmediateThreat(
   );
 }
 
+function shouldEvadeHostileCluster(
+  state: RunState,
+  observation: BeatGameObservation,
+  hostiles: readonly BeatGameEntityObservation[],
+): boolean {
+  return observation.player.health < state.strategy.minimumHealth
+    && hostiles.length >= WOUNDED_HOSTILE_CLUSTER_SIZE;
+}
+
 function shouldEvadeRangedThreat(
   state: RunState,
   observation: BeatGameObservation,
@@ -1534,41 +1563,64 @@ function escapeFromTarget(
     ),
   };
   const escape = state.driver.observe.pipe(
-    Effect.flatMap((observation) =>
-      observation.player.dead
-        ? Effect.void
-        : needsOverworldSurfaceRecovery(
+    Effect.flatMap((observation) => {
+      if (observation.player.dead) {
+        return Effect.void;
+      }
+      return Effect.all([
+        needsOverworldSurfaceRecovery(
           state,
           observation.player.position,
-        ).pipe(
-          Effect.flatMap((needsRecovery) =>
-            needsRecovery
-              ? state.driver.pathfind(
-                surfaceEscapeTarget(
-                  observation.player.position,
-                  target.position,
-                ),
-                17,
-                {
-                  ...escapePath,
-                  allowMining: true,
-                  allowPlacing: true,
-                },
-              )
-              : flee(state.driver, {
-                selector: {
-                  networkId: target.networkId,
-                  alive: true,
-                },
-                triggerRadius: 12,
-                safeDistance: 16,
-                completeWhenSafe: true,
-                maximumEscapes: 1,
-                path: escapePath,
-              })
-          ),
-        )
-    ),
+        ),
+        state.driver.queryEntities({
+          origin: observation.player.position,
+          radius: WOUNDED_HOSTILE_CLUSTER_RADIUS,
+          selector: {
+            categories: [2],
+            alive: true,
+          },
+          maximumResults: 16,
+        }),
+      ]).pipe(
+        Effect.flatMap(([needsRecovery, nearbyHostiles]) => {
+          if (needsRecovery) {
+            return state.driver.pathfind(
+              surfaceEscapeTarget(
+                observation.player.position,
+                target.position,
+              ),
+              17,
+              {
+                ...escapePath,
+                allowMining: true,
+                allowPlacing: true,
+              },
+            );
+          }
+          const escapeCluster = shouldEvadeHostileCluster(
+            state,
+            observation,
+            nearbyHostiles,
+          );
+          return flee(state.driver, {
+            selector: escapeCluster
+              ? {
+                categories: [2],
+                alive: true,
+              }
+              : {
+                networkId: target.networkId,
+                alive: true,
+              },
+            triggerRadius: escapeCluster ? 16 : 12,
+            safeDistance: escapeCluster ? 24 : 16,
+            completeWhenSafe: true,
+            maximumEscapes: escapeCluster ? 4 : 1,
+            path: escapePath,
+          });
+        }),
+      );
+    }),
   );
   return Effect.raceFirst(
     escape.pipe(Effect.as("escaped" as const)),
@@ -1832,7 +1884,7 @@ function findNearbyAttackThreat(
   state: RunState,
   observation: BeatGameObservation,
 ): Effect.Effect<
-  BeatGameEntityObservation | undefined,
+  ImmediateThreat | undefined,
   BeatGameDriverError
 > {
   const radius = 16;
@@ -1857,6 +1909,13 @@ function findNearbyAttackThreat(
     }),
   ]).pipe(
     Effect.map(([hostiles, dangerousNeutralMobs]) => {
+      const closeHostiles = hostiles.filter((entity) =>
+        distanceSquared(
+          observation.player.position,
+          entity.position,
+        ) <= WOUNDED_HOSTILE_CLUSTER_RADIUS
+          * WOUNDED_HOSTILE_CLUSTER_RADIUS
+      );
       const threats = new Map(
         [...hostiles, ...dangerousNeutralMobs].map((entity) => [
           `${entity.connectionEpoch}:${entity.networkId}`,
@@ -1877,7 +1936,41 @@ function findNearbyAttackThreat(
           : closest,
         undefined as BeatGameEntityObservation | undefined,
       );
-      return nearest;
+      if (nearest === undefined) {
+        return undefined;
+      }
+      if (
+        shouldEvadeHostileCluster(
+          state,
+          observation,
+          closeHostiles,
+        )
+      ) {
+        const nearestHostile = closeHostiles.reduce(
+          (closest, candidate) =>
+              closest === undefined
+              || distanceSquared(
+                  observation.player.position,
+                  candidate.position,
+                ) < distanceSquared(
+                  observation.player.position,
+                  closest.position,
+                )
+            ? candidate
+            : closest,
+          undefined as BeatGameEntityObservation | undefined,
+        );
+        return nearestHostile === undefined
+          ? undefined
+          : { target: nearestHostile, response: "flee" as const };
+      }
+      const shouldEscape =
+        ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(nearest.entityType)
+        || shouldEvadeRangedThreat(state, observation, nearest);
+      return {
+        target: nearest,
+        response: shouldEscape ? "flee" as const : "attack" as const,
+      };
     }),
   );
 }
@@ -2015,6 +2108,7 @@ function retreatAndRecover(
           }).pipe(
             Effect.map((hostiles) => ({
               observation,
+              hostiles,
               target: hostiles
                 .map((target) => ({
                   target,
@@ -2042,11 +2136,22 @@ function retreatAndRecover(
             })),
           )
         ),
-        Effect.flatMap(({ observation, target }) =>
+        Effect.flatMap(({ observation, hostiles, target }) =>
           target === undefined
             ? Effect.void
             : (
-              ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(target.entityType)
+              shouldEvadeHostileCluster(
+                state,
+                observation,
+                hostiles.filter((hostile) =>
+                  distanceSquared(
+                    observation.player.position,
+                    hostile.position,
+                  ) <= WOUNDED_HOSTILE_CLUSTER_RADIUS
+                    * WOUNDED_HOSTILE_CLUSTER_RADIUS
+                ),
+              )
+                || ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(target.entityType)
                 || shouldEvadeRangedThreat(state, observation, target)
                 ? escapeFromTarget(state, target)
                 : defendAgainstTarget(state, target)
