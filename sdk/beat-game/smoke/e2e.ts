@@ -435,6 +435,47 @@ const program = Effect.scoped(Effect.gen(function* () {
           }).pipe(Effect.orDie)
         ),
       ),
+    pathfindXZ: (
+      x: number,
+      z: number,
+      dimension: string,
+      radius: number,
+      policy: Parameters<typeof baseDriver.pathfindXZ>[4],
+    ) =>
+      record("pathfind-xz-started", {
+        x,
+        z,
+        dimension,
+        radius,
+        policy,
+      }).pipe(
+        Effect.orDie,
+        Effect.zipRight(
+          baseDriver.pathfindXZ(x, z, dimension, radius, policy),
+        ),
+        Effect.tap(() =>
+          Effect.gen(function* () {
+            const player = yield* bot.world.player();
+            yield* record("pathfind-xz-completed", {
+              x,
+              z,
+              dimension,
+              radius,
+              playerPosition: player.position,
+              playerVelocity: player.velocity,
+            });
+          }).pipe(Effect.orDie)
+        ),
+        Effect.tapErrorCause((cause) =>
+          record("pathfind-xz-failed", {
+            x,
+            z,
+            dimension,
+            radius,
+            cause: String(cause),
+          }).pipe(Effect.orDie)
+        ),
+      ),
     runTask: (
       task: Parameters<typeof baseDriver.runTask>[0],
       policy: Parameters<typeof baseDriver.runTask>[1],
