@@ -1746,6 +1746,10 @@ describe("beat-game run lifecycle", () => {
     ));
 
     expect(driver.xzPaths).toHaveLength(1);
+    expect(driver.xzPaths[0]).toMatchObject({
+      x: 16,
+      z: 0,
+    });
     expect(driver.xzPaths[0]?.policy.maxFallDistance).toBe(1);
     expect(driver.tasks).toContainEqual(expect.objectContaining({
       type: "attack-entity",

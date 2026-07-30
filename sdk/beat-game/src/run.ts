@@ -3100,12 +3100,16 @@ function huntOrExplore(
               current.player.position,
             );
           } else {
+            const frontierScanRadius =
+              current.player.health < state.strategy.minimumHealth
+                ? Math.min(32, state.strategy.entitySearchRadius)
+                : state.strategy.entitySearchRadius;
             yield* Effect.raceFirst(
               advanceExplorationFrontier(
                 state,
                 current.player.position,
                 purpose,
-                state.strategy.entitySearchRadius,
+                frontierScanRadius,
                 explorationPath,
               ),
               waitForVisibleHuntingTarget(
