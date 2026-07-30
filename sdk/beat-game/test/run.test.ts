@@ -2174,6 +2174,75 @@ describe("beat-game run lifecycle", () => {
     });
   });
 
+  it("climbs out of a low ravine before exploring for surface blocks", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      position: {
+        x: 12.5,
+        y: 52,
+        z: 8.5,
+        dimension: "minecraft:overworld",
+      },
+    });
+    driver.surfaceColumns = [
+      {
+        x: 12,
+        z: 8,
+        loaded: true,
+        surfaceY: 51,
+        blockId: "minecraft:stone",
+        biomeId: "minecraft:plains",
+        skyLight: 15,
+        blockLight: 0,
+      },
+      {
+        x: 18,
+        z: 8,
+        loaded: true,
+        surfaceY: 70,
+        blockId: "minecraft:grass_block",
+        biomeId: "minecraft:plains",
+        skyLight: 15,
+        blockLight: 0,
+      },
+    ];
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (driver.paths.length === 0) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.paths[0]).toEqual({
+      position: {
+        x: 18.5,
+        y: 71,
+        z: 8.5,
+        dimension: "minecraft:overworld",
+      },
+      radius: 1.5,
+      policy: expect.objectContaining({
+        allowMining: true,
+        allowPlacing: true,
+      }),
+    });
+    expect(driver.xzPaths).toHaveLength(0);
+  });
+
   it("tries another dry surface when the nearest exit is unreachable", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({

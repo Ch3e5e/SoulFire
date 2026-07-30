@@ -2670,6 +2670,14 @@ function collectBlocksOrExplore(
           );
           return;
         }
+        if (
+          yield* climbToHigherOverworldGround(
+            state,
+            current.player.position,
+          )
+        ) {
+          return;
+        }
         yield* advanceExplorationFrontier(
           state,
           current.player.position,
@@ -3354,6 +3362,36 @@ function returnToOverworldSurface(
   });
 }
 
+function climbToHigherOverworldGround(
+  state: RunState,
+  position: BeatGamePosition,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  if (position.dimension !== "minecraft:overworld") {
+    return Effect.succeed(false);
+  }
+  return state.driver.sampleSurface(
+    position,
+    AIR_ESCAPE_SURFACE_SEARCH_RADIUS,
+    1,
+  ).pipe(
+    Effect.map((columns) =>
+      selectElevatedSurfaceColumns(columns, position).map((surface) => ({
+        x: surface.x + 0.5,
+        y: surface.surfaceY + 1,
+        z: surface.z + 0.5,
+        dimension: position.dimension,
+      }))
+    ),
+    Effect.flatMap((targets) =>
+      targets.length === 0
+        ? Effect.succeed(false)
+        : pathfindToFirstReachableSurface(state, targets).pipe(
+          Effect.as(true),
+        )
+    ),
+  );
+}
+
 function pathfindToFirstReachableSurface(
   state: RunState,
   targets: readonly BeatGamePosition[],
@@ -3437,6 +3475,34 @@ function selectSurfaceEscapeColumns(
     }
   }
   return [...selected.values()];
+}
+
+function selectElevatedSurfaceColumns(
+  columns: readonly {
+    readonly x: number;
+    readonly z: number;
+    readonly loaded: boolean;
+    readonly surfaceY?: number;
+    readonly blockId?: string;
+  }[],
+  position: BeatGamePosition,
+): readonly {
+  readonly x: number;
+  readonly z: number;
+  readonly surfaceY: number;
+}[] {
+  return columns.flatMap((column) =>
+    column.loaded
+      && column.surfaceY !== undefined
+      && column.surfaceY - position.y > 2
+      && !isUnsafeSurfaceBlock(column.blockId)
+      ? [{ x: column.x, z: column.z, surfaceY: column.surfaceY }]
+      : []
+  ).sort((left, right) =>
+    right.surfaceY - left.surfaceY
+      || surfaceHorizontalDistanceSquared(left, position)
+        - surfaceHorizontalDistanceSquared(right, position)
+  ).slice(0, AIR_ESCAPE_DIRECTION_SECTORS);
 }
 
 function surfaceHorizontalDistanceSquared(
