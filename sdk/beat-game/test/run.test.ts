@@ -941,6 +941,76 @@ describe("beat-game run lifecycle", () => {
     ).toBe(false);
   });
 
+  it("defends against a hostile that approaches during recovery", async () => {
+    const driver = new FakeBeatGameDriver();
+    const zombie = {
+      connectionEpoch: "epoch-1",
+      networkId: 18,
+      entityType: "minecraft:zombie",
+      position: {
+        x: 2,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.currentObservation = observation({
+      health: 8,
+      counts: { "minecraft:cooked_beef": 1 },
+    });
+    let hostileQueries = 0;
+    let zombieNearby = false;
+    let zombieDefeated = false;
+    driver.entityQueryResolver = (query) => {
+      if (!query.selector.categories?.includes(2)) {
+        return [];
+      }
+      hostileQueries += 1;
+      if (hostileQueries >= 2 && !zombieDefeated) {
+        zombieNearby = true;
+      }
+      return zombieNearby ? [zombie] : [];
+    };
+    driver.taskObserver = (task) => {
+      if (task.type === "attack-entity") {
+        zombieDefeated = true;
+        zombieNearby = false;
+      }
+    };
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (
+              !driver.tasks.some((task) => task.type === "attack-entity")
+            ) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(hostileQueries).toBeGreaterThanOrEqual(2);
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+      target: expect.objectContaining({
+        connectionEpoch: zombie.connectionEpoch,
+        networkId: zombie.networkId,
+      }),
+      selectBestWeapon: true,
+    }));
+  });
+
   it("closes distance and attacks ranged hostiles bare-handed", async () => {
     const driver = new FakeBeatGameDriver();
     driver.entityResults = [{

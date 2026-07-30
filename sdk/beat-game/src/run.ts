@@ -221,6 +221,9 @@ const ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES = new Set([
 const PROACTIVE_CREEPER_EVASION_RADIUS = 12;
 const WOUNDED_HOSTILE_CLUSTER_RADIUS = 8;
 const WOUNDED_HOSTILE_CLUSTER_SIZE = 2;
+const RECOVERY_DURATION_MS = 20_000;
+const MAXIMUM_RECOVERY_POLL_MS = 500;
+const MINIMUM_RECOVERY_POLL_MS = 100;
 const MINIMUM_SAFE_AIR_TICKS = 200;
 
 export interface BeatGameRun {
@@ -2076,117 +2079,63 @@ function retreatAndRecover(
         })
     ),
   );
-  const eatAvailableFood = state.driver.observe.pipe(
-    Effect.flatMap((observation) =>
-      hasUsableFood(observation)
-        ? eatWhenNeeded(state.driver, {
-          foodItemIds: preferredUsableFoodItemIds(observation),
-          foodLevel: Math.max(18, state.strategy.eatBelowFood),
-          maximumMeals: 8,
-          completeWhenNoFood: true,
-          path: state.strategy.path,
-        })
-        : Effect.void
-    ),
+  const recoveryPollMs = Math.max(
+    MINIMUM_RECOVERY_POLL_MS,
+    Math.min(MAXIMUM_RECOVERY_POLL_MS, state.strategy.observationPollMs),
   );
-  const defendAgainstNearbyHostiles = (
-    defensesRemaining: number,
-  ): Effect.Effect<void, BeatGameDriverError> =>
-    defensesRemaining === 0
-      ? Effect.void
-      : state.driver.observe.pipe(
-        Effect.flatMap((observation) =>
-          state.driver.queryEntities({
-            origin: observation.player.position,
-            radius: 24,
-            selector: {
-              categories: [2],
-              alive: true,
-              requireLineOfSight: true,
-            },
-            maximumResults: 16,
-          }).pipe(
-            Effect.map((hostiles) => ({
-              observation,
-              hostiles,
-              target: hostiles
-                .map((target) => ({
-                  target,
-                  distanceSquared: distanceSquared(
-                    observation.player.position,
-                    target.position,
-                  ),
-                }))
-                .filter(({ target, distanceSquared: targetDistanceSquared }) => {
-                  const engagementRadius =
-                    PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(
-                      target.entityType,
-                    )
-                      || ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(
-                        target.entityType,
-                      )
-                      ? 12
-                      : 4;
-                  return targetDistanceSquared
-                    <= engagementRadius * engagementRadius;
-                })
-                .sort((left, right) =>
-                  left.distanceSquared - right.distanceSquared
-                )[0]?.target,
-            })),
-          )
-        ),
-        Effect.flatMap(({ observation, hostiles, target }) =>
-          target === undefined
-            ? Effect.void
-            : (
-              shouldEvadeHostileCluster(
-                state,
-                observation,
-                hostiles.filter((hostile) =>
-                  distanceSquared(
-                    observation.player.position,
-                    hostile.position,
-                  ) <= WOUNDED_HOSTILE_CLUSTER_RADIUS
-                    * WOUNDED_HOSTILE_CLUSTER_RADIUS
-                ),
-              )
-                || ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(target.entityType)
-                || shouldEvadeRangedThreat(state, observation, target)
-                ? escapeFromTarget(state, target)
-                : defendAgainstTarget(state, target)
-            ).pipe(
-              Effect.matchEffect({
-                onFailure: (error) =>
-                  error.operation === "task.attack-entity"
-                      || error.code === "not_found"
-                      || error.code === "unreachable"
-                    ? Effect.void
-                    : Effect.fail(error),
-                onSuccess: () =>
-                  defendAgainstNearbyHostiles(defensesRemaining - 1),
-              }),
-            )
-        ),
-      );
-  const waitForRecovery = (
+  const recoverUntilSafe = (
     attemptsRemaining: number,
   ): Effect.Effect<void, BeatGameDriverError> =>
     state.driver.observe.pipe(
-      Effect.flatMap((observation) =>
-        observation.player.dead
-        || observation.player.health >= state.strategy.minimumHealth
-        || attemptsRemaining === 0
-          ? Effect.void
-          : Effect.sleep(1_000).pipe(
-            Effect.zipRight(waitForRecovery(attemptsRemaining - 1)),
-          )
-      ),
+      Effect.flatMap((observation) => {
+        if (
+          observation.player.dead
+          || observation.player.health >= state.strategy.minimumHealth
+          || attemptsRemaining === 0
+        ) {
+          return Effect.void;
+        }
+        return findImmediateThreat(state, observation).pipe(
+          Effect.flatMap((threat) => {
+            if (threat === undefined) {
+              if (
+                observation.player.food < 20
+                && hasUsableFood(observation)
+              ) {
+                return eatWhenNeeded(state.driver, {
+                  foodItemIds: preferredUsableFoodItemIds(observation),
+                  foodLevel: Math.max(18, state.strategy.eatBelowFood),
+                  maximumMeals: 1,
+                  completeWhenNoFood: true,
+                  path: state.strategy.path,
+                }).pipe(
+                  Effect.zipRight(Effect.sleep(recoveryPollMs)),
+                );
+              }
+              return Effect.sleep(recoveryPollMs);
+            }
+            const response = threat.response === "flee"
+              ? escapeFromTarget(state, threat.target)
+              : defendAgainstTarget(state, threat.target);
+            return response.pipe(
+              Effect.catchIf(
+                (error) =>
+                  error.operation === "task.attack-entity"
+                  || error.code === "not_found"
+                  || error.code === "unreachable",
+                () => Effect.void,
+              ),
+              Effect.zipRight(Effect.sleep(recoveryPollMs)),
+            );
+          }),
+          Effect.zipRight(recoverUntilSafe(attemptsRemaining - 1)),
+        );
+      }),
     );
   return fleeFromNearbyNeutralThreat.pipe(
-    Effect.zipRight(defendAgainstNearbyHostiles(8)),
-    Effect.zipRight(eatAvailableFood),
-    Effect.zipRight(waitForRecovery(20)),
+    Effect.zipRight(
+      recoverUntilSafe(Math.ceil(RECOVERY_DURATION_MS / recoveryPollMs)),
+    ),
   );
 }
 
