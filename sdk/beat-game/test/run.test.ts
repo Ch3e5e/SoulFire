@@ -2348,7 +2348,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.xzPaths[0]).toEqual(expect.objectContaining({
       x: 48.5,
       z: 0.5,
-      radius: 4,
+      radius: 2,
     }));
   });
 
@@ -3604,16 +3604,16 @@ describe("beat-game run lifecycle", () => {
       expect.objectContaining({
         x: 48,
         z: 0,
-        radius: 4,
+        radius: 2,
         policy: expect.objectContaining({
           allowMining: false,
           allowPlacing: true,
         }),
       }),
       expect.objectContaining({
-        x: 76,
+        x: 80,
         z: 0,
-        radius: 4,
+        radius: 2,
         policy: expect.objectContaining({
           allowMining: false,
           allowPlacing: true,
@@ -3624,7 +3624,7 @@ describe("beat-game run lifecycle", () => {
       selector.entityTypes?.includes("minecraft:cow") === true
     );
     expect(huntQueries.slice(0, 3).map(({ origin }) => origin?.x))
-      .toEqual([0, 48, 76]);
+      .toEqual([0, 48, 80]);
   });
 
   it("uses short approach segments toward food while wounded", async () => {
@@ -3679,11 +3679,107 @@ describe("beat-game run lifecycle", () => {
     expect(driver.xzPaths[0]).toEqual(expect.objectContaining({
       x: 12,
       z: 0,
-      radius: 4,
+      radius: 2,
       policy: expect.objectContaining({
         allowMining: false,
         allowPlacing: true,
         maxFallDistance: 1,
+      }),
+    }));
+  });
+
+  it("moves inside attack range instead of repeating a satisfied approach", async () => {
+    const driver = new FakeBeatGameDriver();
+    const preparedItems = {
+      "minecraft:cobblestone": 20,
+      "minecraft:oak_log": 8,
+      "minecraft:stone_sword": 1,
+    };
+    const cow = {
+      connectionEpoch: "epoch-1",
+      networkId: 2,
+      entityType: "minecraft:cow",
+      position: {
+        x: 25.5,
+        y: 64,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 10,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.currentObservation = observation({
+      counts: preparedItems,
+      position: {
+        x: 0.5,
+        y: 64,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+    });
+    driver.entityResults = [cow];
+    driver.surfaceColumns = [{
+      x: 5,
+      z: 0,
+      loaded: true,
+      surfaceY: 63,
+      blockId: "minecraft:grass_block",
+      biomeId: "minecraft:plains",
+      skyLight: 15,
+      blockLight: 0,
+    }];
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+        driver.currentObservation = observation({
+          counts: preparedItems,
+          position,
+        });
+      });
+    driver.taskObserver = (task) => {
+      if (task.type === "attack-entity") {
+        driver.entityResults = [];
+      }
+    };
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: {
+          observationPollMs: 1,
+          entitySearchRadius: 64,
+        },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (
+              !driver.tasks.some((task) => task.type === "attack-entity")
+            ) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.paths).toHaveLength(1);
+    expect(driver.paths[0]).toEqual(expect.objectContaining({
+      position: {
+        x: 5.5,
+        y: 64,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+      radius: 2,
+    }));
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+      target: expect.objectContaining({
+        connectionEpoch: cow.connectionEpoch,
+        networkId: cow.networkId,
       }),
     }));
   });

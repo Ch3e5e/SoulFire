@@ -129,6 +129,8 @@ const DISPOSABLE_DEATH_RECOVERY_ITEM_IDS = new Set([
 ]);
 const FURNACE_FUEL_SEARCH_RADIUS = 16;
 const HUNT_ATTACK_APPROACH_RADIUS = 24;
+const HUNT_APPROACH_BUFFER = 4;
+const HUNT_APPROACH_GOAL_RADIUS = 2;
 const HUNT_MAXIMUM_APPROACH_DISTANCE = 48;
 const EXPLORATION_REANCHOR_DISTANCE = 16;
 const AIR_ESCAPE_SURFACE_SEARCH_RADIUS = 16;
@@ -3202,7 +3204,8 @@ function huntOrExplore(
             : HUNT_MAXIMUM_APPROACH_DISTANCE;
         const approachDistance = Math.min(
           maximumApproachDistance,
-          targetDistance - HUNT_ATTACK_APPROACH_RADIUS,
+          targetDistance
+            - (HUNT_ATTACK_APPROACH_RADIUS - HUNT_APPROACH_BUFFER),
         );
         const approachRatio = approachDistance / targetDistance;
         const approached = yield* pathfindExplorationTarget(
@@ -3216,7 +3219,7 @@ function huntOrExplore(
               + (target.position.z - current.player.position.z)
                 * approachRatio,
           },
-          4,
+          HUNT_APPROACH_GOAL_RADIUS,
           explorationPath,
         ).pipe(
           Effect.as(true),
