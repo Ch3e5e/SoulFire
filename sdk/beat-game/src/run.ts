@@ -2823,9 +2823,7 @@ function fillLiquidBucket(
         40,
       );
       yield* state.driver.act({
-        type: "interact-block",
-        position: source.position,
-        face: "up",
+        type: "use-item",
         hand: "main",
       });
     }));

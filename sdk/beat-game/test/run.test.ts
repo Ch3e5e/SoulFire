@@ -1671,7 +1671,7 @@ describe("beat-game run lifecycle", () => {
     });
   });
 
-  it("fills a bucket by facing and interacting with a fluid source", async () => {
+  it("fills a bucket by facing a fluid source and using the bucket", async () => {
     const driver = new FakeBeatGameDriver();
     const source = {
       x: 2,
@@ -1703,7 +1703,7 @@ describe("beat-game run lifecycle", () => {
           rotation: { yaw: action.yaw, pitch: action.pitch },
         });
       }
-      return action.type === "interact-block"
+      return action.type === "use-item"
         ? Effect.never
         : Effect.succeed({});
     };
@@ -1715,7 +1715,7 @@ describe("beat-game run lifecycle", () => {
         Effect.flatMap((run) =>
           Effect.gen(function* () {
             while (
-              !driver.actions.some((action) => action.type === "interact-block")
+              !driver.actions.some((action) => action.type === "use-item")
             ) {
               yield* Effect.sleep(1);
             }
@@ -1740,13 +1740,11 @@ describe("beat-game run lifecycle", () => {
         yaw: expect.any(Number),
         pitch: expect.any(Number),
       }),
-      {
-        type: "interact-block",
-        position: source,
-        face: "up",
-        hand: "main",
-      },
+      { type: "use-item", hand: "main" },
     ]);
+    expect(driver.actions).not.toContainEqual(expect.objectContaining({
+      type: "interact-block",
+    }));
   });
 
   it("recycles placed gravel until it produces flint", async () => {
