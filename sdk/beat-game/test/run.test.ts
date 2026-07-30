@@ -2214,6 +2214,26 @@ describe("beat-game run lifecycle", () => {
         skyLight: 15,
         blockLight: 0,
       },
+      {
+        x: 18,
+        z: 9,
+        loaded: true,
+        surfaceY: 70,
+        blockId: "minecraft:grass_block",
+        biomeId: "minecraft:plains",
+        skyLight: 15,
+        blockLight: 0,
+      },
+      {
+        x: 19,
+        z: 8,
+        loaded: true,
+        surfaceY: 69,
+        blockId: "minecraft:grass_block",
+        biomeId: "minecraft:plains",
+        skyLight: 15,
+        blockLight: 0,
+      },
     ];
     driver.pathResolver = (position, radius, policy) =>
       Effect.sync(() => {
@@ -2250,6 +2270,140 @@ describe("beat-game run lifecycle", () => {
       }),
     });
     expect(driver.xzPaths).toHaveLength(0);
+  });
+
+  it("explores horizontally instead of climbing ordinary hills", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      position: {
+        x: 65.5,
+        y: 67,
+        z: 206.5,
+        dimension: "minecraft:overworld",
+      },
+    });
+    driver.surfaceColumns = [
+      {
+        x: 65,
+        z: 206,
+        loaded: true,
+        surfaceY: 66,
+        blockId: "minecraft:grass_block",
+        biomeId: "minecraft:plains",
+        skyLight: 15,
+        blockLight: 0,
+      },
+      {
+        x: 77,
+        z: 195,
+        loaded: true,
+        surfaceY: 73,
+        blockId: "minecraft:grass_block",
+        biomeId: "minecraft:plains",
+        skyLight: 15,
+        blockLight: 0,
+      },
+      {
+        x: 77,
+        z: 196,
+        loaded: true,
+        surfaceY: 72,
+        blockId: "minecraft:grass_block",
+        biomeId: "minecraft:plains",
+        skyLight: 15,
+        blockLight: 0,
+      },
+      {
+        x: 76,
+        z: 195,
+        loaded: true,
+        surfaceY: 73,
+        blockId: "minecraft:grass_block",
+        biomeId: "minecraft:plains",
+        skyLight: 15,
+        blockLight: 0,
+      },
+    ];
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (driver.xzPaths.length === 0) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.paths).toHaveLength(0);
+    expect(driver.xzPaths).toHaveLength(1);
+  });
+
+  it("ignores isolated high columns when escaping low ground", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      position: {
+        x: 12.5,
+        y: 52,
+        z: 8.5,
+        dimension: "minecraft:overworld",
+      },
+    });
+    driver.surfaceColumns = [
+      {
+        x: 12,
+        z: 8,
+        loaded: true,
+        surfaceY: 51,
+        blockId: "minecraft:stone",
+        biomeId: "minecraft:plains",
+        skyLight: 15,
+        blockLight: 0,
+      },
+      {
+        x: 18,
+        z: 8,
+        loaded: true,
+        surfaceY: 70,
+        blockId: "minecraft:grass_block",
+        biomeId: "minecraft:plains",
+        skyLight: 15,
+        blockLight: 0,
+      },
+    ];
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (driver.xzPaths.length === 0) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.paths).toHaveLength(0);
+    expect(driver.xzPaths).toHaveLength(1);
   });
 
   it("tries another dry surface when the nearest exit is unreachable", async () => {

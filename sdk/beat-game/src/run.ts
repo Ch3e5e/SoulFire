@@ -135,6 +135,10 @@ const AIR_ESCAPE_SURFACE_SEARCH_RADIUS = 16;
 const AIR_ESCAPE_SURFACE_APPROACH_ATTEMPTS = 60;
 const AIR_ESCAPE_STAGNANT_OBSERVATIONS = 10;
 const AIR_ESCAPE_DIRECTION_SECTORS = 8;
+const OVERWORLD_LOW_GROUND_MAX_Y = 62;
+const SURFACE_NEIGHBOR_MAX_HEIGHT_DELTA = 1;
+const MINIMUM_STABLE_SURFACE_NEIGHBORS = 2;
+const ELEVATED_SURFACE_PATH_TIMEOUT_MS = 15_000;
 const COAL_ORE_BLOCK_IDS = [
   "minecraft:coal_ore",
   "minecraft:deepslate_coal_ore",
@@ -3396,7 +3400,10 @@ function climbToHigherOverworldGround(
   state: RunState,
   position: BeatGamePosition,
 ): Effect.Effect<boolean, BeatGameDriverError> {
-  if (position.dimension !== "minecraft:overworld") {
+  if (
+    position.dimension !== "minecraft:overworld"
+    || position.y > OVERWORLD_LOW_GROUND_MAX_Y
+  ) {
     return Effect.succeed(false);
   }
   return state.driver.sampleSurface(
@@ -3415,8 +3422,18 @@ function climbToHigherOverworldGround(
     Effect.flatMap((targets) =>
       targets.length === 0
         ? Effect.succeed(false)
-        : pathfindToFirstReachableSurface(state, targets).pipe(
+        : pathfindToFirstReachableSurface(
+          state,
+          targets,
+          0,
+          ELEVATED_SURFACE_PATH_TIMEOUT_MS,
+        ).pipe(
           Effect.as(true),
+          Effect.catchAll((cause) =>
+            cause.operation === "pathfind"
+              ? Effect.succeed(false)
+              : Effect.fail(cause)
+          ),
         )
     ),
   );
@@ -3426,12 +3443,13 @@ function pathfindToFirstReachableSurface(
   state: RunState,
   targets: readonly BeatGamePosition[],
   index = 0,
+  attemptTimeoutMs?: number,
 ): Effect.Effect<void, BeatGameDriverError> {
   const target = targets[index];
   if (target === undefined) {
     return Effect.void;
   }
-  return state.driver.pathfind(
+  const pathfind = state.driver.pathfind(
     target,
     1.5,
     {
@@ -3439,10 +3457,29 @@ function pathfindToFirstReachableSurface(
       allowMining: true,
       allowPlacing: true,
     },
-  ).pipe(
+  );
+  const boundedPathfind = attemptTimeoutMs === undefined
+    ? pathfind
+    : pathfind.pipe(
+      Effect.timeoutFail({
+        duration: attemptTimeoutMs,
+        onTimeout: () => new BeatGameDriverError({
+          operation: "pathfind",
+          code: "unreachable",
+          retryable: true,
+          message: `Timed out climbing toward ${target.x}, ${target.y}, ${target.z}`,
+        }),
+      }),
+    );
+  return boundedPathfind.pipe(
     Effect.catchAll((cause) =>
       cause.operation === "pathfind" && index + 1 < targets.length
-        ? pathfindToFirstReachableSurface(state, targets, index + 1)
+        ? pathfindToFirstReachableSurface(
+          state,
+          targets,
+          index + 1,
+          attemptTimeoutMs,
+        )
         : Effect.fail(cause)
     ),
   );
@@ -3521,13 +3558,22 @@ function selectElevatedSurfaceColumns(
   readonly z: number;
   readonly surfaceY: number;
 }[] {
-  return columns.flatMap((column) =>
+  const safeColumns = columns.flatMap((column) =>
     column.loaded
       && column.surfaceY !== undefined
-      && column.surfaceY - position.y > 2
       && !isUnsafeSurfaceBlock(column.blockId)
       ? [{ x: column.x, z: column.z, surfaceY: column.surfaceY }]
       : []
+  );
+  return safeColumns.filter((candidate) =>
+    candidate.surfaceY - position.y > 2
+    && safeColumns.filter((neighbor) =>
+        neighbor !== candidate
+        && Math.abs(neighbor.x - candidate.x) <= 1
+        && Math.abs(neighbor.z - candidate.z) <= 1
+        && Math.abs(neighbor.surfaceY - candidate.surfaceY)
+          <= SURFACE_NEIGHBOR_MAX_HEIGHT_DELTA
+      ).length >= MINIMUM_STABLE_SURFACE_NEIGHBORS
   ).sort((left, right) =>
     right.surfaceY - left.surfaceY
       || surfaceHorizontalDistanceSquared(left, position)
