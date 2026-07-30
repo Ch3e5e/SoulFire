@@ -3789,16 +3789,18 @@ describe("beat-game run lifecycle", () => {
       while (!driver.tasks.some((task) => task.type === "auto-eat")) {
         yield* Effect.sleep(1);
       }
+      yield* Effect.sleep(250);
       yield* run.stop;
     })));
 
-    expect(driver.tasks).toContainEqual(expect.objectContaining({
-      type: "auto-eat",
-      foodItemIds: ["minecraft:mutton"],
-      foodLevel: 18,
-      maximumMeals: 2,
-      completeWhenNoFood: true,
-    }));
+    expect(driver.tasks.filter((task) => task.type === "auto-eat")).toEqual([
+      expect.objectContaining({
+        foodItemIds: ["minecraft:mutton"],
+        foodLevel: 18,
+        maximumMeals: 2,
+        completeWhenNoFood: true,
+      }),
+    ]);
     expect(driver.tasks.some((task) =>
       task.type === "craft" || task.type === "smelt"
     )).toBe(false);

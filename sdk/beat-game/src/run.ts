@@ -1431,6 +1431,10 @@ function monitorObservedSafety(
   if (
     decision.type !== "recover-death"
     && decision.type !== "eat"
+    && !(
+      decision.type === "satisfy-requirement"
+      && decision.requirement.key === "food"
+    )
     && observation.player.food <= state.strategy.eatBelowFood
     && hasUsableFood(observation)
   ) {
