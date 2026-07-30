@@ -534,7 +534,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
   });
 
-  it("keeps distance from ranged hostiles until it has combat equipment", async () => {
+  it("closes distance and attacks ranged hostiles bare-handed", async () => {
     const driver = new FakeBeatGameDriver();
     driver.entityResults = [{
       connectionEpoch: "epoch-1",
@@ -554,7 +554,7 @@ describe("beat-game run lifecycle", () => {
     driver.entityQueryResolver = (query) =>
       query.selector.categories?.includes(2) ? driver.entityResults : [];
     driver.taskObserver = (task) => {
-      if (task.type === "flee") {
+      if (task.type === "attack-entity") {
         driver.entityResults = [];
       }
     };
@@ -565,7 +565,9 @@ describe("beat-game run lifecycle", () => {
       }).pipe(
         Effect.flatMap((run) =>
           Effect.gen(function* () {
-            while (!driver.tasks.some((task) => task.type === "flee")) {
+            while (
+              !driver.tasks.some((task) => task.type === "attack-entity")
+            ) {
               yield* Effect.sleep(1);
             }
             yield* run.stop;
@@ -576,17 +578,15 @@ describe("beat-game run lifecycle", () => {
     ));
 
     expect(driver.tasks).toContainEqual(expect.objectContaining({
-      type: "flee",
-      selector: {
+      type: "attack-entity",
+      target: expect.objectContaining({
+        connectionEpoch: "epoch-1",
         networkId: 14,
-        alive: true,
-      },
-      triggerRadius: 12,
-      safeDistance: 16,
-      maximumEscapes: 1,
+      }),
+      targetUnavailableTimeoutSeconds: 3,
+      selectBestWeapon: true,
     }));
-    expect(driver.tasks.some((task) => task.type === "attack-entity"))
-      .toBe(false);
+    expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
   });
 
   it("interrupts work and fights back bare-handed after taking damage", async () => {
@@ -654,16 +654,20 @@ describe("beat-game run lifecycle", () => {
         connectionEpoch: attacker.connectionEpoch,
         networkId: attacker.networkId,
       }),
-      maximumAttacks: 3,
+      targetUnavailableTimeoutSeconds: 3,
       selectBestWeapon: true,
     }));
+    const defensiveAttack = driver.tasks.find((task) =>
+      task.type === "attack-entity"
+    );
+    expect(defensiveAttack).not.toHaveProperty("maximumAttacks");
     const attackIndex = driver.tasks.findIndex((task) =>
       task.type === "attack-entity"
     );
     expect(driver.taskPolicies[attackIndex]).toEqual(expect.objectContaining({
       allowMining: false,
       allowPlacing: false,
-      maxSearchTimeMs: 1_000,
+      maxSearchTimeMs: 3_000,
     }));
     expect(driver.maximumActiveControlScopes).toBe(1);
   });
@@ -739,7 +743,7 @@ describe("beat-game run lifecycle", () => {
       .toBe(false);
   });
 
-  it("disengages from melee combat before critical health becomes fatal", async () => {
+  it("keeps fighting a melee attacker bare-handed at critical health", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
       health: 8,
@@ -763,12 +767,8 @@ describe("beat-game run lifecycle", () => {
     driver.entityQueryResolver = (query) =>
       query.selector.categories?.includes(2) ? driver.entityResults : [];
     driver.taskObserver = (task) => {
-      if (task.type === "flee") {
+      if (task.type === "attack-entity") {
         driver.entityResults = [];
-        driver.currentObservation = observation({
-          health: 8,
-          counts: { "minecraft:cooked_beef": 1 },
-        });
       }
     };
 
@@ -778,7 +778,9 @@ describe("beat-game run lifecycle", () => {
       }).pipe(
         Effect.flatMap((run) =>
           Effect.gen(function* () {
-            while (!driver.tasks.some((task) => task.type === "flee")) {
+            while (
+              !driver.tasks.some((task) => task.type === "attack-entity")
+            ) {
               yield* Effect.sleep(1);
             }
             yield* run.stop;
@@ -789,17 +791,19 @@ describe("beat-game run lifecycle", () => {
     ));
 
     expect(driver.tasks).toContainEqual(expect.objectContaining({
-      type: "flee",
-      selector: {
+      type: "attack-entity",
+      target: expect.objectContaining({
+        connectionEpoch: "epoch-1",
         networkId: 24,
-        alive: true,
-      },
-      triggerRadius: 12,
-      safeDistance: 16,
-      maximumEscapes: 1,
+      }),
+      targetUnavailableTimeoutSeconds: 3,
+      selectBestWeapon: true,
     }));
-    expect(driver.tasks.some((task) => task.type === "attack-entity"))
-      .toBe(false);
+    const defensiveAttack = driver.tasks.find((task) =>
+      task.type === "attack-entity"
+    );
+    expect(defensiveAttack).not.toHaveProperty("maximumAttacks");
+    expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
   });
 
   it("replans when a defensive target becomes unreachable", async () => {

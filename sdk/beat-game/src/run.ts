@@ -195,21 +195,6 @@ const ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES = new Set([
   "minecraft:creeper",
   "minecraft:enderman",
 ]);
-const MELEE_WEAPON_ITEM_IDS = [
-  "minecraft:wooden_sword",
-  "minecraft:stone_sword",
-  "minecraft:iron_sword",
-  "minecraft:golden_sword",
-  "minecraft:diamond_sword",
-  "minecraft:netherite_sword",
-  "minecraft:wooden_axe",
-  "minecraft:stone_axe",
-  "minecraft:iron_axe",
-  "minecraft:golden_axe",
-  "minecraft:diamond_axe",
-  "minecraft:netherite_axe",
-] as const;
-const DEFAULT_COMBAT_RETREAT_HEALTH = 12;
 const PROACTIVE_CREEPER_EVASION_RADIUS = 12;
 const MINIMUM_SAFE_AIR_TICKS = 200;
 
@@ -1694,8 +1679,7 @@ function defendAgainstTarget(
   const attack = attackEntity(state.driver, {
     target,
     sprinting: true,
-    maximumAttacks: 3,
-    targetUnavailableTimeoutSeconds: 1,
+    targetUnavailableTimeoutSeconds: 3,
     selectBestWeapon: true,
     path: {
       ...state.strategy.path,
@@ -1703,7 +1687,7 @@ function defendAgainstTarget(
       allowPlacing: false,
       maxSearchTimeMs: Math.min(
         state.strategy.path.maxSearchTimeMs,
-        1_000,
+        3_000,
       ),
     },
   });
@@ -1712,12 +1696,6 @@ function defendAgainstTarget(
       const canBlockWithShield =
         SHIELD_BLOCKING_HOSTILE_ENTITY_TYPES.has(target.entityType)
         && (observation.inventory.counts["minecraft:shield"] ?? 0) > 0;
-      const hasMeleeWeapon = MELEE_WEAPON_ITEM_IDS.some((itemId) =>
-        (observation.inventory.counts[itemId] ?? 0) > 0
-      );
-      const isDistantRangedThreat =
-        SHIELD_BLOCKING_HOSTILE_ENTITY_TYPES.has(target.entityType)
-        && distanceSquared(observation.player.position, target.position) > 16;
       const prepareShield = canBlockWithShield
         ? state.driver.withControl(Effect.gen(function* () {
           if (
@@ -1752,56 +1730,9 @@ function defendAgainstTarget(
           ),
         ))
         : Effect.void;
-      const retreatHealth = Math.min(
-        state.strategy.minimumHealth,
-        DEFAULT_COMBAT_RETREAT_HEALTH,
-      );
-      if (
-        observation.player.health <= retreatHealth
-        && !canBlockWithShield
-      ) {
-        return escapeFromTarget(state, target);
-      }
-      if (
-        isDistantRangedThreat
-        && !canBlockWithShield
-        && !hasMeleeWeapon
-      ) {
-        return escapeFromTarget(state, target);
-      }
-      return prepareShield.pipe(
-        Effect.zipRight(Effect.raceFirst(
-          attack.pipe(Effect.as(false)),
-          waitForUnsafeCombatHealth(state, retreatHealth).pipe(
-            Effect.as(true),
-          ),
-        )),
-        Effect.flatMap((shouldRetreat) =>
-          shouldRetreat
-            ? escapeFromTarget(state, target)
-            : Effect.void
-        ),
-      );
+      return prepareShield.pipe(Effect.zipRight(attack));
     }),
   );
-}
-
-function waitForUnsafeCombatHealth(
-  state: RunState,
-  retreatHealth: number,
-): Effect.Effect<void, BeatGameDriverError> {
-  const poll = (): Effect.Effect<void, BeatGameDriverError> =>
-    Effect.sleep(Math.max(100, state.strategy.observationPollMs)).pipe(
-      Effect.zipRight(state.driver.observe),
-      Effect.flatMap((observation) =>
-        observation.player.dead
-          || hasUnsafeAir(observation)
-          || observation.player.health <= retreatHealth
-          ? Effect.void
-          : Effect.suspend(poll)
-      ),
-    );
-  return Effect.suspend(poll);
 }
 
 function retreatAndRecover(
