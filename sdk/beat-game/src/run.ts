@@ -1400,7 +1400,8 @@ function monitorObservedSafety(
           return Effect.suspend(() => monitor(observation));
         }
         const shouldEscape =
-          ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(target.entityType);
+          ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(target.entityType)
+          || shouldEvadeRangedThreat(state, observation, target);
         return Effect.succeed({
           replanReason: shouldEscape
             ? "interrupted an action to escape a dangerous attacker"
@@ -1478,7 +1479,16 @@ function findImmediateThreat(
         && distanceSquared <= 144
       );
       if (ranged !== undefined) {
-        return { target: ranged.target, response: "attack" };
+        return {
+          target: ranged.target,
+          response: shouldEvadeRangedThreat(
+            state,
+            observation,
+            ranged.target,
+          )
+            ? "flee"
+            : "attack",
+        };
       }
       const melee = candidates.find(({ target, distanceSquared }) =>
         PROACTIVE_MELEE_HOSTILE_ENTITY_TYPES.has(target.entityType)
@@ -1492,6 +1502,16 @@ function findImmediateThreat(
         };
     }),
   );
+}
+
+function shouldEvadeRangedThreat(
+  state: RunState,
+  observation: BeatGameObservation,
+  target: BeatGameEntityObservation,
+): boolean {
+  return PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
+    && observation.player.health < state.strategy.minimumHealth
+    && (observation.inventory.counts["minecraft:shield"] ?? 0) === 0;
 }
 
 function escapeFromTarget(
@@ -1985,8 +2005,9 @@ function retreatAndRecover(
             },
             maximumResults: 16,
           }).pipe(
-            Effect.map((hostiles) =>
-              hostiles
+            Effect.map((hostiles) => ({
+              observation,
+              target: hostiles
                 .map((target) => ({
                   target,
                   distanceSquared: distanceSquared(
@@ -2009,15 +2030,16 @@ function retreatAndRecover(
                 })
                 .sort((left, right) =>
                   left.distanceSquared - right.distanceSquared
-                )[0]?.target
-            ),
+                )[0]?.target,
+            })),
           )
         ),
-        Effect.flatMap((target) =>
+        Effect.flatMap(({ observation, target }) =>
           target === undefined
             ? Effect.void
             : (
               ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(target.entityType)
+                || shouldEvadeRangedThreat(state, observation, target)
                 ? escapeFromTarget(state, target)
                 : defendAgainstTarget(state, target)
             ).pipe(
