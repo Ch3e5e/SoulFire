@@ -1674,12 +1674,19 @@ describe("beat-game run lifecycle", () => {
   it("fills a bucket by facing a fluid source and using the bucket", async () => {
     const driver = new FakeBeatGameDriver();
     const source = {
-      x: 2,
-      y: 63,
-      z: 1,
+      x: 18,
+      y: 27,
+      z: 156,
+      dimension: "minecraft:overworld",
+    } as const;
+    const playerPosition = {
+      x: 19.5,
+      y: 25,
+      z: 158.5,
       dimension: "minecraft:overworld",
     } as const;
     driver.currentObservation = observation({
+      position: playerPosition,
       counts: {
         "minecraft:cooked_beef": 8,
         "minecraft:oak_log": 8,
@@ -1699,6 +1706,7 @@ describe("beat-game run lifecycle", () => {
     driver.actionResolver = (action) => {
       if (action.type === "look") {
         driver.currentObservation = observation({
+          position: playerPosition,
           counts: driver.currentObservation.inventory.counts,
           rotation: { yaw: action.yaw, pitch: action.pitch },
         });
@@ -1728,7 +1736,7 @@ describe("beat-game run lifecycle", () => {
 
     expect(driver.paths).toContainEqual(expect.objectContaining({
       position: source,
-      radius: 2,
+      radius: 3,
     }));
     expect(driver.actions.slice(-3)).toEqual([
       {

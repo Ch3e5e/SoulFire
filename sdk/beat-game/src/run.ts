@@ -132,6 +132,7 @@ const HUNT_ATTACK_APPROACH_RADIUS = 24;
 const HUNT_APPROACH_BUFFER = 4;
 const HUNT_APPROACH_GOAL_RADIUS = 2;
 const HUNT_MAXIMUM_APPROACH_DISTANCE = 48;
+const LIQUID_INTERACTION_APPROACH_RADIUS = 3;
 const EXPLORATION_REANCHOR_DISTANCE = 16;
 const AIR_ESCAPE_SURFACE_SEARCH_RADIUS = 16;
 const AIR_ESCAPE_SURFACE_APPROACH_ATTEMPTS = 60;
@@ -2794,7 +2795,11 @@ function fillLiquidBucket(
       });
     }
     yield* state.driver.withControl(Effect.gen(function* () {
-      yield* state.driver.pathfind(source.position, 2, state.strategy.path);
+      yield* state.driver.pathfind(
+        source.position,
+        LIQUID_INTERACTION_APPROACH_RADIUS,
+        state.strategy.path,
+      );
       const current = yield* state.driver.observe;
       const rotation = rotationToward(
         {
