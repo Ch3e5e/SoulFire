@@ -1685,6 +1685,13 @@ describe("beat-game run lifecycle", () => {
       z: 158.5,
       dimension: "minecraft:overworld",
     } as const;
+    const obstruction = {
+      x: 18,
+      y: 27,
+      z: 157,
+      dimension: "minecraft:overworld",
+    } as const;
+    let sourceExposed = false;
     driver.currentObservation = observation({
       position: playerPosition,
       counts: {
@@ -1703,6 +1710,13 @@ describe("beat-game run lifecycle", () => {
       properties: { level: "0" },
       replaceable: true,
     })];
+    driver.raycastResolver = () =>
+      sourceExposed
+        ? { distance: 2.4 }
+        : {
+          block: blockObservation(obstruction),
+          distance: 1.4,
+        };
     driver.actionResolver = (action) => {
       if (action.type === "look") {
         driver.currentObservation = observation({
@@ -1710,6 +1724,14 @@ describe("beat-game run lifecycle", () => {
           counts: driver.currentObservation.inventory.counts,
           rotation: { yaw: action.yaw, pitch: action.pitch },
         });
+      }
+      if (
+        action.type === "dig-block"
+        && action.position.x === obstruction.x
+        && action.position.y === obstruction.y
+        && action.position.z === obstruction.z
+      ) {
+        sourceExposed = true;
       }
       return action.type === "use-item"
         ? Effect.never
@@ -1738,16 +1760,16 @@ describe("beat-game run lifecycle", () => {
       position: source,
       radius: 3,
     }));
-    expect(driver.actions.slice(-3)).toEqual([
+    expect(driver.raycasts).toHaveLength(2);
+    expect(driver.actions).toContainEqual({
+      type: "dig-block",
+      position: obstruction,
+    });
+    expect(driver.actions.slice(-2)).toEqual([
       {
         type: "select-item",
         selector: { itemIds: ["minecraft:bucket"] },
       },
-      expect.objectContaining({
-        type: "look",
-        yaw: expect.any(Number),
-        pitch: expect.any(Number),
-      }),
       { type: "use-item", hand: "main" },
     ]);
     expect(driver.actions).not.toContainEqual(expect.objectContaining({

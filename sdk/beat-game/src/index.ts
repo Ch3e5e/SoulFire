@@ -95,6 +95,8 @@ export {
   type BeatGamePrimitiveAction,
   type BeatGameQueryBlocks,
   type BeatGameQueryEntities,
+  type BeatGameRaycastObservation,
+  type BeatGameRaycastQuery,
   type BeatGameRecipe,
   type BeatGameSurfaceColumn,
   type BeatGameTask,

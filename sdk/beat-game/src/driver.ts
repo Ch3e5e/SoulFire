@@ -7,6 +7,7 @@ import {
   Hand,
   InventoryArea,
   QuerySort,
+  type BlockSnapshot,
   type SchematicBlock,
   type SoulFireBot,
 } from "@soulfiremc/sdk";
@@ -64,6 +65,17 @@ export interface BeatGameQueryEntities {
   readonly radius: number;
   readonly selector: BeatGameEntitySelector;
   readonly maximumResults?: number;
+}
+
+export interface BeatGameRaycastQuery {
+  readonly direction: Readonly<{ x: number; y: number; z: number }>;
+  readonly maximumDistance: number;
+  readonly includeFluids?: boolean;
+}
+
+export interface BeatGameRaycastObservation {
+  readonly block?: BeatGameBlockObservation;
+  readonly distance: number;
 }
 
 export interface BeatGameSurfaceColumn {
@@ -416,6 +428,9 @@ export interface BeatGameDriver {
     readonly BeatGameEntityObservation[],
     BeatGameDriverError
   >;
+  readonly raycast: (
+    query: BeatGameRaycastQuery,
+  ) => Effect.Effect<BeatGameRaycastObservation, BeatGameDriverError>;
   readonly sampleSurface: (
     center: BeatGamePosition,
     radius?: number,
@@ -990,17 +1005,7 @@ export function makeSoulFireBeatGameDriver(
         pageSize: query.maximumResults ?? 128,
       }).pipe(
         Effect.map(({ blocks }) =>
-          blocks.map((block): BeatGameBlockObservation => ({
-            blockId: block.blockId,
-            position: toBlockPosition(
-              required(block.position, "block.position"),
-            ),
-            properties: block.properties,
-            diggable: block.diggable,
-            replaceable: block.replaceable,
-            interactive: block.interactive,
-            observedAt: new Date().toISOString(),
-          }))
+          blocks.map(toBeatGameBlockObservation)
         ),
         Effect.mapError(mapError("queryBlocks")),
       ),
@@ -1043,6 +1048,21 @@ export function makeSoulFireBeatGameDriver(
           })
         ),
         Effect.mapError(mapError("queryEntities")),
+      ),
+    raycast: (query) =>
+      bot.world.raycast({
+        direction: query.direction,
+        maximumDistance: query.maximumDistance,
+        includeFluids: query.includeFluids ?? false,
+        includeEntities: false,
+      }).pipe(
+        Effect.map((response): BeatGameRaycastObservation => ({
+          ...(response.block === undefined
+            ? {}
+            : { block: toBeatGameBlockObservation(response.block) }),
+          distance: response.distance,
+        })),
+        Effect.mapError(mapError("raycast")),
       ),
     sampleSurface: (center, radius = 8, sampleStep = 2) =>
       bot.camera.worldMap({
@@ -1331,6 +1351,22 @@ function toPosition(
     y: value.y,
     z: value.z,
     dimension: value.dimension,
+  };
+}
+
+function toBeatGameBlockObservation(
+  block: BlockSnapshot,
+): BeatGameBlockObservation {
+  return {
+    blockId: block.blockId,
+    position: toBlockPosition(
+      required(block.position, "block.position"),
+    ),
+    properties: block.properties,
+    diggable: block.diggable,
+    replaceable: block.replaceable,
+    interactive: block.interactive,
+    observedAt: new Date().toISOString(),
   };
 }
 

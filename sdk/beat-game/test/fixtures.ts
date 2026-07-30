@@ -19,6 +19,8 @@ import {
   type BeatGamePrimitiveAction,
   type BeatGameQueryBlocks,
   type BeatGameQueryEntities,
+  type BeatGameRaycastObservation,
+  type BeatGameRaycastQuery,
   type BeatGameRecipe,
   type BeatGameSurfaceColumn,
   type BeatGameTask,
@@ -133,6 +135,7 @@ export class FakeBeatGameDriver implements BeatGameDriver {
   public entityResults: readonly BeatGameEntityObservation[] = [];
   public readonly blockQueries: BeatGameQueryBlocks[] = [];
   public readonly entityQueries: BeatGameQueryEntities[] = [];
+  public readonly raycasts: BeatGameRaycastQuery[] = [];
   public readonly tasks: BeatGameTask[] = [];
   public readonly taskExecutions: BeatGameTaskExecutionOptions[] = [];
   public readonly taskPolicies: BeatGamePathPolicy[] = [];
@@ -186,6 +189,9 @@ export class FakeBeatGameDriver implements BeatGameDriver {
   public entityQueryResolver: (
     query: BeatGameQueryEntities,
   ) => readonly BeatGameEntityObservation[] = () => this.entityResults;
+  public raycastResolver: (
+    query: BeatGameRaycastQuery,
+  ) => BeatGameRaycastObservation = () => ({ distance: 0 });
   public observationResolver: () => Effect.Effect<
     BeatGameObservation,
     BeatGameDriverError
@@ -230,6 +236,12 @@ export class FakeBeatGameDriver implements BeatGameDriver {
     Effect.sync(() => {
       this.entityQueries.push(query);
       return this.entityQueryResolver(query);
+    });
+
+  public readonly raycast: BeatGameDriver["raycast"] = (query) =>
+    Effect.sync(() => {
+      this.raycasts.push(query);
+      return this.raycastResolver(query);
     });
 
   public readonly sampleSurface: BeatGameDriver["sampleSurface"] = () =>

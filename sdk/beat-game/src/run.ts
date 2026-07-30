@@ -133,6 +133,8 @@ const HUNT_APPROACH_BUFFER = 4;
 const HUNT_APPROACH_GOAL_RADIUS = 2;
 const HUNT_MAXIMUM_APPROACH_DISTANCE = 48;
 const LIQUID_INTERACTION_APPROACH_RADIUS = 3;
+const LIQUID_INTERACTION_REACH = 4.5;
+const MAXIMUM_LIQUID_SIGHT_CLEARING_BLOCKS = 4;
 const EXPLORATION_REANCHOR_DISTANCE = 16;
 const AIR_ESCAPE_SURFACE_SEARCH_RADIUS = 16;
 const AIR_ESCAPE_SURFACE_APPROACH_ATTEMPTS = 60;
@@ -2800,37 +2802,104 @@ function fillLiquidBucket(
         LIQUID_INTERACTION_APPROACH_RADIUS,
         state.strategy.path,
       );
-      const current = yield* state.driver.observe;
-      const rotation = rotationToward(
-        {
+      for (
+        let clearedBlocks = 0;
+        clearedBlocks <= MAXIMUM_LIQUID_SIGHT_CLEARING_BLOCKS;
+        clearedBlocks += 1
+      ) {
+        const current = yield* state.driver.observe;
+        const eyePosition = {
           ...current.player.position,
           y: current.player.position.y + 1.62,
-        },
-        {
+        };
+        const sourceCenter = {
           x: source.position.x + 0.5,
           y: source.position.y + 0.5,
           z: source.position.z + 0.5,
-        },
-      );
-      yield* state.driver.act({
-        type: "select-item",
-        selector: { itemIds: ["minecraft:bucket"] },
-      });
-      yield* state.driver.act({
-        type: "look",
-        yaw: rotation.yaw,
-        pitch: rotation.pitch,
-      });
-      yield* waitForViewRotation(
-        state.driver,
-        rotation.yaw,
-        rotation.pitch,
-        40,
-      );
-      yield* state.driver.act({
-        type: "use-item",
-        hand: "main",
-      });
+        };
+        const direction = {
+          x: sourceCenter.x - eyePosition.x,
+          y: sourceCenter.y - eyePosition.y,
+          z: sourceCenter.z - eyePosition.z,
+        };
+        const sourceDistance = Math.sqrt(
+          direction.x * direction.x
+            + direction.y * direction.y
+            + direction.z * direction.z,
+        );
+        if (sourceDistance > LIQUID_INTERACTION_REACH) {
+          return yield* Effect.fail(new BeatGameDriverError({
+            operation: `fill-${liquid}-bucket`,
+            retryable: true,
+            message: `The ${liquid} source remained ${sourceDistance.toFixed(
+              2,
+            )} blocks away after pathfinding`,
+          }));
+        }
+        const rotation = rotationToward(eyePosition, sourceCenter);
+        yield* state.driver.act({
+          type: "look",
+          yaw: rotation.yaw,
+          pitch: rotation.pitch,
+        });
+        yield* waitForViewRotation(
+          state.driver,
+          rotation.yaw,
+          rotation.pitch,
+          40,
+        );
+        const obstruction = (yield* state.driver.raycast({
+          direction,
+          maximumDistance: Math.min(
+            LIQUID_INTERACTION_REACH,
+            sourceDistance + 0.05,
+          ),
+          includeFluids: false,
+        })).block;
+        if (
+          obstruction === undefined
+          || sameBlockPosition(obstruction.position, source.position)
+        ) {
+          yield* state.driver.act({
+            type: "select-item",
+            selector: { itemIds: ["minecraft:bucket"] },
+          });
+          yield* state.driver.act({
+            type: "use-item",
+            hand: "main",
+          });
+          return;
+        }
+        if (
+          !obstruction.diggable
+          || clearedBlocks === MAXIMUM_LIQUID_SIGHT_CLEARING_BLOCKS
+        ) {
+          return yield* Effect.fail(new BeatGameDriverError({
+            operation: `expose-${liquid}-source`,
+            retryable: true,
+            message: `Could not expose the ${liquid} source through ${
+              obstruction.blockId
+            } at ${positionKey(obstruction.position)}`,
+          }));
+        }
+        yield* state.driver.act({
+          type: "select-item",
+          selector: {
+            itemIds: [
+              "minecraft:netherite_pickaxe",
+              "minecraft:diamond_pickaxe",
+              "minecraft:iron_pickaxe",
+              "minecraft:stone_pickaxe",
+              "minecraft:wooden_pickaxe",
+              "minecraft:golden_pickaxe",
+            ],
+          },
+        });
+        yield* state.driver.act({
+          type: "dig-block",
+          position: obstruction.position,
+        });
+      }
     }));
   });
 }
@@ -5640,6 +5709,7 @@ function withTaskIdempotency(
     events: driver.events,
     queryBlocks: driver.queryBlocks,
     queryEntities: driver.queryEntities,
+    raycast: driver.raycast,
     sampleSurface: driver.sampleSurface,
     recipesFor: driver.recipesFor,
     canCraft: driver.canCraft,
