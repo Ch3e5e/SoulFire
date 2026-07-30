@@ -361,20 +361,48 @@ const program = Effect.scoped(Effect.gen(function* () {
   yield* baseDriver.waitForChunks(4, 60_000);
   yield* record("bot-chunks-ready", { radiusChunks: 4 });
   let lastObservedInventoryRevision: bigint | undefined;
+  let lastObservedVitals:
+    | Readonly<{
+      health: number;
+      food: number;
+      dead: boolean;
+    }>
+    | undefined;
   const driver = {
     ...baseDriver,
     observe: baseDriver.observe.pipe(
       Effect.tap((observation) => {
+        const effects = [];
         if (
-          observation.inventory.revision === lastObservedInventoryRevision
+          observation.inventory.revision !== lastObservedInventoryRevision
         ) {
-          return Effect.void;
+          lastObservedInventoryRevision = observation.inventory.revision;
+          effects.push(record("inventory-observed", {
+            revision: observation.inventory.revision,
+            counts: observation.inventory.counts,
+          }).pipe(Effect.orDie));
         }
-        lastObservedInventoryRevision = observation.inventory.revision;
-        return record("inventory-observed", {
-          revision: observation.inventory.revision,
-          counts: observation.inventory.counts,
-        }).pipe(Effect.orDie);
+        const vitals = {
+          health: observation.player.health,
+          food: observation.player.food,
+          dead: observation.player.dead,
+        };
+        if (
+          lastObservedVitals === undefined
+          || vitals.health !== lastObservedVitals.health
+          || vitals.food !== lastObservedVitals.food
+          || vitals.dead !== lastObservedVitals.dead
+        ) {
+          lastObservedVitals = vitals;
+          effects.push(record("player-vitals-observed", {
+            ...vitals,
+            position: observation.player.position,
+          }).pipe(Effect.orDie));
+        }
+        return Effect.all(effects, {
+          concurrency: "unbounded",
+          discard: true,
+        });
       }),
     ),
     recipesFor: (resultItemId: string) =>
