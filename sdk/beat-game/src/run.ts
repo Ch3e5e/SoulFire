@@ -131,6 +131,10 @@ const FURNACE_FUEL_SEARCH_RADIUS = 16;
 const HUNT_ATTACK_APPROACH_RADIUS = 24;
 const HUNT_MAXIMUM_APPROACH_DISTANCE = 48;
 const EXPLORATION_REANCHOR_DISTANCE = 16;
+const AIR_ESCAPE_SURFACE_SEARCH_RADIUS = 16;
+const AIR_ESCAPE_SURFACE_APPROACH_ATTEMPTS = 60;
+const AIR_ESCAPE_STAGNANT_OBSERVATIONS = 10;
+const AIR_ESCAPE_DIRECTION_SECTORS = 8;
 const COAL_ORE_BLOCK_IDS = [
   "minecraft:coal_ore",
   "minecraft:deepslate_coal_ore",
@@ -1646,7 +1650,7 @@ function emergencyAirAscent(
         ).pipe(
           Effect.flatMap((recovered) =>
             recovered
-              ? Effect.void
+              ? swimToNearbyDrySurface(state)
               : returnToOverworldSurface(state, position)
           ),
         )
@@ -1663,12 +1667,129 @@ function waitForAirRecovery(
     Effect.flatMap((observation) =>
       observation.player.dead
         ? Effect.succeed(true)
-        : !hasUnsafeAir(observation)
+        : observation.player.maxAir <= 0
+          || observation.player.air >= observation.player.maxAir
         ? Effect.succeed(true)
         : attemptsRemaining <= 1
         ? Effect.succeed(false)
         : waitForAirRecovery(state, attemptsRemaining - 1)
     ),
+  );
+}
+
+function swimToNearbyDrySurface(
+  state: RunState,
+): Effect.Effect<void, BeatGameDriverError> {
+  return Effect.gen(function* () {
+    const observation = yield* state.driver.observe;
+    if (observation.player.dead) {
+      return;
+    }
+    const columns = yield* state.driver.sampleSurface(
+      observation.player.position,
+      AIR_ESCAPE_SURFACE_SEARCH_RADIUS,
+      1,
+    );
+    const surfaces = selectSurfaceEscapeColumns(
+      columns,
+      observation.player.position,
+    );
+    if (surfaces.length === 0) {
+      yield* returnToOverworldSurface(state, observation.player.position);
+      return;
+    }
+    for (const surface of surfaces) {
+      const reached = yield* swimTowardDrySurface(state, surface);
+      if (reached) {
+        return;
+      }
+    }
+  });
+}
+
+function swimTowardDrySurface(
+  state: RunState,
+  surface: Readonly<{ x: number; z: number; surfaceY: number }>,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  return state.driver.observe.pipe(
+    Effect.flatMap((observation) => {
+      if (observation.player.dead) {
+        return Effect.succeed(true);
+      }
+      const target = {
+        x: surface.x + 0.5,
+        y: surface.surfaceY + 1,
+        z: surface.z + 0.5,
+        dimension: observation.player.position.dimension,
+      };
+      const rotation = rotationToward(
+        observation.player.position,
+        {
+          ...target,
+          y: observation.player.position.y,
+        },
+      );
+      return state.driver.withControl(
+        state.driver.act({
+          type: "look",
+          yaw: rotation.yaw,
+          pitch: -20,
+        }).pipe(
+          Effect.zipRight(state.driver.act({
+            type: "set-movement",
+            forward: true,
+            jump: true,
+            sprint: true,
+          })),
+          Effect.zipRight(waitForDrySurfaceApproach(
+            state,
+            target,
+            AIR_ESCAPE_SURFACE_APPROACH_ATTEMPTS,
+          )),
+          Effect.ensuring(
+            state.driver.act({ type: "reset-movement" }).pipe(
+              Effect.ignore,
+            ),
+          ),
+        ),
+      );
+    }),
+  );
+}
+
+function waitForDrySurfaceApproach(
+  state: RunState,
+  target: BeatGamePosition,
+  attemptsRemaining: number,
+  previousDistanceSquared?: number,
+  stagnantObservations = 0,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  return Effect.sleep(100).pipe(
+    Effect.zipRight(state.driver.observe),
+    Effect.flatMap((observation) => {
+      const position = observation.player.position;
+      const distanceToTarget = horizontalDistanceSquared(position, target);
+      const reachedSurface = distanceToTarget <= 1.5 * 1.5
+        && position.y >= target.y - 0.25;
+      if (observation.player.dead || reachedSurface) {
+        return Effect.succeed(true);
+      }
+      const madeProgress = previousDistanceSquared === undefined
+        || distanceToTarget < previousDistanceSquared - 0.05;
+      const nextStagnantObservations = madeProgress
+        ? 0
+        : stagnantObservations + 1;
+      return attemptsRemaining <= 1
+          || nextStagnantObservations >= AIR_ESCAPE_STAGNANT_OBSERVATIONS
+        ? Effect.succeed(false)
+        : waitForDrySurfaceApproach(
+          state,
+          target,
+          attemptsRemaining - 1,
+          distanceToTarget,
+          nextStagnantObservations,
+        );
+    }),
   );
 }
 
@@ -3213,22 +3334,52 @@ function selectSurfaceColumn(
   position: BeatGamePosition,
 ): { readonly x: number; readonly z: number; readonly surfaceY: number }
   | undefined {
+  return selectSurfaceEscapeColumns(columns, position, 1)[0];
+}
+
+function selectSurfaceEscapeColumns(
+  columns: readonly {
+    readonly x: number;
+    readonly z: number;
+    readonly loaded: boolean;
+    readonly surfaceY?: number;
+    readonly blockId?: string;
+  }[],
+  position: BeatGamePosition,
+  maximumResults = AIR_ESCAPE_DIRECTION_SECTORS,
+): readonly {
+  readonly x: number;
+  readonly z: number;
+  readonly surfaceY: number;
+}[] {
   const candidates = columns.flatMap((column) =>
     column.loaded
       && column.surfaceY !== undefined
       && !isUnsafeSurfaceBlock(column.blockId)
       ? [{ x: column.x, z: column.z, surfaceY: column.surfaceY }]
       : []
+  ).sort((left, right) =>
+    surfaceHorizontalDistanceSquared(left, position)
+      - surfaceHorizontalDistanceSquared(right, position)
   );
-  return candidates.reduce<(typeof candidates)[number] | undefined>(
-    (nearest, candidate) =>
-      nearest === undefined
-        || surfaceHorizontalDistanceSquared(candidate, position)
-          < surfaceHorizontalDistanceSquared(nearest, position)
-        ? candidate
-        : nearest,
-    undefined,
-  );
+  const selected = new Map<number, (typeof candidates)[number]>();
+  for (const candidate of candidates) {
+    const angle = Math.atan2(
+      candidate.z + 0.5 - position.z,
+      candidate.x + 0.5 - position.x,
+    );
+    const normalizedAngle = (angle + Math.PI * 2) % (Math.PI * 2);
+    const sector = Math.floor(
+      normalizedAngle / (Math.PI * 2 / AIR_ESCAPE_DIRECTION_SECTORS),
+    );
+    if (!selected.has(sector)) {
+      selected.set(sector, candidate);
+    }
+    if (selected.size >= maximumResults) {
+      break;
+    }
+  }
+  return [...selected.values()];
 }
 
 function surfaceHorizontalDistanceSquared(
@@ -3306,7 +3457,7 @@ function advanceExplorationFrontier(
       ).pipe(
         Effect.catchAll((cause) =>
           cause.operation === "pathfindXZ"
-            ? Effect.void
+            ? recoverSurfaceAfterExplorationFailure(state)
             : Effect.fail(cause)
         ),
         Effect.ensuring(
@@ -3327,6 +3478,25 @@ function advanceExplorationFrontier(
             ),
             Effect.ignore,
           ),
+        ),
+      )
+    ),
+  );
+}
+
+function recoverSurfaceAfterExplorationFailure(
+  state: RunState,
+): Effect.Effect<void, BeatGameDriverError> {
+  return state.driver.observe.pipe(
+    Effect.flatMap((observation) =>
+      needsOverworldSurfaceRecovery(
+        state,
+        observation.player.position,
+      ).pipe(
+        Effect.flatMap((needsRecovery) =>
+          needsRecovery
+            ? returnToOverworldSurface(state, observation.player.position)
+            : Effect.void
         ),
       )
     ),

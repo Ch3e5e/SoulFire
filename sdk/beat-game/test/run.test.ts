@@ -1226,6 +1226,140 @@ describe("beat-game run lifecycle", () => {
       .toBe(false);
   });
 
+  it("replenishes air fully and swims onto nearby dry ground", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.surfaceColumns = [{
+      x: 4,
+      z: 0,
+      loaded: true,
+      surfaceY: 64,
+      blockId: "minecraft:grass_block",
+      skyLight: 15,
+      blockLight: 0,
+    }];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(
+        Effect.zipRight(
+          task.type === "collect-blocks" ? Effect.never : Effect.void,
+        ),
+      );
+    let swimmingUpward = false;
+    let swimmingToShore = false;
+    let ascentObservations = 0;
+    let resolveReachedShore!: () => void;
+    const reachedShore = new Promise<void>((resolve) => {
+      resolveReachedShore = resolve;
+    });
+    driver.actionObserver = (action) => {
+      const current = driver.currentObservation;
+      if (action.type === "look") {
+        driver.currentObservation = {
+          ...current,
+          player: {
+            ...current.player,
+            rotation: {
+              yaw: action.yaw,
+              pitch: action.pitch,
+            },
+          },
+        };
+        return;
+      }
+      if (
+        action.type === "set-movement"
+        && action.forward === true
+        && action.jump === true
+      ) {
+        const swimmingVertically =
+          driver.currentObservation.player.rotation.pitch === -90;
+        swimmingUpward = swimmingVertically;
+        swimmingToShore = !swimmingVertically;
+        driver.currentObservation = {
+          ...driver.currentObservation,
+          player: {
+            ...driver.currentObservation.player,
+            air: swimmingVertically ? 250 : 300,
+            position: swimmingVertically
+              ? {
+                x: 0,
+                y: 63.95,
+                z: 0,
+                dimension: "minecraft:overworld",
+              }
+              : {
+                x: 4.5,
+                y: 65,
+                z: 0.5,
+                dimension: "minecraft:overworld",
+              },
+          },
+        };
+        return;
+      }
+      if (action.type === "reset-movement") {
+        if (swimmingToShore) {
+          resolveReachedShore();
+        }
+        swimmingUpward = false;
+        swimmingToShore = false;
+      }
+    };
+    driver.observationResolver = () =>
+      Effect.sync(() => {
+        if (swimmingUpward) {
+          ascentObservations += 1;
+          if (ascentObservations >= 3) {
+            driver.currentObservation = {
+              ...driver.currentObservation,
+              player: {
+                ...driver.currentObservation.player,
+                air: 300,
+              },
+            };
+          }
+        }
+        return driver.currentObservation;
+      });
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (
+        !driver.tasks.some((task) => task.type === "collect-blocks")
+      ) {
+        yield* Effect.sleep(1);
+      }
+      driver.currentObservation = observation({
+        air: 100,
+        position: { x: 0, y: 61, z: 0 },
+      });
+      yield* Effect.promise(() => reachedShore).pipe(
+        Effect.timeout("5 seconds"),
+      );
+      yield* run.stop;
+    })));
+
+    expect(ascentObservations).toBeGreaterThanOrEqual(3);
+    expect(driver.actions).toContainEqual(expect.objectContaining({
+      type: "look",
+      pitch: -20,
+    }));
+    expect(driver.actions).toContainEqual({
+      type: "set-movement",
+      forward: true,
+      jump: true,
+      sprint: true,
+    });
+    expect(driver.currentObservation.player.position).toMatchObject({
+      x: 4.5,
+      y: 65,
+      z: 0.5,
+    });
+  });
+
   it("fills a bucket by facing and interacting with a fluid source", async () => {
     const driver = new FakeBeatGameDriver();
     const source = {
@@ -1910,6 +2044,74 @@ describe("beat-game run lifecycle", () => {
       }),
     });
     expect(driver.tasks.some((task) => task.type === "explore")).toBe(false);
+  });
+
+  it("recovers from a shallow underground pocket after exploration is blocked", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      position: {
+        x: 58.5,
+        y: 62,
+        z: -8.5,
+        dimension: "minecraft:overworld",
+      },
+    });
+    driver.surfaceColumns = [{
+      x: 58,
+      z: -8,
+      loaded: true,
+      surfaceY: 68,
+      blockId: "minecraft:grass_block",
+      biomeId: "minecraft:plains",
+      skyLight: 15,
+      blockLight: 0,
+    }];
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+      }).pipe(
+        Effect.zipRight(Effect.fail(new BeatGameDriverError({
+          operation: "pathfindXZ",
+          code: "unreachable",
+          retryable: true,
+          message: "No route leaves the underground pocket",
+        }))),
+      );
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (driver.paths.length === 0) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.xzPaths).toHaveLength(1);
+    expect(driver.paths[0]).toEqual({
+      position: {
+        x: 58.5,
+        y: 69,
+        z: -7.5,
+        dimension: "minecraft:overworld",
+      },
+      radius: 1.5,
+      policy: expect.objectContaining({
+        allowMining: true,
+        allowPlacing: true,
+      }),
+    });
   });
 
   it("moves on after an animal remains unreachable", async () => {
