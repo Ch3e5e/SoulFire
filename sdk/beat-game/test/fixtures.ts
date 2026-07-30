@@ -20,6 +20,7 @@ import {
   type BeatGameQueryBlocks,
   type BeatGameQueryEntities,
   type BeatGameRecipe,
+  type BeatGameSurfaceColumn,
   type BeatGameTask,
   type BeatGameCraftability,
   type BeatGameTaskExecutionOptions,
@@ -141,6 +142,14 @@ export class FakeBeatGameDriver implements BeatGameDriver {
     readonly radius: number;
     readonly policy: BeatGamePathPolicy;
   }[] = [];
+  public readonly xzPaths: {
+    readonly x: number;
+    readonly z: number;
+    readonly dimension: string;
+    readonly radius: number;
+    readonly policy: BeatGamePathPolicy;
+  }[] = [];
+  public surfaceColumns: readonly BeatGameSurfaceColumn[] = [];
   public activeControlScopes = 0;
   public maximumActiveControlScopes = 0;
   public recipeResolver: (
@@ -189,6 +198,16 @@ export class FakeBeatGameDriver implements BeatGameDriver {
     Effect.sync(() => {
       this.paths.push({ position, radius, policy });
     });
+  public xzPathResolver: BeatGameDriver["pathfindXZ"] = (
+    x,
+    z,
+    dimension,
+    radius,
+    policy,
+  ) =>
+    Effect.sync(() => {
+      this.xzPaths.push({ x, z, dimension, radius, policy });
+    });
 
   public constructor(
     instanceId = "instance-1",
@@ -213,6 +232,9 @@ export class FakeBeatGameDriver implements BeatGameDriver {
       return this.entityQueryResolver(query);
     });
 
+  public readonly sampleSurface: BeatGameDriver["sampleSurface"] = () =>
+    Effect.sync(() => this.surfaceColumns);
+
   public readonly recipesFor: BeatGameDriver["recipesFor"] = (resultItemId) =>
     Effect.sync(() => this.recipeResolver(resultItemId));
 
@@ -227,6 +249,14 @@ export class FakeBeatGameDriver implements BeatGameDriver {
     radius,
     policy,
   ) => this.pathResolver(position, radius, policy);
+
+  public readonly pathfindXZ: BeatGameDriver["pathfindXZ"] = (
+    x,
+    z,
+    dimension,
+    radius,
+    policy,
+  ) => this.xzPathResolver(x, z, dimension, radius, policy);
 
   public readonly runTask: BeatGameDriver["runTask"] = (
     task,

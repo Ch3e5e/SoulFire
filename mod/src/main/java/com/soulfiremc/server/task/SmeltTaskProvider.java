@@ -866,6 +866,45 @@ public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
       }
     }
 
+    private void recoverFurnaceContents(
+      net.minecraft.client.player.LocalPlayer player
+    ) {
+      if (!(player.containerMenu instanceof AbstractFurnaceMenu menu)) {
+        return;
+      }
+      var gameMode = context.bot().minecraft().gameMode;
+      if (gameMode == null) {
+        return;
+      }
+      var carried = menu.getCarried();
+      if (!carried.isEmpty()) {
+        SFInventoryHelpers.playerInventorySlots(menu)
+          .filter(slot -> canDeposit(menu, slot, carried))
+          .findFirst()
+          .ifPresent(slot -> gameMode.handleContainerInput(
+            menu.containerId,
+            slot,
+            0,
+            ContainerInput.PICKUP,
+            player
+          ));
+      }
+      if (!menu.getCarried().isEmpty()) {
+        return;
+      }
+      for (var slot : List.of(2, 0, 1)) {
+        if (!menu.getSlot(slot).getItem().isEmpty()) {
+          gameMode.handleContainerInput(
+            menu.containerId,
+            slot,
+            0,
+            ContainerInput.QUICK_MOVE,
+            player
+          );
+        }
+      }
+    }
+
     private void transition(Stage next, String message) {
       stage = next;
       stageTicks = 0;
@@ -928,11 +967,20 @@ public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
     ) {
       stopPath(reason, cause);
       var player = context.bot().minecraft().player;
-      if (player != null && !(player.containerMenu instanceof InventoryMenu)) {
-        player.closeContainer();
-      }
-      if (reason != ControlStopReason.COMPLETED && !result.isDone()) {
-        result.cancel(true);
+      try {
+        if (player != null) {
+          recoverFurnaceContents(player);
+        }
+      } finally {
+        if (
+          player != null
+            && !(player.containerMenu instanceof InventoryMenu)
+        ) {
+          player.closeContainer();
+        }
+        if (reason != ControlStopReason.COMPLETED && !result.isDone()) {
+          result.cancel(true);
+        }
       }
     }
 

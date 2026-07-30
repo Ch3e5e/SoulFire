@@ -66,6 +66,17 @@ export interface BeatGameQueryEntities {
   readonly maximumResults?: number;
 }
 
+export interface BeatGameSurfaceColumn {
+  readonly x: number;
+  readonly z: number;
+  readonly loaded: boolean;
+  readonly surfaceY?: number;
+  readonly blockId?: string;
+  readonly biomeId?: string;
+  readonly skyLight: number;
+  readonly blockLight: number;
+}
+
 export interface BeatGameBuildBlock {
   readonly offset: Readonly<{ x: number; y: number; z: number }>;
   readonly blockId: string;
@@ -405,6 +416,14 @@ export interface BeatGameDriver {
     readonly BeatGameEntityObservation[],
     BeatGameDriverError
   >;
+  readonly sampleSurface: (
+    center: BeatGamePosition,
+    radius?: number,
+    sampleStep?: number,
+  ) => Effect.Effect<
+    readonly BeatGameSurfaceColumn[],
+    BeatGameDriverError
+  >;
   readonly recipesFor: (
     resultItemId: string,
   ) => Effect.Effect<readonly BeatGameRecipe[], BeatGameDriverError>;
@@ -418,6 +437,13 @@ export interface BeatGameDriver {
   ) => Effect.Effect<void, BeatGameDriverError>;
   readonly pathfind: (
     position: BeatGamePosition,
+    radius: number,
+    policy: BeatGamePathPolicy,
+  ) => Effect.Effect<void, BeatGameDriverError>;
+  readonly pathfindXZ: (
+    x: number,
+    z: number,
+    dimension: string,
     radius: number,
     policy: BeatGamePathPolicy,
   ) => Effect.Effect<void, BeatGameDriverError>;
@@ -1018,6 +1044,33 @@ export function makeSoulFireBeatGameDriver(
         ),
         Effect.mapError(mapError("queryEntities")),
       ),
+    sampleSurface: (center, radius = 8, sampleStep = 2) =>
+      bot.camera.worldMap({
+        centerX: Math.floor(center.x),
+        centerZ: Math.floor(center.z),
+        radius,
+        sampleStep,
+      }).pipe(
+        Effect.map(({ columns }) =>
+          columns.map((column): BeatGameSurfaceColumn => ({
+            x: column.x,
+            z: column.z,
+            loaded: column.loaded,
+            ...(column.surfaceY === undefined
+              ? {}
+              : { surfaceY: column.surfaceY }),
+            ...(column.blockId === undefined
+              ? {}
+              : { blockId: column.blockId }),
+            ...(column.biomeId === undefined
+              ? {}
+              : { biomeId: column.biomeId }),
+            skyLight: column.skyLight,
+            blockLight: column.blockLight,
+          }))
+        ),
+        Effect.mapError(mapError("sampleSurface")),
+      ),
     recipesFor: (resultItemId) =>
       bot.recipes.list({
         resultItemId,
@@ -1086,6 +1139,24 @@ export function makeSoulFireBeatGameDriver(
         ),
         Effect.asVoid,
         Effect.mapError(mapError("pathfind")),
+      ),
+    pathfindXZ: (x, z, dimension, radius, policy) =>
+      bot.tasks.goTo(goals.xz(x, z, { dimension, radius }), {
+        conflictPolicy: BotTaskConflictPolicy.REPLACE,
+        reconnectPolicy: BotTaskReconnectPolicy.PAUSE_AND_RESUME,
+        path: pathOptions(policy),
+      }).pipe(
+        Effect.flatMap((handle) =>
+          handle.result().pipe(
+            Effect.onInterrupt(() =>
+              handle.cancel("Beat-game pathfinding was interrupted").pipe(
+                Effect.ignore,
+              )
+            ),
+          )
+        ),
+        Effect.asVoid,
+        Effect.mapError(mapError("pathfindXZ")),
       ),
     runTask,
     act: (action) =>

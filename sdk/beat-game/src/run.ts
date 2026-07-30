@@ -32,6 +32,7 @@ import {
   respawnAndRecover,
   smelt,
   throwEyeOfEnder,
+  transferContainerItems,
 } from "./behaviors.js";
 import { ReplayBroadcast } from "./broadcast.js";
 import {
@@ -244,6 +245,9 @@ interface RunState {
   readonly checkpoint: Ref.Ref<BeatGameCheckpoint>;
   readonly observation: Ref.Ref<BeatGameObservation>;
   readonly pendingDeaths: Ref.Ref<readonly PendingDeath[]>;
+  readonly explorationFrontiers: Ref.Ref<
+    Readonly<Record<string, ExplorationFrontier>>
+  >;
   readonly paused: Ref.Ref<boolean>;
   readonly stopped: Deferred.Deferred<void>;
   readonly checkpointMutex: Effect.Semaphore;
@@ -252,6 +256,11 @@ interface RunState {
   readonly snapshots: ReplayBroadcast<BeatGameSnapshot>;
   readonly sequence: Ref.Ref<bigint>;
   readonly startedAtMs: number;
+}
+
+interface ExplorationFrontier {
+  readonly origin: BeatGamePosition;
+  readonly nextIndex: number;
 }
 
 interface PendingDeath {
@@ -357,6 +366,9 @@ export function beatGameWithDriver(
     const checkpointRef = yield* Ref.make(stored);
     const observationRef = yield* Ref.make(observation);
     const pendingDeaths = yield* Ref.make<readonly PendingDeath[]>([]);
+    const explorationFrontiers = yield* Ref.make<
+      Readonly<Record<string, ExplorationFrontier>>
+    >({});
     const paused = yield* Ref.make(false);
     const stopped = yield* Deferred.make<void>();
     const checkpointMutex = yield* Effect.makeSemaphore(1);
@@ -373,6 +385,7 @@ export function beatGameWithDriver(
       checkpoint: checkpointRef,
       observation: observationRef,
       pendingDeaths,
+      explorationFrontiers,
       paused,
       stopped,
       checkpointMutex,
@@ -1672,13 +1685,16 @@ function defendAgainstTarget(
   const attack = attackEntity(state.driver, {
     target,
     sprinting: true,
+    maximumAttacks: 3,
     targetUnavailableTimeoutSeconds: 1,
     selectBestWeapon: true,
     path: {
       ...state.strategy.path,
+      allowMining: false,
+      allowPlacing: false,
       maxSearchTimeMs: Math.min(
         state.strategy.path.maxSearchTimeMs,
-        3_000,
+        1_000,
       ),
     },
   });
@@ -2159,24 +2175,31 @@ function satisfyFoodRequirement(
     0,
   );
   if (rawFoodCount === 0) {
-    const maximumTargets =
-      observation.player.health < state.strategy.minimumHealth
-        ? 1
-        : bufferedCollectionCount("food", missingCookedFood);
-    return huntOrExplore(
-      state,
-      observation,
-      {
-        entityTypes: [
-          "minecraft:cow",
-          "minecraft:pig",
-          "minecraft:sheep",
-          "minecraft:chicken",
-        ],
-        alive: true,
-      },
-      maximumTargets,
-      "find-food-animals",
+    return recoverNearbyFurnaceContents(state, observation).pipe(
+      Effect.flatMap(({ observation: current, recovered }) => {
+        if (recovered) {
+          return Effect.void;
+        }
+        const maximumTargets =
+          current.player.health < state.strategy.minimumHealth
+            ? 1
+            : bufferedCollectionCount("food", missingCookedFood);
+        return huntOrExplore(
+          state,
+          current,
+          {
+            entityTypes: [
+              "minecraft:cow",
+              "minecraft:pig",
+              "minecraft:sheep",
+              "minecraft:chicken",
+            ],
+            alive: true,
+          },
+          maximumTargets,
+          "find-food-animals",
+        );
+      }),
     );
   }
   const batch = rawFood[0];
@@ -2205,6 +2228,52 @@ function satisfyFoodRequirement(
     );
   }
   return cookRawFoodBatch(state, observation, batch, missingCookedFood);
+}
+
+function recoverNearbyFurnaceContents(
+  state: RunState,
+  observation: BeatGameObservation,
+): Effect.Effect<{
+  readonly observation: BeatGameObservation;
+  readonly recovered: boolean;
+}, BeatGameDriverError> {
+  return state.driver.queryBlocks({
+    center: observation.player.position,
+    radius: state.strategy.blockSearchRadius,
+    selector: { blockIds: ["minecraft:furnace"] },
+    maximumResults: 1,
+  }).pipe(
+    Effect.flatMap((furnaces) => {
+      const furnace = furnaces[0];
+      if (furnace === undefined) {
+        return Effect.succeed({ observation, recovered: false });
+      }
+      const initialItemCount = inventoryItemCount(observation);
+      return transferContainerItems(state.driver, {
+        direction: "withdraw",
+        container: furnace.position,
+        operations: [{
+          selector: {},
+          count: 192,
+          allowPartial: true,
+        }],
+        path: state.strategy.path,
+      }).pipe(
+        Effect.zipRight(state.driver.observe),
+        Effect.map((current) => ({
+          observation: current,
+          recovered: inventoryItemCount(current) > initialItemCount,
+        })),
+      );
+    }),
+  );
+}
+
+function inventoryItemCount(observation: BeatGameObservation): number {
+  return Object.values(observation.inventory.counts).reduce(
+    (total, count) => total + count,
+    0,
+  );
 }
 
 function cookRawFoodBatch(
@@ -2371,10 +2440,7 @@ function collectBlocksOrExplore(
   return Effect.gen(function* () {
     let current = observation;
     const targetCount = countItems(observation) + options.count;
-    const resourcePath = {
-      ...state.strategy.path,
-      allowPlacing: false,
-    };
+    const resourcePath = state.strategy.path;
     const explorationPath = {
       ...resourcePath,
       allowMining: false,
@@ -2404,21 +2470,20 @@ function collectBlocksOrExplore(
         current = yield* state.driver.observe;
       }
       if (countItems(current) <= beforeAttempt) {
-        const checkpoint = yield* Ref.get(state.checkpoint);
-        yield* explore(state.driver, {
-          origin: current.player.position,
-          radius: discoveryHopRadius(
+        if (isDeepOverworld(current.player.position)) {
+          yield* returnToOverworldSurface(
             state,
-            state.strategy.blockSearchRadius,
-          ),
-          maximumWaypoints: 1,
-          purpose: explorationPurpose(
-            options.purpose,
             current.player.position,
-            checkpoint.revision,
-          ),
-          path: explorationPath,
-        });
+          );
+          return;
+        }
+        yield* advanceExplorationFrontier(
+          state,
+          current.player.position,
+          options.purpose,
+          state.strategy.blockSearchRadius,
+          explorationPath,
+        );
         return;
       }
     }
@@ -2756,25 +2821,25 @@ function huntOrExplore(
   purpose: string,
 ): Effect.Effect<void, BeatGameError | BeatGameDriverError> {
   return Effect.gen(function* () {
-    const huntingPath = {
-      ...state.strategy.path,
-      allowPlacing: false,
+    const huntingPath = state.strategy.path;
+    const explorationPath = {
+      ...huntingPath,
+      allowMining: false,
     };
     const attemptedTargets = new Set<string>();
     const locallyUnreachable = new Set<string>();
     let attacked = 0;
-    let observedCandidate = false;
     while (attacked < maximumTargets) {
       const current = yield* state.driver.observe;
       const checkpoint = yield* Ref.get(state.checkpoint);
       const now = Date.now();
-      const unreachable = new Set([
+      const unreachableTargets = new Set([
         ...locallyUnreachable,
         ...checkpoint.memory.unreachable
           .filter(({ expiresAt }) =>
             expiresAt === undefined || Date.parse(expiresAt) > now
           )
-          .map(({ value }) => positionKey(value)),
+          .map(({ key }) => key),
       ]);
       const targets = yield* state.driver.queryEntities({
         origin: current.player.position,
@@ -2788,7 +2853,9 @@ function huntOrExplore(
       const maximumVerticalDistance =
         current.player.health < state.strategy.minimumHealth ? 12 : 32;
       const candidates = targets.filter((target) =>
-        !unreachable.has(positionKey(target.position))
+        !unreachableTargets.has(
+          `target:${target.connectionEpoch}:${target.networkId}`,
+        )
         && !attemptedTargets.has(
           `${target.connectionEpoch}:${target.networkId}`,
         )
@@ -2812,38 +2879,28 @@ function huntOrExplore(
         undefined,
       );
       if (target === undefined) {
-        if (attacked === 0 && !observedCandidate) {
+        if (attacked === 0) {
           if (isDeepOverworld(current.player.position)) {
             yield* returnToOverworldSurface(
               state,
               current.player.position,
             );
           } else {
-            yield* explore(state.driver, {
-              origin: current.player.position,
-              radius: discoveryHopRadius(
-                state,
-                state.strategy.entitySearchRadius,
-              ),
-              maximumWaypoints: 1,
-              purpose: explorationPurpose(
-                purpose,
-                current.player.position,
-              ),
-              path: huntingPath,
-            });
+            yield* advanceExplorationFrontier(
+              state,
+              current.player.position,
+              purpose,
+              state.strategy.entitySearchRadius,
+              explorationPath,
+            );
           }
-        } else if (attacked === 0) {
-          yield* Effect.sleep(state.strategy.observationPollMs);
         }
         return;
       }
-      observedCandidate = true;
-      attemptedTargets.add(
-        `${target.connectionEpoch}:${target.networkId}`,
-      );
+      const targetId = `${target.connectionEpoch}:${target.networkId}`;
+      attemptedTargets.add(targetId);
       const targetKey =
-        `target:${target.connectionEpoch}:${target.networkId}`;
+        `target:${targetId}`;
       const claim = yield* state.coordinator.claim({
         teamId: checkpoint.teamId,
         runId: checkpoint.runId,
@@ -2898,7 +2955,7 @@ function huntOrExplore(
                   key: targetKey,
                   value: target.position,
                   observedAt: new Date().toISOString(),
-                  expiresAt: new Date(Date.now() + 60_000).toISOString(),
+                  expiresAt: new Date(Date.now() + 600_000).toISOString(),
                   confidence: 1,
                 },
               ].slice(-64),
@@ -2910,7 +2967,7 @@ function huntOrExplore(
           cause.code === "not_found"
             || cause.operation === "task.attack-entity"
             ? Effect.sync(() => {
-              locallyUnreachable.add(positionKey(target.position));
+              locallyUnreachable.add(targetKey);
             }).pipe(
               Effect.zipRight(
                 current.player.position.dimension === "minecraft:overworld"
@@ -2949,18 +3006,77 @@ function returnToOverworldSurface(
   state: RunState,
   position: BeatGamePosition,
 ): Effect.Effect<void, BeatGameDriverError> {
-  return state.driver.pathfind(
-    {
-      ...position,
-      y: 80,
-    },
-    17,
-    {
-      ...state.strategy.path,
-      allowMining: true,
-      allowPlacing: true,
-    },
+  return state.driver.sampleSurface(position).pipe(
+    Effect.map((columns) => selectSurfaceColumn(columns, position)),
+    Effect.flatMap((surface) =>
+      state.driver.pathfind(
+        surface === undefined
+          ? {
+            ...position,
+            y: Math.max(80, position.y + 48),
+          }
+          : {
+            x: surface.x + 0.5,
+            y: surface.surfaceY + 1,
+            z: surface.z + 0.5,
+            dimension: position.dimension,
+          },
+        1.5,
+        {
+          ...state.strategy.path,
+          allowMining: true,
+          allowPlacing: true,
+        },
+      )
+    ),
   );
+}
+
+function selectSurfaceColumn(
+  columns: readonly {
+    readonly x: number;
+    readonly z: number;
+    readonly loaded: boolean;
+    readonly surfaceY?: number;
+    readonly blockId?: string;
+  }[],
+  position: BeatGamePosition,
+): { readonly x: number; readonly z: number; readonly surfaceY: number }
+  | undefined {
+  const candidates = columns.flatMap((column) =>
+    column.loaded
+      && column.surfaceY !== undefined
+      && column.surfaceY > position.y + 2
+      && !isUnsafeSurfaceBlock(column.blockId)
+      ? [{ x: column.x, z: column.z, surfaceY: column.surfaceY }]
+      : []
+  );
+  return candidates.reduce<(typeof candidates)[number] | undefined>(
+    (nearest, candidate) =>
+      nearest === undefined
+        || surfaceHorizontalDistanceSquared(candidate, position)
+          < surfaceHorizontalDistanceSquared(nearest, position)
+        ? candidate
+        : nearest,
+    undefined,
+  );
+}
+
+function surfaceHorizontalDistanceSquared(
+  surface: { readonly x: number; readonly z: number },
+  position: BeatGamePosition,
+): number {
+  const deltaX = surface.x + 0.5 - position.x;
+  const deltaZ = surface.z + 0.5 - position.z;
+  return deltaX * deltaX + deltaZ * deltaZ;
+}
+
+function isUnsafeSurfaceBlock(blockId: string | undefined): boolean {
+  return blockId === undefined
+    || blockId === "minecraft:water"
+    || blockId === "minecraft:lava"
+    || blockId === "minecraft:powder_snow"
+    || blockId.endsWith("_leaves");
 }
 
 function explorationPurpose(
@@ -2976,6 +3092,80 @@ function explorationPurpose(
     : `${purpose.slice(0, 24)}:${cellX}:${cellZ}:${rotation}`;
 }
 
+function advanceExplorationFrontier(
+  state: RunState,
+  position: BeatGamePosition,
+  purpose: string,
+  scanRadius: number,
+  path: BeatGameStrategy["path"],
+): Effect.Effect<void, BeatGameDriverError> {
+  const key = `${position.dimension}:${purpose}`;
+  const hop = discoveryHopRadius(state, scanRadius);
+  return Ref.modify(state.explorationFrontiers, (frontiers) => {
+    const existing = frontiers[key];
+    const frontier = existing?.origin.dimension === position.dimension
+      ? existing
+      : { origin: position, nextIndex: 1 };
+    const offset = squareSpiralOffset(frontier.nextIndex);
+    const target = {
+      x: frontier.origin.x + offset.x * hop,
+      z: frontier.origin.z + offset.z * hop,
+    };
+    return [
+      target,
+      {
+        ...frontiers,
+        [key]: {
+          origin: frontier.origin,
+          nextIndex: frontier.nextIndex + 1,
+        },
+      },
+    ] as const;
+  }).pipe(
+    Effect.flatMap((target) =>
+      state.driver.pathfindXZ(
+        target.x,
+        target.z,
+        position.dimension,
+        2,
+        path,
+      )
+    ),
+  );
+}
+
+function squareSpiralOffset(index: number): {
+  readonly x: number;
+  readonly z: number;
+} {
+  if (index <= 0) {
+    return { x: 0, z: 0 };
+  }
+  let x = 0;
+  let z = 0;
+  let deltaX = 1;
+  let deltaZ = 0;
+  let segmentLength = 1;
+  let segmentProgress = 0;
+  let segmentsAtLength = 0;
+  for (let step = 0; step < index; step += 1) {
+    x += deltaX;
+    z += deltaZ;
+    segmentProgress += 1;
+    if (segmentProgress < segmentLength) {
+      continue;
+    }
+    segmentProgress = 0;
+    [deltaX, deltaZ] = [-deltaZ, deltaX];
+    segmentsAtLength += 1;
+    if (segmentsAtLength === 2) {
+      segmentsAtLength = 0;
+      segmentLength += 1;
+    }
+  }
+  return { x, z };
+}
+
 function discoveryHopRadius(
   state: RunState,
   scanRadius: number,
@@ -2983,6 +3173,7 @@ function discoveryHopRadius(
   return Math.max(
     8,
     Math.min(
+      64,
       state.strategy.explorationRadius,
       Math.floor(scanRadius / 2),
     ),
@@ -4724,10 +4915,12 @@ function withTaskIdempotency(
     events: driver.events,
     queryBlocks: driver.queryBlocks,
     queryEntities: driver.queryEntities,
+    sampleSurface: driver.sampleSurface,
     recipesFor: driver.recipesFor,
     canCraft: driver.canCraft,
     waitForChunks: driver.waitForChunks,
     pathfind: driver.pathfind,
+    pathfindXZ: driver.pathfindXZ,
     runTask: (task, policy, execution = {}) =>
       driver.runTask(task, policy, {
         idempotencyKey:

@@ -96,6 +96,7 @@ export {
   type BeatGameQueryBlocks,
   type BeatGameQueryEntities,
   type BeatGameRecipe,
+  type BeatGameSurfaceColumn,
   type BeatGameTask,
   type BeatGameTaskExecutionOptions,
 } from "./driver.js";
