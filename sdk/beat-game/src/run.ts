@@ -1350,6 +1350,7 @@ function monitorObservedSafety(
   if (
     decision.type !== "recover-death"
     && decision.type !== "retreat"
+    && decision.type !== "eat"
     && observation.player.health < state.strategy.minimumHealth
     && !(
       decision.type === "satisfy-requirement"

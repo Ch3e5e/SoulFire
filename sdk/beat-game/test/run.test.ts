@@ -2206,6 +2206,43 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks.some((task) => task.type === "explore")).toBe(false);
   });
 
+  it("does not interrupt eating solely because health becomes unsafe", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      health: 19,
+      food: 14,
+      counts: { "minecraft:rotten_flesh": 1 },
+    });
+    driver.taskResolver = (task) => {
+      driver.tasks.push(task);
+      if (task.type !== "auto-eat") {
+        return Effect.void;
+      }
+      driver.currentObservation = observation({
+        health: 17,
+        food: 14,
+        counts: { "minecraft:rotten_flesh": 1 },
+      });
+      return Effect.never;
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      yield* Effect.sleep(250);
+      yield* run.stop;
+    })));
+
+    expect(driver.tasks.filter((task) => task.type === "auto-eat")).toEqual([
+      expect.objectContaining({
+        foodItemIds: ["minecraft:rotten_flesh"],
+        foodLevel: 14,
+        maximumMeals: 1,
+      }),
+    ]);
+  });
+
   it("makes spare charcoal before cooking a full food batch", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
