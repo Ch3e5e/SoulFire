@@ -24,6 +24,7 @@ import {
   mkdir,
   readdir,
   realpath,
+  rm,
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
@@ -47,6 +48,12 @@ const artifactDirectory = path.resolve(
   environment(
     "SOULFIRE_E2E_ARTIFACT_DIR",
     path.join(repositoryRoot, "temp", "beat-game-e2e", runId),
+  ),
+);
+const minecraftDataRootDirectory = path.resolve(
+  environment(
+    "SOULFIRE_E2E_MINECRAFT_DATA_ROOT",
+    path.join(repositoryRoot, "temp", "beat-game-minecraft"),
   ),
 );
 const botName = environment("SOULFIRE_E2E_BOT_NAME", "SFSmokeBot");
@@ -89,6 +96,7 @@ interface CommandResult {
 
 interface BaseMinecraftFixture {
   readonly containerName: string;
+  readonly dataDirectory?: string;
   readonly freshWorld: boolean;
   readonly managed: boolean;
   readonly port: number;
@@ -607,6 +615,10 @@ const program = Effect.scoped(Effect.gen(function* () {
 const startMinecraftFixture = Effect.suspend(() => {
   const managedContainerName =
     `soulfire-beat-game-${randomUUID().slice(0, 12)}`;
+  const managedDataDirectory = path.join(
+    minecraftDataRootDirectory,
+    managedContainerName,
+  );
   const start = Effect.gen(function* () {
     if (fixtureConfiguration.attachedMinecraftContainer !== undefined) {
       if (fixtureConfiguration.mode !== "survival") {
@@ -643,6 +655,9 @@ const startMinecraftFixture = Effect.suspend(() => {
     }
 
     const containerName = managedContainerName;
+    yield* fromPromise("create persistent Minecraft data directory", () =>
+      mkdir(managedDataDirectory, { recursive: true })
+    );
     const commonArguments = [
       "run",
       "--detach",
@@ -651,6 +666,8 @@ const startMinecraftFixture = Effect.suspend(() => {
       containerName,
       "--publish",
       `127.0.0.1:${minecraftPort}:25565`,
+      "--volume",
+      `${managedDataDirectory}:/data`,
       "--env",
       "EULA=TRUE",
       "--env",
@@ -687,6 +704,7 @@ const startMinecraftFixture = Effect.suspend(() => {
       const fixture = {
         mode: "survival",
         containerName,
+        dataDirectory: managedDataDirectory,
         freshWorld: true,
         managed: true,
         port,
@@ -855,6 +873,7 @@ const startMinecraftFixture = Effect.suspend(() => {
     const fixture = {
       mode: "controlled",
       containerName,
+      dataDirectory: managedDataDirectory,
       freshWorld: true,
       managed: true,
       port,
@@ -876,7 +895,12 @@ const startMinecraftFixture = Effect.suspend(() => {
       fixtureConfiguration.attachedMinecraftContainer !== undefined
         || fixtureConfiguration.keepContainer
         ? Effect.void
-        : docker(["rm", "--force", managedContainerName]).pipe(Effect.ignore)
+        : Effect.all([
+          docker(["rm", "--force", managedContainerName]).pipe(Effect.ignore),
+          fromPromise("remove Minecraft data directory", () =>
+            rm(managedDataDirectory, { recursive: true, force: true })
+          ).pipe(Effect.ignore),
+        ], { discard: true })
     ),
   );
 });
@@ -903,6 +927,12 @@ function stopMinecraftFixture(
         "--force",
         fixture.containerName,
       ]).pipe(Effect.ignore);
+      if (fixture.dataDirectory !== undefined) {
+        const dataDirectory = fixture.dataDirectory;
+        yield* fromPromise("remove Minecraft data directory", () =>
+          rm(dataDirectory, { recursive: true, force: true })
+        ).pipe(Effect.ignore);
+      }
     }
   });
 }
