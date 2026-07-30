@@ -1199,6 +1199,69 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks.some((task) => task.type === "explore")).toBe(false);
   });
 
+  it("interrupts exploration when a matching entity becomes visible", async () => {
+    const driver = new FakeBeatGameDriver();
+    const cow = {
+      connectionEpoch: "epoch-1",
+      networkId: 40,
+      entityType: "minecraft:cow",
+      position: {
+        x: 3,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 10,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.currentObservation = observation({ food: 17, health: 8 });
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (task.type === "attack-entity") {
+          driver.entityResults = [];
+        }
+      });
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (driver.xzPaths.length === 0) {
+              yield* Effect.sleep(1);
+            }
+            driver.entityResults = [cow];
+            while (
+              !driver.tasks.some((task) => task.type === "attack-entity")
+            ) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.xzPaths).toHaveLength(1);
+    expect(driver.xzPaths[0]?.policy.maxFallDistance).toBe(1);
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+      target: expect.objectContaining({
+        connectionEpoch: cow.connectionEpoch,
+        networkId: cow.networkId,
+      }),
+    }));
+  });
+
   it("rotates resource exploration after a threat interrupts a frontier", async () => {
     const driver = new FakeBeatGameDriver();
     const creeper = {
@@ -1250,6 +1313,63 @@ describe("beat-game run lifecycle", () => {
     expect(driver.xzPaths.slice(0, 2).map(({ x, z }) => ({ x, z }))).toEqual([
       { x: 24, z: 0 },
       { x: 24, z: 24 },
+    ]);
+  });
+
+  it("reanchors resource exploration after a defensive escape", async () => {
+    const driver = new FakeBeatGameDriver();
+    const creeper = {
+      connectionEpoch: "epoch-1",
+      networkId: 43,
+      entityType: "minecraft:creeper",
+      position: {
+        x: 6,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+        if (driver.xzPaths.length === 1) {
+          driver.entityResults = [creeper];
+        }
+      }).pipe(Effect.zipRight(Effect.never));
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (task.type === "flee") {
+          driver.entityResults = [];
+          driver.currentObservation = observation({
+            position: { x: 100, y: 64, z: 0 },
+          });
+        }
+      });
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (driver.xzPaths.length < 2) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.xzPaths.slice(0, 2).map(({ x, z }) => ({ x, z }))).toEqual([
+      { x: 24, z: 0 },
+      { x: 124, z: 0 },
     ]);
   });
 

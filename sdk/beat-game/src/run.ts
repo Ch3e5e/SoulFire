@@ -121,6 +121,7 @@ const WORKSTATION_REUSE_RADIUS = 32;
 const FURNACE_FUEL_SEARCH_RADIUS = 16;
 const HUNT_ATTACK_APPROACH_RADIUS = 24;
 const HUNT_MAXIMUM_APPROACH_DISTANCE = 48;
+const EXPLORATION_REANCHOR_DISTANCE = 16;
 const COAL_ORE_BLOCK_IDS = [
   "minecraft:coal_ore",
   "minecraft:deepslate_coal_ore",
@@ -264,6 +265,7 @@ interface RunState {
 interface ExplorationFrontier {
   readonly origin: BeatGamePosition;
   readonly nextIndex: number;
+  readonly lastPosition?: BeatGamePosition;
 }
 
 interface PendingDeath {
@@ -2860,16 +2862,20 @@ function huntOrExplore(
   purpose: string,
 ): Effect.Effect<void, BeatGameError | BeatGameDriverError> {
   return Effect.gen(function* () {
-    const huntingPath = state.strategy.path;
-    const explorationPath = {
-      ...huntingPath,
-      allowMining: false,
-    };
     const attemptedTargets = new Set<string>();
     const locallyUnreachable = new Set<string>();
     let attacked = 0;
     while (attacked < maximumTargets) {
       const current = yield* state.driver.observe;
+      const huntingPath = survivalPathPolicy(
+        state.strategy.path,
+        current.player.health,
+        state.strategy.minimumHealth,
+      );
+      const explorationPath = {
+        ...huntingPath,
+        allowMining: false,
+      };
       if (yield* needsOverworldSurfaceRecovery(state, current.player.position)) {
         yield* returnToOverworldSurface(state, current.player.position);
         return;
@@ -2929,12 +2935,20 @@ function huntOrExplore(
               current.player.position,
             );
           } else {
-            yield* advanceExplorationFrontier(
-              state,
-              current.player.position,
-              purpose,
-              state.strategy.entitySearchRadius,
-              explorationPath,
+            yield* Effect.raceFirst(
+              advanceExplorationFrontier(
+                state,
+                current.player.position,
+                purpose,
+                state.strategy.entitySearchRadius,
+                explorationPath,
+              ),
+              waitForVisibleHuntingTarget(
+                state,
+                selector,
+                attemptedTargets,
+                unreachableTargets,
+              ),
             );
           }
         }
@@ -3092,6 +3106,56 @@ function huntOrExplore(
   });
 }
 
+function waitForVisibleHuntingTarget(
+  state: RunState,
+  selector: Parameters<BeatGameDriver["queryEntities"]>[0]["selector"],
+  attemptedTargets: ReadonlySet<string>,
+  unreachableTargets: ReadonlySet<string>,
+): Effect.Effect<void, BeatGameDriverError> {
+  const poll = (): Effect.Effect<void, BeatGameDriverError> =>
+    Effect.sleep(Math.max(100, state.strategy.observationPollMs)).pipe(
+      Effect.zipRight(state.driver.observe),
+      Effect.flatMap((observation) =>
+        state.driver.queryEntities({
+          origin: observation.player.position,
+          radius: state.strategy.entitySearchRadius,
+          selector,
+          maximumResults: 64,
+        }).pipe(
+          Effect.flatMap((targets) => {
+            const maximumVerticalDistance =
+              observation.player.health < state.strategy.minimumHealth
+                ? 12
+                : 32;
+            const found = targets.some((target) =>
+              !unreachableTargets.has(
+                `target:${target.connectionEpoch}:${target.networkId}`,
+              )
+              && !attemptedTargets.has(
+                `${target.connectionEpoch}:${target.networkId}`,
+              )
+              && Math.abs(
+                  target.position.y - observation.player.position.y,
+                ) <= maximumVerticalDistance
+            );
+            return found ? Effect.void : Effect.suspend(poll);
+          }),
+        )
+      ),
+    );
+  return Effect.suspend(poll);
+}
+
+function survivalPathPolicy(
+  path: BeatGameStrategy["path"],
+  health: number,
+  minimumHealth: number,
+): BeatGameStrategy["path"] {
+  return health < minimumHealth && path.maxFallDistance > 1
+    ? { ...path, maxFallDistance: 1 }
+    : path;
+}
+
 function isDeepOverworld(position: BeatGamePosition): boolean {
   return position.dimension === "minecraft:overworld" && position.y < 58;
 }
@@ -3211,7 +3275,12 @@ function advanceExplorationFrontier(
   const hop = discoveryHopRadius(state, scanRadius);
   return Ref.modify(state.explorationFrontiers, (frontiers) => {
     const existing = frontiers[key];
+    const wasExternallyDisplaced = existing?.lastPosition !== undefined
+      && horizontalDistanceSquared(existing.lastPosition, position)
+        > EXPLORATION_REANCHOR_DISTANCE
+          * EXPLORATION_REANCHOR_DISTANCE;
     const frontier = existing?.origin.dimension === position.dimension
+        && !wasExternallyDisplaced
       ? existing
       : { origin: position, nextIndex: 1 };
     const offset = squareSpiralOffset(frontier.nextIndex);
@@ -3242,6 +3311,25 @@ function advanceExplorationFrontier(
           cause.operation === "pathfindXZ"
             ? Effect.void
             : Effect.fail(cause)
+        ),
+        Effect.ensuring(
+          state.driver.observe.pipe(
+            Effect.flatMap((observation) =>
+              Ref.update(state.explorationFrontiers, (frontiers) => {
+                const frontier = frontiers[key];
+                return frontier === undefined
+                  ? frontiers
+                  : {
+                    ...frontiers,
+                    [key]: {
+                      ...frontier,
+                      lastPosition: observation.player.position,
+                    },
+                  };
+              })
+            ),
+            Effect.ignore,
+          ),
         ),
       )
     ),
