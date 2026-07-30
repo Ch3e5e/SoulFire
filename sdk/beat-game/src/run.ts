@@ -3310,28 +3310,50 @@ function returnToOverworldSurface(
   state: RunState,
   position: BeatGamePosition,
 ): Effect.Effect<void, BeatGameDriverError> {
-  return state.driver.sampleSurface(position, 4, 1).pipe(
-    Effect.map((columns) => selectSurfaceColumn(columns, position)),
-    Effect.flatMap((surface) =>
-      state.driver.pathfind(
-        surface === undefined
-          ? {
-            ...position,
-            y: Math.max(80, position.y + 48),
-          }
-          : {
-            x: surface.x + 0.5,
-            y: surface.surfaceY + 1,
-            z: surface.z + 0.5,
-            dimension: position.dimension,
-          },
-        1.5,
-        {
-          ...state.strategy.path,
-          allowMining: true,
-          allowPlacing: true,
-        },
-      )
+  return Effect.gen(function* () {
+    const columns = yield* state.driver.sampleSurface(
+      position,
+      AIR_ESCAPE_SURFACE_SEARCH_RADIUS,
+      1,
+    );
+    const surfaces = selectSurfaceEscapeColumns(columns, position);
+    const targets: readonly BeatGamePosition[] = surfaces.length === 0
+      ? [{
+        ...position,
+        y: Math.max(80, position.y + 48),
+      }]
+      : surfaces.map((surface) => ({
+        x: surface.x + 0.5,
+        y: surface.surfaceY + 1,
+        z: surface.z + 0.5,
+        dimension: position.dimension,
+      }));
+    yield* pathfindToFirstReachableSurface(state, targets);
+  });
+}
+
+function pathfindToFirstReachableSurface(
+  state: RunState,
+  targets: readonly BeatGamePosition[],
+  index = 0,
+): Effect.Effect<void, BeatGameDriverError> {
+  const target = targets[index];
+  if (target === undefined) {
+    return Effect.void;
+  }
+  return state.driver.pathfind(
+    target,
+    1.5,
+    {
+      ...state.strategy.path,
+      allowMining: true,
+      allowPlacing: true,
+    },
+  ).pipe(
+    Effect.catchAll((cause) =>
+      cause.operation === "pathfind" && index + 1 < targets.length
+        ? pathfindToFirstReachableSurface(state, targets, index + 1)
+        : Effect.fail(cause)
     ),
   );
 }

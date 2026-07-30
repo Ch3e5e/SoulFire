@@ -2113,6 +2113,80 @@ describe("beat-game run lifecycle", () => {
     });
   });
 
+  it("tries another dry surface when the nearest exit is unreachable", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      position: {
+        x: 0.5,
+        y: 30,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+    });
+    driver.surfaceColumns = [
+      {
+        x: 0,
+        z: 0,
+        loaded: true,
+        surfaceY: 64,
+        blockId: "minecraft:grass_block",
+        biomeId: "minecraft:plains",
+        skyLight: 15,
+        blockLight: 0,
+      },
+      {
+        x: -3,
+        z: 0,
+        loaded: true,
+        surfaceY: 62,
+        blockId: "minecraft:grass_block",
+        biomeId: "minecraft:plains",
+        skyLight: 15,
+        blockLight: 0,
+      },
+    ];
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+      }).pipe(
+        Effect.zipRight(
+          position.x === 0.5
+            ? Effect.fail(new BeatGameDriverError({
+              operation: "pathfind",
+              code: "unreachable",
+              retryable: true,
+              message: "The nearest exit is blocked",
+            }))
+            : Effect.never,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (driver.paths.length < 2) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.paths.slice(0, 2)).toEqual([
+      expect.objectContaining({
+        position: expect.objectContaining({ x: 0.5, y: 65, z: 0.5 }),
+      }),
+      expect.objectContaining({
+        position: expect.objectContaining({ x: -2.5, y: 63, z: 0.5 }),
+      }),
+    ]);
+  });
+
   it("continues exploring from natural low-elevation terrain", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
