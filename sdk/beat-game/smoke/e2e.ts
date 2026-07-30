@@ -39,7 +39,10 @@ import {
 
 const execFile = promisify(execFileCallback);
 const repositoryRoot = path.resolve(import.meta.dirname, "../../..");
-const runId = `beat-game-e2e-${randomUUID()}`;
+const runId = environment(
+  "SOULFIRE_E2E_RUN_ID",
+  `beat-game-e2e-${randomUUID()}`,
+);
 const artifactDirectory = path.resolve(
   environment(
     "SOULFIRE_E2E_ARTIFACT_DIR",
@@ -55,17 +58,9 @@ const debugBlockBreak = booleanEnvironment(
   false,
 );
 const minecraftPort = 25_565;
-const inspectorUsername = optionalEnvironment(
-  "SOULFIRE_E2E_INSPECTOR_USERNAME",
+const attachedMinecraftContainer = optionalEnvironment(
+  "SOULFIRE_E2E_MINECRAFT_CONTAINER",
 );
-if (
-  inspectorUsername !== undefined
-  && !/^[A-Za-z0-9_]{1,16}$/u.test(inspectorUsername)
-) {
-  throw new Error(
-    "SOULFIRE_E2E_INSPECTOR_USERNAME must be a valid Minecraft username",
-  );
-}
 const timeoutMs = positiveIntegerEnvironment(
   "SOULFIRE_E2E_TIMEOUT_MS",
   smokeMode === "controlled" ? 45 * 60 * 1_000 : 8 * 60 * 60 * 1_000,
@@ -83,9 +78,7 @@ const fixtureConfiguration = {
   seed: smokeMode === "controlled"
     ? environment("SOULFIRE_E2E_SEED", "SoulFire SDK controlled e2e")
     : optionalEnvironment("SOULFIRE_E2E_SEED"),
-  inspectorUsername: smokeMode === "survival"
-    ? inspectorUsername
-    : undefined,
+  attachedMinecraftContainer,
   keepContainer: booleanEnvironment("SOULFIRE_E2E_KEEP_CONTAINER", false),
 } as const;
 
@@ -96,13 +89,14 @@ interface CommandResult {
 
 interface BaseMinecraftFixture {
   readonly containerName: string;
+  readonly freshWorld: boolean;
+  readonly managed: boolean;
   readonly port: number;
 }
 
 interface SurvivalMinecraftFixture extends BaseMinecraftFixture {
   readonly mode: "survival";
   readonly seed: string | undefined;
-  readonly inspectorUsername: string | undefined;
 }
 
 interface ControlledMinecraftFixture extends BaseMinecraftFixture {
@@ -141,7 +135,7 @@ const program = Effect.scoped(Effect.gen(function* () {
       { concurrency: "unbounded" },
     );
     const soulfire = yield* SoulFire.install({
-      directory: path.join(artifactDirectory, "soulfire"),
+      directory: path.join(artifactDirectory, `soulfire-${runId}`),
       jarPath: dedicatedJar,
       javaPath,
       javaArgs: [
@@ -295,7 +289,7 @@ const program = Effect.scoped(Effect.gen(function* () {
     bot.world.player().pipe(
       Effect.mapError((cause) => new Error("read bot readiness", { cause })),
       Effect.flatMap((player) =>
-        player.onGround
+        player.dead || player.onGround
           ? Effect.succeed(player)
           : Effect.fail(new Error("Bot has not loaded its standing block"))
       ),
@@ -322,7 +316,11 @@ const program = Effect.scoped(Effect.gen(function* () {
     player: joinedPlayer,
     inventory: initialInventory,
   });
-  if (fixture.mode === "survival" && initialItems.length > 0) {
+  if (
+    fixture.mode === "survival"
+    && fixture.freshWorld
+    && initialItems.length > 0
+  ) {
     return yield* Effect.fail(new Error(
       `Authoritative smoke bot joined with a non-empty inventory: ${
         json(initialItems)
@@ -522,7 +520,7 @@ const program = Effect.scoped(Effect.gen(function* () {
       "Beat-game run completed while the bot was still in the End",
     ));
   }
-  if (fixture.mode === "survival") {
+  if (fixture.mode === "survival" && fixture.freshWorld) {
     yield* assertAdminCommandPolicy(fixture);
   }
   yield* record("beat-game-completed", {
@@ -538,8 +536,44 @@ const program = Effect.scoped(Effect.gen(function* () {
 ));
 
 const startMinecraftFixture = Effect.suspend(() => {
-  const containerName = `soulfire-beat-game-${randomUUID().slice(0, 12)}`;
+  const managedContainerName =
+    `soulfire-beat-game-${randomUUID().slice(0, 12)}`;
   const start = Effect.gen(function* () {
+    if (fixtureConfiguration.attachedMinecraftContainer !== undefined) {
+      if (fixtureConfiguration.mode !== "survival") {
+        return yield* Effect.fail(new Error(
+          "Controlled smoke mode cannot attach to an existing Minecraft world",
+        ));
+      }
+      const containerName = fixtureConfiguration.attachedMinecraftContainer;
+      const inspection = yield* docker([
+        "inspect",
+        "--format",
+        "{{.State.Running}}",
+        containerName,
+      ]);
+      if (inspection.stdout.trim() !== "true") {
+        return yield* Effect.fail(new Error(
+          `Minecraft container ${containerName} is not running`,
+        ));
+      }
+      const port = yield* publishedMinecraftPort(containerName);
+      const fixture = {
+        mode: "survival",
+        containerName,
+        freshWorld: false,
+        managed: false,
+        port,
+        seed: fixtureConfiguration.seed,
+      } satisfies SurvivalMinecraftFixture;
+      yield* record("minecraft-attached", {
+        ...fixture,
+        serverType: "PAPER",
+      });
+      return fixture;
+    }
+
+    const containerName = managedContainerName;
     const commonArguments = [
       "run",
       "--detach",
@@ -561,48 +595,38 @@ const startMinecraftFixture = Effect.suspend(() => {
       "--env",
       "MODE=survival",
       "--env",
+      "SPAWN_PROTECTION=0",
+      "--env",
       "VIEW_DISTANCE=10",
       "--env",
       "SIMULATION_DISTANCE=10",
     ];
 
     if (fixtureConfiguration.mode === "survival") {
-      const rconEnabled = fixtureConfiguration.inspectorUsername !== undefined;
       const serverArguments = [
         ...commonArguments,
         "--env",
-        `ENABLE_RCON=${String(rconEnabled)}`,
+        "ENABLE_RCON=false",
       ];
-      if (rconEnabled) {
-        serverArguments.push(
-          "--env",
-          "RCON_PASSWORD=soulfire-smoke",
-        );
-      }
       if (fixtureConfiguration.seed !== undefined) {
         serverArguments.push("--env", `SEED=${fixtureConfiguration.seed}`);
       }
       serverArguments.push(fixtureConfiguration.image);
       yield* docker(serverArguments);
       yield* waitForMinecraftServer(containerName);
-      if (fixtureConfiguration.inspectorUsername !== undefined) {
-        yield* rcon(
-          containerName,
-          `op ${fixtureConfiguration.inspectorUsername}`,
-        );
-      }
       const port = yield* publishedMinecraftPort(containerName);
       const fixture = {
         mode: "survival",
         containerName,
+        freshWorld: true,
+        managed: true,
         port,
         seed: fixtureConfiguration.seed,
-        inspectorUsername: fixtureConfiguration.inspectorUsername,
       } satisfies SurvivalMinecraftFixture;
       yield* record("minecraft-ready", {
         ...fixture,
         serverType: "PAPER",
-        rconEnabled,
+        rconEnabled: false,
         seed: fixture.seed ?? "server-generated",
       });
       return fixture;
@@ -622,8 +646,6 @@ const startMinecraftFixture = Effect.suspend(() => {
       "RCON_PASSWORD=soulfire-smoke",
       "--env",
       "DIFFICULTY=peaceful",
-      "--env",
-      "SPAWN_PROTECTION=0",
       "--env",
       `SEED=${seed}`,
       fixtureConfiguration.image,
@@ -764,6 +786,8 @@ const startMinecraftFixture = Effect.suspend(() => {
     const fixture = {
       mode: "controlled",
       containerName,
+      freshWorld: true,
+      managed: true,
       port,
       seed,
       stronghold,
@@ -780,9 +804,10 @@ const startMinecraftFixture = Effect.suspend(() => {
 
   return start.pipe(
     Effect.onError(() =>
-      fixtureConfiguration.keepContainer
+      fixtureConfiguration.attachedMinecraftContainer !== undefined
+        || fixtureConfiguration.keepContainer
         ? Effect.void
-        : docker(["rm", "--force", containerName]).pipe(Effect.ignore)
+        : docker(["rm", "--force", managedContainerName]).pipe(Effect.ignore)
     ),
   );
 });
@@ -803,7 +828,7 @@ function stopMinecraftFixture(
         )
       ).pipe(Effect.ignore);
     }
-    if (!fixtureConfiguration.keepContainer) {
+    if (fixture.managed && !fixtureConfiguration.keepContainer) {
       yield* docker([
         "rm",
         "--force",
@@ -1008,35 +1033,17 @@ function assertAdminCommandPolicy(
       const adminLines = logs.split(/\r?\n/u).filter((line) =>
         /\[Rcon:|issued server command:|made .* a server operator/iu.test(line)
       );
-      const allowedOperatorLines = fixture.inspectorUsername === undefined
-        ? []
-        : adminLines.filter((line) =>
-          line.includes(
-            `[Rcon: Made ${fixture.inspectorUsername} a server operator]`,
-          )
-        );
-      const unexpectedLines = adminLines.filter((line) =>
-        !allowedOperatorLines.includes(line)
-      );
-      const expectedOperatorCommands =
-        fixture.inspectorUsername === undefined ? 0 : 1;
-      if (
-        unexpectedLines.length > 0
-        || allowedOperatorLines.length !== expectedOperatorCommands
-      ) {
+      if (adminLines.length > 0) {
         return Effect.fail(new Error(
           `Authoritative smoke violated its administrative command policy:\n${
-            adminLines.join("\n") || "expected inspector op command was absent"
+            adminLines.join("\n")
           }`,
         ));
       }
       return record("admin-command-audit", {
         passed: true,
-        rconEnabled: fixture.inspectorUsername !== undefined,
-        commandsObserved: allowedOperatorLines.length,
-        allowedCommand: fixture.inspectorUsername === undefined
-          ? undefined
-          : `op ${fixture.inspectorUsername}`,
+        rconEnabled: false,
+        commandsObserved: 0,
       });
     }),
   );

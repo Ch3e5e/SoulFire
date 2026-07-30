@@ -49,9 +49,12 @@ export function observation(
     readonly counts?: Readonly<Record<string, number>>;
     readonly position?: Partial<BeatGamePosition>;
     readonly rotation?: Partial<BeatGameObservation["player"]["rotation"]>;
+    readonly equipment?: Readonly<Record<string, string>>;
     readonly connectionEpoch?: string;
     readonly food?: number;
     readonly health?: number;
+    readonly air?: number;
+    readonly maxAir?: number;
   } = {},
 ): BeatGameObservation {
   const dimension = overrides.dimension ?? "minecraft:overworld";
@@ -69,9 +72,12 @@ export function observation(
         pitch: overrides.rotation?.pitch ?? 0,
       },
       velocity: { x: 0, y: 0, z: 0 },
+      equipment: overrides.equipment ?? {},
       health: overrides.health ?? 20,
       maxHealth: 20,
       food: overrides.food ?? 20,
+      air: overrides.air ?? overrides.maxAir ?? 300,
+      maxAir: overrides.maxAir ?? 300,
       dead: overrides.dead ?? false,
       sleeping: false,
       usingItem: false,
@@ -168,6 +174,9 @@ export class FakeBeatGameDriver implements BeatGameDriver {
   public blockQueryResolver: (
     query: BeatGameQueryBlocks,
   ) => readonly BeatGameBlockObservation[] = () => this.blockResults;
+  public entityQueryResolver: (
+    query: BeatGameQueryEntities,
+  ) => readonly BeatGameEntityObservation[] = () => this.entityResults;
   public observationResolver: () => Effect.Effect<
     BeatGameObservation,
     BeatGameDriverError
@@ -201,7 +210,7 @@ export class FakeBeatGameDriver implements BeatGameDriver {
   public readonly queryEntities: BeatGameDriver["queryEntities"] = (query) =>
     Effect.sync(() => {
       this.entityQueries.push(query);
-      return this.entityResults;
+      return this.entityQueryResolver(query);
     });
 
   public readonly recipesFor: BeatGameDriver["recipesFor"] = (resultItemId) =>

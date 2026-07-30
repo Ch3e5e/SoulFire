@@ -21,6 +21,7 @@ import com.soulfiremc.grpc.generated.BotTaskProgress;
 import com.soulfiremc.grpc.generated.ItemSelector;
 import com.soulfiremc.grpc.generated.SmeltTask;
 import com.soulfiremc.grpc.generated.SmeltTaskResult;
+import com.soulfiremc.mod.mixin.soulfire.AbstractFurnaceMenuAccessor;
 import com.soulfiremc.server.api.BotTaskExecution;
 import com.soulfiremc.server.api.BotTaskProvider;
 import com.soulfiremc.server.bot.ControlPriority;
@@ -294,6 +295,7 @@ public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
           case NAVIGATE -> navigate();
           case OPEN_MENU -> openMenu();
           case VALIDATE_MENU -> validateMenu();
+          case UNLOAD_FUEL -> unloadFuel();
           case LOAD_INPUT -> loadInput();
           case LOAD_FUEL -> loadFuel();
           case WAIT_FOR_OUTPUT -> waitForOutput();
@@ -422,13 +424,77 @@ public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
         && (!level.fuelValues().isFuel(existingFuel)
         || fuelSelector != null
         && !InventoryServiceImpl.matches(existingFuel, fuelSelector))) {
-        throw Status.FAILED_PRECONDITION
-          .withDescription(
-            "Existing station fuel does not match the task fuel policy"
-          )
-          .asRuntimeException();
+        transition(
+          Stage.UNLOAD_FUEL,
+          "Unloading fuel that does not match the task policy"
+        );
+        return;
       }
       transition(Stage.LOAD_INPUT, "Loading smelting input");
+    }
+
+    private void unloadFuel() {
+      var menu = requireFurnaceMenu();
+      var player = requirePlayer();
+      var gameMode = Objects.requireNonNull(
+        context.bot().minecraft().gameMode
+      );
+      var carried = menu.getCarried();
+      if (carried.isEmpty()) {
+        var existingFuel = menu.getSlot(1).getItem();
+        if (existingFuel.isEmpty()) {
+          transition(Stage.LOAD_INPUT, "Loading smelting input");
+          return;
+        }
+        var canStoreFuel = SFInventoryHelpers.playerInventorySlots(menu)
+          .anyMatch(slot -> canDeposit(menu, slot, existingFuel));
+        if (!canStoreFuel) {
+          throw Status.RESOURCE_EXHAUSTED
+            .withDescription(
+              "Player inventory has no room for existing furnace fuel"
+            )
+            .asRuntimeException();
+        }
+        gameMode.handleContainerInput(
+          menu.containerId,
+          1,
+          0,
+          ContainerInput.PICKUP,
+          player
+        );
+        carried = menu.getCarried();
+      }
+      if (carried.isEmpty()) {
+        transition(Stage.LOAD_INPUT, "Loading smelting input");
+        return;
+      }
+      var fuelToStore = carried;
+      var target = SFInventoryHelpers.playerInventorySlots(menu)
+        .filter(slot -> canDeposit(menu, slot, fuelToStore))
+        .findFirst()
+        .orElseThrow(() -> Status.RESOURCE_EXHAUSTED
+          .withDescription(
+            "Player inventory has no room for existing furnace fuel"
+          )
+          .asRuntimeException()
+        );
+      gameMode.handleContainerInput(
+        menu.containerId,
+        target,
+        0,
+        ContainerInput.PICKUP,
+        player
+      );
+      if (menu.getCarried().isEmpty()) {
+        transition(Stage.LOAD_INPUT, "Loading smelting input");
+        return;
+      }
+      stageTicks++;
+      if (stageTicks > MENU_TIMEOUT_TICKS) {
+        throw Status.DEADLINE_EXCEEDED
+          .withDescription("Timed out unloading existing furnace fuel")
+          .asRuntimeException();
+      }
     }
 
     private void loadInput() {
@@ -505,6 +571,7 @@ public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
       var additionalFuel = additionalFuelItems(
         batchOperations,
         recipe.display.duration(),
+        remainingBurnTicks(menu),
         existingFuel.getCount(),
         fuelTicks
       );
@@ -885,6 +952,13 @@ public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
     };
   }
 
+  private static int remainingBurnTicks(AbstractFurnaceMenu menu) {
+    return Math.max(
+      0,
+      ((AbstractFurnaceMenuAccessor) menu).soulfire$getData().get(0)
+    );
+  }
+
   private record RecipeSelection(
     RecipeDisplayEntry entry,
     FurnaceRecipeDisplay display,
@@ -917,12 +991,14 @@ public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
   static int additionalFuelItems(
     int operations,
     int cookingTimeTicks,
+    int remainingBurnTicks,
     int existingFuelItems,
     int fuelTicksPerItem
   ) {
     if (
       operations <= 0
         || cookingTimeTicks <= 0
+        || remainingBurnTicks < 0
         || existingFuelItems < 0
         || fuelTicksPerItem <= 0
     ) {
@@ -931,7 +1007,8 @@ public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
       );
     }
     var requiredTicks = (long) operations * cookingTimeTicks;
-    var availableTicks = (long) existingFuelItems * fuelTicksPerItem;
+    var availableTicks = remainingBurnTicks
+      + (long) existingFuelItems * fuelTicksPerItem;
     return (int) Math.max(
       0,
       Math.ceilDiv(requiredTicks - availableTicks, fuelTicksPerItem)
@@ -942,6 +1019,7 @@ public final class SmeltTaskProvider implements BotTaskProvider<SmeltTask> {
     NAVIGATE,
     OPEN_MENU,
     VALIDATE_MENU,
+    UNLOAD_FUEL,
     LOAD_INPUT,
     LOAD_FUEL,
     WAIT_FOR_OUTPUT,

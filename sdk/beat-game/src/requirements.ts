@@ -33,6 +33,13 @@ export const RAW_FOOD_TO_COOKED = {
   "minecraft:potato": "minecraft:baked_potato",
 } as const;
 
+export const EDIBLE_FOOD_ITEM_IDS = [
+  ...COOKED_FOOD_ITEM_IDS,
+  ...Object.keys(RAW_FOOD_TO_COOKED),
+  "minecraft:carrot",
+  "minecraft:apple",
+] as const;
+
 export const LOG_ITEM_IDS = [
   "minecraft:oak_log",
   "minecraft:spruce_log",
@@ -122,7 +129,7 @@ const REQUIREMENTS: Readonly<
       "shield",
       ["minecraft:shield"],
       () => 1,
-      50,
+      67,
     ),
   ],
   [BeatGamePhase.ENTER_NETHER]: [

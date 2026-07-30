@@ -65,6 +65,7 @@ import java.util.concurrent.CompletionException;
 public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
   private static final int MAX_CRAFT_OPERATIONS = 4_096;
   private static final int MENU_TIMEOUT_TICKS = 100;
+  private static final int INVENTORY_SYNC_TICKS = 2;
   private static final Set<ControlResource> RESOURCES = Set.of(
     ControlResource.MOVEMENT,
     ControlResource.ROTATION,
@@ -185,9 +186,10 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
     private final @Nullable BlockPos station;
     private final CompletableFuture<CraftTaskResult> result;
     private @Nullable PathExecutor activePath;
-    private @Nullable IngredientPlacement activePlacement;
     private Stage stage;
     private int stageTicks;
+    private int syncStateId;
+    private int syncStableTicks;
     private int crafted;
 
     private CraftControl(
@@ -225,9 +227,8 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
           case NAVIGATE -> navigate();
           case OPEN_MENU -> openMenu();
           case CLEAR_GRID -> clearGrid();
-          case PICKUP_INGREDIENT -> pickupIngredient();
-          case PLACE_INGREDIENT -> placeIngredient();
-          case RETURN_INGREDIENT -> returnIngredient();
+          case PLACE_INGREDIENTS -> placeIngredients();
+          case WAIT_FOR_INGREDIENT_SYNC -> waitForIngredientSync();
           case WAIT_FOR_RESULT -> waitForResult();
           case TAKE_RESULT -> takeResult();
           case DEPOSIT_RESULT -> depositResult();
@@ -355,7 +356,7 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
         .filter(slotIndex -> !menu.getSlot(slotIndex).getItem().isEmpty())
         .findFirst();
       if (occupiedInput.isEmpty()) {
-        transition(Stage.PICKUP_INGREDIENT, "Placing recipe ingredients");
+        transition(Stage.PLACE_INGREDIENTS, "Placing recipe ingredients");
         return;
       }
       handleContainerInput(
@@ -373,7 +374,7 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
       }
     }
 
-    private void pickupIngredient() {
+    private void placeIngredients() {
       var player = requirePlayer();
       var menu = requireCraftingMenu(player.containerMenu);
       if (!menu.getCarried().isEmpty()) {
@@ -388,7 +389,6 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
         transition(Stage.WAIT_FOR_RESULT, "Waiting for crafted result");
         return;
       }
-      activePlacement = placement;
       handleContainerInput(
         menu,
         placement.sourceSlot(),
@@ -396,17 +396,11 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
         ContainerInput.PICKUP,
         player
       );
-      transition(Stage.PLACE_INGREDIENT, "Placing recipe ingredient");
-    }
-
-    private void placeIngredient() {
-      var player = requirePlayer();
-      var menu = requireCraftingMenu(player.containerMenu);
-      var placement = Objects.requireNonNull(activePlacement);
       var carried = menu.getCarried();
       if (carried.isEmpty()) {
-        transition(Stage.PICKUP_INGREDIENT, "Retrying recipe ingredient");
-        return;
+        throw Status.ABORTED
+          .withDescription("The selected recipe ingredient could not be picked up")
+          .asRuntimeException();
       }
       if (!placement.matches(carried)) {
         throw Status.FAILED_PRECONDITION
@@ -415,20 +409,34 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
           )
           .asRuntimeException();
       }
-      handleContainerInput(
-        menu,
-        placement.targetSlot(),
-        1,
-        ContainerInput.PICKUP,
-        player
-      );
-      transition(Stage.RETURN_INGREDIENT, "Returning unused ingredients");
-    }
 
-    private void returnIngredient() {
-      var player = requirePlayer();
-      var menu = requireCraftingMenu(player.containerMenu);
-      var placement = Objects.requireNonNull(activePlacement);
+      for (var ingredient : ingredientPlacements(craftingMenu(menu), menu)) {
+        carried = menu.getCarried();
+        if (carried.isEmpty()) {
+          break;
+        }
+        var target = menu.getSlot(ingredient.targetSlot()).getItem();
+        if (ingredient.matches(target)) {
+          continue;
+        }
+        if (!target.isEmpty()) {
+          throw Status.FAILED_PRECONDITION
+            .withDescription(
+              "The crafting grid contains an item that does not match the recipe"
+            )
+            .asRuntimeException();
+        }
+        if (ingredient.matches(carried)) {
+          handleContainerInput(
+            menu,
+            ingredient.targetSlot(),
+            1,
+            ContainerInput.PICKUP,
+            player
+          );
+        }
+      }
+
       if (!menu.getCarried().isEmpty()) {
         handleContainerInput(
           menu,
@@ -438,8 +446,66 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
           player
         );
       }
-      activePlacement = null;
-      transition(Stage.PICKUP_INGREDIENT, "Placing recipe ingredients");
+      if (!menu.getCarried().isEmpty()) {
+        throw Status.ABORTED
+          .withDescription(
+            "The recipe ingredient transaction left an item on the inventory cursor"
+          )
+          .asRuntimeException();
+      }
+
+      syncStateId = menu.getStateId();
+      syncStableTicks = 0;
+      transition(
+        Stage.WAIT_FOR_INGREDIENT_SYNC,
+        "Synchronizing recipe ingredients"
+      );
+    }
+
+    private void waitForIngredientSync() {
+      var player = requirePlayer();
+      var menu = requireCraftingMenu(player.containerMenu);
+      var stateId = menu.getStateId();
+      if (stateId != syncStateId) {
+        syncStateId = stateId;
+        syncStableTicks = 0;
+      } else {
+        syncStableTicks++;
+      }
+
+      if (syncStableTicks >= INVENTORY_SYNC_TICKS) {
+        var carried = menu.getCarried();
+        if (!carried.isEmpty()) {
+          var target = SFInventoryHelpers.playerInventorySlots(menu)
+            .filter(slot -> canDeposit(menu, slot, carried))
+            .findFirst()
+            .orElseThrow(() -> Status.RESOURCE_EXHAUSTED
+              .withDescription(
+                "Inventory has no room to clear the crafting cursor"
+              )
+              .asRuntimeException()
+            );
+          handleContainerInput(
+            menu,
+            target,
+            0,
+            ContainerInput.PICKUP,
+            player
+          );
+          syncStateId = menu.getStateId();
+          syncStableTicks = 0;
+        } else {
+          transition(Stage.PLACE_INGREDIENTS, "Placing recipe ingredients");
+          return;
+        }
+      }
+
+      stageTicks++;
+      if (stageTicks > MENU_TIMEOUT_TICKS) {
+        throw Status.DEADLINE_EXCEEDED
+          .withDescription("Timed out synchronizing recipe ingredients")
+          .asRuntimeException();
+      }
     }
 
     private void waitForResult() {
@@ -764,9 +830,8 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
     NAVIGATE,
     OPEN_MENU,
     CLEAR_GRID,
-    PICKUP_INGREDIENT,
-    PLACE_INGREDIENT,
-    RETURN_INGREDIENT,
+    PLACE_INGREDIENTS,
+    WAIT_FOR_INGREDIENT_SYNC,
     WAIT_FOR_RESULT,
     TAKE_RESULT,
     DEPOSIT_RESULT

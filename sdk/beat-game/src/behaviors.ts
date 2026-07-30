@@ -133,32 +133,45 @@ export function collectNearbyDrops(
     if (settleDelayMs > 0) {
       yield* Effect.sleep(settleDelayMs);
     }
-    const observation = yield* driver.observe;
-    const drops = yield* driver.queryEntities({
-      origin: observation.player.position,
-      radius: positiveFiniteNumber(options.radius ?? 8, "radius"),
-      selector: {
-        entityTypes: ["minecraft:item"],
-        alive: true,
-      },
-      maximumResults: positiveInteger(
-        options.maximumDrops ?? 16,
-        "maximumDrops",
-      ),
-    });
-    for (const drop of drops) {
-      if (
-        drop.entityType !== "minecraft:item"
-        || !drop.alive
-        || drop.itemId === undefined
-      ) {
-        continue;
+    const radius = positiveFiniteNumber(options.radius ?? 8, "radius");
+    const maximumDrops = positiveInteger(
+      options.maximumDrops ?? 16,
+      "maximumDrops",
+    );
+    const requestedPath = mergePathPolicy(options.path);
+    const pickupPath = {
+      ...requestedPath,
+      maxSearchTimeMs: Math.min(requestedPath.maxSearchTimeMs, 5_000),
+    };
+    for (let pass = 0; pass < 2; pass += 1) {
+      if (pass > 0) {
+        yield* Effect.sleep(100);
       }
-      yield* driver.pathfind(
-        drop.position,
-        1.5,
-        mergePathPolicy(options.path),
-      ).pipe(Effect.catchAll(() => Effect.void));
+      const observation = yield* driver.observe;
+      const drops = yield* driver.queryEntities({
+        origin: observation.player.position,
+        radius,
+        selector: {
+          entityTypes: ["minecraft:item"],
+          alive: true,
+        },
+        maximumResults: maximumDrops,
+      });
+      const collectibleDrops = drops.filter((drop) =>
+        drop.entityType === "minecraft:item"
+        && drop.alive
+        && drop.itemId !== undefined
+      );
+      if (collectibleDrops.length === 0) {
+        return;
+      }
+      for (const drop of collectibleDrops) {
+        yield* driver.pathfind(
+          drop.position,
+          0,
+          pickupPath,
+        ).pipe(Effect.catchAll(() => Effect.void));
+      }
     }
   }));
 }

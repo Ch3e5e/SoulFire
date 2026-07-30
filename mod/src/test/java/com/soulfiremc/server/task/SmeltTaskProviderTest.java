@@ -42,15 +42,27 @@ final class SmeltTaskProviderTest {
   void loadsEnoughFuelForTheWholeBatch() {
     assertEquals(
       1,
-      SmeltTaskProvider.additionalFuelItems(8, 200, 0, 1_600)
+      SmeltTaskProvider.additionalFuelItems(8, 200, 0, 0, 1_600)
     );
     assertEquals(
       2,
-      SmeltTaskProvider.additionalFuelItems(9, 200, 0, 1_600)
+      SmeltTaskProvider.additionalFuelItems(9, 200, 0, 0, 1_600)
     );
     assertEquals(
       0,
-      SmeltTaskProvider.additionalFuelItems(8, 200, 1, 1_600)
+      SmeltTaskProvider.additionalFuelItems(8, 200, 0, 1, 1_600)
+    );
+  }
+
+  @Test
+  void consumesResidualBurnTimeBeforeQueuingMoreFuel() {
+    assertEquals(
+      0,
+      SmeltTaskProvider.additionalFuelItems(7, 200, 1_400, 0, 300)
+    );
+    assertEquals(
+      1,
+      SmeltTaskProvider.additionalFuelItems(8, 200, 1_399, 0, 300)
     );
   }
 }

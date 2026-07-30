@@ -21,6 +21,41 @@ describe("beat-game planner", () => {
     });
   });
 
+  it("acquires emergency food instead of retreating without regeneration", () => {
+    const decision = decideBeatGameAction({
+      checkpoint: checkpoint(BeatGamePhase.PREPARE_OVERWORLD),
+      observation: observation({
+        food: 17,
+        health: 12,
+      }),
+      strategy: defaultBeatGameStrategy,
+    });
+
+    expect(decision).toMatchObject({
+      type: "satisfy-requirement",
+      action: "satisfy:food",
+      requirement: { key: "food" },
+    });
+  });
+
+  it("cooks raw food before trying to recover at low health", () => {
+    const decision = decideBeatGameAction({
+      checkpoint: checkpoint(BeatGamePhase.PREPARE_OVERWORLD),
+      observation: observation({
+        counts: { "minecraft:porkchop": 3 },
+        food: 17,
+        health: 12,
+      }),
+      strategy: defaultBeatGameStrategy,
+    });
+
+    expect(decision).toMatchObject({
+      type: "satisfy-requirement",
+      action: "satisfy:food",
+      requirement: { key: "food" },
+    });
+  });
+
   it("advances only after a fresh observation satisfies preparation", () => {
     const base = checkpoint(BeatGamePhase.PREPARE_OVERWORLD);
     const decision = decideBeatGameAction({

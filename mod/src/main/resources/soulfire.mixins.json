@@ -62,6 +62,7 @@
     "headless.sound.MixinSoundEngine",
     "headless.sound.MixinSoundEngineExecutor",
     "headless.sound.MixinSoundManager",
+    "soulfire.AbstractFurnaceMenuAccessor",
     "soulfire.ClientRecipeBookAccessor",
     "soulfire.BlockStatePredictionHandlerAccessor",
     "soulfire.ClientLevelAccessor",

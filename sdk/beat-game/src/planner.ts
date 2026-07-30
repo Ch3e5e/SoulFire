@@ -6,7 +6,9 @@ import {
   type BeatGamePlannerState,
   type BeatGameStrategy,
 } from "./model.js";
-import { requirementsForPhase } from "./requirements.js";
+import {
+  requirementsForPhase,
+} from "./requirements.js";
 
 export type BeatGamePlannerDecision =
   | {
@@ -89,14 +91,22 @@ export function decideBeatGameAction(
   ) {
     return { type: "eat", action: "eat" };
   }
-  if (observation.player.health < strategy.minimumHealth) {
-    return { type: "retreat", action: "retreat" };
-  }
   const requirements = requirementsForPhase(
     phase,
     observation.inventory,
     strategy,
   );
+  if (observation.player.health < strategy.minimumHealth) {
+    const food = requirements.find(({ key }) => key === "food");
+    if (
+      !hasFood(observation, strategy)
+      && food !== undefined
+      && !food.satisfied
+    ) {
+      return requirementDecision(food);
+    }
+    return { type: "retreat", action: "retreat" };
+  }
   const missing = requirements.find(({ satisfied }) => !satisfied);
   switch (phase) {
     case BeatGamePhase.PREPARE_OVERWORLD:

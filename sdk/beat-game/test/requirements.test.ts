@@ -60,9 +60,9 @@ describe("beat-game requirements", () => {
       "food",
       "iron",
       "pickaxe",
+      "shield",
       "water-bucket",
       "ignition",
-      "shield",
     ]);
   });
 

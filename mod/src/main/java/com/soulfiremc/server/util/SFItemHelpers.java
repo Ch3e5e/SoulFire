@@ -40,9 +40,15 @@ public final class SFItemHelpers {
     return itemStack.getComponents().get(DataComponents.TOOL) != null;
   }
 
+  public static boolean isEdibleFood(ItemStack itemStack) {
+    var components = itemStack.getComponents();
+    return components.get(DataComponents.FOOD) != null
+      && components.get(DataComponents.CONSUMABLE) != null;
+  }
+
   public static boolean isGoodEdibleFood(ItemStack itemStack) {
     var components = itemStack.getComponents();
-    if (components.get(DataComponents.FOOD) == null) {
+    if (!isEdibleFood(itemStack)) {
       return false;
     }
     return Optional.ofNullable(components.get(DataComponents.CONSUMABLE)).map(f -> {

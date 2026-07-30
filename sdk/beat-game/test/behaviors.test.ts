@@ -272,7 +272,7 @@ describe("beat-game behavior programs", () => {
       settleDelayMs: 0,
     }));
 
-    expect(driver.entityQueries).toEqual([{
+    expect(driver.entityQueries).toEqual(Array.from({ length: 2 }, () => ({
       origin: position,
       radius: 8,
       selector: {
@@ -280,11 +280,13 @@ describe("beat-game behavior programs", () => {
         alive: true,
       },
       maximumResults: 16,
-    }]);
-    expect(driver.paths).toEqual([expect.objectContaining({
+    })));
+    expect(driver.paths).toEqual(Array.from({ length: 2 }, () =>
+      expect.objectContaining({
       position: driver.entityResults[0]?.position,
-      radius: 1.5,
-    })]);
+      radius: 0,
+      policy: expect.objectContaining({ maxSearchTimeMs: 5_000 }),
+    })));
     expect(driver.maximumActiveControlScopes).toBe(1);
   });
 

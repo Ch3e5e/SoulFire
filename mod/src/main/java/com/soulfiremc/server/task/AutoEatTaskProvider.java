@@ -37,6 +37,7 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.inventory.InventoryMenu;
+import net.minecraft.world.item.ItemStack;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.ArrayList;
@@ -186,9 +187,7 @@ public final class AutoEatTaskProvider
       var slot = SFInventoryHelpers.findMatchingSlotForAction(
         player.getInventory(),
         menu,
-        stack -> SFItemHelpers.isGoodEdibleFood(stack)
-          && (foodItemIds.isEmpty()
-          || foodItemIds.contains(stack.typeHolder().getRegisteredName()))
+        stack -> isPermittedFood(stack, foodItemIds)
       );
       if (slot.isEmpty()) {
         if (completeWhenNoFood) {
@@ -280,6 +279,29 @@ public final class AutoEatTaskProvider
     public String description() {
       return "Auto eat";
     }
+  }
+
+  static boolean isPermittedFood(
+    ItemStack stack,
+    Set<String> foodItemIds
+  ) {
+    return isPermittedFood(
+      SFItemHelpers.isEdibleFood(stack),
+      SFItemHelpers.isGoodEdibleFood(stack),
+      stack.typeHolder().getRegisteredName(),
+      foodItemIds
+    );
+  }
+
+  static boolean isPermittedFood(
+    boolean edible,
+    boolean safeEdible,
+    String itemId,
+    Set<String> foodItemIds
+  ) {
+    return foodItemIds.isEmpty()
+      ? safeEdible
+      : edible && foodItemIds.contains(itemId);
   }
 
   private static ControlTask createMeal(

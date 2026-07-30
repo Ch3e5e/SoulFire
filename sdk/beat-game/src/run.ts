@@ -53,7 +53,9 @@ import {
   type BeatGameError,
 } from "./errors.js";
 import {
+  distanceSquared,
   NETHER_PORTAL_FRAME_OBSIDIAN_COUNT,
+  rotationToward,
   triangulateStronghold,
 } from "./geometry.js";
 import {
@@ -94,6 +96,8 @@ import type {
   BeatGameStrategyHooks,
 } from "./policy.js";
 import {
+  COOKED_FOOD_ITEM_IDS,
+  EDIBLE_FOOD_ITEM_IDS,
   LOG_ITEM_IDS,
   PLANK_ITEM_IDS,
   RAW_FOOD_TO_COOKED,
@@ -145,6 +149,63 @@ const DANGEROUS_NEUTRAL_ENTITY_TYPES = [
   "minecraft:trader_llama",
   "minecraft:wolf",
 ] as const;
+const PROACTIVE_MELEE_HOSTILE_ENTITY_TYPES = new Set([
+  "minecraft:blaze",
+  "minecraft:bogged",
+  "minecraft:breeze",
+  "minecraft:cave_spider",
+  "minecraft:drowned",
+  "minecraft:elder_guardian",
+  "minecraft:endermite",
+  "minecraft:evoker",
+  "minecraft:guardian",
+  "minecraft:hoglin",
+  "minecraft:husk",
+  "minecraft:magma_cube",
+  "minecraft:phantom",
+  "minecraft:piglin_brute",
+  "minecraft:pillager",
+  "minecraft:ravager",
+  "minecraft:shulker",
+  "minecraft:silverfish",
+  "minecraft:slime",
+  "minecraft:spider",
+  "minecraft:stray",
+  "minecraft:vex",
+  "minecraft:vindicator",
+  "minecraft:witch",
+  "minecraft:wither_skeleton",
+  "minecraft:zoglin",
+  "minecraft:zombie",
+  "minecraft:zombie_villager",
+]);
+const SHIELD_BLOCKING_HOSTILE_ENTITY_TYPES = new Set([
+  "minecraft:bogged",
+  "minecraft:drowned",
+  "minecraft:pillager",
+  "minecraft:skeleton",
+  "minecraft:stray",
+]);
+const ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES = new Set([
+  "minecraft:creeper",
+  "minecraft:enderman",
+]);
+const MELEE_WEAPON_ITEM_IDS = [
+  "minecraft:wooden_sword",
+  "minecraft:stone_sword",
+  "minecraft:iron_sword",
+  "minecraft:golden_sword",
+  "minecraft:diamond_sword",
+  "minecraft:netherite_sword",
+  "minecraft:wooden_axe",
+  "minecraft:stone_axe",
+  "minecraft:iron_axe",
+  "minecraft:golden_axe",
+  "minecraft:diamond_axe",
+  "minecraft:netherite_axe",
+] as const;
+const DEFAULT_COMBAT_RETREAT_HEALTH = 12;
+const MINIMUM_SAFE_AIR_TICKS = 200;
 
 export interface BeatGameRun {
   readonly id: string;
@@ -180,7 +241,7 @@ interface RunState {
   readonly hooks: BeatGameStrategyHooks;
   readonly checkpoint: Ref.Ref<BeatGameCheckpoint>;
   readonly observation: Ref.Ref<BeatGameObservation>;
-  readonly pendingDeath: Ref.Ref<PendingDeath | undefined>;
+  readonly pendingDeaths: Ref.Ref<readonly PendingDeath[]>;
   readonly paused: Ref.Ref<boolean>;
   readonly stopped: Deferred.Deferred<void>;
   readonly checkpointMutex: Effect.Semaphore;
@@ -203,6 +264,14 @@ interface ActionResult {
   ) => BeatGameCheckpoint;
   readonly phase?: BeatGamePhase;
   readonly replanReason?: string;
+  readonly defenseTarget?: BeatGameEntityObservation;
+  readonly escapeTarget?: BeatGameEntityObservation;
+  readonly airEscapePosition?: BeatGamePosition;
+}
+
+interface ImmediateThreat {
+  readonly target: BeatGameEntityObservation;
+  readonly response: "attack" | "flee";
 }
 
 export function beatGame(
@@ -285,7 +354,7 @@ export function beatGameWithDriver(
     const stored = restored ?? (yield* store.save(initial, undefined));
     const checkpointRef = yield* Ref.make(stored);
     const observationRef = yield* Ref.make(observation);
-    const pendingDeath = yield* Ref.make<PendingDeath | undefined>(undefined);
+    const pendingDeaths = yield* Ref.make<readonly PendingDeath[]>([]);
     const paused = yield* Ref.make(false);
     const stopped = yield* Deferred.make<void>();
     const checkpointMutex = yield* Effect.makeSemaphore(1);
@@ -301,7 +370,7 @@ export function beatGameWithDriver(
       hooks: options.hooks ?? {},
       checkpoint: checkpointRef,
       observation: observationRef,
-      pendingDeath,
+      pendingDeaths,
       paused,
       stopped,
       checkpointMutex,
@@ -713,7 +782,7 @@ function runDecisionWithRetry(
         yield* advancePhase(state, result.phase);
       }
       if (decision.type === "recover-death") {
-        yield* Ref.set(state.pendingDeath, undefined);
+        yield* completePendingDeath(state, observation.observedAt);
       }
       const latestObservation = yield* Ref.get(state.observation);
       yield* persist(state, (checkpoint) => {
@@ -773,15 +842,23 @@ function executeDecision(
     observation,
     actionCheckpoint,
   );
-  const execute = (() => {
+  const execute: Effect.Effect<
+    ActionResult,
+    unknown
+  > = (() => {
     switch (decision.type) {
       case "recover-death": {
+        const pendingDeath: PendingDeath = {
+          observedAt: observation.observedAt,
+          position: observation.player.position,
+        };
         const recovery = state.hooks.recoverDeath?.(policyContext)
           ?? respawnAndRecover(state.driver, {
             deathPosition: observation.player.position,
             path: state.strategy.path,
           });
-        return Effect.all([
+        return enqueuePendingDeath(state, pendingDeath).pipe(
+          Effect.zipRight(Effect.all([
           emit(state, {
             type: "death-observed",
             detail: positionKey(observation.player.position),
@@ -797,7 +874,7 @@ function executeDecision(
               confidence: 1,
             },
           ),
-        ], { discard: true }).pipe(
+          ], { discard: true })),
           Effect.zipRight(recovery),
           Effect.tap(() =>
             emit(state, {
@@ -1098,8 +1175,29 @@ function executeDecision(
   })();
   return Effect.raceFirst(
     execute,
-    monitorActionSafety(state, decision),
+    monitorActionSafety(state, decision, observation),
   ).pipe(
+    Effect.flatMap((result) => {
+      const response = result.airEscapePosition !== undefined
+        ? emergencyAirAscent(state, result.airEscapePosition)
+        : result.escapeTarget !== undefined
+        ? escapeFromTarget(state, result.escapeTarget)
+        : result.defenseTarget !== undefined
+        ? defendAgainstTarget(state, result.defenseTarget)
+        : Effect.void;
+      const interruptedForSafety =
+        result.airEscapePosition !== undefined
+        || result.escapeTarget !== undefined
+        || result.defenseTarget !== undefined;
+      return response.pipe(
+        Effect.catchTag("BeatGameDriverError", () => Effect.void),
+        Effect.flatMap(() =>
+          decision.type === "recover-death" && interruptedForSafety
+            ? execute
+            : Effect.succeed(result)
+        ),
+      );
+    }),
     Effect.mapError((error) =>
       error instanceof BeatGameDriverError
         ? error.operation === "pathfind"
@@ -1130,8 +1228,11 @@ function monitorActionSafety(
     BeatGamePlannerDecision,
     { readonly type: "advance-phase" }
   >,
-): Effect.Effect<ActionResult, BeatGameError> {
-  const monitor = (): Effect.Effect<ActionResult, BeatGameError> =>
+  actionObservation: BeatGameObservation,
+): Effect.Effect<ActionResult, BeatGameError | BeatGameDriverError> {
+  const monitor = (
+    previousObservation: BeatGameObservation,
+  ): Effect.Effect<ActionResult, BeatGameError | BeatGameDriverError> =>
     Effect.sleep(Math.max(100, state.strategy.observationPollMs)).pipe(
       Effect.zipRight(Ref.get(state.paused)),
       Effect.flatMap((paused) =>
@@ -1139,8 +1240,17 @@ function monitorActionSafety(
           ? Effect.succeed({
             replanReason: "run paused",
           } satisfies ActionResult)
-          : observeFresh(state).pipe(
-            Effect.flatMap((observation) => {
+          : Ref.get(state.pendingDeaths).pipe(
+            Effect.flatMap((pendingDeath) =>
+              decision.type === "recover-death"
+                && pendingDeath.at(-1) !== undefined
+                && pendingDeath.at(-1)?.observedAt
+                  !== actionObservation.observedAt
+                ? Effect.succeed({
+                  replanReason: "bot died again during recovery",
+                } satisfies ActionResult)
+                : observeDriverFresh(state).pipe(
+                  Effect.flatMap((observation) => {
               if (
                 decision.type !== "recover-death"
                 && observation.player.dead
@@ -1150,50 +1260,504 @@ function monitorActionSafety(
                 } satisfies ActionResult);
               }
               if (
-                decision.type !== "recover-death"
-                && decision.type !== "retreat"
-                && observation.player.health < state.strategy.minimumHealth
+                decision.type !== "retreat"
+                && decision.type !== "fight-ender-dragon"
+                && !observation.player.dead
               ) {
-                return Effect.succeed({
-                  replanReason: "health fell below the safety threshold",
-                } satisfies ActionResult);
+                return findImmediateThreat(state, observation).pipe(
+                  Effect.flatMap((threat) =>
+                    threat === undefined
+                      ? monitorObservedSafety(
+                        state,
+                        decision,
+                        previousObservation,
+                        observation,
+                        monitor,
+                      )
+                      : Effect.succeed({
+                        replanReason: threat.response === "flee"
+                          ? "interrupted an action to evade an immediate threat"
+                          : "interrupted an action to preempt a nearby hostile",
+                        ...(threat.response === "flee"
+                          ? { escapeTarget: threat.target }
+                          : { defenseTarget: threat.target }),
+                      } satisfies ActionResult)
+                  ),
+                );
               }
-              if (
-                decision.type !== "recover-death"
-                && decision.type !== "eat"
-                && observation.player.food <= state.strategy.eatBelowFood
-                && hasUsableFood(observation)
-              ) {
-                return Effect.succeed({
-                  replanReason: "hunger fell below the eating threshold",
-                } satisfies ActionResult);
-              }
-              return Effect.suspend(monitor);
-            }),
+              return monitorObservedSafety(
+                state,
+                decision,
+                previousObservation,
+                observation,
+                monitor,
+              );
+                  }),
+                )
+            ),
           )
       ),
     );
-  return Effect.suspend(monitor);
+  return Effect.suspend(() => monitor(actionObservation));
+}
+
+function monitorObservedSafety(
+  state: RunState,
+  decision: Exclude<
+    BeatGamePlannerDecision,
+    { readonly type: "advance-phase" }
+  >,
+  previousObservation: BeatGameObservation,
+  observation: BeatGameObservation,
+  monitor: (
+    previousObservation: BeatGameObservation,
+  ) => Effect.Effect<ActionResult, BeatGameError | BeatGameDriverError>,
+): Effect.Effect<ActionResult, BeatGameError | BeatGameDriverError> {
+  if (
+    !observation.player.dead
+    && hasUnsafeAir(observation)
+  ) {
+    return Effect.succeed({
+      replanReason: "air fell below the safety threshold",
+      airEscapePosition: observation.player.position,
+    } satisfies ActionResult);
+  }
+  if (
+    decision.type !== "retreat"
+    && decision.type !== "fight-ender-dragon"
+    && observation.player.health < previousObservation.player.health
+  ) {
+    return findNearbyAttackThreat(state, observation).pipe(
+      Effect.flatMap((target) => {
+        if (target === undefined) {
+          return Effect.suspend(() => monitor(observation));
+        }
+        const shouldEscape =
+          ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(target.entityType);
+        return Effect.succeed({
+          replanReason: shouldEscape
+            ? "interrupted an action to escape a dangerous attacker"
+            : "interrupted an action to defend against an attacker",
+          ...(shouldEscape
+            ? { escapeTarget: target }
+            : { defenseTarget: target }),
+        } satisfies ActionResult);
+      }),
+    );
+  }
+  if (
+    decision.type !== "recover-death"
+    && decision.type !== "retreat"
+    && observation.player.health < state.strategy.minimumHealth
+    && !(
+      decision.type === "satisfy-requirement"
+      && decision.requirement.key === "food"
+      && !hasRecoveryFood(observation)
+    )
+  ) {
+    return Effect.succeed({
+      replanReason: "health fell below the safety threshold",
+    } satisfies ActionResult);
+  }
+  if (
+    decision.type !== "recover-death"
+    && decision.type !== "eat"
+    && observation.player.food <= state.strategy.eatBelowFood
+    && hasUsableFood(observation)
+  ) {
+    return Effect.succeed({
+      replanReason: "hunger fell below the eating threshold",
+    } satisfies ActionResult);
+  }
+  return Effect.suspend(() => monitor(observation));
+}
+
+function findImmediateThreat(
+  state: RunState,
+  observation: BeatGameObservation,
+): Effect.Effect<ImmediateThreat | undefined, BeatGameDriverError> {
+  return state.driver.queryEntities({
+    origin: observation.player.position,
+    radius: 24,
+    selector: {
+      categories: [2],
+      alive: true,
+    },
+    maximumResults: 32,
+  }).pipe(
+    Effect.map((hostiles) => {
+      const candidates = hostiles
+        .map((target) => ({
+          target,
+          distanceSquared: distanceSquared(
+            observation.player.position,
+            target.position,
+          ),
+        }))
+        .sort((left, right) => left.distanceSquared - right.distanceSquared);
+      const explosive = candidates.find(({ target, distanceSquared }) =>
+        target.entityType === "minecraft:creeper" && distanceSquared <= 576
+      );
+      if (explosive !== undefined) {
+        return { target: explosive.target, response: "flee" };
+      }
+      const ranged = candidates.find(({ target, distanceSquared }) =>
+        SHIELD_BLOCKING_HOSTILE_ENTITY_TYPES.has(target.entityType)
+        && distanceSquared <= 144
+      );
+      if (ranged !== undefined) {
+        return { target: ranged.target, response: "attack" };
+      }
+      const melee = candidates.find(({ target, distanceSquared }) =>
+        PROACTIVE_MELEE_HOSTILE_ENTITY_TYPES.has(target.entityType)
+        && distanceSquared <= 16
+      );
+      return melee === undefined
+        ? undefined
+        : {
+          target: melee.target,
+          response: "attack",
+        };
+    }),
+  );
+}
+
+function escapeFromTarget(
+  state: RunState,
+  target: BeatGameEntityObservation,
+): Effect.Effect<void, BeatGameDriverError> {
+  const escapePath = {
+    ...state.strategy.path,
+    maxSearchTimeMs: Math.min(
+      state.strategy.path.maxSearchTimeMs,
+      3_000,
+    ),
+  };
+  const escape = state.driver.observe.pipe(
+    Effect.flatMap((observation) =>
+      observation.player.dead
+        ? Effect.void
+        : isDeepOverworld(observation.player.position)
+        ? state.driver.pathfind(
+          surfaceEscapeTarget(
+            observation.player.position,
+            target.position,
+          ),
+          17,
+          {
+            ...escapePath,
+            allowMining: true,
+            allowPlacing: true,
+          },
+        )
+        : flee(state.driver, {
+          selector: {
+            categories: [2],
+            alive: true,
+          },
+          triggerRadius: 24,
+          safeDistance: 36,
+          completeWhenSafe: true,
+          maximumEscapes: 4,
+          path: escapePath,
+        })
+    ),
+  );
+  return Effect.raceFirst(
+    escape.pipe(Effect.as("escaped" as const)),
+    waitForUnsafeAir(state),
+  ).pipe(
+    Effect.flatMap((outcome) =>
+      outcome === "unsafe-air"
+        ? state.driver.observe.pipe(
+          Effect.flatMap((observation) =>
+            emergencyAirAscent(state, observation.player.position)
+          ),
+        )
+        : Effect.void
+    ),
+  );
+}
+
+function surfaceEscapeTarget(
+  player: BeatGamePosition,
+  threat: BeatGamePosition,
+): BeatGamePosition {
+  const deltaX = player.x - threat.x;
+  const deltaZ = player.z - threat.z;
+  const horizontalDistance = Math.hypot(deltaX, deltaZ);
+  const directionX = horizontalDistance > 0.001
+    ? deltaX / horizontalDistance
+    : 1;
+  const directionZ = horizontalDistance > 0.001
+    ? deltaZ / horizontalDistance
+    : 0;
+  return {
+    x: player.x + directionX * 24,
+    y: 80,
+    z: player.z + directionZ * 24,
+    dimension: player.dimension,
+  };
 }
 
 function hasUsableFood(observation: BeatGameObservation): boolean {
-  return [
-    "minecraft:cooked_beef",
-    "minecraft:cooked_porkchop",
-    "minecraft:cooked_mutton",
-    "minecraft:cooked_chicken",
-    "minecraft:cooked_rabbit",
-    "minecraft:bread",
-    "minecraft:beef",
-    "minecraft:porkchop",
-    "minecraft:mutton",
-    "minecraft:chicken",
-    "minecraft:rabbit",
-    "minecraft:carrot",
-    "minecraft:baked_potato",
-    "minecraft:potato",
-    "minecraft:apple",
-  ].some((itemId) => (observation.inventory.counts[itemId] ?? 0) > 0);
+  return EDIBLE_FOOD_ITEM_IDS.some((itemId) =>
+    (observation.inventory.counts[itemId] ?? 0) > 0
+  );
+}
+
+function hasRecoveryFood(observation: BeatGameObservation): boolean {
+  return COOKED_FOOD_ITEM_IDS.some((itemId) =>
+    (observation.inventory.counts[itemId] ?? 0) > 0
+  );
+}
+
+function hasUnsafeAir(observation: BeatGameObservation): boolean {
+  return observation.player.maxAir > 0
+    && observation.player.air
+      <= Math.min(MINIMUM_SAFE_AIR_TICKS, observation.player.maxAir * 2 / 3);
+}
+
+function waitForUnsafeAir(
+  state: RunState,
+): Effect.Effect<"dead" | "unsafe-air", BeatGameDriverError> {
+  const poll = (): Effect.Effect<
+    "dead" | "unsafe-air",
+    BeatGameDriverError
+  > =>
+    Effect.sleep(Math.max(100, state.strategy.observationPollMs)).pipe(
+      Effect.zipRight(state.driver.observe),
+      Effect.flatMap((observation) =>
+        observation.player.dead
+          ? Effect.succeed("dead" as const)
+          : hasUnsafeAir(observation)
+          ? Effect.succeed("unsafe-air" as const)
+          : Effect.suspend(poll)
+      ),
+    );
+  return Effect.suspend(poll);
+}
+
+function emergencyAirAscent(
+  state: RunState,
+  position: BeatGamePosition,
+): Effect.Effect<void, BeatGameDriverError> {
+  return state.driver.observe.pipe(
+    Effect.flatMap((observation) =>
+      observation.player.dead
+        ? Effect.void
+        : state.driver.withControl(
+          state.driver.act({
+            type: "look",
+            yaw: observation.player.rotation.yaw,
+            pitch: -90,
+          }).pipe(
+            Effect.zipRight(state.driver.act({
+              type: "set-movement",
+              forward: true,
+              jump: true,
+              sprint: true,
+            })),
+            Effect.zipRight(waitForAirRecovery(state, 30)),
+            Effect.ensuring(
+              state.driver.act({ type: "reset-movement" }).pipe(Effect.ignore),
+            ),
+          ),
+        ).pipe(
+          Effect.flatMap((recovered) =>
+            recovered
+              ? Effect.void
+              : returnToOverworldSurface(state, position)
+          ),
+        )
+    ),
+  );
+}
+
+function waitForAirRecovery(
+  state: RunState,
+  attemptsRemaining: number,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  return Effect.sleep(100).pipe(
+    Effect.zipRight(state.driver.observe),
+    Effect.flatMap((observation) =>
+      observation.player.dead
+        ? Effect.succeed(true)
+        : !hasUnsafeAir(observation)
+        ? Effect.succeed(true)
+        : attemptsRemaining <= 1
+        ? Effect.succeed(false)
+        : waitForAirRecovery(state, attemptsRemaining - 1)
+    ),
+  );
+}
+
+function findNearbyAttackThreat(
+  state: RunState,
+  observation: BeatGameObservation,
+): Effect.Effect<
+  BeatGameEntityObservation | undefined,
+  BeatGameDriverError
+> {
+  const radius = 16;
+  return Effect.all([
+    state.driver.queryEntities({
+      origin: observation.player.position,
+      radius,
+      selector: {
+        categories: [2],
+        alive: true,
+      },
+      maximumResults: 8,
+    }),
+    state.driver.queryEntities({
+      origin: observation.player.position,
+      radius,
+      selector: {
+        entityTypes: DANGEROUS_NEUTRAL_ENTITY_TYPES,
+        alive: true,
+      },
+      maximumResults: 8,
+    }),
+  ]).pipe(
+    Effect.map(([hostiles, dangerousNeutralMobs]) => {
+      const threats = new Map(
+        [...hostiles, ...dangerousNeutralMobs].map((entity) => [
+          `${entity.connectionEpoch}:${entity.networkId}`,
+          entity,
+        ]),
+      );
+      const nearest = [...threats.values()].reduce(
+        (closest, candidate) =>
+            closest === undefined
+            || distanceSquared(
+                observation.player.position,
+                candidate.position,
+              ) < distanceSquared(
+                observation.player.position,
+                closest.position,
+              )
+          ? candidate
+          : closest,
+        undefined as BeatGameEntityObservation | undefined,
+      );
+      return nearest;
+    }),
+  );
+}
+
+function defendAgainstTarget(
+  state: RunState,
+  target: BeatGameEntityObservation,
+): Effect.Effect<void, BeatGameDriverError> {
+  const attack = attackEntity(state.driver, {
+    target,
+    sprinting: true,
+    targetUnavailableTimeoutSeconds: 1,
+    selectBestWeapon: true,
+    path: {
+      ...state.strategy.path,
+      maxSearchTimeMs: Math.min(
+        state.strategy.path.maxSearchTimeMs,
+        3_000,
+      ),
+    },
+  });
+  return state.driver.observe.pipe(
+    Effect.flatMap((observation) => {
+      const canBlockWithShield =
+        SHIELD_BLOCKING_HOSTILE_ENTITY_TYPES.has(target.entityType)
+        && (observation.inventory.counts["minecraft:shield"] ?? 0) > 0;
+      const hasMeleeWeapon = MELEE_WEAPON_ITEM_IDS.some((itemId) =>
+        (observation.inventory.counts[itemId] ?? 0) > 0
+      );
+      const isDistantRangedThreat =
+        SHIELD_BLOCKING_HOSTILE_ENTITY_TYPES.has(target.entityType)
+        && distanceSquared(observation.player.position, target.position) > 16;
+      const prepareShield = canBlockWithShield
+        ? state.driver.withControl(Effect.gen(function* () {
+          if (
+            observation.player.equipment.offhand !== "minecraft:shield"
+          ) {
+            yield* state.driver.act({
+              type: "equip-item",
+              selector: { itemIds: ["minecraft:shield"] },
+              equipmentSlot: "offhand",
+            });
+          }
+          const rotation = rotationToward(
+            {
+              ...observation.player.position,
+              y: observation.player.position.y + 1.62,
+            },
+            {
+              ...target.position,
+              y: target.position.y + 1,
+            },
+          );
+          yield* state.driver.act({
+            type: "look",
+            yaw: rotation.yaw,
+            pitch: rotation.pitch,
+          });
+          yield* state.driver.act({ type: "use-item", hand: "off" });
+          yield* Effect.sleep(1_000);
+        }).pipe(
+          Effect.ensuring(
+            state.driver.act({ type: "release-item" }).pipe(Effect.ignore),
+          ),
+        ))
+        : Effect.void;
+      const retreatHealth = Math.min(
+        state.strategy.minimumHealth,
+        DEFAULT_COMBAT_RETREAT_HEALTH,
+      );
+      if (
+        observation.player.health <= retreatHealth
+        && !canBlockWithShield
+      ) {
+        return escapeFromTarget(state, target);
+      }
+      if (
+        isDistantRangedThreat
+        && !canBlockWithShield
+        && !hasMeleeWeapon
+      ) {
+        return escapeFromTarget(state, target);
+      }
+      return prepareShield.pipe(
+        Effect.zipRight(Effect.raceFirst(
+          attack.pipe(Effect.as(false)),
+          waitForUnsafeCombatHealth(state, retreatHealth).pipe(
+            Effect.as(true),
+          ),
+        )),
+        Effect.flatMap((shouldRetreat) =>
+          shouldRetreat
+            ? escapeFromTarget(state, target)
+            : Effect.void
+        ),
+      );
+    }),
+  );
+}
+
+function waitForUnsafeCombatHealth(
+  state: RunState,
+  retreatHealth: number,
+): Effect.Effect<void, BeatGameDriverError> {
+  const poll = (): Effect.Effect<void, BeatGameDriverError> =>
+    Effect.sleep(Math.max(100, state.strategy.observationPollMs)).pipe(
+      Effect.zipRight(state.driver.observe),
+      Effect.flatMap((observation) =>
+        observation.player.dead
+          || hasUnsafeAir(observation)
+          || observation.player.health <= retreatHealth
+          ? Effect.void
+          : Effect.suspend(poll)
+      ),
+    );
+  return Effect.suspend(poll);
 }
 
 function retreatAndRecover(
@@ -1246,6 +1810,44 @@ function retreatAndRecover(
         : Effect.void
     ),
   );
+  const defendAgainstNearbyHostiles = (
+    defensesRemaining: number,
+  ): Effect.Effect<void, BeatGameDriverError> =>
+    defensesRemaining === 0
+      ? Effect.void
+      : state.driver.observe.pipe(
+        Effect.flatMap((observation) =>
+          state.driver.queryEntities({
+            origin: observation.player.position,
+            radius: 24,
+            selector: {
+              categories: [2],
+              alive: true,
+            },
+            maximumResults: 16,
+          }).pipe(
+            Effect.map((hostiles) =>
+              [...hostiles].sort((left, right) =>
+                distanceSquared(observation.player.position, left.position)
+                - distanceSquared(observation.player.position, right.position)
+              )[0]
+            ),
+          )
+        ),
+        Effect.flatMap((target) =>
+          target === undefined
+            ? Effect.void
+            : (
+              ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(target.entityType)
+                ? escapeFromTarget(state, target)
+                : defendAgainstTarget(state, target)
+            ).pipe(
+              Effect.zipRight(
+                defendAgainstNearbyHostiles(defensesRemaining - 1),
+              ),
+            )
+        ),
+      );
   const waitForRecovery = (
     attemptsRemaining: number,
   ): Effect.Effect<void, BeatGameDriverError> =>
@@ -1259,19 +1861,9 @@ function retreatAndRecover(
             Effect.zipRight(waitForRecovery(attemptsRemaining - 1)),
           )
       ),
-    );
+  );
   return fleeFromNearbyNeutralThreat.pipe(
-    Effect.zipRight(flee(state.driver, {
-      selector: {
-        categories: [2],
-        alive: true,
-      },
-      triggerRadius: 16,
-      safeDistance: 28,
-      completeWhenSafe: true,
-      maximumEscapes: 2,
-      path: escapePath,
-    })),
+    Effect.zipRight(defendAgainstNearbyHostiles(8)),
     Effect.zipRight(eatAvailableFood),
     Effect.zipRight(waitForRecovery(20)),
   );
@@ -1546,7 +2138,11 @@ function satisfyFoodRequirement(
     (total, { count }) => total + count,
     0,
   );
-  if (rawFoodCount < missingCookedFood) {
+  if (rawFoodCount === 0) {
+    const maximumTargets =
+      observation.player.health < state.strategy.minimumHealth
+        ? 1
+        : bufferedCollectionCount("food", missingCookedFood);
     return huntOrExplore(
       state,
       observation,
@@ -1559,10 +2155,7 @@ function satisfyFoodRequirement(
         ],
         alive: true,
       },
-      bufferedCollectionCount(
-        "food",
-        missingCookedFood - rawFoodCount,
-      ),
+      maximumTargets,
       "find-food-animals",
     );
   }
@@ -1570,6 +2163,40 @@ function satisfyFoodRequirement(
   if (batch === undefined) {
     return Effect.void;
   }
+  if (observation.player.health < state.strategy.minimumHealth) {
+    return state.driver.queryBlocks({
+      center: observation.player.position,
+      radius: WORKSTATION_REUSE_RADIUS,
+      selector: { blockIds: ["minecraft:furnace"] },
+      maximumResults: 1,
+    }).pipe(
+      Effect.flatMap((furnaces) =>
+        furnaces.length > 0
+          || (observation.inventory.counts["minecraft:furnace"] ?? 0) > 0
+          ? cookRawFoodBatch(state, observation, batch, missingCookedFood)
+          : eatWhenNeeded(state.driver, {
+            foodItemIds: [batch.rawItemId],
+            foodLevel: Math.max(18, state.strategy.eatBelowFood),
+            maximumMeals: batch.count,
+            completeWhenNoFood: true,
+            path: state.strategy.path,
+          }).pipe(Effect.zipRight(retreatAndRecover(state)))
+      ),
+    );
+  }
+  return cookRawFoodBatch(state, observation, batch, missingCookedFood);
+}
+
+function cookRawFoodBatch(
+  state: RunState,
+  observation: BeatGameObservation,
+  batch: {
+    readonly rawItemId: string;
+    readonly cookedItemId: string;
+    readonly count: number;
+  },
+  missingCookedFood: number,
+): Effect.Effect<void, BeatGameError | BeatGameDriverError> {
   const batchCount = Math.min(
     batch.count,
     bufferedCollectionCount("food", missingCookedFood),
@@ -1738,7 +2365,7 @@ function collectBlocksOrExplore(
       yield* collectNearbyDrops(state.driver, {
         radius: 12,
         maximumDrops: 32,
-        settleDelayMs: 250,
+        settleDelayMs: 500,
         path: resourcePath,
       });
       current = yield* state.driver.observe;
@@ -1753,7 +2380,10 @@ function collectBlocksOrExplore(
       if (countItems(current) <= beforeAttempt) {
         yield* explore(state.driver, {
           origin: current.player.position,
-          radius: state.strategy.explorationRadius,
+          radius: discoveryHopRadius(
+            state,
+            state.strategy.blockSearchRadius,
+          ),
           maximumWaypoints: 1,
           purpose: explorationPurpose(
             options.purpose,
@@ -1793,7 +2423,10 @@ function fillLiquidBucket(
     if (source === undefined) {
       return yield* explore(state.driver, {
         origin: observation.player.position,
-        radius: state.strategy.explorationRadius,
+        radius: discoveryHopRadius(
+          state,
+          state.strategy.blockSearchRadius,
+        ),
         maximumWaypoints: 1,
         purpose: explorationPurpose(
           `find-${liquid}`,
@@ -1803,11 +2436,34 @@ function fillLiquidBucket(
       });
     }
     yield* state.driver.withControl(Effect.gen(function* () {
-      yield* state.driver.pathfind(source.position, 3, state.strategy.path);
+      yield* state.driver.pathfind(source.position, 2, state.strategy.path);
+      const current = yield* state.driver.observe;
+      const rotation = rotationToward(
+        {
+          ...current.player.position,
+          y: current.player.position.y + 1.62,
+        },
+        {
+          x: source.position.x + 0.5,
+          y: source.position.y + 0.5,
+          z: source.position.z + 0.5,
+        },
+      );
       yield* state.driver.act({
         type: "select-item",
         selector: { itemIds: ["minecraft:bucket"] },
       });
+      yield* state.driver.act({
+        type: "look",
+        yaw: rotation.yaw,
+        pitch: rotation.pitch,
+      });
+      yield* waitForViewRotation(
+        state.driver,
+        rotation.yaw,
+        rotation.pitch,
+        40,
+      );
       yield* state.driver.act({
         type: "interact-block",
         position: source.position,
@@ -1818,19 +2474,189 @@ function fillLiquidBucket(
   });
 }
 
+function waitForViewRotation(
+  driver: BeatGameDriver,
+  yaw: number,
+  pitch: number,
+  attempts: number,
+): Effect.Effect<void, BeatGameDriverError> {
+  return driver.observe.pipe(
+    Effect.flatMap((observation) => {
+      const rotation = observation.player.rotation;
+      if (
+        Math.abs(wrappedDegrees(rotation.yaw - yaw)) <= 4
+        && Math.abs(rotation.pitch - pitch) <= 4
+      ) {
+        return Effect.void;
+      }
+      if (attempts <= 1) {
+        return Effect.fail(new BeatGameDriverError({
+          operation: "wait-for-view-rotation",
+          retryable: true,
+          message: `The bot did not finish facing yaw ${yaw.toFixed(1)}, pitch ${
+            pitch.toFixed(1)
+          }`,
+        }));
+      }
+      return Effect.sleep(50).pipe(
+        Effect.zipRight(waitForViewRotation(
+          driver,
+          yaw,
+          pitch,
+          attempts - 1,
+        )),
+      );
+    }),
+  );
+}
+
+function wrappedDegrees(value: number): number {
+  return ((value + 180) % 360 + 360) % 360 - 180;
+}
+
 function ensureFlint(
   state: RunState,
   observation: BeatGameObservation,
 ): Effect.Effect<void, BeatGameDriverError> {
-  if ((observation.inventory.counts["minecraft:flint"] ?? 0) > 0) {
-    return Effect.void;
-  }
-  return collectBlocks(state.driver, {
-    blockIds: ["minecraft:gravel"],
-    count: 4,
-    searchRadius: state.strategy.blockSearchRadius,
-    path: state.strategy.path,
+  return Effect.gen(function* () {
+    let current = observation;
+    if ((current.inventory.counts["minecraft:flint"] ?? 0) > 0) {
+      return;
+    }
+    if ((current.inventory.counts["minecraft:gravel"] ?? 0) === 0) {
+      yield* collectBlocks(state.driver, {
+        blockIds: ["minecraft:gravel"],
+        count: 8,
+        searchRadius: state.strategy.blockSearchRadius,
+        path: state.strategy.path,
+      });
+      yield* collectNearbyDrops(state.driver, {
+        radius: 8,
+        maximumDrops: 16,
+        path: state.strategy.path,
+      });
+      current = yield* state.driver.observe;
+    }
+    if ((current.inventory.counts["minecraft:flint"] ?? 0) > 0) {
+      return;
+    }
+    if ((current.inventory.counts["minecraft:gravel"] ?? 0) === 0) {
+      return yield* Effect.fail(new BeatGameDriverError({
+        operation: "acquire-flint",
+        retryable: true,
+        message: "Breaking nearby gravel produced neither gravel nor flint",
+      }));
+    }
+
+    const target = (yield* findWorkstationTargets(
+      state.driver,
+      current.player.position,
+    ))[0];
+    if (target === undefined) {
+      return yield* Effect.fail(new BeatGameDriverError({
+        operation: "acquire-flint",
+        retryable: true,
+        message: "No supported position is available for recycling gravel",
+      }));
+    }
+    yield* state.driver.pathfind(
+      blockCenter(target),
+      3,
+      {
+        ...state.strategy.path,
+        allowMining: false,
+        allowPlacing: false,
+      },
+    );
+
+    for (let attempt = 0; attempt < 64; attempt += 1) {
+      current = yield* state.driver.observe;
+      if ((current.inventory.counts["minecraft:flint"] ?? 0) > 0) {
+        return;
+      }
+      if ((current.inventory.counts["minecraft:gravel"] ?? 0) === 0) {
+        yield* collectNearbyDrops(state.driver, {
+          radius: 4,
+          maximumDrops: 8,
+          settleDelayMs: 100,
+          path: state.strategy.path,
+        });
+        current = yield* state.driver.observe;
+        if ((current.inventory.counts["minecraft:flint"] ?? 0) > 0) {
+          return;
+        }
+        if ((current.inventory.counts["minecraft:gravel"] ?? 0) === 0) {
+          return yield* Effect.fail(new BeatGameDriverError({
+            operation: "acquire-flint",
+            retryable: true,
+            message: "The recycled gravel item could not be recovered",
+          }));
+        }
+      }
+
+      yield* state.driver.act({
+        type: "select-item",
+        selector: { itemIds: ["minecraft:gravel"] },
+      });
+      yield* state.driver.act({
+        type: "place-block",
+        against: { ...target, y: target.y - 1 },
+        face: "up",
+        hand: "main",
+      });
+      const placed = yield* waitForExactBlockId(
+        state.driver,
+        target,
+        "minecraft:gravel",
+      );
+      if (!placed) {
+        return yield* Effect.fail(new BeatGameDriverError({
+          operation: "acquire-flint",
+          retryable: true,
+          message: "Gravel placement was not confirmed by the server",
+        }));
+      }
+      yield* state.driver.act({ type: "dig-block", position: target });
+      yield* collectNearbyDrops(state.driver, {
+        radius: 4,
+        maximumDrops: 8,
+        settleDelayMs: 100,
+        path: state.strategy.path,
+      });
+    }
+
+    return yield* Effect.fail(new BeatGameDriverError({
+      operation: "acquire-flint",
+      retryable: true,
+      message: "Recycling gravel did not produce flint after 64 attempts",
+    }));
   });
+}
+
+function waitForExactBlockId(
+  driver: BeatGameDriver,
+  target: BeatGameBlockPosition,
+  blockId: string,
+  attempts = 20,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  return driver.queryBlocks({
+    center: blockCenter(target),
+    radius: 0.25,
+    selector: { blockIds: [blockId] },
+    maximumResults: 1,
+  }).pipe(
+    Effect.flatMap((blocks) =>
+      blocks.some(({ position }) => sameBlockPosition(position, target))
+        ? Effect.succeed(true)
+        : attempts <= 1
+        ? Effect.succeed(false)
+        : Effect.sleep(50).pipe(
+          Effect.zipRight(
+            waitForExactBlockId(driver, target, blockId, attempts - 1),
+          ),
+        )
+    ),
+  );
 }
 
 function ensureString(
@@ -1931,11 +2757,16 @@ function huntOrExplore(
           Math.max(16, maximumTargets + attemptedTargets.size),
         ),
       });
+      const maximumVerticalDistance =
+        current.player.health < state.strategy.minimumHealth ? 12 : 32;
       const candidates = targets.filter((target) =>
         !unreachable.has(positionKey(target.position))
         && !attemptedTargets.has(
           `${target.connectionEpoch}:${target.networkId}`,
         )
+        && Math.abs(
+            target.position.y - current.player.position.y,
+          ) <= maximumVerticalDistance
       );
       const target = candidates.reduce<BeatGameEntityObservation | undefined>(
         (nearest, candidate) =>
@@ -1954,16 +2785,26 @@ function huntOrExplore(
       );
       if (target === undefined) {
         if (attacked === 0 && !observedCandidate) {
-          yield* explore(state.driver, {
-            origin: current.player.position,
-            radius: state.strategy.explorationRadius,
-            maximumWaypoints: 1,
-            purpose: explorationPurpose(
-              purpose,
+          if (isDeepOverworld(current.player.position)) {
+            yield* returnToOverworldSurface(
+              state,
               current.player.position,
-            ),
-            path: huntingPath,
-          });
+            );
+          } else {
+            yield* explore(state.driver, {
+              origin: current.player.position,
+              radius: discoveryHopRadius(
+                state,
+                state.strategy.entitySearchRadius,
+              ),
+              maximumWaypoints: 1,
+              purpose: explorationPurpose(
+                purpose,
+                current.player.position,
+              ),
+              path: huntingPath,
+            });
+          }
         } else if (attacked === 0) {
           yield* Effect.sleep(state.strategy.observationPollMs);
         }
@@ -2012,7 +2853,7 @@ function huntOrExplore(
           },
         },
       );
-      yield* attackEntity(state.driver, {
+      const defeated = yield* attackEntity(state.driver, {
         target,
         targetUnavailableTimeoutSeconds: 3,
         selectBestWeapon: true,
@@ -2036,24 +2877,61 @@ function huntOrExplore(
             },
           })).pipe(Effect.ignore)
         ),
+        Effect.as(true),
         Effect.catchTag("BeatGameDriverError", (cause) =>
-          cause.code === "not_found"
+          cause.code === "not_found" || cause.operation === "run-task"
             ? Effect.sync(() => {
               locallyUnreachable.add(positionKey(target.position));
-            })
+            }).pipe(
+              Effect.zipRight(
+                current.player.position.dimension === "minecraft:overworld"
+                    && target.position.y - current.player.position.y > 6
+                  ? returnToOverworldSurface(
+                    state,
+                    current.player.position,
+                  )
+                  : Effect.void,
+              ),
+              Effect.as(false),
+            )
             : Effect.fail(cause)
         ),
         Effect.ensuring(releaseActionClaim(state, claim)),
       );
+      if (!defeated) {
+        continue;
+      }
       yield* collectNearbyDrops(state.driver, {
         radius: 8,
         maximumDrops: 16,
-        settleDelayMs: 250,
+        settleDelayMs: 500,
         path: huntingPath,
       });
       attacked += 1;
     }
   });
+}
+
+function isDeepOverworld(position: BeatGamePosition): boolean {
+  return position.dimension === "minecraft:overworld" && position.y < 58;
+}
+
+function returnToOverworldSurface(
+  state: RunState,
+  position: BeatGamePosition,
+): Effect.Effect<void, BeatGameDriverError> {
+  return state.driver.pathfind(
+    {
+      ...position,
+      y: 80,
+    },
+    17,
+    {
+      ...state.strategy.path,
+      allowMining: true,
+      allowPlacing: true,
+    },
+  );
 }
 
 function explorationPurpose(
@@ -2063,6 +2941,19 @@ function explorationPurpose(
   const cellX = Math.floor(position.x / 32);
   const cellZ = Math.floor(position.z / 32);
   return `${purpose.slice(0, 40)}:${cellX}:${cellZ}`;
+}
+
+function discoveryHopRadius(
+  state: RunState,
+  scanRadius: number,
+): number {
+  return Math.max(
+    8,
+    Math.min(
+      state.strategy.explorationRadius,
+      Math.floor(scanRadius / 2),
+    ),
+  );
 }
 
 function acquireEnderPearls(
@@ -2110,8 +3001,11 @@ function acquireEnderPearls(
       if (piglin === undefined) {
         yield* explore(state.driver, {
           origin: observation.player.position,
-          radius: state.strategy.explorationRadius,
-          maximumWaypoints: 3,
+          radius: discoveryHopRadius(
+            state,
+            state.strategy.entitySearchRadius,
+          ),
+          maximumWaypoints: 1,
           purpose: "find-bartering-piglin",
           path: state.strategy.path,
         });
@@ -2915,9 +3809,36 @@ function completeRun(
 function observeFresh(
   state: RunState,
 ): Effect.Effect<BeatGameObservation, BeatGameError> {
+  return observeDriverFresh(state).pipe(
+    Effect.flatMap((observation) =>
+      Ref.get(state.pendingDeaths).pipe(
+        Effect.map((pendingDeaths) => {
+          const pendingDeath = pendingDeaths.at(-1);
+          if (pendingDeath === undefined) {
+            return observation;
+          }
+          return {
+            ...observation,
+            observedAt: pendingDeath.observedAt,
+            player: {
+              ...observation.player,
+              position: pendingDeath.position,
+              health: 0,
+              dead: true,
+            },
+          };
+        }),
+      )
+    ),
+  );
+}
+
+function observeDriverFresh(
+  state: RunState,
+): Effect.Effect<BeatGameObservation, BeatGameError> {
   return Effect.gen(function* () {
     const checkpoint = yield* Ref.get(state.checkpoint);
-    const observation = yield* state.driver.observe.pipe(
+    return yield* state.driver.observe.pipe(
       Effect.mapError((cause) =>
         observationError(
           checkpoint.runId,
@@ -2928,20 +3849,6 @@ function observeFresh(
       ),
       Effect.tap((observation) => Ref.set(state.observation, observation)),
     );
-    const pendingDeath = yield* Ref.get(state.pendingDeath);
-    if (pendingDeath === undefined) {
-      return observation;
-    }
-    return {
-      ...observation,
-      observedAt: pendingDeath.observedAt,
-      player: {
-        ...observation.player,
-        position: pendingDeath.position,
-        health: 0,
-        dead: true,
-      },
-    };
   });
 }
 
@@ -2955,7 +3862,7 @@ function monitorDriverEvents(
       }
       return Ref.get(state.observation).pipe(
         Effect.flatMap((observation) =>
-          Ref.set(state.pendingDeath, {
+          enqueuePendingDeath(state, {
             observedAt: event.observedAt,
             position: observation.player.position,
             ...(event.message === undefined
@@ -2966,6 +3873,32 @@ function monitorDriverEvents(
       );
     }),
     Effect.catchAll(() => Effect.void),
+  );
+}
+
+function enqueuePendingDeath(
+  state: RunState,
+  pendingDeath: PendingDeath,
+): Effect.Effect<void> {
+  return Ref.update(state.pendingDeaths, (pendingDeaths) => {
+    const duplicate = pendingDeaths.some((candidate) =>
+      candidate.observedAt === pendingDeath.observedAt
+      || samePosition(candidate.position, pendingDeath.position)
+    );
+    return duplicate ? pendingDeaths : [...pendingDeaths, pendingDeath];
+  });
+}
+
+function completePendingDeath(
+  state: RunState,
+  observedAt: string,
+): Effect.Effect<void> {
+  return Ref.update(
+    state.pendingDeaths,
+    (pendingDeaths) =>
+      pendingDeaths.filter((pendingDeath) =>
+        pendingDeath.observedAt !== observedAt
+      ),
   );
 }
 
@@ -3047,7 +3980,8 @@ function persist(
   state: RunState,
   update: (checkpoint: BeatGameCheckpoint) => BeatGameCheckpoint,
 ): Effect.Effect<BeatGameCheckpoint, BeatGameError> {
-  return state.checkpointMutex.withPermits(1)(Effect.gen(function* () {
+  return state.checkpointMutex.withPermits(1)(Effect.uninterruptible(
+    Effect.gen(function* () {
     const current = yield* Ref.get(state.checkpoint);
     const now = new Date().toISOString();
     const updated = update(current);
@@ -3068,7 +4002,8 @@ function persist(
       revision: stored.revision,
     });
     return stored;
-  }));
+    }),
+  ));
 }
 
 function currentSnapshot(

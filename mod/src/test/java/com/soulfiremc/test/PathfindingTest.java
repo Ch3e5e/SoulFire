@@ -20,8 +20,10 @@ package com.soulfiremc.test;
 import com.soulfiremc.server.pathfinding.NodeState;
 import com.soulfiremc.server.pathfinding.RouteFinder;
 import com.soulfiremc.server.pathfinding.SFVec3i;
+import com.soulfiremc.server.pathfinding.execution.BlockBreakAction;
 import com.soulfiremc.server.pathfinding.execution.BlockPlaceAction;
 import com.soulfiremc.server.pathfinding.execution.InteractBlockAction;
+import com.soulfiremc.server.pathfinding.execution.MovementAction;
 import com.soulfiremc.server.pathfinding.goals.PosGoal;
 import com.soulfiremc.server.pathfinding.graph.MinecraftGraph;
 import com.soulfiremc.server.pathfinding.graph.ProjectedInventory;
@@ -562,7 +564,9 @@ final class PathfindingTest {
     var route = routeFinder.findRouteFuture(initialState).join();
     var foundRouteResult = assertInstanceOf(
       RouteFinder.FoundRouteResult.class, route);
-    assertEquals(1, foundRouteResult.actions().size());
+    assertEquals(2, foundRouteResult.actions().size());
+    assertInstanceOf(BlockBreakAction.class, foundRouteResult.actions().get(0));
+    assertInstanceOf(MovementAction.class, foundRouteResult.actions().get(1));
   }
 
   @Test
@@ -642,7 +646,7 @@ final class PathfindingTest {
       var route = routeFinder.findRouteFuture(initialState).join();
       var foundRouteResult = assertInstanceOf(
         RouteFinder.FoundRouteResult.class, route);
-      assertEquals(1, foundRouteResult.actions().size());
+      assertEquals(2, foundRouteResult.actions().size());
     }
   }
 
@@ -673,7 +677,7 @@ final class PathfindingTest {
       var route = routeFinder.findRouteFuture(initialState).join();
       var foundRouteResult = assertInstanceOf(
         RouteFinder.FoundRouteResult.class, route);
-      assertEquals(1, foundRouteResult.actions().size());
+      assertEquals(2, foundRouteResult.actions().size());
     }
   }
 }

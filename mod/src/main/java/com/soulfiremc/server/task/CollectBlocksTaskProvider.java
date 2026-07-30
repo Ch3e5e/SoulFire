@@ -123,6 +123,13 @@ public final class CollectBlocksTaskProvider
       .collect(Collectors.toUnmodifiableSet());
   }
 
+  static boolean isDirectBreakCandidate(
+    BlockPos playerFeet,
+    BlockPos target
+  ) {
+    return target.getY() >= playerFeet.getY();
+  }
+
   private static final class CollectBlocksControl implements ControlTask {
     private final BotTaskContext context;
     private final Set<String> blockIds;
@@ -408,6 +415,8 @@ public final class CollectBlocksTaskProvider
           for (var y = -4; y <= 6; y++) {
             var position = origin.offset(x, y, z);
             if (
+              !isDirectBreakCandidate(origin, position)
+                ||
               Vec3.atCenterOf(position).distanceToSqr(eyePosition)
                 > DIRECT_BREAK_REACH_SQUARED
                 || !level.hasChunkAt(position)
@@ -431,7 +440,7 @@ public final class CollectBlocksTaskProvider
           .thenComparingDouble(position ->
             Vec3.atCenterOf(position.toBlockPos())
               .distanceToSqr(eyePosition)
-          ));
+        ));
     }
 
     private static BlockFace nearestFace(

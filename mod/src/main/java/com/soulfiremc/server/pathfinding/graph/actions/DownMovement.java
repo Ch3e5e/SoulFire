@@ -20,6 +20,7 @@ package com.soulfiremc.server.pathfinding.graph.actions;
 import com.soulfiremc.server.pathfinding.SFVec3i;
 import com.soulfiremc.server.pathfinding.cost.Costs;
 import com.soulfiremc.server.pathfinding.execution.BlockBreakAction;
+import com.soulfiremc.server.pathfinding.execution.MovementAction;
 import com.soulfiremc.server.pathfinding.graph.BlockFace;
 import com.soulfiremc.server.pathfinding.graph.GraphInstructions;
 import com.soulfiremc.server.pathfinding.graph.MinecraftGraph;
@@ -116,7 +117,14 @@ public final class DownMovement extends GraphAction implements Cloneable {
       false,
       actionDirection,
       cost,
-      List.of(new BlockBreakAction(breakCost))));
+      List.of(
+        new BlockBreakAction(breakCost),
+        new MovementAction(
+          absoluteTargetFeetBlock,
+          false,
+          graph.pathConstraint()
+        )
+      )));
   }
 
   @Override

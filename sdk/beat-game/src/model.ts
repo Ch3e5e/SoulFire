@@ -167,9 +167,12 @@ export interface BeatGamePlayerObservation {
   readonly position: BeatGamePosition;
   readonly rotation: BeatGameRotation;
   readonly velocity: Readonly<{ x: number; y: number; z: number }>;
+  readonly equipment: Readonly<Record<string, string>>;
   readonly health: number;
   readonly maxHealth: number;
   readonly food: number;
+  readonly air: number;
+  readonly maxAir: number;
   readonly dead: boolean;
   readonly sleeping: boolean;
   readonly usingItem: boolean;

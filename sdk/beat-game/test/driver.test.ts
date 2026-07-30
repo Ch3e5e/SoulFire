@@ -29,6 +29,7 @@ function effectBot(
     goTo?: readonly unknown[];
     armor?: Readonly<Record<string, unknown>>;
     eat?: readonly unknown[];
+    equip?: Readonly<Record<string, unknown>>;
     cancellations: number;
   } = { cancellations: 0 };
   const taskHandle = {
@@ -59,6 +60,12 @@ function effectBot(
           dead: false,
           sleeping: false,
           usingItem: false,
+          equipment: {
+            offhand: {
+              itemId: "minecraft:shield",
+              count: 1,
+            },
+          },
           connectionEpoch: "connection-epoch",
           revision: 7n,
         }),
@@ -94,6 +101,10 @@ function effectBot(
           ],
         }),
       selectHotbar: () => Effect.succeed({}),
+      equip: (request: Readonly<Record<string, unknown>>) => {
+        calls.equip = request;
+        return Effect.succeed({});
+      },
     },
     recipes: {
       list: () => Effect.succeed({ recipes: [] }),
@@ -155,6 +166,7 @@ describe("production SoulFire beat-game driver", () => {
       },
       health: 18,
       food: 17,
+      equipment: { offhand: "minecraft:shield" },
       connectionEpoch: "connection-epoch",
       revision: 7n,
     });
@@ -293,6 +305,25 @@ describe("production SoulFire beat-game driver", () => {
       connectionEpoch: "00000000-0000-0000-0000-000000000042",
       entityId: 42,
       sprinting: true,
+    });
+  });
+
+  it("equips an item into the requested equipment slot", async () => {
+    const { bot, calls } = effectBot();
+    const driver = makeSoulFireBeatGameDriver(bot);
+
+    await Effect.runPromise(driver.act({
+      type: "equip-item",
+      selector: { itemIds: ["minecraft:shield"] },
+      equipmentSlot: "offhand",
+    }));
+
+    expect(calls.equip).toEqual({
+      selector: {
+        itemIds: ["minecraft:shield"],
+        tags: [],
+      },
+      equipmentSlot: "offhand",
     });
   });
 

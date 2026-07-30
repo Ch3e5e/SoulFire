@@ -305,6 +305,17 @@ export type BeatGamePrimitiveAction =
     readonly pitch: number;
   }
   | {
+    readonly type: "equip-item";
+    readonly selector: BeatGameItemSelector;
+    readonly equipmentSlot:
+      | "mainhand"
+      | "offhand"
+      | "head"
+      | "chest"
+      | "legs"
+      | "feet";
+  }
+  | {
     readonly type: "select-item";
     readonly selector: BeatGameItemSelector;
   }
@@ -446,6 +457,12 @@ export function makeSoulFireBeatGameDriver(
       const rotation = required(player.rotation, "player.rotation");
       const counts: Record<string, number> = {};
       const hotbar: Record<number, string> = {};
+      const equipment = Object.fromEntries(
+        Object.entries(player.equipment).map(([slot, item]) => [
+          slot,
+          item.itemId,
+        ]),
+      );
       for (const slot of inventory.slots) {
         if (
           slot.item === undefined
@@ -470,9 +487,12 @@ export function makeSoulFireBeatGameDriver(
           position: toPosition(position),
           rotation: { yaw: rotation.yaw, pitch: rotation.pitch },
           velocity: { x: velocity.x, y: velocity.y, z: velocity.z },
+          equipment,
           health: player.health,
           maxHealth: player.maxHealth,
           food: player.food,
+          air: player.air,
+          maxAir: player.maxAir,
           dead: player.dead,
           sleeping: player.sleeping,
           usingItem: player.usingItem,
@@ -1099,6 +1119,11 @@ function executePrimitive(
   switch (action.type) {
     case "look":
       return bot.look(action.yaw, action.pitch);
+    case "equip-item":
+      return bot.inventory.equip({
+        selector: itemSelector(action.selector),
+        equipmentSlot: action.equipmentSlot,
+      });
     case "select-item":
       return bot.inventory.selectHotbar({
         selection: {
