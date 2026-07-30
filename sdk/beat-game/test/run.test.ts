@@ -210,6 +210,48 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("does not abandon work for a distant creeper", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.entityResults = [{
+      connectionEpoch: "epoch-1",
+      networkId: 42,
+      entityType: "minecraft:creeper",
+      position: {
+        x: 16,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:01.000Z",
+    }];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(
+        Effect.zipRight(
+          task.type === "collect-blocks"
+            ? Effect.never
+            : Effect.void,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some((task) => task.type === "collect-blocks")) {
+        yield* Effect.sleep(1);
+      }
+      yield* Effect.sleep(250);
+      yield* run.stop;
+    })));
+
+    expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
+  });
+
   it("escapes underground threats toward the Overworld surface", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({

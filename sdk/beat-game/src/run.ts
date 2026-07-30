@@ -206,6 +206,7 @@ const MELEE_WEAPON_ITEM_IDS = [
   "minecraft:netherite_axe",
 ] as const;
 const DEFAULT_COMBAT_RETREAT_HEALTH = 12;
+const PROACTIVE_CREEPER_EVASION_RADIUS = 12;
 const MINIMUM_SAFE_AIR_TICKS = 200;
 
 export interface BeatGameRun {
@@ -1399,7 +1400,10 @@ function findImmediateThreat(
         }))
         .sort((left, right) => left.distanceSquared - right.distanceSquared);
       const explosive = candidates.find(({ target, distanceSquared }) =>
-        target.entityType === "minecraft:creeper" && distanceSquared <= 576
+        target.entityType === "minecraft:creeper"
+        && distanceSquared
+          <= PROACTIVE_CREEPER_EVASION_RADIUS
+            * PROACTIVE_CREEPER_EVASION_RADIUS
       );
       if (explosive !== undefined) {
         return { target: explosive.target, response: "flee" };
