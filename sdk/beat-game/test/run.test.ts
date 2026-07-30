@@ -1933,6 +1933,57 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks.some((task) => task.type === "explore")).toBe(false);
   });
 
+  it("keeps Overworld exploration on a sampled surface", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.surfaceColumns = [{
+      x: 24,
+      z: 0,
+      loaded: true,
+      surfaceY: 64,
+      blockId: "minecraft:grass_block",
+      biomeId: "minecraft:plains",
+      skyLight: 15,
+      blockLight: 0,
+    }];
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (driver.paths.length === 0) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.paths[0]).toEqual({
+      position: {
+        x: 24.5,
+        y: 65,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+      radius: 2,
+      policy: {
+        allowMining: false,
+        allowPlacing: true,
+        maxFallDistance: 3,
+        maxSearchTimeMs: 30_000,
+      },
+    });
+    expect(driver.xzPaths).toHaveLength(0);
+  });
+
   it("interrupts exploration when a matching entity becomes visible", async () => {
     const driver = new FakeBeatGameDriver();
     const cow = {

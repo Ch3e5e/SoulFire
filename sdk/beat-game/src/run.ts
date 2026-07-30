@@ -3205,18 +3205,24 @@ function huntOrExplore(
           targetDistance - HUNT_ATTACK_APPROACH_RADIUS,
         );
         const approachRatio = approachDistance / targetDistance;
-        const approached = yield* state.driver.pathfindXZ(
-          current.player.position.x
-            + (target.position.x - current.player.position.x) * approachRatio,
-          current.player.position.z
-            + (target.position.z - current.player.position.z) * approachRatio,
-          current.player.position.dimension,
+        const approached = yield* pathfindExplorationTarget(
+          state,
+          current.player.position,
+          {
+            x: current.player.position.x
+              + (target.position.x - current.player.position.x)
+                * approachRatio,
+            z: current.player.position.z
+              + (target.position.z - current.player.position.z)
+                * approachRatio,
+          },
           4,
           explorationPath,
         ).pipe(
           Effect.as(true),
           Effect.catchAll((cause) =>
-            cause.operation === "pathfindXZ"
+            cause.operation === "pathfind"
+                || cause.operation === "pathfindXZ"
               ? Effect.succeed(false)
               : Effect.fail(cause)
           ),
@@ -3683,15 +3689,16 @@ function advanceExplorationFrontier(
     ] as const;
   }).pipe(
     Effect.flatMap((target) =>
-      state.driver.pathfindXZ(
-        target.x,
-        target.z,
-        position.dimension,
+      pathfindExplorationTarget(
+        state,
+        position,
+        target,
         2,
         path,
       ).pipe(
         Effect.catchAll((cause) =>
-          cause.operation === "pathfindXZ"
+          cause.operation === "pathfind"
+              || cause.operation === "pathfindXZ"
             ? recoverSurfaceAfterExplorationFailure(state)
             : Effect.fail(cause)
         ),
@@ -3715,6 +3722,61 @@ function advanceExplorationFrontier(
           ),
         ),
       )
+    ),
+  );
+}
+
+function pathfindExplorationTarget(
+  state: RunState,
+  position: BeatGamePosition,
+  target: { readonly x: number; readonly z: number },
+  radius: number,
+  path: BeatGameStrategy["path"],
+): Effect.Effect<void, BeatGameDriverError> {
+  if (position.dimension !== "minecraft:overworld") {
+    return state.driver.pathfindXZ(
+      target.x,
+      target.z,
+      position.dimension,
+      radius,
+      path,
+    );
+  }
+  const targetCenter = {
+    x: target.x,
+    y: position.y,
+    z: target.z,
+    dimension: position.dimension,
+  };
+  return state.driver.sampleSurface(targetCenter, 4, 1).pipe(
+    Effect.map((columns) =>
+      selectSurfaceColumn(
+        columns.filter((column) =>
+          Math.abs(column.x + 0.5 - target.x) <= 4
+          && Math.abs(column.z + 0.5 - target.z) <= 4
+        ),
+        targetCenter,
+      )
+    ),
+    Effect.flatMap((surface) =>
+      surface === undefined
+        ? state.driver.pathfindXZ(
+          target.x,
+          target.z,
+          position.dimension,
+          radius,
+          path,
+        )
+        : state.driver.pathfind(
+          {
+            x: surface.x + 0.5,
+            y: surface.surfaceY + 1,
+            z: surface.z + 0.5,
+            dimension: position.dimension,
+          },
+          radius,
+          path,
+        )
     ),
   );
 }
