@@ -4302,7 +4302,13 @@ describe("beat-game run lifecycle", () => {
   it("finishes a close spider fight with a weapon at critical health", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
-      health: 8,
+      health: 20,
+      position: {
+        x: 0,
+        y: 80,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
       counts: {
         "minecraft:stone_sword": 1,
       },
@@ -4313,7 +4319,7 @@ describe("beat-game run lifecycle", () => {
       entityType: "minecraft:spider",
       position: {
         x: 2,
-        y: 64,
+        y: 80,
         z: 0,
         dimension: "minecraft:overworld",
       },
@@ -4327,19 +4333,21 @@ describe("beat-game run lifecycle", () => {
     driver.taskResolver = (task) =>
       Effect.sync(() => {
         driver.tasks.push(task);
-        if (task.type === "attack-nearest") {
+        if (task.type === "attack-nearest" || task.type === "attack-entity") {
           driver.currentObservation = observation({
             health: 2,
+            position: {
+              x: 0,
+              y: 80,
+              z: 0,
+              dimension: "minecraft:overworld",
+            },
             counts: {
               "minecraft:stone_sword": 1,
             },
           });
         }
-      }).pipe(
-        Effect.zipRight(
-          task.type === "attack-nearest" ? Effect.never : Effect.void,
-        ),
-      );
+      }).pipe(Effect.zipRight(Effect.never));
 
     await Effect.runPromise(Effect.scoped(
       beatGameWithDriver(driver, {
@@ -4348,7 +4356,9 @@ describe("beat-game run lifecycle", () => {
         Effect.flatMap((run) =>
           Effect.gen(function* () {
             while (
-              !driver.tasks.some((task) => task.type === "attack-nearest")
+              !driver.tasks.some((task) =>
+                task.type === "attack-nearest" || task.type === "attack-entity"
+              )
             ) {
               yield* Effect.sleep(1);
             }
@@ -4361,7 +4371,6 @@ describe("beat-game run lifecycle", () => {
     ));
 
     expect(driver.tasks).toContainEqual(expect.objectContaining({
-      type: "attack-nearest",
       selectBestWeapon: true,
     }));
     expect(driver.actions.some((action) =>

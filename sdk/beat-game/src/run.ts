@@ -484,6 +484,10 @@ const COMMITTABLE_CLOSE_MELEE_ENTITY_TYPES = new Set([
   "minecraft:zombie",
   "minecraft:zombie_villager",
 ]);
+const FAST_MELEE_PURSUER_ENTITY_TYPES = new Set([
+  "minecraft:cave_spider",
+  "minecraft:spider",
+]);
 const ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES = new Set([
   "minecraft:creeper",
 ]);
@@ -2095,7 +2099,7 @@ function shouldDisengageFromThreat(
   observation: BeatGameObservation,
   target: BeatGameEntityObservation,
 ): boolean {
-  if (shouldCommitToUndergroundMeleeFight(observation, target)) {
+  if (shouldCommitToMeleeFight(observation, target)) {
     return false;
   }
   if (PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)) {
@@ -2153,6 +2157,22 @@ function shouldCommitToUndergroundMeleeFight(
     && shouldCommitToCloseMeleeFight(observation, target);
 }
 
+function shouldCommitToFastMeleePursuerFight(
+  observation: BeatGameObservation,
+  target: BeatGameEntityObservation,
+): boolean {
+  return FAST_MELEE_PURSUER_ENTITY_TYPES.has(target.entityType)
+    && hasMeleeWeapon(observation);
+}
+
+function shouldCommitToMeleeFight(
+  observation: BeatGameObservation,
+  target: BeatGameEntityObservation,
+): boolean {
+  return shouldCommitToUndergroundMeleeFight(observation, target)
+    || shouldCommitToFastMeleePursuerFight(observation, target);
+}
+
 function escapeFromTarget(
   state: RunState,
   target: BeatGameEntityObservation,
@@ -2178,7 +2198,7 @@ function escapeFromTarget(
       || PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
       || (
         PROACTIVE_MELEE_HOSTILE_ENTITY_TYPES.has(target.entityType)
-        && !shouldCommitToUndergroundMeleeFight(observation, target)
+        && !shouldCommitToMeleeFight(observation, target)
       )
       || shouldDisengageFromThreat(state, observation, target)
     ) {
@@ -2261,7 +2281,7 @@ function escapeFromTarget(
       || PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
       || (
         PROACTIVE_MELEE_HOSTILE_ENTITY_TYPES.has(target.entityType)
-        && !shouldCommitToUndergroundMeleeFight(latest, target)
+        && !shouldCommitToMeleeFight(latest, target)
       )
       || shouldDisengageFromThreat(state, latest, target);
     const safeNavigation = navigation.pipe(
@@ -2350,21 +2370,24 @@ function monitorEscapeSafety(
             );
           }
           return findNearbyAttackThreat(state, observation).pipe(
-            Effect.flatMap((threat) =>
-              threat === undefined
-                ? monitorEscapeSafety(
+            Effect.flatMap((threat) => {
+              if (threat === undefined) {
+                return monitorEscapeSafety(
                   state,
                   currentTarget,
                   observation,
                   continueEscapingWhenHit,
-                )
-                : Effect.succeed({
-                  type: continueEscapingWhenHit || threat.response === "flee"
-                    ? "escape"
-                    : "defend",
-                  target: threat.target,
-                } as const)
-            ),
+                );
+              }
+              const shouldKeepEscaping = continueEscapingWhenHit
+                && !shouldCommitToMeleeFight(observation, threat.target);
+              return Effect.succeed({
+                type: shouldKeepEscaping || threat.response === "flee"
+                  ? "escape"
+                  : "defend",
+                target: threat.target,
+              } as const);
+            }),
           );
         }),
       );
@@ -3323,7 +3346,7 @@ function monitorDefenseHealth(
       if (
         observation.player.health >= state.strategy.minimumHealth
         || observation.player.health >= engagementHealth
-        || shouldCommitToUndergroundMeleeFight(observation, target)
+        || shouldCommitToMeleeFight(observation, target)
         || shouldCommitToRangedFight(observation, target)
       ) {
         return monitorDefenseHealth(state, target, engagementHealth);
