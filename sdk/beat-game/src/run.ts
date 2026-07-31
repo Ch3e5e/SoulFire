@@ -2154,6 +2154,7 @@ function shouldCommitToUndergroundMeleeFight(
   target: BeatGameEntityObservation,
 ): boolean {
   return observation.player.position.y <= OVERWORLD_LOW_GROUND_MAX_Y
+    && target.entityType !== "minecraft:drowned"
     && shouldCommitToCloseMeleeFight(observation, target);
 }
 
@@ -5709,6 +5710,8 @@ function huntOrExplore(
     readonly maximumExplorationHops?: number;
     readonly path?: BeatGameStrategy["path"];
     readonly explorationTarget?: BeatGamePosition;
+    readonly allowFluidFallback?: boolean;
+    readonly fallbackToLocalExploration?: boolean;
   },
 ): Effect.Effect<void, BeatGameError | BeatGameDriverError> {
   return Effect.gen(function* () {
@@ -5866,6 +5869,12 @@ function huntOrExplore(
                 === current.player.position.dimension
               ? targetPreference.explorationTarget
               : undefined;
+          const allowFluidFallback =
+            targetPreference?.allowFluidFallback
+              ?? (
+                current.player.health >= state.strategy.minimumHealth
+                && current.player.food > 6
+              );
           const advance = directedExplorationTarget === undefined
             ? advanceExplorationFrontier(
               state,
@@ -5874,8 +5883,7 @@ function huntOrExplore(
               frontierScanRadius,
               explorationPath,
               true,
-              current.player.health >= state.strategy.minimumHealth
-                && current.player.food > 6,
+              allowFluidFallback,
             )
             : pathfindExplorationTarget(
               state,
@@ -5884,15 +5892,15 @@ function huntOrExplore(
               2,
               explorationPath,
               true,
-              current.player.health >= state.strategy.minimumHealth
-                && current.player.food > 6,
+              allowFluidFallback,
             );
-          yield* Effect.raceFirst(
+          const explorationOutcome = yield* Effect.raceFirst(
             advance.pipe(
+              Effect.as("advanced" as const),
               Effect.catchAll((cause) =>
                 cause.operation === "pathfind"
                     || cause.operation === "pathfindXZ"
-                  ? Effect.void
+                  ? Effect.succeed("route-failed" as const)
                   : Effect.fail(cause)
               ),
             ),
@@ -5901,8 +5909,29 @@ function huntOrExplore(
               selector,
               attemptedTargets,
               unreachableTargets,
-            ),
+            ).pipe(Effect.as("target-visible" as const)),
           );
+          if (
+            explorationOutcome === "route-failed"
+            && targetPreference?.fallbackToLocalExploration === true
+          ) {
+            yield* advanceExplorationFrontier(
+              state,
+              current.player.position,
+              `${purpose}-local`,
+              frontierScanRadius,
+              explorationPath,
+              true,
+              allowFluidFallback,
+            ).pipe(
+              Effect.catchAll((cause) =>
+                cause.operation === "pathfind"
+                    || cause.operation === "pathfindXZ"
+                  ? Effect.void
+                  : Effect.fail(cause)
+              ),
+            );
+          }
         }
         continue;
       }
@@ -8276,6 +8305,7 @@ function prepareForDistantDeathRecovery(
     const protectedRecoveryPath = {
       ...recoveryPath,
       allowPlacing: false,
+      avoidFluids: true,
     };
     const buildingMaterialCount = (value: BeatGameObservation): number =>
       DEATH_RECOVERY_BUILDING_ITEM_IDS.reduce(
@@ -8343,6 +8373,8 @@ function prepareForDistantDeathRecovery(
           maximumExplorationHops: 8,
           path: protectedRecoveryPath,
           explorationTarget: pendingDeath.position,
+          allowFluidFallback: false,
+          fallbackToLocalExploration: true,
         },
       ).pipe(Effect.zipRight(state.driver.observe));
     };

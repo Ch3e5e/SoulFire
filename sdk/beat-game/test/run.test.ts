@@ -1767,6 +1767,86 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("falls back to local dry exploration while preparing a distant recovery", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const deathPosition = {
+      x: 700,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    const observedAt = new Date().toISOString();
+    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
+      runId: "dry-corpse-food-run",
+      teamId: "dry-corpse-food-team",
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        deathPositions: [{
+          key: `death:${observedAt}`,
+          value: {
+            ...deathPosition,
+            inventoryCounts: { "minecraft:iron_ingot": 7 },
+          },
+          observedAt,
+          confidence: 1,
+        }],
+      },
+    }, undefined));
+    driver.currentObservation = observation({
+      food: 17,
+      health: 8,
+      counts: {
+        "minecraft:dirt": 16,
+        "minecraft:oak_log": 12,
+        "minecraft:wooden_sword": 1,
+      },
+    });
+    driver.entityResults = [];
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+        return driver.xzPaths.length;
+      }).pipe(
+        Effect.flatMap((attempt) =>
+          attempt === 1
+            ? Effect.fail(new BeatGameDriverError({
+              operation: "pathfindXZ",
+              code: "unreachable",
+              retryable: true,
+              message: "The directed route enters open water",
+            }))
+            : Effect.never
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        runId: "dry-corpse-food-run",
+        team: { teamId: "dry-corpse-food-team" },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (driver.xzPaths.length < 2) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.xzPaths).toHaveLength(2);
+    expect(driver.xzPaths.every(({ policy }) => policy.avoidFluids === true))
+      .toBe(true);
+  });
+
   it("protects the corpse recovery building reserve while hunting for food", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
@@ -1874,7 +1954,7 @@ describe("beat-game run lifecycle", () => {
     expect(attackIndex).toBeGreaterThanOrEqual(0);
     expect(driver.taskPolicies[attackIndex]).toEqual(expect.objectContaining({
       allowPlacing: false,
-      avoidFluids: false,
+      avoidFluids: true,
     }));
     expect(driver.currentObservation.inventory.counts["minecraft:dirt"])
       .toBe(16);
@@ -5262,6 +5342,102 @@ describe("beat-game run lifecycle", () => {
 
     expect(driver.tasks).toContainEqual(expect.objectContaining({
       type: "attack-nearest",
+    }));
+    expect(driver.actions).toContainEqual({
+      type: "set-movement",
+      forward: true,
+      jump: true,
+      sprint: true,
+    });
+  });
+
+  it("disengages from a drowned at ocean level after heavy damage", async () => {
+    const driver = new FakeBeatGameDriver();
+    const position = {
+      x: 0,
+      y: 61,
+      z: 0,
+      dimension: "minecraft:overworld",
+    } as const;
+    const drowned = {
+      connectionEpoch: "epoch-1",
+      networkId: 27,
+      entityType: "minecraft:drowned",
+      position: { ...position, x: 2 },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:01.000Z",
+    } as const;
+    driver.currentObservation = observation({
+      health: 20,
+      position,
+      counts: { "minecraft:wooden_sword": 1 },
+    });
+    driver.entityResults = [drowned];
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2) ? driver.entityResults : [];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (task.type === "attack-entity") {
+          driver.currentObservation = observation({
+            health: 7,
+            position,
+            counts: { "minecraft:wooden_sword": 1 },
+          });
+        }
+      }).pipe(
+        Effect.zipRight(
+          task.type === "attack-entity" ? Effect.never : Effect.void,
+        ),
+      );
+    const resolvePath = driver.pathResolver;
+    driver.pathResolver = (target, radius, policy) =>
+      resolvePath(target, radius, policy).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            driver.entityResults = [];
+          })
+        ),
+      );
+    const resolveXZPath = driver.xzPathResolver;
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      resolveXZPath(x, z, dimension, radius, policy).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            driver.entityResults = [];
+          })
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (
+              !driver.tasks.some((task) => task.type === "flee")
+            ) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+    }));
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "flee",
+      selector: {
+        networkId: drowned.networkId,
+        alive: true,
+      },
     }));
     expect(driver.actions).toContainEqual({
       type: "set-movement",
