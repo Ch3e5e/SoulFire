@@ -266,6 +266,7 @@ const HUNT_ATTACK_APPROACH_RADIUS = 24;
 const HUNT_APPROACH_BUFFER = 4;
 const HUNT_APPROACH_GOAL_RADIUS = 2;
 const HUNT_MAXIMUM_APPROACH_DISTANCE = 48;
+const CRITICAL_HUNGER_FOOD_LEVEL = 6;
 const DIRECTED_HUNT_MAXIMUM_DETOUR = 32;
 const AQUATIC_HUNT_MAXIMUM_HORIZONTAL_DISTANCE = 10;
 const AQUATIC_HUNT_MAXIMUM_VERTICAL_DISTANCE = 6;
@@ -2642,7 +2643,7 @@ function recoverFromFluid(
         type: "set-movement",
         forward: true,
         jump: true,
-        sprint: observation.player.food > 6,
+        sprint: observation.player.food > CRITICAL_HUNGER_FOOD_LEVEL,
       })),
       Effect.zipRight(waitForAirRecovery(state, 60)),
       Effect.ensuring(
@@ -2768,7 +2769,7 @@ function swimToNearbyDrySurface(
           allowMining: false,
           allowPlacing: false,
           avoidFluids: false,
-          sprint: observation.player.food > 6,
+          sprint: observation.player.food > CRITICAL_HUNGER_FOOD_LEVEL,
           maxSearchTimeMs: Math.min(
             state.strategy.path.maxSearchTimeMs,
             SHORE_PATH_MAX_SEARCH_TIME_MS,
@@ -3067,7 +3068,7 @@ function swimTowardDrySurface(
             type: "set-movement",
             forward: true,
             jump: true,
-            sprint: observation.player.food > 6,
+            sprint: observation.player.food > CRITICAL_HUNGER_FOOD_LEVEL,
           })),
           Effect.zipRight(waitForDrySurfaceApproach(
             state,
@@ -5873,7 +5874,7 @@ function huntOrExplore(
             targetPreference?.allowFluidFallback
               ?? (
                 current.player.health >= state.strategy.minimumHealth
-                && current.player.food > 6
+                && current.player.food > CRITICAL_HUNGER_FOOD_LEVEL
               );
           const advance = directedExplorationTarget === undefined
             ? advanceExplorationFrontier(
@@ -5986,7 +5987,7 @@ function huntOrExplore(
           targetExplorationPath,
           true,
           current.player.health >= state.strategy.minimumHealth
-            && current.player.food > 6,
+            && current.player.food > CRITICAL_HUNGER_FOOD_LEVEL,
         ).pipe(
           Effect.as(true),
           Effect.catchAll((cause) =>
@@ -6201,7 +6202,11 @@ function isHuntingTargetWithinReach(
         ) <= EMERGENCY_FOOD_MAXIMUM_HORIZONTAL_DISTANCE ** 2;
   }
   if (AQUATIC_FOOD_ENTITY_TYPES.has(target.entityType)) {
-    return Math.abs(target.position.y - observation.player.position.y)
+    return (
+      observation.player.health >= minimumHealth
+      || observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
+    )
+      && Math.abs(target.position.y - observation.player.position.y)
         <= AQUATIC_HUNT_MAXIMUM_VERTICAL_DISTANCE
       && horizontalDistanceSquared(
           target.position,

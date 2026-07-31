@@ -1796,6 +1796,21 @@ describe("beat-game run lifecycle", () => {
         }],
       },
     }, undefined));
+    const salmon = {
+      connectionEpoch: "epoch-1",
+      networkId: 43,
+      entityType: "minecraft:salmon",
+      position: {
+        x: 3,
+        y: 61,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 3,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
     driver.currentObservation = observation({
       food: 17,
       health: 8,
@@ -1805,7 +1820,7 @@ describe("beat-game run lifecycle", () => {
         "minecraft:wooden_sword": 1,
       },
     });
-    driver.entityResults = [];
+    driver.entityResults = [salmon];
     driver.xzPathResolver = (x, z, dimension, radius, policy) =>
       Effect.sync(() => {
         driver.xzPaths.push({ x, z, dimension, radius, policy });
@@ -1845,6 +1860,8 @@ describe("beat-game run lifecycle", () => {
     expect(driver.xzPaths).toHaveLength(2);
     expect(driver.xzPaths.every(({ policy }) => policy.avoidFluids === true))
       .toBe(true);
+    expect(driver.tasks.some((task) => task.type === "attack-entity"))
+      .toBe(false);
   });
 
   it("protects the corpse recovery building reserve while hunting for food", async () => {
