@@ -98,6 +98,7 @@ import net.minecraft.world.item.component.WritableBookContent;
 import net.minecraft.world.item.component.WrittenBookContent;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.block.BedBlock;
+import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.SignBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.Property;
@@ -1874,14 +1875,18 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
   }
 
   private static final class DigBlockTask implements ControlTask {
+    private static final int MAXIMUM_BLOCK_REPLACEMENT_RETRIES = 16;
+
     private final BotConnection bot;
     private final BlockPos position;
     private final boolean cancel;
     private Direction face = Direction.UP;
     private boolean started;
     private boolean predictedBroken;
+    private BlockState attemptedState;
     private boolean done;
     private int ticks;
+    private int blockReplacementRetries;
 
     private DigBlockTask(BotConnection bot, BlockPos position, boolean cancel) {
       this.bot = bot;
@@ -1907,19 +1912,43 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
       }
       var pendingPrediction =
         BlockPredictionSupport.hasPendingPrediction(bot, position);
-      if (level.getBlockState(position).isAir()) {
-        if (!started) {
+      var currentState = level.getBlockState(position);
+      if (!started && (currentState.isAir() || currentState.getBlock() instanceof LiquidBlock)) {
+        done = true;
+        return;
+      }
+      if (currentState.isAir() && started) {
+        predictedBroken = true;
+      }
+      var reconciliation = BlockPredictionSupport.reconcileBreak(
+        currentState,
+        attemptedState,
+        started,
+        predictedBroken,
+        pendingPrediction,
+        blockReplacementRetries,
+        MAXIMUM_BLOCK_REPLACEMENT_RETRIES
+      );
+      switch (reconciliation) {
+        case COMPLETE -> {
           done = true;
           return;
         }
-        predictedBroken = true;
-        done = !pendingPrediction;
-        return;
-      }
-      if (started && predictedBroken && !pendingPrediction) {
-        throw Status.FAILED_PRECONDITION
+        case AWAIT_CONFIRMATION -> {
+          return;
+        }
+        case RETRY_REPLACEMENT -> {
+          gameMode.stopDestroyBlock();
+          started = false;
+          predictedBroken = false;
+          attemptedState = null;
+          blockReplacementRetries++;
+        }
+        case REJECTED -> throw Status.FAILED_PRECONDITION
           .withDescription("The server rejected breaking the target block")
           .asRuntimeException();
+        case CONTINUE -> {
+        }
       }
       requireReach(player, position);
       if (!started) {
@@ -1931,9 +1960,15 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
         }
         player.swing(InteractionHand.MAIN_HAND);
         started = true;
+        attemptedState = currentState;
         return;
       }
       if (!gameMode.continueDestroyBlock(position, face)) {
+        if (level.getBlockState(position).isAir()) {
+          predictedBroken = true;
+          done = !BlockPredictionSupport.hasPendingPrediction(bot, position);
+          return;
+        }
         throw Status.FAILED_PRECONDITION
           .withDescription("Block breaking was rejected")
           .asRuntimeException();

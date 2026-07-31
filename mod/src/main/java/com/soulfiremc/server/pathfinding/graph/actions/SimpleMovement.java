@@ -64,7 +64,13 @@ public final class SimpleMovement extends GraphAction implements Cloneable {
   // Mutable
   private boolean supportInTargetBlock;
   // Mutable
+  private boolean targetFeetInSwimmableWater;
+  // Mutable
+  private boolean targetHeadInSwimmableWater;
+  // Mutable
   private InteractablePassage interactablePassage;
+  // Mutable
+  private boolean currentFloorProjected;
 
   private SimpleMovement(MovementDirection direction, MovementModifier modifier, SubscriptionConsumer blockSubscribers) {
     super(modifier == MovementModifier.NORMAL ? direction.actionDirection() : ActionDirection.SPECIAL);
@@ -105,6 +111,7 @@ public final class SimpleMovement extends GraphAction implements Cloneable {
     }
 
     this.registerRequiredSolidBlock(blockSubscribers);
+    this.registerTargetWater(blockSubscribers);
     this.registerDiagonalCollisionBlocks(blockSubscribers);
     this.registerPossibleBlocksToPlaceAgainst(blockSubscribers);
   }
@@ -234,6 +241,17 @@ public final class SimpleMovement extends GraphAction implements Cloneable {
     blockSubscribers.subscribe(targetFeetBlock.sub(0, 1, 0), MovementSolidSubscription.INSTANCE);
   }
 
+  private void registerTargetWater(SubscriptionConsumer blockSubscribers) {
+    blockSubscribers.subscribe(
+      targetFeetBlock,
+      new MovementTargetWaterSubscription(true)
+    );
+    blockSubscribers.subscribe(
+      targetFeetBlock.add(0, 1, 0),
+      new MovementTargetWaterSubscription(false)
+    );
+  }
+
   private void registerPossibleBlocksToPlaceAgainst(SubscriptionConsumer blockSubscribers) {
     if (!allowBlockActions) {
       return;
@@ -267,16 +285,48 @@ public final class SimpleMovement extends GraphAction implements Cloneable {
 
   @Override
   public List<GraphInstructions> getInstructions(MinecraftGraph graph, SFVec3i node) {
-    var requiresAgainstBlock = !floorHasSupport && !supportInTargetBlock && floorCanBePlaced;
-    if (!floorHasSupport && !supportInTargetBlock && !requiresAgainstBlock) {
+    if (
+      diagonal
+        && modifier == MovementModifier.JUMP_UP_BLOCK
+    ) {
+      // Diagonal ascents are sensitive to the player's exact sub-block
+      // position. A preceding corner slide can leave the player pressed
+      // against the raised block with too little forward travel to complete
+      // the jump. Route through a cardinal approach for reliable execution.
+      return Collections.emptyList();
+    }
+
+    var hasMovementSupport =
+      floorHasSupport
+        || supportInTargetBlock
+        || targetFeetInSwimmableWater;
+    var requiresAgainstBlock = !hasMovementSupport && floorCanBePlaced;
+    if (!hasMovementSupport && !requiresAgainstBlock) {
       return Collections.emptyList();
     }
 
     if (requiresAgainstBlock && blockPlaceAgainstData == null) {
-      return Collections.emptyList();
+      if (
+        currentFloorProjected
+          && modifier == MovementModifier.NORMAL
+          && !diagonal
+      ) {
+        blockPlaceAgainstData = new BlockPlaceAgainstData(
+          node.sub(0, 1, 0),
+          direction.toSkyDirection().blockFace()
+        );
+      } else {
+        return Collections.emptyList();
+      }
     }
 
     var cost = this.cost;
+    if (
+      targetFeetInSwimmableWater
+        && targetHeadInSwimmableWater
+    ) {
+      cost += Costs.SUBMERGED_MOVEMENT;
+    }
 
     var blocksToBreak = blockBreakCosts == null ? 0 : blockBreakCosts.length;
     var blockToPlace = requiresAgainstBlock ? 1 : 0;
@@ -317,7 +367,11 @@ public final class SimpleMovement extends GraphAction implements Cloneable {
       cost += graph.pathConstraint().placeBlockPenalty();
 
       var floorBlock = absoluteTargetFeetBlock.sub(0, 1, 0);
-      actions.add(new BlockPlaceAction(floorBlock, blockPlaceAgainstData));
+      actions.add(new BlockPlaceAction(
+        floorBlock,
+        blockPlaceAgainstData,
+        graph.pathConstraint()
+      ));
     }
 
     actions.add(new MovementAction(absoluteTargetFeetBlock, diagonal, graph.pathConstraint()));
@@ -338,6 +392,10 @@ public final class SimpleMovement extends GraphAction implements Cloneable {
   @Override
   public SimpleMovement copy() {
     return this.clone();
+  }
+
+  public void currentFloorProjected(boolean currentFloorProjected) {
+    this.currentFloorProjected = currentFloorProjected;
   }
 
   @Override
@@ -367,8 +425,9 @@ public final class SimpleMovement extends GraphAction implements Cloneable {
   ) implements SimpleMovementSubscription {
     @Override
     public MinecraftGraph.SubscriptionSingleResult processBlock(MinecraftGraph graph, SFVec3i key, SimpleMovement simpleMovement,
-                                                                BlockState blockState, SFVec3i absoluteKey) {
-      if (SFBlockHelpers.isBodyPassableBlock(blockState)) {
+      BlockState blockState, SFVec3i absoluteKey) {
+      var swimmableWater = SFBlockHelpers.isSwimmableWaterBlock(blockState);
+      if (SFBlockHelpers.isBodyPassableBlock(blockState) || swimmableWater) {
         if (simpleMovement.allowBlockActions) {
           simpleMovement.noNeedToBreak[blockArrayIndex] = true;
         }
@@ -376,7 +435,12 @@ public final class SimpleMovement extends GraphAction implements Cloneable {
         return MinecraftGraph.SubscriptionSingleResult.CONTINUE;
       }
 
-      if (bodyPart == BodyPart.FEET && targetFeetBlock && SFBlockHelpers.canSupportFeetInBlock(blockState)) {
+      if (
+        bodyPart == BodyPart.FEET
+          && targetFeetBlock
+          && simpleMovement.modifier != MovementModifier.JUMP_UP_BLOCK
+          && SFBlockHelpers.canSupportFeetInBlock(blockState)
+      ) {
         if (simpleMovement.allowBlockActions) {
           simpleMovement.noNeedToBreak[blockArrayIndex] = true;
         }
@@ -422,8 +486,30 @@ public final class SimpleMovement extends GraphAction implements Cloneable {
         new MovementMiningCost(
           absoluteKey,
           cacheableMiningCost.miningCost(),
-          cacheableMiningCost.willDropUsableBlockItem(),
+          cacheableMiningCost.willDropUsableBlockItem()
+            && graph.pathConstraint().isPlaceableBlockDrop(blockState),
           blockBreakSideHint);
+      return MinecraftGraph.SubscriptionSingleResult.CONTINUE;
+    }
+  }
+
+  private record MovementTargetWaterSubscription(
+    boolean feet
+  ) implements SimpleMovementSubscription {
+    @Override
+    public MinecraftGraph.SubscriptionSingleResult processBlock(
+      MinecraftGraph graph,
+      SFVec3i key,
+      SimpleMovement simpleMovement,
+      BlockState blockState,
+      SFVec3i absoluteKey
+    ) {
+      var swimmableWater = SFBlockHelpers.isSwimmableWaterBlock(blockState);
+      if (feet) {
+        simpleMovement.targetFeetInSwimmableWater = swimmableWater;
+      } else {
+        simpleMovement.targetHeadInSwimmableWater = swimmableWater;
+      }
       return MinecraftGraph.SubscriptionSingleResult.CONTINUE;
     }
   }

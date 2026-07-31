@@ -39,7 +39,7 @@ import net.minecraft.world.entity.OwnableEntity;
 import net.minecraft.world.entity.TamableAnimal;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.item.ItemEntity;
-import net.minecraft.world.entity.monster.Monster;
+import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.item.ItemStack;
@@ -389,7 +389,7 @@ public final class MinecraftDomainMapper {
     if (entity instanceof Player) {
       return EntityCategory.ENTITY_CATEGORY_PLAYER;
     }
-    if (entity instanceof Monster) {
+    if (entity instanceof Enemy) {
       return EntityCategory.ENTITY_CATEGORY_HOSTILE;
     }
     if (entity instanceof Projectile) {

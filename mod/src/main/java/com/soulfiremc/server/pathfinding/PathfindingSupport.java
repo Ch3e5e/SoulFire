@@ -23,6 +23,8 @@ import com.soulfiremc.server.bot.BotConnection;
 import com.soulfiremc.server.pathfinding.goals.AwayFromPosGoal;
 import com.soulfiremc.server.pathfinding.goals.BreakBlockPosGoal;
 import com.soulfiremc.server.pathfinding.goals.CloseToPosGoal;
+import com.soulfiremc.server.pathfinding.goals.CloseToWorldPosGoal;
+import com.soulfiremc.server.pathfinding.goals.CloseToWorldXZGoal;
 import com.soulfiremc.server.pathfinding.goals.CompositeGoal;
 import com.soulfiremc.server.pathfinding.goals.DynamicGoalScorer;
 import com.soulfiremc.server.pathfinding.goals.GoalScorer;
@@ -30,16 +32,24 @@ import com.soulfiremc.server.pathfinding.goals.PlaceBlockGoal;
 import com.soulfiremc.server.pathfinding.goals.PosGoal;
 import com.soulfiremc.server.pathfinding.goals.XZGoal;
 import com.soulfiremc.server.pathfinding.goals.YGoal;
+import com.soulfiremc.server.pathfinding.graph.constraint.AdditionalPlacementConstraint;
+import com.soulfiremc.server.pathfinding.graph.constraint.AvoidFluidConstraint;
 import com.soulfiremc.server.pathfinding.graph.constraint.ConfiguredPathConstraint;
 import com.soulfiremc.server.pathfinding.graph.constraint.NoBlockBreakingConstraint;
 import com.soulfiremc.server.pathfinding.graph.constraint.NoBlockPlacingConstraint;
 import com.soulfiremc.server.pathfinding.graph.constraint.PathConstraint;
 import com.soulfiremc.server.pathfinding.graph.constraint.PathConstraintImpl;
+import com.soulfiremc.server.util.BlockItems;
+import com.soulfiremc.server.util.SFItemHelpers;
 import io.grpc.Status;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.phys.Vec3;
 
+import java.util.LinkedHashSet;
 import java.util.OptionalDouble;
 import java.util.OptionalInt;
 import java.util.Set;
@@ -90,11 +100,10 @@ public final class PathfindingSupport {
         var position = near.getPosition();
         var target = new Vec3(position.getX(), position.getY(), position.getZ());
         var vector = SFVec3i.fromDouble(target);
-        var radius = Math.max(1, Math.round(near.getRadius()));
         yield new ResolvedGoal(
           near.getRadius() <= 0
             ? new PosGoal(vector)
-            : new CloseToPosGoal(vector, radius),
+            : new CloseToWorldPosGoal(target, near.getRadius()),
           _ -> target
         );
       }
@@ -120,12 +129,13 @@ public final class PathfindingSupport {
             .asRuntimeException();
         }
         var initialPosition = entity.position();
-        var radius = Math.max(1, Math.round(entityGoal.getRadius()));
         DynamicGoalScorer scorer = () -> {
           var liveLevel = bot.minecraft().level;
           var current = liveLevel == null ? null : findEntityById(liveLevel, entityId);
           var position = current == null ? initialPosition : current.position();
-          return new CloseToPosGoal(SFVec3i.fromDouble(position), radius);
+          return entityGoal.getRadius() <= 0
+            ? new PosGoal(SFVec3i.fromDouble(position))
+            : new CloseToWorldPosGoal(position, entityGoal.getRadius());
         };
         yield new ResolvedGoal(
           scorer,
@@ -139,7 +149,16 @@ public final class PathfindingSupport {
       case XZ -> {
         var xz = goal.getXz();
         validateDimension(currentDimension, xz.getDimension());
-        var scorer = new XZGoal((int) Math.round(xz.getX()), (int) Math.round(xz.getZ()));
+        var scorer = xz.getRadius() <= 0
+          ? (GoalScorer) new XZGoal(
+            (int) Math.round(xz.getX()),
+            (int) Math.round(xz.getZ())
+          )
+          : new CloseToWorldXZGoal(
+            xz.getX(),
+            xz.getZ(),
+            xz.getRadius()
+          );
         yield new ResolvedGoal(
           scorer,
           connection -> {
@@ -270,15 +289,55 @@ public final class PathfindingSupport {
     PathfindOptions options
   ) {
     PathConstraint constraint = new PathConstraintImpl(bot);
+    if (options.getAdditionalPlaceItemIdsCount() > 0) {
+      var additionalItems = new LinkedHashSet<Item>();
+      for (var itemId : options.getAdditionalPlaceItemIdsList()) {
+        var identifier = Identifier.tryParse(itemId);
+        if (
+          identifier == null
+            || !BuiltInRegistries.ITEM.containsKey(identifier)
+        ) {
+          throw Status.INVALID_ARGUMENT
+            .withDescription("Unknown additional place item id: " + itemId)
+            .asRuntimeException();
+        }
+        var item = BuiltInRegistries.ITEM.getValue(identifier);
+        var block = BlockItems.getBlock(item);
+        if (
+          block.isEmpty()
+            || !SFItemHelpers.isSafeFullBlock(block.orElseThrow())
+        ) {
+          throw Status.INVALID_ARGUMENT
+            .withDescription(
+              "Additional place item must be a safe, non-falling block: "
+                + itemId
+            )
+            .asRuntimeException();
+        }
+        additionalItems.add(item);
+      }
+      constraint = new AdditionalPlacementConstraint(
+        constraint,
+        Set.copyOf(additionalItems)
+      );
+    }
     if (!options.getAllowMining()) {
       constraint = new NoBlockBreakingConstraint(constraint);
     }
     if (!options.getAllowPlacing()) {
       constraint = new NoBlockPlacingConstraint(constraint);
     }
+    if (options.getAvoidFluids()) {
+      constraint = AvoidFluidConstraint.forPlayer(
+        constraint,
+        bot.minecraft().level,
+        bot.minecraft().player
+      );
+    }
     if (options.hasBreakBlockPenalty()
       || options.hasPlaceBlockPenalty()
-      || options.getSearchTimeoutSeconds() > 0) {
+      || options.getSearchTimeoutSeconds() > 0
+      || options.hasSprint()) {
       var breakPenalty = optionalPenalty(
         options.hasBreakBlockPenalty(),
         options.getBreakBlockPenalty(),
@@ -299,7 +358,10 @@ public final class PathfindingSupport {
         constraint,
         breakPenalty,
         placePenalty,
-        searchTimeout
+        searchTimeout,
+        options.hasSprint()
+          ? java.util.Optional.of(options.getSprint())
+          : java.util.Optional.empty()
       );
     }
     return constraint;

@@ -7,6 +7,7 @@ import {
   type BeatGameStrategy,
 } from "./model.js";
 import {
+  EDIBLE_FOOD_ITEM_IDS,
   EMERGENCY_FOOD_ITEM_IDS,
   requirementsForPhase,
 } from "./requirements.js";
@@ -88,7 +89,7 @@ export function decideBeatGameAction(
   }
   if (
     observation.player.food <= strategy.eatBelowFood
-    && hasFood(observation, strategy)
+    && hasEdibleFood(observation)
   ) {
     return { type: "eat", action: "eat" };
   }
@@ -204,6 +205,12 @@ function hasFood(
     strategy,
   ).find(({ key }) => key === "food")?.itemIds ?? [];
   return [...foodIds, ...EMERGENCY_FOOD_ITEM_IDS].some((itemId) =>
+    (observation.inventory.counts[itemId] ?? 0) > 0
+  );
+}
+
+function hasEdibleFood(observation: BeatGameObservation): boolean {
+  return [...EDIBLE_FOOD_ITEM_IDS, ...EMERGENCY_FOOD_ITEM_IDS].some((itemId) =>
     (observation.inventory.counts[itemId] ?? 0) > 0
   );
 }

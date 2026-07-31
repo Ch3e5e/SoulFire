@@ -127,7 +127,9 @@ public final class UpMovement extends GraphAction implements Cloneable {
       new JumpAndPlaceBelowAction(
         node,
         new BlockPlaceAgainstData(
-          node.sub(0, 1, 0), BlockFace.TOP)));
+          node.sub(0, 1, 0), BlockFace.TOP),
+        graph.pathConstraint()
+      ));
 
     return Collections.singletonList(new GraphInstructions(
       absoluteTargetFeetBlock,
@@ -184,7 +186,8 @@ public final class UpMovement extends GraphAction implements Cloneable {
         new MovementMiningCost(
           absoluteKey,
           cacheableMiningCost.miningCost(),
-          cacheableMiningCost.willDropUsableBlockItem(),
+          cacheableMiningCost.willDropUsableBlockItem()
+            && graph.pathConstraint().isPlaceableBlockDrop(blockState),
           blockBreakSideHint);
       return MinecraftGraph.SubscriptionSingleResult.CONTINUE;
     }

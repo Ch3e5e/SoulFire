@@ -17,6 +17,7 @@
  */
 package com.soulfiremc.server.pathfinding.graph.constraint;
 
+import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.OptionalInt;
 
@@ -26,7 +27,8 @@ public record ConfiguredPathConstraint(
   PathConstraint delegate,
   OptionalDouble configuredBreakBlockPenalty,
   OptionalDouble configuredPlaceBlockPenalty,
-  OptionalInt configuredExpireTimeout
+  OptionalInt configuredExpireTimeout,
+  Optional<Boolean> configuredSprint
 ) implements DelegatePathConstraint {
   @Override
   public double breakBlockPenalty() {
@@ -41,5 +43,10 @@ public record ConfiguredPathConstraint(
   @Override
   public int expireTimeout() {
     return configuredExpireTimeout.orElseGet(delegate::expireTimeout);
+  }
+
+  @Override
+  public boolean sprint() {
+    return configuredSprint.orElseGet(delegate::sprint);
   }
 }

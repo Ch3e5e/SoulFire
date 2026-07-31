@@ -254,6 +254,8 @@ message AttackEntityTask {
   optional ItemSelector weapon = 8;
   // Restores the selected hotbar slot when the task stops.
   bool restore_selected_slot = 9;
+  // Uses an equipped offhand shield while approaching and between attacks.
+  bool use_offhand_shield = 10;
 }
 
 enum AttackEntityCompletionReason {
@@ -711,6 +713,9 @@ message CollectBlocksTask {
   // Zero selects the server default.
   uint32 search_radius = 4;
   PathfindOptions options = 5;
+  // Excludes targets with fluid above them up to the bot's current elevation.
+  // Useful when a caller cannot safely manage underwater collection.
+  bool avoid_submerged_targets = 6;
 }
 
 enum CollectBlocksCompletionReason {

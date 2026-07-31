@@ -229,6 +229,7 @@ def test_sync_attack_task_preserves_combat_policy() -> None:
         target_unavailable_timeout_seconds=6,
         weapon=ItemSelector(tags=["minecraft:swords"]),
         restore_selected_slot=True,
+        use_offhand_shield=True,
     )
 
     assert service.request is not None
@@ -243,6 +244,7 @@ def test_sync_attack_task_preserves_combat_policy() -> None:
     assert unpacked.select_best_weapon
     assert list(unpacked.weapon.tags) == ["minecraft:swords"]
     assert unpacked.restore_selected_slot
+    assert unpacked.use_offhand_shield
 
 
 def test_sync_ranged_attack_preserves_trajectory_and_spacing_policy() -> None:
@@ -814,7 +816,12 @@ def test_sync_collect_blocks_task_preserves_selectors_and_path_policy() -> None:
         tags=["minecraft:logs"],
         count=6,
         search_radius=48,
-        options=PathfindOptions(allow_mining=True, allow_placing=False),
+        avoid_submerged_targets=True,
+        options=PathfindOptions(
+            allow_mining=True,
+            allow_placing=False,
+            avoid_fluids=True,
+        ),
     )
 
     assert service.request is not None
@@ -824,8 +831,10 @@ def test_sync_collect_blocks_task_preserves_selectors_and_path_policy() -> None:
     assert list(task.tags) == ["minecraft:logs"]
     assert task.count == 6
     assert task.search_radius == 48
+    assert task.avoid_submerged_targets
     assert task.options.allow_mining
     assert not task.options.allow_placing
+    assert task.options.avoid_fluids
 
 
 def test_sync_excavate_task_preserves_corners_limit_and_path_policy() -> None:

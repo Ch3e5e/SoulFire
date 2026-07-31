@@ -91,7 +91,7 @@ async def test_async_pathfinder_plans_without_starting_a_task() -> None:
 
     plan = await pathfinder.plan(
         goals.block(BlockTarget(4, 65, -2)),
-        options=PathfindOptions(search_timeout_seconds=3),
+        options=PathfindOptions(search_timeout_seconds=3, sprint=False),
         include_descriptions=True,
     )
 
@@ -100,6 +100,8 @@ async def test_async_pathfinder_plans_without_starting_a_task() -> None:
     assert service.request.instance_id == "instance-id"
     assert service.request.bot_id == "bot-id"
     assert service.request.options.search_timeout_seconds == 3
+    assert service.request.options.HasField("sprint")
+    assert not service.request.options.sprint
     assert service.request.include_descriptions
 
 

@@ -315,7 +315,7 @@ function worldMemory(value: unknown): void {
   memoryEntries(
     memory.deathPositions,
     "checkpoint.memory.deathPositions",
-    position,
+    deathPosition,
   );
   if (!Array.isArray(memory.eyeSamples)) {
     throw new TypeError("checkpoint.memory.eyeSamples must be an array");
@@ -337,6 +337,19 @@ function worldMemory(value: unknown): void {
       memory.strongholdEstimate,
       "checkpoint.memory.strongholdEstimate",
     );
+  }
+}
+
+function deathPosition(value: unknown, path: string): void {
+  position(value, path);
+  const item = record(value, path);
+  if (item.inventoryCounts === undefined) {
+    return;
+  }
+  const counts = record(item.inventoryCounts, `${path}.inventoryCounts`);
+  for (const [itemId, count] of Object.entries(counts)) {
+    nonEmptyString(itemId, `${path}.inventoryCounts item ID`);
+    nonNegativeInteger(count, `${path}.inventoryCounts.${itemId}`);
   }
 }
 

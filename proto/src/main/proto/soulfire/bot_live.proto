@@ -1003,6 +1003,17 @@ message PathfindOptions {
   optional double break_block_penalty = 5;
   // Extra planner cost for placing a block. Unset uses server settings.
   optional double place_block_penalty = 6;
+  // If true, candidate movements whose feet or head would enter fluid are
+  // excluded from the route.
+  bool avoid_fluids = 7;
+  // Additional block item ids that pathfinding may place after exhausting its
+  // built-in disposable building blocks. This is request-scoped and should be
+  // used sparingly for recovery paths that would otherwise leave a bot
+  // stranded.
+  repeated string additional_place_item_ids = 8;
+  // Whether ordinary forward path traversal should sprint. Unset preserves the
+  // server default of sprinting. Set false for hunger-efficient travel.
+  optional bool sprint = 9;
 }
 
 message GoToRequest {

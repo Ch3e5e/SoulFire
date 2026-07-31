@@ -206,6 +206,7 @@ describe("SoulFireTasks", () => {
         targetUnavailableTimeoutSeconds: 6,
         weapon: { tags: ["minecraft:swords"] },
         restoreSelectedSlot: true,
+        useOffhandShield: true,
         path: { allowMining: false, allowPlacing: false },
       },
     );
@@ -224,6 +225,7 @@ describe("SoulFireTasks", () => {
       selectBestWeapon: true,
       weapon: { tags: ["minecraft:swords"] },
       restoreSelectedSlot: true,
+      useOffhandShield: true,
       options: { allowMining: false, allowPlacing: false },
     });
   });
@@ -1023,7 +1025,12 @@ describe("SoulFireTasks", () => {
       tags: ["minecraft:logs"],
       count: 6,
       searchRadius: 48,
-      path: { allowMining: true, allowPlacing: false },
+      avoidSubmergedTargets: true,
+      path: {
+        allowMining: true,
+        allowPlacing: false,
+        avoidFluids: true,
+      },
     });
 
     expect(anyUnpack(started!.input!, CollectBlocksTaskSchema))
@@ -1032,7 +1039,12 @@ describe("SoulFireTasks", () => {
         tags: ["minecraft:logs"],
         count: 6,
         searchRadius: 48,
-        options: { allowMining: true, allowPlacing: false },
+        avoidSubmergedTargets: true,
+        options: {
+          allowMining: true,
+          allowPlacing: false,
+          avoidFluids: true,
+        },
       });
   });
 

@@ -586,7 +586,7 @@ class FollowEntityTaskResult(_message.Message):
     def __init__(self, final_position: _Optional[_Union[_common_pb2.WorldPosition, _Mapping]] = ..., reason: _Optional[_Union[FollowEntityCompletionReason, str]] = ...) -> None: ...
 
 class AttackEntityTask(_message.Message):
-    __slots__ = ("target", "options", "attack_range", "sprinting", "maximum_attacks", "target_unavailable_timeout_seconds", "select_best_weapon", "weapon", "restore_selected_slot")
+    __slots__ = ("target", "options", "attack_range", "sprinting", "maximum_attacks", "target_unavailable_timeout_seconds", "select_best_weapon", "weapon", "restore_selected_slot", "use_offhand_shield")
     TARGET_FIELD_NUMBER: _ClassVar[int]
     OPTIONS_FIELD_NUMBER: _ClassVar[int]
     ATTACK_RANGE_FIELD_NUMBER: _ClassVar[int]
@@ -596,6 +596,7 @@ class AttackEntityTask(_message.Message):
     SELECT_BEST_WEAPON_FIELD_NUMBER: _ClassVar[int]
     WEAPON_FIELD_NUMBER: _ClassVar[int]
     RESTORE_SELECTED_SLOT_FIELD_NUMBER: _ClassVar[int]
+    USE_OFFHAND_SHIELD_FIELD_NUMBER: _ClassVar[int]
     target: _domain_pb2.EntityReference
     options: _bot_live_pb2.PathfindOptions
     attack_range: float
@@ -605,7 +606,8 @@ class AttackEntityTask(_message.Message):
     select_best_weapon: bool
     weapon: _inventory_pb2.ItemSelector
     restore_selected_slot: bool
-    def __init__(self, target: _Optional[_Union[_domain_pb2.EntityReference, _Mapping]] = ..., options: _Optional[_Union[_bot_live_pb2.PathfindOptions, _Mapping]] = ..., attack_range: _Optional[float] = ..., sprinting: bool = ..., maximum_attacks: _Optional[int] = ..., target_unavailable_timeout_seconds: _Optional[int] = ..., select_best_weapon: bool = ..., weapon: _Optional[_Union[_inventory_pb2.ItemSelector, _Mapping]] = ..., restore_selected_slot: bool = ...) -> None: ...
+    use_offhand_shield: bool
+    def __init__(self, target: _Optional[_Union[_domain_pb2.EntityReference, _Mapping]] = ..., options: _Optional[_Union[_bot_live_pb2.PathfindOptions, _Mapping]] = ..., attack_range: _Optional[float] = ..., sprinting: bool = ..., maximum_attacks: _Optional[int] = ..., target_unavailable_timeout_seconds: _Optional[int] = ..., select_best_weapon: bool = ..., weapon: _Optional[_Union[_inventory_pb2.ItemSelector, _Mapping]] = ..., restore_selected_slot: bool = ..., use_offhand_shield: bool = ...) -> None: ...
 
 class AttackEntityTaskResult(_message.Message):
     __slots__ = ("final_position", "reason", "attacks", "target_alive")
@@ -1060,18 +1062,20 @@ class AutoArmorTaskResult(_message.Message):
     def __init__(self, reason: _Optional[_Union[AutoArmorCompletionReason, str]] = ..., equips: _Optional[int] = ...) -> None: ...
 
 class CollectBlocksTask(_message.Message):
-    __slots__ = ("block_ids", "tags", "count", "search_radius", "options")
+    __slots__ = ("block_ids", "tags", "count", "search_radius", "options", "avoid_submerged_targets")
     BLOCK_IDS_FIELD_NUMBER: _ClassVar[int]
     TAGS_FIELD_NUMBER: _ClassVar[int]
     COUNT_FIELD_NUMBER: _ClassVar[int]
     SEARCH_RADIUS_FIELD_NUMBER: _ClassVar[int]
     OPTIONS_FIELD_NUMBER: _ClassVar[int]
+    AVOID_SUBMERGED_TARGETS_FIELD_NUMBER: _ClassVar[int]
     block_ids: _containers.RepeatedScalarFieldContainer[str]
     tags: _containers.RepeatedScalarFieldContainer[str]
     count: int
     search_radius: int
     options: _bot_live_pb2.PathfindOptions
-    def __init__(self, block_ids: _Optional[_Iterable[str]] = ..., tags: _Optional[_Iterable[str]] = ..., count: _Optional[int] = ..., search_radius: _Optional[int] = ..., options: _Optional[_Union[_bot_live_pb2.PathfindOptions, _Mapping]] = ...) -> None: ...
+    avoid_submerged_targets: bool
+    def __init__(self, block_ids: _Optional[_Iterable[str]] = ..., tags: _Optional[_Iterable[str]] = ..., count: _Optional[int] = ..., search_radius: _Optional[int] = ..., options: _Optional[_Union[_bot_live_pb2.PathfindOptions, _Mapping]] = ..., avoid_submerged_targets: bool = ...) -> None: ...
 
 class CollectBlocksTaskResult(_message.Message):
     __slots__ = ("reason", "blocks_broken", "final_position")

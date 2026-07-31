@@ -56,6 +56,22 @@ describe("beat-game planner", () => {
     });
   });
 
+  it("eats raw food before hunger interrupts another action", () => {
+    const decision = decideBeatGameAction({
+      checkpoint: checkpoint(BeatGamePhase.PREPARE_OVERWORLD),
+      observation: observation({
+        counts: { "minecraft:porkchop": 3 },
+        food: defaultBeatGameStrategy.eatBelowFood,
+      }),
+      strategy: defaultBeatGameStrategy,
+    });
+
+    expect(decision).toMatchObject({
+      type: "eat",
+      action: "eat",
+    });
+  });
+
   it("recovers in place when current hunger or emergency food can heal", () => {
     const base = checkpoint(BeatGamePhase.PREPARE_OVERWORLD);
 

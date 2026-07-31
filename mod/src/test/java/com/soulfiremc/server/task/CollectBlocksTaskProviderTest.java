@@ -17,9 +17,23 @@
  */
 package com.soulfiremc.server.task;
 
+import com.soulfiremc.server.pathfinding.SFVec3i;
+import com.soulfiremc.server.pathfinding.graph.BlockFace;
+import com.soulfiremc.test.utils.TestBlockAccessorBuilder;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -40,5 +54,148 @@ final class CollectBlocksTaskProviderTest {
       playerFeet,
       playerFeet.above(4)
     ));
+    assertTrue(CollectBlocksTaskProvider.isDirectBreakCandidate(
+      playerFeet,
+      playerFeet.offset(1, -1, 0)
+    ));
+    assertFalse(CollectBlocksTaskProvider.isDirectBreakCandidate(
+      playerFeet,
+      playerFeet.below()
+    ));
+  }
+
+  @Test
+  void detectsTargetsUnderAFluidColumn() {
+    var blocks = new TestBlockAccessorBuilder();
+    blocks.setBlockAt(0, 56, 0, Blocks.IRON_ORE);
+    blocks.setBlockAt(0, 57, 0, Blocks.STONE);
+    blocks.setBlockAt(0, 58, 0, Blocks.STONE);
+    blocks.setBlockAt(0, 59, 0, Blocks.DIRT);
+    blocks.setBlockAt(0, 60, 0, Blocks.WATER);
+    blocks.setBlockAt(1, 56, 0, Blocks.IRON_ORE);
+    var level = blocks.build();
+    var playerFeet = new BlockPos(0, 62, 0);
+
+    assertTrue(CollectBlocksTaskProvider.hasFluidAbove(
+      level,
+      playerFeet,
+      new BlockPos(0, 56, 0)
+    ));
+    assertFalse(CollectBlocksTaskProvider.hasFluidAbove(
+      level,
+      playerFeet,
+      new BlockPos(1, 56, 0)
+    ));
+  }
+
+  @Test
+  void onlyTreatsTheFirstRaycastBlockAsDirectlyReachable() {
+    var target = new BlockPos(4, 65, -2);
+
+    assertTrue(CollectBlocksTaskProvider.hitsTargetBlock(
+      target,
+      new BlockHitResult(
+        Vec3.atCenterOf(target),
+        Direction.UP,
+        target,
+        false
+      )
+    ));
+    assertFalse(CollectBlocksTaskProvider.hitsTargetBlock(
+      target,
+      new BlockHitResult(
+        Vec3.atCenterOf(target.below()),
+        Direction.UP,
+        target.below(),
+        false
+      )
+    ));
+  }
+
+  @Test
+  void reachesTheNearestFaceOfAnOverheadBlock() {
+    var playerFeet = new SFVec3i(0, 64, 0);
+    var eyePosition = new Vec3(0.5D, 65.62D, 0.5D);
+    var overheadLog = playerFeet.add(0, 6, 0);
+
+    assertTrue(
+      Vec3.atCenterOf(overheadLog.toBlockPos())
+        .distanceToSqr(eyePosition)
+        > 4.5D * 4.5D
+    );
+    assertTrue(CollectBlocksTaskProvider.directBreakFaces(
+      eyePosition,
+      overheadLog
+    ).contains(BlockFace.BOTTOM));
+  }
+
+  @Test
+  void rejectsDropSensitiveBlocksWhenNoSuitableToolExists() {
+    assertFalse(CollectBlocksTaskProvider.hasDropPreservingTool(
+      Blocks.STONE.defaultBlockState(),
+      List.of(ItemStack.EMPTY)
+    ));
+    assertTrue(CollectBlocksTaskProvider.hasDropPreservingTool(
+      Blocks.OAK_LOG.defaultBlockState(),
+      List.of(ItemStack.EMPTY)
+    ));
+  }
+
+  @Test
+  void retriesOnlyTargetsAdjacentToAStalledCollectionPosition() {
+    var playerPosition = new SFVec3i(10, 64, -5);
+    var adjacentTarget = playerPosition.add(1, 0, 0);
+    var overheadTarget = playerPosition.add(0, 3, 0);
+    var distantTarget = playerPosition.add(4, 0, 0);
+
+    assertEquals(
+      Set.of(adjacentTarget),
+      CollectBlocksTaskProvider.stalledAdjacentTargets(
+        Set.of(adjacentTarget, overheadTarget, distantTarget),
+        playerPosition
+      )
+    );
+  }
+
+  @Test
+  void abandonsATargetAfterFourDistinctFailedApproaches() {
+    var target = new SFVec3i(10, 64, -5);
+    var failedApproaches = new HashMap<SFVec3i, Set<SFVec3i>>();
+    var rejectedTargets = new HashSet<SFVec3i>();
+    var firstApproach = target.add(1, 0, 0);
+
+    assertTrue(CollectBlocksTaskProvider.recordFailedApproach(
+      failedApproaches,
+      rejectedTargets,
+      target,
+      firstApproach
+    ));
+    assertFalse(CollectBlocksTaskProvider.recordFailedApproach(
+      failedApproaches,
+      rejectedTargets,
+      target,
+      firstApproach
+    ));
+    assertTrue(CollectBlocksTaskProvider.recordFailedApproach(
+      failedApproaches,
+      rejectedTargets,
+      target,
+      target.add(-1, 0, 0)
+    ));
+    assertTrue(CollectBlocksTaskProvider.recordFailedApproach(
+      failedApproaches,
+      rejectedTargets,
+      target,
+      target.add(0, 0, 1)
+    ));
+    assertTrue(CollectBlocksTaskProvider.recordFailedApproach(
+      failedApproaches,
+      rejectedTargets,
+      target,
+      target.add(0, 0, -1)
+    ));
+
+    assertEquals(Set.of(target), rejectedTargets);
+    assertFalse(failedApproaches.containsKey(target));
   }
 }

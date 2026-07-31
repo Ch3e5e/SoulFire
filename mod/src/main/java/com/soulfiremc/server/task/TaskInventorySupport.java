@@ -112,12 +112,26 @@ public final class TaskInventorySupport {
   }
 
   static void swapWithSelectedHotbar(BotConnection bot, int slot) {
+    var player = bot.minecraft().player;
+    if (player == null) {
+      throw new IllegalStateException(
+        "Bot player is unavailable"
+      );
+    }
+    swapWithHotbar(bot, slot, player.getInventory().getSelectedSlot());
+  }
+
+  static void swapWithHotbar(
+    BotConnection bot,
+    int slot,
+    int hotbar
+  ) {
     withPlayerInventory(bot, (player, gameMode) ->
       swapWithHotbar(
         player,
         gameMode,
         slot,
-        player.getInventory().getSelectedSlot()
+        hotbar
       ));
   }
 

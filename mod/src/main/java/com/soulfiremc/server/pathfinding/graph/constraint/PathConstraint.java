@@ -36,6 +36,8 @@ public interface PathConstraint {
 
   boolean isPlaceable(ItemStack item);
 
+  boolean isPlaceableBlockDrop(BlockState blockState);
+
   boolean isTool(ItemStack item);
 
   boolean isOutOfLevel(BlockState blockState, SFVec3i pos);
@@ -48,6 +50,11 @@ public interface PathConstraint {
 
   GraphInstructions modifyAsNeeded(GraphInstructions instruction);
 
+  /// Returns whether a generated movement may be considered by pathfinding.
+  default boolean allowsInstruction(GraphInstructions instruction) {
+    return true;
+  }
+
   /// Returns the cost penalty for breaking a block during pathfinding.
   double breakBlockPenalty();
 
@@ -59,6 +66,11 @@ public interface PathConstraint {
 
   /// Returns whether pruning of the pathfinding search space is disabled.
   boolean disablePruning();
+
+  /// Returns whether ordinary forward path traversal should sprint.
+  default boolean sprint() {
+    return true;
+  }
 
   MinMaxProperty.DataLayout yRotJitter();
 

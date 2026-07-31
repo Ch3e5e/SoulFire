@@ -17,11 +17,15 @@
  */
 package com.soulfiremc.server.task;
 
+import com.soulfiremc.grpc.generated.AttackEntityTask;
+import com.soulfiremc.server.bot.ControlResource;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class AttackEntityTaskProviderTest {
   @Test
@@ -50,5 +54,25 @@ final class AttackEntityTaskProviderTest {
         entity
       )
     );
+  }
+
+  @Test
+  void directlyPursuesVisibleNearbyTargetsOnReachableTerrain() {
+    assertTrue(AttackEntityTaskProvider.shouldPursueDirectly(12, 2.5, true));
+    assertFalse(AttackEntityTaskProvider.shouldPursueDirectly(12.01, 2, true));
+    assertFalse(AttackEntityTaskProvider.shouldPursueDirectly(8, 2.51, true));
+    assertFalse(AttackEntityTaskProvider.shouldPursueDirectly(8, 1, false));
+  }
+
+  @Test
+  void claimsOffhandControlOnlyWhenShieldingIsRequested() {
+    var provider = new AttackEntityTaskProvider();
+
+    assertFalse(provider.resources(
+      AttackEntityTask.getDefaultInstance()
+    ).contains(ControlResource.OFF_HAND));
+    assertTrue(provider.resources(
+      AttackEntityTask.newBuilder().setUseOffhandShield(true).build()
+    ).contains(ControlResource.OFF_HAND));
   }
 }

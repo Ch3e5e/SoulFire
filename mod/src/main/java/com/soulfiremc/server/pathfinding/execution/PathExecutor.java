@@ -35,8 +35,10 @@ import com.soulfiremc.server.util.TimeUtil;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Queue;
 import java.util.Set;
@@ -53,7 +55,8 @@ public final class PathExecutor implements ControlTask {
     ControlResource.INVENTORY
   );
   private static final int MAX_ERROR_DISTANCE = 20;
-  private static final int MAX_CONSECUTIVE_EMPTY_PARTIAL_ROUTES = 5;
+  private static final int MAX_CONSECUTIVE_STATIONARY_PARTIAL_ROUTES = 3;
+  private static final int MAX_CONSECUTIVE_STALLED_ACTIONS = 5;
   private final Queue<WorldAction> worldActionQueue = new LinkedBlockingQueue<>();
   private final Set<SFVec3i> completedBlockBreaks = new HashSet<>();
   private final BotConnection connection;
@@ -61,8 +64,10 @@ public final class PathExecutor implements ControlTask {
   private final CompletableFuture<Void> pathCompletionFuture;
   private final PartialRouteProgressGuard partialRouteProgressGuard =
     new PartialRouteProgressGuard(
-      MAX_CONSECUTIVE_EMPTY_PARTIAL_ROUTES
+      MAX_CONSECUTIVE_STATIONARY_PARTIAL_ROUTES
     );
+  private final ActionStallGuard actionStallGuard =
+    new ActionStallGuard(MAX_CONSECUTIVE_STALLED_ACTIONS);
   private volatile boolean awaitingPath;
   private int totalMovements;
   private int ticks;
@@ -221,32 +226,22 @@ public final class PathExecutor implements ControlTask {
           case RouteFinder.NoRouteFoundResult _ ->
             throw UnreachableGoalException.noRoute();
           case RouteFinder.PartialRouteResult partialRouteResult -> () -> {
-            if (
-              partialRouteProgressGuard.shouldAbort(
-                partialRouteResult.actions()
-              )
-            ) {
-              awaitingPath = false;
-              pathCompletionFuture.completeExceptionally(
-                UnreachableGoalException.stalled(
-                  MAX_CONSECUTIVE_EMPTY_PARTIAL_ROUTES
-                )
-              );
-              return;
-            }
-            var newActions = addRecalculate(repositionIfNeeded(partialRouteResult.actions(), routeSearchResult.start(), isInitial, this.findPath));
-            if (newActions.isEmpty()) {
-              log.info("We're already at the goal!");
-              awaitingPath = false;
-              pathCompletionFuture.complete(null);
-              return;
-            }
-
-            log.info("Found path with {} actions!", newActions.size());
-
-            preparePath(newActions);
+            preparePartialPath(
+              partialRouteResult.actions(),
+              routeSearchResult.start(),
+              isInitial
+            );
           };
-          case RouteFinder.SearchExpiredResult _ -> throw new IllegalStateException("Route search expired before finding a route!");
+          case RouteFinder.SearchExpiredResult searchExpiredResult -> () -> {
+            log.info(
+              "Using the best partial route found before the search deadline"
+            );
+            preparePartialPath(
+              searchExpiredResult.actions(),
+              routeSearchResult.start(),
+              isInitial
+            );
+          };
           case RouteFinder.SearchInterruptedResult _ -> throw new IllegalStateException("Route search was interrupted before finding a route!");
         });
       } catch (Throwable t) {
@@ -255,6 +250,30 @@ public final class PathExecutor implements ControlTask {
         pathCompletionFuture.completeExceptionally(t);
       }
     });
+  }
+
+  private void preparePartialPath(
+    List<WorldAction> actions,
+    SFVec3i start,
+    boolean isInitial
+  ) {
+    var routeEndpoint = actions.isEmpty()
+      ? start
+      : actions.getLast().targetPosition(connection);
+    if (partialRouteProgressGuard.shouldAbort(routeEndpoint)) {
+      awaitingPath = false;
+      pathCompletionFuture.completeExceptionally(
+        UnreachableGoalException.stalled(
+          MAX_CONSECUTIVE_STATIONARY_PARTIAL_ROUTES
+        )
+      );
+      return;
+    }
+    var newActions = addRecalculate(
+      repositionIfNeeded(actions, start, isInitial, findPath)
+    );
+    log.info("Found path with {} actions!", newActions.size());
+    preparePath(newActions);
   }
 
   public void preparePath(List<WorldAction> worldActions) {
@@ -288,6 +307,21 @@ public final class PathExecutor implements ControlTask {
     }
 
     if (ticks > 0 && ticks >= worldAction.getAllowedTicks()) {
+      var playerPosition = SFVec3i.fromInt(
+        connection.minecraft().player.blockPosition()
+      );
+      if (actionStallGuard.shouldAbort(
+        worldAction.toString(),
+        playerPosition
+      )) {
+        pathCompletionFuture.completeExceptionally(
+          UnreachableGoalException.stalledAction(
+            MAX_CONSECUTIVE_STALLED_ACTIONS,
+            worldAction.toString()
+          )
+        );
+        return;
+      }
       log.warn("Took too long to complete action: {}", worldAction);
       log.warn("Recalculating path...");
       recalculatePath();
@@ -412,30 +446,34 @@ public final class PathExecutor implements ControlTask {
   }
 
   static final class PartialRouteProgressGuard {
-    private final int maximumConsecutiveEmptyRoutes;
-    private int consecutiveEmptyRoutes;
+    private final int maximumConsecutiveStationaryRoutes;
+    private SFVec3i previousEndpoint;
+    private int consecutiveStationaryRoutes;
 
-    PartialRouteProgressGuard(int maximumConsecutiveEmptyRoutes) {
-      if (maximumConsecutiveEmptyRoutes < 1) {
+    PartialRouteProgressGuard(int maximumConsecutiveStationaryRoutes) {
+      if (maximumConsecutiveStationaryRoutes < 1) {
         throw new IllegalArgumentException(
-          "maximumConsecutiveEmptyRoutes must be positive"
+          "maximumConsecutiveStationaryRoutes must be positive"
         );
       }
-      this.maximumConsecutiveEmptyRoutes =
-        maximumConsecutiveEmptyRoutes;
+      this.maximumConsecutiveStationaryRoutes =
+        maximumConsecutiveStationaryRoutes;
     }
 
-    boolean shouldAbort(List<?> actions) {
-      if (!actions.isEmpty()) {
-        reset();
+    boolean shouldAbort(SFVec3i endpoint) {
+      if (!Objects.equals(endpoint, previousEndpoint)) {
+        previousEndpoint = endpoint;
+        consecutiveStationaryRoutes = 1;
         return false;
       }
-      consecutiveEmptyRoutes++;
-      return consecutiveEmptyRoutes >= maximumConsecutiveEmptyRoutes;
+      consecutiveStationaryRoutes++;
+      return consecutiveStationaryRoutes
+        >= maximumConsecutiveStationaryRoutes;
     }
 
     void reset() {
-      consecutiveEmptyRoutes = 0;
+      previousEndpoint = null;
+      consecutiveStationaryRoutes = 0;
     }
   }
 
@@ -479,5 +517,27 @@ public final class PathExecutor implements ControlTask {
   ) {}
 
   public record Progress(boolean planning, int currentMovement, int totalMovements) {
+  }
+
+  static final class ActionStallGuard {
+    private final int maximumConsecutiveStalls;
+    private final Map<StalledAction, Integer> stalls = new HashMap<>();
+
+    ActionStallGuard(int maximumConsecutiveStalls) {
+      if (maximumConsecutiveStalls < 1) {
+        throw new IllegalArgumentException(
+          "maximumConsecutiveStalls must be positive"
+        );
+      }
+      this.maximumConsecutiveStalls = maximumConsecutiveStalls;
+    }
+
+    boolean shouldAbort(String action, SFVec3i position) {
+      var stalledAction = new StalledAction(action, position);
+      var occurrences = stalls.merge(stalledAction, 1, Integer::sum);
+      return occurrences >= maximumConsecutiveStalls;
+    }
+
+    private record StalledAction(String action, SFVec3i position) {}
   }
 }

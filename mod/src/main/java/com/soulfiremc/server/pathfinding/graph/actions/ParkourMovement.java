@@ -157,9 +157,15 @@ public final class ParkourMovement extends GraphAction implements Cloneable {
     @Override
     public MinecraftGraph.SubscriptionSingleResult processBlock(MinecraftGraph graph, SFVec3i key, ParkourMovement parkourMovement,
                                                                 BlockState blockState, SFVec3i absoluteKey) {
+      // A failed jump over fluid turns a recoverable detour into a drowning
+      // hazard. Water and lava have dedicated movement support, so route
+      // through or around them instead of treating them as parkour gaps.
+      if (!blockState.getFluidState().isEmpty()) {
+        return MinecraftGraph.SubscriptionSingleResult.IMPOSSIBLE;
+      }
+
       // We only want to jump over dangerous blocks/gaps
-      // So either a non-full-block like water or lava or magma
-      // since it hurts to stand on.
+      // such as air gaps, magma, or other unsafe floor blocks.
       if (SFBlockHelpers.isWalkableFloorBlock(blockState)) {
         return MinecraftGraph.SubscriptionSingleResult.IMPOSSIBLE;
       }

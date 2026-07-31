@@ -17,6 +17,7 @@
  */
 package com.soulfiremc.server.pathfinding.execution;
 
+import com.soulfiremc.server.pathfinding.SFVec3i;
 import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 
@@ -91,6 +92,29 @@ final class MovementActionTest {
       66.0,
       true
     ));
+  }
+
+  @Test
+  void keepsSwimmingWhileCrossingAFluidBlockAtTargetHeight() {
+    assertTrue(MovementAction.needsUpwardInput(61.5, 62.0, true));
+    assertTrue(MovementAction.needsUpwardInput(61.74, 62.0, true));
+    assertTrue(MovementAction.needsUpwardInput(61.75, 62.0, true));
+    assertTrue(MovementAction.needsUpwardInput(62.25, 62.0, true));
+    assertFalse(MovementAction.needsUpwardInput(62.26, 62.0, true));
+
+    assertFalse(MovementAction.needsUpwardInput(61.5, 62.0, false));
+    assertTrue(MovementAction.needsUpwardInput(61.39, 62.0, false));
+  }
+
+  @Test
+  void keepsJumpingAfterTheInitialDiagonalApproach() {
+    var action = new MovementAction(SFVec3i.ZERO, true, null);
+
+    assertFalse(action.shouldJump());
+    assertFalse(action.shouldJump());
+    assertFalse(action.shouldJump());
+    assertTrue(action.shouldJump());
+    assertTrue(action.shouldJump());
   }
 
   private static void assertInput(

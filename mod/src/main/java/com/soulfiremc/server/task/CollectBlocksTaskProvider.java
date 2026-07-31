@@ -31,28 +31,40 @@ import com.soulfiremc.server.bot.ControlTask;
 import com.soulfiremc.server.pathfinding.SFVec3i;
 import com.soulfiremc.server.pathfinding.execution.BlockBreakAction;
 import com.soulfiremc.server.pathfinding.execution.BlockBreakRejectedException;
+import com.soulfiremc.server.pathfinding.execution.BlockPlaceRejectedException;
 import com.soulfiremc.server.pathfinding.execution.PathExecutor;
 import com.soulfiremc.server.pathfinding.execution.UnreachableGoalException;
+import com.soulfiremc.server.pathfinding.goals.AdjacentToBlockGoal;
 import com.soulfiremc.server.pathfinding.goals.BreakBlockPosGoal;
 import com.soulfiremc.server.pathfinding.goals.CompositeGoal;
+import com.soulfiremc.server.pathfinding.goals.GoalScorer;
 import com.soulfiremc.server.pathfinding.graph.BlockFace;
+import com.soulfiremc.server.pathfinding.graph.constraint.AvoidFluidConstraint;
 import com.soulfiremc.server.pathfinding.graph.constraint.BlockBreakBlacklistConstraint;
 import com.soulfiremc.server.pathfinding.graph.constraint.NoBlockPlacingConstraint;
 import com.soulfiremc.server.pathfinding.graph.constraint.PathConstraint;
 import com.soulfiremc.server.pathfinding.graph.constraint.PathConstraintImpl;
 import io.grpc.Status;
+import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.tags.TagKey;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.BlockGetter;
+import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -65,6 +77,7 @@ public final class CollectBlocksTaskProvider
   private static final int DEFAULT_SEARCH_RADIUS = 32;
   private static final int MAX_SEARCH_RADIUS = 64;
   private static final int MAX_CANDIDATES = 256;
+  private static final int MAX_FAILED_APPROACHES_PER_TARGET = 4;
   private static final double DIRECT_BREAK_REACH_SQUARED = 4.5D * 4.5D;
   private static final Set<ControlResource> RESOURCES = Set.of(
     ControlResource.MOVEMENT,
@@ -110,6 +123,8 @@ public final class CollectBlocksTaskProvider
       count,
       radius,
       input.getOptions().getAllowPlacing(),
+      input.getAvoidSubmergedTargets(),
+      input.getOptions().getAvoidFluids(),
       result
     );
     return new BotTaskExecution(control, result);
@@ -127,7 +142,104 @@ public final class CollectBlocksTaskProvider
     BlockPos playerFeet,
     BlockPos target
   ) {
-    return target.getY() >= playerFeet.getY();
+    if (target.getY() >= playerFeet.getY()) {
+      return true;
+    }
+    return target.getY() == playerFeet.getY() - 1
+      && (
+        target.getX() != playerFeet.getX()
+          || target.getZ() != playerFeet.getZ()
+      );
+  }
+
+  static boolean hasFluidAbove(
+    BlockGetter level,
+    BlockPos playerFeet,
+    BlockPos target
+  ) {
+    for (
+      var y = target.getY() + 1;
+      y <= playerFeet.getY() + 1;
+      y++
+    ) {
+      if (!level.getFluidState(target.atY(y)).isEmpty()) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private static Optional<BlockFace> findDirectBreakFace(
+    BlockGetter level,
+    LocalPlayer player,
+    BlockPos target
+  ) {
+    var eyePosition = player.getEyePosition();
+    var blockPosition = SFVec3i.fromInt(target);
+    return directBreakFaces(eyePosition, blockPosition).stream()
+      .filter(face -> {
+        var hit = level.clip(new ClipContext(
+          eyePosition,
+          face.getMiddleOfFace(blockPosition),
+          ClipContext.Block.OUTLINE,
+          ClipContext.Fluid.NONE,
+          player
+        ));
+        return hitsTargetBlock(target, hit);
+      })
+      .findFirst();
+  }
+
+  static List<BlockFace> directBreakFaces(
+    Vec3 eyePosition,
+    SFVec3i target
+  ) {
+    return List.of(BlockFace.VALUES).stream()
+      .filter(face ->
+        face.getMiddleOfFace(target).distanceToSqr(eyePosition)
+          <= DIRECT_BREAK_REACH_SQUARED
+      )
+      .sorted(Comparator.comparingDouble(face ->
+        face.getMiddleOfFace(target).distanceToSqr(eyePosition)
+      ))
+      .toList();
+  }
+
+  static boolean hitsTargetBlock(BlockPos target, HitResult hit) {
+    return hit instanceof BlockHitResult blockHit
+      && blockHit.getBlockPos().equals(target);
+  }
+
+  static Set<SFVec3i> stalledAdjacentTargets(
+    Set<SFVec3i> attemptedTargets,
+    SFVec3i playerPosition
+  ) {
+    return attemptedTargets.stream()
+      .filter(target -> AdjacentToBlockGoal.isAdjacentPosition(
+        target,
+        playerPosition
+      ))
+      .collect(Collectors.toUnmodifiableSet());
+  }
+
+  static boolean recordFailedApproach(
+    Map<SFVec3i, Set<SFVec3i>> failedApproaches,
+    Set<SFVec3i> rejectedTargets,
+    SFVec3i target,
+    SFVec3i playerPosition
+  ) {
+    var positions = failedApproaches.computeIfAbsent(
+      target,
+      _ -> new HashSet<>()
+    );
+    if (!positions.add(playerPosition)) {
+      return false;
+    }
+    if (positions.size() >= MAX_FAILED_APPROACHES_PER_TARGET) {
+      failedApproaches.remove(target);
+      rejectedTargets.add(target);
+    }
+    return true;
   }
 
   private static final class CollectBlocksControl implements ControlTask {
@@ -137,11 +249,15 @@ public final class CollectBlocksTaskProvider
     private final int targetCount;
     private final int searchRadius;
     private final boolean allowPlacing;
+    private final boolean avoidSubmergedTargets;
+    private final boolean avoidFluids;
     private final CompletableFuture<CollectBlocksTaskResult> result;
     private final Set<SFVec3i> rejectedTargets = new HashSet<>();
+    private final Map<SFVec3i, Set<SFVec3i>>
+      rejectedAdjacentPositions = new HashMap<>();
     private @Nullable PathExecutor activePath;
     private @Nullable BlockBreakAction activeNearbyBreak;
-    private @Nullable SFVec3i activeNearbyTarget;
+    private @Nullable DirectBreakTarget activeNearbyTarget;
     private int activeNearbyBreakTicks;
     private Set<SFVec3i> activeTargets = Set.of();
     private int blocksBroken;
@@ -153,6 +269,8 @@ public final class CollectBlocksTaskProvider
       int targetCount,
       int searchRadius,
       boolean allowPlacing,
+      boolean avoidSubmergedTargets,
+      boolean avoidFluids,
       CompletableFuture<CollectBlocksTaskResult> result
     ) {
       this.context = context;
@@ -161,6 +279,8 @@ public final class CollectBlocksTaskProvider
       this.targetCount = targetCount;
       this.searchRadius = searchRadius;
       this.allowPlacing = allowPlacing;
+      this.avoidSubmergedTargets = avoidSubmergedTargets;
+      this.avoidFluids = avoidFluids;
       this.result = result;
     }
 
@@ -170,6 +290,9 @@ public final class CollectBlocksTaskProvider
         return;
       }
       if (activePath != null) {
+        if (stopActivePathWithoutDropTool()) {
+          return;
+        }
         tickActivePath();
         return;
       }
@@ -213,26 +336,40 @@ public final class CollectBlocksTaskProvider
       if (!allowPlacing) {
         constraint = new NoBlockPlacingConstraint(constraint);
       }
+      if (avoidFluids) {
+        constraint = AvoidFluidConstraint.forPlayer(
+          constraint,
+          context.bot().minecraft().level,
+          context.bot().minecraft().player
+        );
+      }
       activeTargets = Set.copyOf(candidates);
       activePath = PathExecutor.createPathfinding(
         context.bot(),
         new CompositeGoal(candidates.stream()
-          .map(BreakBlockPosGoal::new)
+          .<GoalScorer>mapMulti(
+            (candidate, goals) -> {
+              goals.accept(new BreakBlockPosGoal(candidate));
+              goals.accept(new AdjacentToBlockGoal(
+                candidate,
+                rejectedAdjacentPositions.getOrDefault(
+                  candidate,
+                  Set.of()
+                )
+              ));
+            }
+          )
           .collect(Collectors.toUnmodifiableSet())),
         constraint
       );
       activePath.onStarted();
     }
 
-    private void startNearbyBreak(SFVec3i target) {
-      var player = context.bot().minecraft().player;
-      if (player == null) {
-        return;
-      }
+    private void startNearbyBreak(DirectBreakTarget target) {
       activeNearbyTarget = target;
       activeNearbyBreak = new BlockBreakAction(
-        target,
-        nearestFace(player.getEyePosition(), target)
+        target.position(),
+        target.face()
       );
       activeNearbyBreakTicks = 0;
       context.reportProgress(progress("Mining nearby matching block"));
@@ -246,7 +383,7 @@ public final class CollectBlocksTaskProvider
         return;
       }
       if (blockBreak.isRejected(context.bot())) {
-        rejectedTargets.add(target);
+        rejectedTargets.add(target.position());
         clearNearbyBreak(true);
         context.reportProgress(progress(
           "Skipping a nearby block rejected by the server"
@@ -267,7 +404,7 @@ public final class CollectBlocksTaskProvider
         activeNearbyBreakTicks
           > blockBreak.getAllowedTicks() + 20
       ) {
-        rejectedTargets.add(target);
+        rejectedTargets.add(target.position());
         clearNearbyBreak(true);
         context.reportProgress(progress(
           "Skipping a nearby block that could not be mined"
@@ -306,10 +443,12 @@ public final class CollectBlocksTaskProvider
         path.completion().join();
         path.onStopped(ControlStopReason.COMPLETED, null);
         var confirmedBreaks = confirmedBreaks(path);
+        var completedTargets = activeTargets;
         activeTargets = Set.of();
         if (confirmedBreaks == 0) {
+          rejectStalledAdjacentPositions(completedTargets);
           context.reportProgress(progress(
-            "Route completed without mining a matching block"
+            "Trying another approach to a matching block"
           ));
           return;
         }
@@ -323,6 +462,7 @@ public final class CollectBlocksTaskProvider
           confirmedBreaks(path),
           targetCount - blocksBroken
         );
+        var failedTargets = activeTargets;
         activeTargets = Set.of();
         if (blocksBroken >= targetCount) {
           complete(
@@ -336,6 +476,12 @@ public final class CollectBlocksTaskProvider
           : exception.getCause();
         path.onStopped(ControlStopReason.FAILED, cause);
         if (cause instanceof UnreachableGoalException) {
+          if (rejectStalledAdjacentPositions(failedTargets)) {
+            context.reportProgress(progress(
+              "Trying another approach after collection path stalled"
+            ));
+            return;
+          }
           complete(
             CollectBlocksCompletionReason
               .COLLECT_BLOCKS_COMPLETION_REASON_NO_REACHABLE_BLOCKS
@@ -351,8 +497,38 @@ public final class CollectBlocksTaskProvider
           ));
           return;
         }
+        if (cause instanceof BlockPlaceRejectedException) {
+          rejectedTargets.addAll(failedTargets);
+          context.reportProgress(progress(
+            "Skipping targets whose route requires a rejected placement"
+          ));
+          return;
+        }
         result.completeExceptionally(cause);
       }
+    }
+
+    private boolean rejectStalledAdjacentPositions(
+      Set<SFVec3i> attemptedTargets
+    ) {
+      var player = context.bot().minecraft().player;
+      if (player == null) {
+        return false;
+      }
+      var playerPosition = SFVec3i.fromInt(player.blockPosition());
+      var rejectedAny = false;
+      for (var target : stalledAdjacentTargets(
+        attemptedTargets,
+        playerPosition
+      )) {
+        rejectedAny |= recordFailedApproach(
+          rejectedAdjacentPositions,
+          rejectedTargets,
+          target,
+          playerPosition
+        );
+      }
+      return rejectedAny;
     }
 
     private long confirmedBreaks(PathExecutor path) {
@@ -394,14 +570,25 @@ public final class CollectBlocksTaskProvider
           }
         }
       }
-      return candidates.stream()
+      var orderedCandidates = candidates.stream()
         .sorted(Comparator.comparingDouble(position ->
           position.toBlockPos().distSqr(origin)))
+        .filter(position -> canHarvest(
+          level.getBlockState(position.toBlockPos())
+        ))
         .limit(MAX_CANDIDATES)
+        .toList();
+      if (!avoidSubmergedTargets) {
+        return orderedCandidates;
+      }
+      return orderedCandidates.stream()
+        .filter(position ->
+          !hasFluidAbove(level, origin, position.toBlockPos())
+        )
         .toList();
     }
 
-    private Optional<SFVec3i> findReachableCandidate() {
+    private Optional<DirectBreakTarget> findReachableCandidate() {
       var player = context.bot().minecraft().player;
       var level = context.bot().minecraft().level;
       if (player == null || level == null) {
@@ -409,58 +596,88 @@ public final class CollectBlocksTaskProvider
       }
       var origin = player.blockPosition();
       var eyePosition = player.getEyePosition();
-      var candidates = new HashSet<SFVec3i>();
+      var candidates = new HashSet<DirectBreakTarget>();
       for (var x = -5; x <= 5; x++) {
         for (var z = -5; z <= 5; z++) {
           for (var y = -4; y <= 6; y++) {
             var position = origin.offset(x, y, z);
             if (
               !isDirectBreakCandidate(origin, position)
-                ||
-              Vec3.atCenterOf(position).distanceToSqr(eyePosition)
-                > DIRECT_BREAK_REACH_SQUARED
                 || !level.hasChunkAt(position)
+                || (
+                  avoidSubmergedTargets
+                    && hasFluidAbove(level, origin, position)
+                )
             ) {
               continue;
             }
-            if (matches(position, level.getBlockState(position))) {
-              candidates.add(SFVec3i.fromInt(position));
+            var state = level.getBlockState(position);
+            if (!matches(position, state) || !canHarvest(state)) {
+              continue;
             }
+            findDirectBreakFace(level, player, position)
+              .map(face -> new DirectBreakTarget(
+                SFVec3i.fromInt(position),
+                face
+              ))
+              .ifPresent(candidates::add);
           }
         }
       }
       return candidates.stream()
         .min(Comparator
-          .comparingInt((SFVec3i position) -> {
-            var block = position.toBlockPos();
+          .comparingInt((DirectBreakTarget target) -> {
+            var block = target.position().toBlockPos();
             var deltaX = block.getX() - origin.getX();
             var deltaZ = block.getZ() - origin.getZ();
             return deltaX * deltaX + deltaZ * deltaZ;
           })
-          .thenComparingDouble(position ->
-            Vec3.atCenterOf(position.toBlockPos())
+          .thenComparingDouble(target ->
+            target.face().getMiddleOfFace(target.position())
               .distanceToSqr(eyePosition)
         ));
     }
 
-    private static BlockFace nearestFace(
-      Vec3 eyePosition,
-      SFVec3i target
-    ) {
-      var center = target.toVec3().add(0.5D, 0.5D, 0.5D);
-      var deltaX = eyePosition.x - center.x;
-      var deltaY = eyePosition.y - center.y;
-      var deltaZ = eyePosition.z - center.z;
-      var absoluteX = Math.abs(deltaX);
-      var absoluteY = Math.abs(deltaY);
-      var absoluteZ = Math.abs(deltaZ);
-      if (absoluteY >= absoluteX && absoluteY >= absoluteZ) {
-        return deltaY >= 0 ? BlockFace.TOP : BlockFace.BOTTOM;
+    private boolean stopActivePathWithoutDropTool() {
+      var path = activePath;
+      var level = context.bot().minecraft().level;
+      if (path == null || level == null) {
+        return false;
       }
-      if (absoluteX >= absoluteZ) {
-        return deltaX >= 0 ? BlockFace.EAST : BlockFace.WEST;
+      var hasHarvestableTarget = activeTargets.stream()
+        .anyMatch(position -> {
+          var blockPosition = position.toBlockPos();
+          var state = level.getBlockState(blockPosition);
+          return matches(blockPosition, state) && canHarvest(state);
+        });
+      if (hasHarvestableTarget) {
+        return false;
       }
-      return deltaZ >= 0 ? BlockFace.SOUTH : BlockFace.NORTH;
+      blocksBroken += (int) Math.min(
+        confirmedBreaks(path),
+        targetCount - blocksBroken
+      );
+      activePath = null;
+      activeTargets = Set.of();
+      path.onStopped(ControlStopReason.CANCELLED, null);
+      complete(
+        blocksBroken >= targetCount
+          ? CollectBlocksCompletionReason
+            .COLLECT_BLOCKS_COMPLETION_REASON_TARGET_REACHED
+          : CollectBlocksCompletionReason
+            .COLLECT_BLOCKS_COMPLETION_REASON_NO_REACHABLE_BLOCKS
+      );
+      return true;
+    }
+
+    private boolean canHarvest(BlockState state) {
+      var player = context.bot().minecraft().player;
+      return player != null && hasDropPreservingTool(
+        state,
+        player.inventoryMenu.slots.stream()
+          .map(slot -> slot.getItem())
+          .toList()
+      );
     }
 
     private boolean matches(BlockPos position, BlockState state) {
@@ -579,5 +796,26 @@ public final class CollectBlocksTaskProvider
     public String description() {
       return "Collect blocks";
     }
+  }
+
+  private record DirectBreakTarget(
+    SFVec3i position,
+    BlockFace face
+  ) {
+  }
+
+  static boolean hasDropPreservingTool(
+    BlockState state,
+    Iterable<ItemStack> inventory
+  ) {
+    if (!state.requiresCorrectToolForDrops()) {
+      return true;
+    }
+    for (var stack : inventory) {
+      if (stack.isCorrectToolForDrops(state)) {
+        return true;
+      }
+    }
+    return false;
   }
 }

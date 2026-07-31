@@ -138,7 +138,12 @@ public final class PathConstraintImpl implements PathConstraint {
 
   @Override
   public boolean isPlaceable(ItemStack item) {
-    return SFItemHelpers.isSafeFullBlockItem(item);
+    return SFItemHelpers.isPathBuildingBlockItem(item);
+  }
+
+  @Override
+  public boolean isPlaceableBlockDrop(BlockState blockState) {
+    return SFItemHelpers.isPathBuildingBlock(blockState.getBlock());
   }
 
   @Override

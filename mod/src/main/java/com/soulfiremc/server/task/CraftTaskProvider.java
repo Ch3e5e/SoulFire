@@ -134,34 +134,35 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
 
     var inventoryRecipe = RecipeSupport.canCraftInInventory(entry);
     BlockPos station = null;
-    if (!inventoryRecipe && !(player.containerMenu instanceof CraftingMenu)) {
-      if (!input.hasStation()) {
+    if (!inventoryRecipe) {
+      if (input.hasStation()) {
+        var requested = input.getStation();
+        var level = Objects.requireNonNull(
+          context.bot().minecraft().level,
+          "Bot level is not available"
+        );
+        var currentDimension = level.dimension().identifier().toString();
+        if (!requested.getDimension().isBlank()
+          && !requested.getDimension().equals(currentDimension)) {
+          throw Status.INVALID_ARGUMENT
+            .withDescription(
+              "Crafting station is in '%s', but the bot is in '%s'"
+                .formatted(requested.getDimension(), currentDimension)
+            )
+            .asRuntimeException();
+        }
+        station = new BlockPos(
+          requested.getX(),
+          requested.getY(),
+          requested.getZ()
+        );
+      } else if (!(player.containerMenu instanceof CraftingMenu)) {
         throw Status.FAILED_PRECONDITION
           .withDescription(
             "station is required for a crafting-table recipe unless a crafting table is already open"
           )
           .asRuntimeException();
       }
-      var requested = input.getStation();
-      var level = Objects.requireNonNull(
-        context.bot().minecraft().level,
-        "Bot level is not available"
-      );
-      var currentDimension = level.dimension().identifier().toString();
-      if (!requested.getDimension().isBlank()
-        && !requested.getDimension().equals(currentDimension)) {
-        throw Status.INVALID_ARGUMENT
-          .withDescription(
-            "Crafting station is in '%s', but the bot is in '%s'"
-              .formatted(requested.getDimension(), currentDimension)
-          )
-          .asRuntimeException();
-      }
-      station = new BlockPos(
-        requested.getX(),
-        requested.getY(),
-        requested.getZ()
-      );
     }
 
     var result = new CompletableFuture<CraftTaskResult>();
@@ -210,7 +211,7 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
       this.result = result;
       this.stage = inventoryRecipe || station == null
         ? Stage.OPEN_MENU
-        : Stage.NAVIGATE;
+        : Stage.PREPARE_INVENTORY;
     }
 
     @Override
@@ -224,6 +225,8 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
           return;
         }
         switch (stage) {
+          case PREPARE_INVENTORY -> prepareInventory();
+          case WAIT_FOR_INVENTORY_SYNC -> waitForInventorySync();
           case NAVIGATE -> navigate();
           case OPEN_MENU -> openMenu();
           case CLEAR_GRID -> clearGrid();
@@ -235,6 +238,82 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
         }
       } catch (Throwable throwable) {
         fail(throwable);
+      }
+    }
+
+    private void prepareInventory() {
+      var player = requirePlayer();
+      if (!(player.containerMenu instanceof InventoryMenu menu)) {
+        player.closeContainer();
+        stageTicks++;
+        if (stageTicks > MENU_TIMEOUT_TICKS) {
+          throw Status.DEADLINE_EXCEEDED
+            .withDescription(
+              "Timed out preparing the player inventory for crafting"
+            )
+            .asRuntimeException();
+        }
+        return;
+      }
+
+      var offhand = menu.getSlot(InventoryMenu.SHIELD_SLOT).getItem();
+      if (offhand.isEmpty() || !recipeAccepts(offhand)) {
+        transition(Stage.NAVIGATE, "Navigating to crafting table");
+        return;
+      }
+
+      handleContainerInput(
+        menu,
+        InventoryMenu.SHIELD_SLOT,
+        0,
+        ContainerInput.QUICK_MOVE,
+        player
+      );
+      syncStateId = menu.getStateId();
+      syncStableTicks = 0;
+      transition(
+        Stage.WAIT_FOR_INVENTORY_SYNC,
+        "Making offhand ingredients accessible"
+      );
+    }
+
+    private void waitForInventorySync() {
+      var player = requirePlayer();
+      if (!(player.containerMenu instanceof InventoryMenu menu)) {
+        throw Status.FAILED_PRECONDITION
+          .withDescription(
+            "The player inventory was closed while preparing to craft"
+          )
+          .asRuntimeException();
+      }
+      var stateId = menu.getStateId();
+      if (stateId != syncStateId) {
+        syncStateId = stateId;
+        syncStableTicks = 0;
+      } else {
+        syncStableTicks++;
+      }
+
+      if (syncStableTicks >= INVENTORY_SYNC_TICKS) {
+        var offhand = menu.getSlot(InventoryMenu.SHIELD_SLOT).getItem();
+        if (!offhand.isEmpty() && recipeAccepts(offhand)) {
+          throw Status.RESOURCE_EXHAUSTED
+            .withDescription(
+              "Inventory has no room to move an offhand recipe ingredient"
+            )
+            .asRuntimeException();
+        }
+        transition(Stage.NAVIGATE, "Navigating to crafting table");
+        return;
+      }
+
+      stageTicks++;
+      if (stageTicks > MENU_TIMEOUT_TICKS) {
+        throw Status.DEADLINE_EXCEEDED
+          .withDescription(
+            "Timed out synchronizing an offhand recipe ingredient"
+          )
+          .asRuntimeException();
       }
     }
 
@@ -616,6 +695,21 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
       return List.copyOf(result);
     }
 
+    private boolean recipeAccepts(ItemStack stack) {
+      var displayContext = RecipeSupport.displayContext(context.bot());
+      return switch (recipe.display()) {
+        case ShapedCraftingRecipeDisplay shaped ->
+          shaped.ingredients().stream()
+            .map(ingredient -> acceptedStacks(ingredient, displayContext))
+            .anyMatch(accepted -> ingredientMatches(accepted, stack));
+        case ShapelessCraftingRecipeDisplay shapeless ->
+          shapeless.ingredients().stream()
+            .map(ingredient -> acceptedStacks(ingredient, displayContext))
+            .anyMatch(accepted -> ingredientMatches(accepted, stack));
+        default -> false;
+      };
+    }
+
     private static List<ItemStack> acceptedStacks(
       SlotDisplay ingredient,
       net.minecraft.util.context.ContextMap displayContext
@@ -827,6 +921,8 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
   }
 
   private enum Stage {
+    PREPARE_INVENTORY,
+    WAIT_FOR_INVENTORY_SYNC,
     NAVIGATE,
     OPEN_MENU,
     CLEAR_GRID,
@@ -842,9 +938,7 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
     List<ItemStack> acceptedStacks
   ) {
     private boolean matches(ItemStack stack) {
-      return !stack.isEmpty() && acceptedStacks.stream()
-        .anyMatch(accepted ->
-          ItemStack.isSameItemSameComponents(accepted, stack));
+      return ingredientMatches(acceptedStacks, stack);
     }
   }
 
@@ -854,9 +948,15 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
     List<ItemStack> acceptedStacks
   ) {
     private boolean matches(ItemStack stack) {
-      return !stack.isEmpty() && acceptedStacks.stream()
-        .anyMatch(accepted ->
-          ItemStack.isSameItemSameComponents(accepted, stack));
+      return ingredientMatches(acceptedStacks, stack);
     }
+  }
+
+  static boolean ingredientMatches(
+    List<ItemStack> acceptedStacks,
+    ItemStack stack
+  ) {
+    return !stack.isEmpty() && acceptedStacks.stream()
+      .anyMatch(accepted -> ItemStack.isSameItem(accepted, stack));
   }
 }

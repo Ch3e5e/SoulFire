@@ -15,17 +15,24 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-package com.soulfiremc.server.pathfinding.graph;
+package com.soulfiremc.server.pathfinding.execution;
 
-import java.io.Serial;
+import org.junit.jupiter.api.Test;
 
-/// Exception thrown when a node is out of the render distance. The RouteFinder is supposed to catch
-/// this exception and insert a path recalculation action and return the best path.
-public final class OutOfLevelException extends RuntimeException {
-  @Serial
-  private static final long serialVersionUID = 1L;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
-  public OutOfLevelException() {
-    super();
+class GapJumpActionTest {
+  @Test
+  void waitsForSprintMomentumBeforeJumping() {
+    assertFalse(GapJumpAction.shouldStartJump(1, 0));
+    assertFalse(GapJumpAction.shouldStartJump(2, 0.07));
+    assertTrue(GapJumpAction.shouldStartJump(2, 0.08));
+  }
+
+  @Test
+  void eventuallyJumpsWhenTerrainPreventsNormalAcceleration() {
+    assertFalse(GapJumpAction.shouldStartJump(2, 0));
+    assertTrue(GapJumpAction.shouldStartJump(3, 0));
   }
 }

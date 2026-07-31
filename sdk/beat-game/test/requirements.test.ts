@@ -55,12 +55,13 @@ describe("beat-game requirements", () => {
 
     expect(requirements.map(({ key }) => key)).toEqual([
       "logs",
+      "basic-melee-weapon",
       "cobblestone",
       "melee-weapon",
-      "food",
       "iron",
-      "pickaxe",
       "shield",
+      "food",
+      "pickaxe",
       "water-bucket",
       "ignition",
     ]);
@@ -106,8 +107,8 @@ describe("beat-game requirements", () => {
     expect(logRequirement({
       "minecraft:shield": 1,
     })).toMatchObject({
-      targetCount: 0,
-      satisfied: true,
+      targetCount: 2,
+      satisfied: false,
     });
   });
 
@@ -122,10 +123,18 @@ describe("beat-game requirements", () => {
       observation().inventory,
       strategy,
     ).map(({ key }) => key)).toEqual([
+      "logs",
+      "basic-melee-weapon",
+      "cobblestone",
       "diamond-pickaxe",
+      "melee-weapon",
+      "iron",
+      "shield",
+      "food",
       "obsidian",
       "water-bucket",
       "ignition",
+      "pickaxe",
     ]);
 
     expect(requirementsForPhase(
@@ -138,5 +147,40 @@ describe("beat-game requirements", () => {
       }).inventory,
       strategy,
     ).map(({ key }) => key)).not.toContain("diamond-pickaxe");
+  });
+
+  it("revalidates survival supplies before entering the Nether", () => {
+    const requirements = requirementsForPhase(
+      BeatGamePhase.ENTER_NETHER,
+      observation({
+        counts: {
+          "minecraft:oak_log": 8,
+          "minecraft:wooden_sword": 1,
+          "minecraft:cobblestone": 20,
+          "minecraft:stone_sword": 1,
+          "minecraft:iron_ingot": 7,
+          "minecraft:iron_pickaxe": 1,
+          "minecraft:water_bucket": 1,
+          "minecraft:flint_and_steel": 1,
+          "minecraft:shield": 1,
+        },
+      }).inventory,
+      {
+        ...defaultBeatGameStrategy,
+        portalStrategy: PortalStrategy.CAST,
+      },
+    );
+
+    expect(requirements.find(({ key }) => key === "food")).toMatchObject({
+      currentCount: 0,
+      targetCount: 8,
+      satisfied: false,
+    });
+    expect(
+      requirements.filter(({ key }) => key === "water-bucket"),
+    ).toHaveLength(1);
+    expect(
+      requirements.filter(({ key }) => key === "ignition"),
+    ).toHaveLength(1);
   });
 });

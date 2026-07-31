@@ -20,12 +20,16 @@ package com.soulfiremc.server.pathfinding.execution;
 import com.soulfiremc.server.bot.BotConnection;
 import com.soulfiremc.server.pathfinding.SFVec3i;
 import com.soulfiremc.server.pathfinding.cost.Costs;
+import com.soulfiremc.server.pathfinding.graph.constraint.PathConstraint;
 import com.soulfiremc.server.util.BlockItems;
 import com.soulfiremc.server.util.SFInventoryHelpers;
+import com.soulfiremc.server.util.SFItemHelpers;
 import lombok.extern.slf4j.Slf4j;
 import net.minecraft.client.multiplayer.MultiPlayerGameMode;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.inventory.ContainerInput;
+import net.minecraft.world.inventory.InventoryMenu;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Blocks;
@@ -35,15 +39,22 @@ public final class ItemPlaceHelper {
   private ItemPlaceHelper() {
   }
 
-  public static boolean placeBestBlockInHand(BotConnection connection) {
+  public static InteractionHand placeBestBlockInHand(
+    BotConnection connection,
+    PathConstraint pathConstraint
+  ) {
     var player = connection.minecraft().player;
     var playerInventory = player.inventoryMenu;
 
-    Item leastHardItem = null;
-    var leastDestroyTime = 0F;
+    Item bestItem = null;
+    var bestPriority = Integer.MAX_VALUE;
+    var bestDestroyTime = 0F;
     for (var slot : playerInventory.slots) {
       var slotItemStack = slot.getItem();
-      if (slotItemStack.isEmpty()) {
+      if (
+        slotItemStack.isEmpty()
+          || !pathConstraint.isPlaceable(slotItemStack)
+      ) {
         continue;
       }
 
@@ -54,21 +65,38 @@ public final class ItemPlaceHelper {
       }
 
       var destroyTime = blockType.get().defaultDestroyTime();
-      if (leastHardItem == null || destroyTime < leastDestroyTime) {
-        leastHardItem = slotItem;
-        leastDestroyTime = destroyTime;
+      var priority = SFItemHelpers.isDisposableFullBlockItem(slotItemStack)
+        ? 0
+        : 1;
+      if (
+        bestItem == null
+          || priority < bestPriority
+          || (
+            priority == bestPriority
+              && destroyTime < bestDestroyTime
+          )
+      ) {
+        bestItem = slotItem;
+        bestPriority = priority;
+        bestDestroyTime = destroyTime;
       }
     }
 
-    if (leastHardItem == null) {
-      throw new IllegalStateException("Failed to find item stack to place");
+    if (bestItem == null) {
+      throw new IllegalStateException(
+        "Failed to find a path building block to place"
+      );
     }
 
-    var finalLeastHardItem = leastHardItem;
-    return placeInHand(connection.minecraft().gameMode, player,
-      SFInventoryHelpers.findMatchingSlotForAction(player.getInventory(), playerInventory,
-          slot -> slot.getItem() == finalLeastHardItem)
-        .orElseThrow(() -> new IllegalStateException("Failed to find item stack to use")));
+    var selectedItem = bestItem;
+    var slot = SFInventoryHelpers.findMatchingSlotForAction(player.getInventory(), playerInventory,
+        candidate -> candidate.getItem() == selectedItem)
+      .orElseThrow(() -> new IllegalStateException("Failed to find item stack to use"));
+    if (slot == InventoryMenu.SHIELD_SLOT) {
+      return InteractionHand.OFF_HAND;
+    }
+    placeInHand(connection.minecraft().gameMode, player, slot);
+    return InteractionHand.MAIN_HAND;
   }
 
   public static boolean placeBestToolInHand(BotConnection connection, SFVec3i blockPosition) {
@@ -110,23 +138,23 @@ public final class ItemPlaceHelper {
     }
 
     var finalBestItemStack = bestItemStack;
-    return placeInHand(connection.minecraft().gameMode, player,
+    placeInHand(connection.minecraft().gameMode, player,
       SFInventoryHelpers.findMatchingSlotForAction(player.getInventory(), playerInventory,
           slot -> ItemStack.isSameItemSameComponents(slot, finalBestItemStack))
         .orElseThrow(() -> new IllegalStateException("Failed to find item stack to use")));
+    return true;
   }
 
-  private static boolean placeInHand(MultiPlayerGameMode gameMode, LocalPlayer player, int slot) {
+  private static void placeInHand(MultiPlayerGameMode gameMode, LocalPlayer player, int slot) {
     if (player.hasContainerOpen()) {
-      log.warn("Cannot place item in hand while looking at a foreign container");
-      return false;
+      log.debug("Closing foreign container before selecting a pathfinding item");
+      player.closeContainer();
     }
 
     if (SFInventoryHelpers.getSelectedSlot(player.getInventory()) == slot) {
-      return true;
+      return;
     } else if (SFInventoryHelpers.isSelectableHotbarSlot(slot)) {
       player.getInventory().setSelectedSlot(SFInventoryHelpers.toHotbarIndex(slot));
-      return true;
     } else {
       player.sendOpenInventory();
       gameMode.handleContainerInput(
@@ -137,7 +165,6 @@ public final class ItemPlaceHelper {
         player
       );
       player.closeContainer();
-      return true;
     }
   }
 }

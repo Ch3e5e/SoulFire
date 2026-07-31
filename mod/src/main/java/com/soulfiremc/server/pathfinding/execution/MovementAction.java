@@ -37,6 +37,7 @@ import java.util.concurrent.ThreadLocalRandom;
 @RequiredArgsConstructor
 public final class MovementAction implements WorldAction {
   private static final double STEP_HEIGHT = 0.6;
+  private static final double TARGET_HEIGHT_TOLERANCE = 0.25;
   @Getter
   private final SFVec3i blockPosition;
   // Corner jumps normally require you to stand closer to the block to jump
@@ -80,7 +81,22 @@ public final class MovementAction implements WorldAction {
     boolean verticallySupported
   ) {
     return verticallySupported
-      && !MathHelper.isOutsideTolerance(currentY, targetY, 0.25);
+      && !MathHelper.isOutsideTolerance(currentY, targetY, TARGET_HEIGHT_TOLERANCE);
+  }
+
+  static boolean needsUpwardInput(
+    double currentY,
+    double targetY,
+    boolean movingInFluid
+  ) {
+    return movingInFluid
+      // Keep swimming while crossing a fluid block at the target height.
+      // Releasing jump as soon as the player enters the vertical completion
+      // tolerance lets shallow-water movement sink against the next block
+      // edge and repeatedly stall. If the player is above the tolerance,
+      // releasing jump still lets gravity bring them back down.
+      ? currentY <= targetY + TARGET_HEIGHT_TOLERANCE
+      : currentY < targetY - STEP_HEIGHT;
   }
 
   private boolean isAtTargetXZ(LocalPlayer clientEntity, Vec3 botPosition, Vec3 targetMiddleBlock) {
@@ -128,9 +144,13 @@ public final class MovementAction implements WorldAction {
     connection.rotationControl().lookHorizontallyAt(targetMiddleBlock, yRot, xRot);
 
     var botPosition = clientEntity.position();
-    var needsJump = targetMiddleBlock.y - STEP_HEIGHT > botPosition.y;
+    var movingInFluid = clientEntity.isInWater() || clientEntity.isInLava();
+    var needsJump = needsUpwardInput(
+      botPosition.y,
+      targetMiddleBlock.y,
+      movingInFluid
+    );
     if (needsJump) {
-      var movingInFluid = clientEntity.isInWater() || clientEntity.isInLava();
       // Fluid movement never reaches the normal grounded-gravity state. Waiting
       // for it here leaves the bot submerged and unable to swim up one block.
       if (!movingInFluid && !wasStill) {
@@ -162,6 +182,10 @@ public final class MovementAction implements WorldAction {
       controlState.down(movementInput.backward());
       controlState.left(movementInput.left());
       controlState.right(movementInput.right());
+      // Sprint-swimming lowers the player pose enough to leave submerged,
+      // low-ceiling spaces. On land this also lets ordinary path segments run
+      // instead of walking whenever the player can sprint.
+      controlState.sprint(pathConstraint.sprint() && movementInput.forward());
     }
   }
 
@@ -193,7 +217,7 @@ public final class MovementAction implements WorldAction {
     };
   }
 
-  private boolean shouldJump() {
+  boolean shouldJump() {
     if (!walkFewTicksNoJump) {
       return true;
     }
@@ -201,10 +225,9 @@ public final class MovementAction implements WorldAction {
     if (noJumpTicks < 3) {
       noJumpTicks++;
       return false;
-    } else {
-      noJumpTicks = 0;
-      return true;
     }
+
+    return true;
   }
 
   @Override

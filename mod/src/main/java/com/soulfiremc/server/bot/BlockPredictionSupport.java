@@ -19,10 +19,20 @@ package com.soulfiremc.server.bot;
 
 import com.soulfiremc.mod.mixin.soulfire.BlockStatePredictionHandlerAccessor;
 import com.soulfiremc.mod.mixin.soulfire.ClientLevelAccessor;
+import com.soulfiremc.server.util.SFBlockHelpers;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.block.state.BlockState;
 
 public final class BlockPredictionSupport {
   private BlockPredictionSupport() {}
+
+  public enum BreakReconciliation {
+    CONTINUE,
+    AWAIT_CONFIRMATION,
+    COMPLETE,
+    RETRY_REPLACEMENT,
+    REJECTED
+  }
 
   public static boolean hasPendingPrediction(
     BotConnection connection,
@@ -34,5 +44,34 @@ public final class BlockPredictionSupport {
     var accessor = (BlockStatePredictionHandlerAccessor) predictionHandler;
     return accessor.soulfire$getServerVerifiedStates()
       .containsKey(position.asLong());
+  }
+
+  public static BreakReconciliation reconcileBreak(
+    BlockState currentState,
+    BlockState attemptedState,
+    boolean breakAttempted,
+    boolean predictedBroken,
+    boolean pendingPrediction,
+    int replacementRetries,
+    int maximumReplacementRetries
+  ) {
+    if (SFBlockHelpers.isEmptyBlock(currentState.getBlock())) {
+      return breakAttempted && pendingPrediction
+        ? BreakReconciliation.AWAIT_CONFIRMATION
+        : BreakReconciliation.COMPLETE;
+    }
+    if (!breakAttempted || !predictedBroken || pendingPrediction) {
+      return BreakReconciliation.CONTINUE;
+    }
+    if (
+      replacementRetries < maximumReplacementRetries
+        && (
+        !currentState.equals(attemptedState)
+          || SFBlockHelpers.isGravityAffected(currentState)
+      )
+    ) {
+      return BreakReconciliation.RETRY_REPLACEMENT;
+    }
+    return BreakReconciliation.REJECTED;
   }
 }

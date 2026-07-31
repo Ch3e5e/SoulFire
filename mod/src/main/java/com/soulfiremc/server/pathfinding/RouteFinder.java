@@ -18,11 +18,11 @@
 package com.soulfiremc.server.pathfinding;
 
 import com.google.common.base.Stopwatch;
+import com.soulfiremc.server.pathfinding.execution.BlockPlaceAction;
 import com.soulfiremc.server.pathfinding.execution.WorldAction;
 import com.soulfiremc.server.pathfinding.goals.GoalScorer;
 import com.soulfiremc.server.pathfinding.graph.GraphInstructions;
 import com.soulfiremc.server.pathfinding.graph.MinecraftGraph;
-import com.soulfiremc.server.pathfinding.graph.OutOfLevelException;
 import com.soulfiremc.server.pathfinding.graph.constraint.NoBlockActionsConstraint;
 import com.soulfiremc.server.pathfinding.graph.constraint.NoBlockBreakingConstraint;
 import com.soulfiremc.server.pathfinding.graph.constraint.NoBlockPlacingConstraint;
@@ -36,11 +36,14 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicReferenceArray;
 
 @Slf4j
 public record RouteFinder(MinecraftGraph baseGraph, GoalScorer scorer, Executor executor) {
   /// Maximum possible usable block items (4 rows * 9 columns * 64 stack size)
   private static final int MAX_USABLE_BLOCK_ITEMS = 4 * 9 * 64;
+  private static final int MAX_NODES_AFTER_LEVEL_BOUNDARY = 2_048;
 
   public RouteFinder(MinecraftGraph baseGraph, GoalScorer scorer) {
     this(baseGraph, scorer, ForkJoinPool.commonPool());
@@ -101,39 +104,96 @@ public record RouteFinder(MinecraftGraph baseGraph, GoalScorer scorer, Executor 
 
     var resultFuture = new CompletableFuture<RouteSearchResult>();
     var countdown = new CountDownLatch(futures.size());
-    for (var future : futures) {
-      future.thenAccept(result -> {
-          if (result instanceof FoundRouteResult || result instanceof PartialRouteResult) {
-            if (!resultFuture.isDone()) {
-              resultFuture.complete(result);
-            }
+    var completedResults =
+      new AtomicReferenceArray<RouteSearchResult>(futures.size());
+    var firstFailure = new AtomicReference<Throwable>();
+    for (var i = 0; i < futures.size(); i++) {
+      var futureIndex = i;
+      var future = futures.get(i);
+      future.whenComplete((result, throwable) -> {
+        if (result != null) {
+          completedResults.set(futureIndex, result);
+        }
+        if (throwable != null) {
+          firstFailure.compareAndSet(null, throwable);
+        }
+
+        if (
+          result != null
+            && isActionableResult(result)
+            && resultFuture.complete(result)
+        ) {
             cancellationToken.cancel();
             for (var f : futures) {
               f.cancel(true);
             }
             stopwatch.stop();
             log.info("Best route found in {}ms", stopwatch.elapsed().toMillis());
-          } else {
-            countdown.countDown();
-            if (countdown.getCount() == 0 && !resultFuture.isDone()) {
-              resultFuture.complete(futures.getFirst().resultNow());
-              stopwatch.stop();
-              log.info("No route found after {}ms", stopwatch.elapsed().toMillis());
-            }
-          }
-        })
-        .exceptionally(ex -> {
-          countdown.countDown();
-          if (countdown.getCount() == 0 && !resultFuture.isDone()) {
-            resultFuture.completeExceptionally(ex);
-            stopwatch.stop();
-            log.info("Route finding failed after {}ms", stopwatch.elapsed().toMillis());
-          }
-          return null;
-        });
+        }
+
+        countdown.countDown();
+        if (countdown.getCount() != 0 || resultFuture.isDone()) {
+          return;
+        }
+
+        var inconclusiveResult =
+          selectInconclusiveResult(completedResults);
+        if (inconclusiveResult != null) {
+          resultFuture.complete(inconclusiveResult);
+          stopwatch.stop();
+          log.info(
+            "No actionable route found after {}ms",
+            stopwatch.elapsed().toMillis()
+          );
+          return;
+        }
+
+        var failure = firstFailure.get();
+        resultFuture.completeExceptionally(
+          failure != null
+            ? failure
+            : new IllegalStateException("Route finding completed without a result")
+        );
+        stopwatch.stop();
+        log.info(
+          "Route finding failed after {}ms",
+          stopwatch.elapsed().toMillis()
+        );
+      });
     }
 
     return resultFuture;
+  }
+
+  static boolean isActionableResult(RouteSearchResult result) {
+    return result instanceof FoundRouteResult
+      || (
+      result instanceof PartialRouteResult partial
+        && !partial.actions().isEmpty()
+    )
+      || (
+      result instanceof SearchExpiredResult expired
+        && !expired.actions().isEmpty()
+    );
+  }
+
+  private static RouteSearchResult selectInconclusiveResult(
+    AtomicReferenceArray<RouteSearchResult> results
+  ) {
+    RouteSearchResult firstResult = null;
+    for (var i = 0; i < results.length(); i++) {
+      var result = results.get(i);
+      if (result == null) {
+        continue;
+      }
+      if (firstResult == null) {
+        firstResult = result;
+      }
+      if (result instanceof PartialRouteResult) {
+        return result;
+      }
+    }
+    return firstResult;
   }
 
   public CompletableFuture<RouteSearchResult> findRouteFutureSingle(MinecraftGraph graph, NodeState from, CancellationToken cancellationToken) {
@@ -158,6 +218,8 @@ public record RouteFinder(MinecraftGraph baseGraph, GoalScorer scorer, Executor 
     // Store block positions that we need to look at
     var openSet = new ObjectHeapPriorityQueue<MinecraftRouteNode>();
     var bestGlobalNode = new ObjectReference<MinecraftRouteNode>();
+    var visitedNodes = 0;
+    var nodesAtFirstBoundary = -1;
 
     {
       var startScore = scorer.computeScore(graph, from.blockPosition(), List.of());
@@ -206,13 +268,16 @@ public record RouteFinder(MinecraftGraph baseGraph, GoalScorer scorer, Executor 
       } else if (System.currentTimeMillis() > expireTime) {
         stopwatch.stop();
         log.info("Expired pathfinding after {}ms", stopwatch.elapsed().toMillis());
-        return SearchExpiredResult.INSTANCE;
+        return new SearchExpiredResult(
+          reconstructPath(bestGlobalNode.value)
+        );
       }
 
       progressInfo.run();
       cleaner.run();
 
       var current = openSet.dequeue();
+      visitedNodes++;
 
       log.debug("Looking at node: {}", current.node());
 
@@ -224,49 +289,77 @@ public record RouteFinder(MinecraftGraph baseGraph, GoalScorer scorer, Executor 
         return new FoundRouteResult(reconstructPath(current));
       }
 
-      try {
-        var positionLong = current.node().blockPosition().asMinecraftLong();
-        var cachedInstructions = instructionCache.get(positionLong);
+      var positionLong = current.node().blockPosition().asMinecraftLong();
+      var currentFloorProjected = hasProjectedFloor(current);
+      var cachedInstructions = currentFloorProjected
+        ? null
+        : instructionCache.get(positionLong);
 
-        if (cachedInstructions == null) {
-          // Cache miss - compute and store instructions
-          var counter = new IntReference();
-          var list = new GraphInstructions[MinecraftGraph.ACTIONS_SIZE];
-          graph.insertActions(
-            current.node().blockPosition(),
-            current.parentToNodeDirection(),
-            instructions -> {
-              list[counter.value++] = instructions;
-              handleInstructions(graph, openSet, routeIndex, blockItemsIndex, current, instructions, bestGlobalNode);
-            }
-          );
-          instructionCache.put(positionLong, list);
-        } else {
-          // Cache hit - reuse cached instructions
-          for (var instructions : cachedInstructions) {
-            if (instructions == null) {
-              break;
-            }
+      if (cachedInstructions == null) {
+        // Cache miss - compute and store instructions
+        var counter = new IntReference();
+        var list = new GraphInstructions[MinecraftGraph.ACTIONS_SIZE];
+        var nodeReachedLevelBoundary = graph.insertActions(
+          current.node().blockPosition(),
+          current.parentToNodeDirection(),
+          currentFloorProjected,
+          instructions -> {
+            list[counter.value++] = instructions;
             handleInstructions(graph, openSet, routeIndex, blockItemsIndex, current, instructions, bestGlobalNode);
           }
+        );
+        if (nodeReachedLevelBoundary) {
+          if (nodesAtFirstBoundary < 0) {
+            nodesAtFirstBoundary = visitedNodes;
+          }
+        } else if (!currentFloorProjected) {
+          instructionCache.put(positionLong, list);
         }
-      } catch (OutOfLevelException _) {
-        log.debug("Found a node out of the level: {}", current.node());
+      } else {
+        // Cache hit - reuse cached instructions
+        for (var instructions : cachedInstructions) {
+          if (instructions == null) {
+            break;
+          }
+          handleInstructions(graph, openSet, routeIndex, blockItemsIndex, current, instructions, bestGlobalNode);
+        }
+      }
+      if (
+        nodesAtFirstBoundary >= 0
+          && visitedNodes - nodesAtFirstBoundary
+            >= MAX_NODES_AFTER_LEVEL_BOUNDARY
+      ) {
         stopwatch.stop();
         log.info(
-          "Took {}ms to find route to reach the edge of view distance",
-          stopwatch.elapsed().toMillis());
-
-        // The current node is not always the best node. We need to find the best node.
-        var bestNode = bestGlobalNode.value;
-
-        return new PartialRouteResult(reconstructPath(bestNode));
+          "Took {}ms to find the best route to the edge of view distance",
+          stopwatch.elapsed().toMillis()
+        );
+        return new PartialRouteResult(
+          reconstructPath(bestGlobalNode.value)
+        );
       }
     }
 
     stopwatch.stop();
+    if (nodesAtFirstBoundary >= 0) {
+      log.info(
+        "Took {}ms to find the best route to the edge of view distance",
+        stopwatch.elapsed().toMillis()
+      );
+      return new PartialRouteResult(
+        reconstructPath(bestGlobalNode.value)
+      );
+    }
     log.info("Failed to find route after {}ms", stopwatch.elapsed().toMillis());
     return NoRouteFoundResult.INSTANCE;
+  }
+
+  private static boolean hasProjectedFloor(MinecraftRouteNode node) {
+    var floor = node.node().blockPosition().sub(0, 1, 0);
+    return node.actions().stream()
+      .filter(BlockPlaceAction.class::isInstance)
+      .map(BlockPlaceAction.class::cast)
+      .anyMatch(action -> action.blockPosition().equals(floor));
   }
 
   private void handleInstructions(MinecraftGraph graph,
@@ -369,9 +462,8 @@ public record RouteFinder(MinecraftGraph baseGraph, GoalScorer scorer, Executor 
     public static final SearchInterruptedResult INSTANCE = new SearchInterruptedResult();
   }
 
-  /// The search expired before finding a route
-  public record SearchExpiredResult() implements RouteSearchResult {
-    public static final SearchExpiredResult INSTANCE = new SearchExpiredResult();
+  /// The search expired before finding a full route
+  public record SearchExpiredResult(List<WorldAction> actions) implements RouteSearchResult {
   }
 
   /// A full route found to the target

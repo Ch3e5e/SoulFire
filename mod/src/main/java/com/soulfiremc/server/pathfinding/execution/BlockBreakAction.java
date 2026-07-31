@@ -25,24 +25,40 @@ import com.soulfiremc.server.pathfinding.graph.BlockFace;
 import com.soulfiremc.server.pathfinding.graph.actions.movement.MovementMiningCost;
 import com.soulfiremc.server.util.SFBlockHelpers;
 import lombok.Getter;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
 
 @Slf4j
-@RequiredArgsConstructor
 public final class BlockBreakAction implements WorldAction {
+  private static final int MAXIMUM_BLOCK_REPLACEMENT_RETRIES = 16;
+
   @Getter
   private final SFVec3i blockPosition;
   private final BlockFace blockBreakSideHint;
   private boolean putInHand;
   private boolean breakAttempted;
   private boolean predictedBroken;
+  private BlockState attemptedState;
   private int totalTicks = -1;
+  private int allowedTicks;
+  private int blockReplacementRetries;
+  private double fluidAnchorY = Double.NaN;
+
+  public BlockBreakAction(
+    SFVec3i blockPosition,
+    BlockFace blockBreakSideHint
+  ) {
+    this.blockPosition = blockPosition;
+    this.blockBreakSideHint = blockBreakSideHint;
+  }
 
   public BlockBreakAction(MovementMiningCost movementMiningCost) {
-    this(movementMiningCost.block(), movementMiningCost.blockBreakSideHint());
+    this(
+      movementMiningCost.block(),
+      movementMiningCost.blockBreakSideHint()
+    );
   }
 
   @Override
@@ -62,25 +78,37 @@ public final class BlockBreakAction implements WorldAction {
       position
     );
     predictedBroken |= pendingPrediction;
-    return !pendingPrediction;
+    if (pendingPrediction) {
+      return false;
+    }
+    return true;
   }
 
   public boolean isRejected(BotConnection connection) {
+    var position = blockPosition.toBlockPos();
+    var reconciliation = BlockPredictionSupport.reconcileBreak(
+      connection.minecraft().level.getBlockState(position),
+      attemptedState,
+      breakAttempted,
+      predictedBroken,
+      BlockPredictionSupport.hasPendingPrediction(connection, position),
+      blockReplacementRetries,
+      MAXIMUM_BLOCK_REPLACEMENT_RETRIES
+    );
     if (
-      !breakAttempted
-        || !predictedBroken
-        || BlockPredictionSupport.hasPendingPrediction(
-        connection,
-        blockPosition.toBlockPos()
-      )
+      reconciliation
+        == BlockPredictionSupport.BreakReconciliation.RETRY_REPLACEMENT
     ) {
+      breakAttempted = false;
+      predictedBroken = false;
+      putInHand = false;
+      attemptedState = null;
+      totalTicks = -1;
+      blockReplacementRetries++;
       return false;
     }
-
-    var blockType = connection.minecraft().level
-      .getBlockState(blockPosition.toBlockPos())
-      .getBlock();
-    return !SFBlockHelpers.isEmptyBlock(blockType);
+    return reconciliation
+      == BlockPredictionSupport.BreakReconciliation.REJECTED;
   }
 
   @Override
@@ -92,6 +120,21 @@ public final class BlockBreakAction implements WorldAction {
   public void tick(BotConnection connection) {
     var clientEntity = connection.minecraft().player;
     connection.controlState().resetAll();
+    var movingInFluid = clientEntity.isInWater() || clientEntity.isInLava();
+    if (movingInFluid) {
+      if (Double.isNaN(fluidAnchorY)) {
+        fluidAnchorY = clientEntity.getY();
+      }
+      if (shouldMaintainFluidHeight(
+        movingInFluid,
+        clientEntity.getY(),
+        fluidAnchorY
+      )) {
+        connection.controlState().jump(true);
+      }
+    } else {
+      fluidAnchorY = Double.NaN;
+    }
 
     var level = connection.minecraft().level;
     var breakTarget = blockBreakSideHint.getMiddleOfFace(blockPosition);
@@ -127,6 +170,7 @@ public final class BlockBreakAction implements WorldAction {
           clientEntity.getInventory().getSelectedItem(),
           optionalBlock)
         .ticks();
+      allowedTicks += totalTicks + 20;
     }
 
     var gameMode = connection.minecraft().gameMode;
@@ -135,6 +179,7 @@ public final class BlockBreakAction implements WorldAction {
     if (!breakAttempted) {
       if (gameMode.startDestroyBlock(target, direction)) {
         breakAttempted = true;
+        attemptedState = optionalBlock;
         clientEntity.swing(InteractionHand.MAIN_HAND);
       }
       return;
@@ -151,9 +196,17 @@ public final class BlockBreakAction implements WorldAction {
     return breakAttempted;
   }
 
+  static boolean shouldMaintainFluidHeight(
+    boolean movingInFluid,
+    double currentY,
+    double anchorY
+  ) {
+    return movingInFluid && currentY <= anchorY;
+  }
+
   @Override
   public int getAllowedTicks() {
-    return totalTicks == -1 ? 20 : totalTicks + 20;
+    return Math.max(20, allowedTicks);
   }
 
   @Override

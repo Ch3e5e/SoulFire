@@ -49,20 +49,24 @@ export function observation(
   overrides: {
     readonly dimension?: string;
     readonly dead?: boolean;
+    readonly observedAt?: string;
     readonly counts?: Readonly<Record<string, number>>;
     readonly position?: Partial<BeatGamePosition>;
     readonly rotation?: Partial<BeatGameObservation["player"]["rotation"]>;
+    readonly onGround?: boolean;
     readonly equipment?: Readonly<Record<string, string>>;
     readonly connectionEpoch?: string;
     readonly food?: number;
     readonly health?: number;
     readonly air?: number;
     readonly maxAir?: number;
+    readonly fireTicks?: number;
+    readonly emptyPlayerSlots?: number;
   } = {},
 ): BeatGameObservation {
   const dimension = overrides.dimension ?? "minecraft:overworld";
   return {
-    observedAt: "2026-01-01T00:00:00.000Z",
+    observedAt: overrides.observedAt ?? "2026-01-01T00:00:00.000Z",
     player: {
       position: {
         x: overrides.position?.x ?? 0,
@@ -75,12 +79,14 @@ export function observation(
         pitch: overrides.rotation?.pitch ?? 0,
       },
       velocity: { x: 0, y: 0, z: 0 },
+      onGround: overrides.onGround ?? true,
       equipment: overrides.equipment ?? {},
       health: overrides.health ?? 20,
       maxHealth: 20,
       food: overrides.food ?? 20,
       air: overrides.air ?? overrides.maxAir ?? 300,
       maxAir: overrides.maxAir ?? 300,
+      fireTicks: overrides.fireTicks ?? 0,
       dead: overrides.dead ?? false,
       sleeping: false,
       usingItem: false,
@@ -90,6 +96,9 @@ export function observation(
     inventory: {
       revision: 1n,
       selectedHotbarSlot: 0,
+      ...(overrides.emptyPlayerSlots === undefined
+        ? {}
+        : { emptyPlayerSlots: overrides.emptyPlayerSlots }),
       counts: overrides.counts ?? {},
       hotbar: {},
     },

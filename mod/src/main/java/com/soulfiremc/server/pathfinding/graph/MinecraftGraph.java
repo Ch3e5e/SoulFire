@@ -89,12 +89,32 @@ public record MinecraftGraph(BlockGetter blockAccessor,
     }
   }
 
-  public void insertActions(SFVec3i node, @Nullable ActionDirection fromDirection, Consumer<GraphInstructions> callback) {
-    log.debug("Inserting actions for node: {}", node);
-    calculateActions(node, generateTemplateActions(fromDirection), callback);
+  public boolean insertActions(
+    SFVec3i node,
+    @Nullable ActionDirection fromDirection,
+    Consumer<GraphInstructions> callback
+  ) {
+    return insertActions(node, fromDirection, false, callback);
   }
 
-  private GraphAction[] generateTemplateActions(@Nullable ActionDirection fromDirection) {
+  public boolean insertActions(
+    SFVec3i node,
+    @Nullable ActionDirection fromDirection,
+    boolean currentFloorProjected,
+    Consumer<GraphInstructions> callback
+  ) {
+    log.debug("Inserting actions for node: {}", node);
+    return calculateActions(
+      node,
+      generateTemplateActions(fromDirection, currentFloorProjected),
+      callback
+    );
+  }
+
+  private GraphAction[] generateTemplateActions(
+    @Nullable ActionDirection fromDirection,
+    boolean currentFloorProjected
+  ) {
     var actions = new GraphAction[ACTIONS_TEMPLATE.length];
     for (var i = 0; i < ACTIONS_TEMPLATE.length; i++) {
       var action = ACTIONS_TEMPLATE[i];
@@ -103,21 +123,31 @@ public record MinecraftGraph(BlockGetter blockAccessor,
       }
 
       actions[i] = ACTIONS_TEMPLATE[i].copy();
+      if (actions[i] instanceof SimpleMovement movement) {
+        movement.currentFloorProjected(currentFloorProjected);
+      }
     }
 
     return actions;
   }
 
-  private void calculateActions(
+  private boolean calculateActions(
     SFVec3i node,
     GraphAction[] actions,
     Consumer<GraphInstructions> callback) {
+    var reachedLevelBoundary = false;
     for (var i = 0; i < SUBSCRIPTION_KEYS.length; i++) {
-      processSubscription(node, actions, callback, i);
+      reachedLevelBoundary |= processSubscription(
+        node,
+        actions,
+        callback,
+        i
+      );
     }
+    return reachedLevelBoundary;
   }
 
-  private void processSubscription(
+  private boolean processSubscription(
     SFVec3i node,
     GraphAction[] actions,
     Consumer<GraphInstructions> callback,
@@ -141,7 +171,10 @@ public record MinecraftGraph(BlockGetter blockAccessor,
         blockState = blockAccessor.getBlockState(absolutePositionBlock.toBlockPos());
 
         if (pathConstraint.isOutOfLevel(blockState, absolutePositionBlock)) {
-          throw new OutOfLevelException();
+          for (var unavailableSubscriber : value) {
+            actions[unavailableSubscriber.actionIndex] = null;
+          }
+          return true;
         }
       }
 
@@ -152,12 +185,16 @@ public record MinecraftGraph(BlockGetter blockAccessor,
         }
 
         for (var instruction : action.getInstructions(this, node)) {
-          callback.accept(pathConstraint.modifyAsNeeded(instruction));
+          var modified = pathConstraint.modifyAsNeeded(instruction);
+          if (pathConstraint.allowsInstruction(modified)) {
+            callback.accept(modified);
+          }
         }
       } else if (result == MinecraftGraph.SubscriptionSingleResult.IMPOSSIBLE) {
         actions[subscriber.actionIndex] = null;
       }
     }
+    return false;
   }
 
   public enum SubscriptionSingleResult {

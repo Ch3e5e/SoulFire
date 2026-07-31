@@ -35,7 +35,6 @@ import io.grpc.Status;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
-import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.inventory.InventoryMenu;
 import net.minecraft.world.item.ItemStack;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -343,23 +342,13 @@ public final class AutoEatTaskProvider
     } else {
       hand = InteractionHand.MAIN_HAND;
       swappedFromInventory = true;
-      steps.add(ControlTask.action(player::sendOpenInventory));
-      steps.add(ControlTask.action(() -> click(context, slot)));
-      steps.add(ControlTask.waitMillis(50L));
       steps.add(ControlTask.action(() ->
-        click(
-          context,
-          SFInventoryHelpers.getSelectedSlot(player.getInventory())
+        TaskInventorySupport.swapWithHotbar(
+          bot,
+          slot,
+          originalHotbar
         )));
-      steps.add(ControlTask.waitMillis(50L));
-      steps.add(ControlTask.action(() -> {
-        if (!player.inventoryMenu.getCarried().isEmpty()) {
-          click(context, slot);
-        }
-      }));
-      steps.add(ControlTask.waitMillis(50L));
-      steps.add(ControlTask.action(player::closeContainer));
-      steps.add(ControlTask.waitMillis(50L));
+      steps.add(ControlTask.waitMillis(100L));
     }
     steps.add(ControlTask.action(() ->
       bot.minecraft().options.keyUse.setDown(true)));
@@ -379,33 +368,23 @@ public final class AutoEatTaskProvider
           || player.isDeadOrDying()
           || player.getFoodData().getFoodLevel() <= initialFoodLevel
       ) {
-        if (player.isUsingItem()) {
-          gameMode.releaseUsingItem(player);
-        }
+        stopHeldUse(bot);
         throw new IllegalStateException(
           player.isDeadOrDying() || bot.minecraft().player != player
             ? "Player died or respawned before the meal was confirmed"
             : "Food level did not increase after using the selected meal"
         );
       }
+      stopHeldUse(bot);
     }));
     if (restoreSelectedSlot && swappedFromInventory) {
-      steps.add(ControlTask.action(player::sendOpenInventory));
-      steps.add(ControlTask.action(() -> click(context, slot)));
-      steps.add(ControlTask.waitMillis(50L));
       steps.add(ControlTask.action(() ->
-        click(
-          context,
-          SFInventoryHelpers.getSelectedSlot(player.getInventory())
+        TaskInventorySupport.swapWithHotbar(
+          bot,
+          slot,
+          originalHotbar
         )));
-      steps.add(ControlTask.waitMillis(50L));
-      steps.add(ControlTask.action(() -> {
-        if (!player.inventoryMenu.getCarried().isEmpty()) {
-          click(context, slot);
-        }
-      }));
-      steps.add(ControlTask.waitMillis(50L));
-      steps.add(ControlTask.action(player::closeContainer));
+      steps.add(ControlTask.waitMillis(100L));
     } else if (restoreSelectedSlot && selectedDifferentHotbar) {
       steps.add(ControlTask.action(() ->
         player.getInventory().setSelectedSlot(originalHotbar)));
@@ -419,6 +398,15 @@ public final class AutoEatTaskProvider
         steps
       )
     );
+  }
+
+  private static void stopHeldUse(BotConnection bot) {
+    bot.minecraft().options.keyUse.setDown(false);
+    var player = bot.minecraft().player;
+    var gameMode = bot.minecraft().gameMode;
+    if (player != null && gameMode != null && player.isUsingItem()) {
+      gameMode.releaseUsingItem(player);
+    }
   }
 
   private static final class HeldUseControlTask implements ControlTask {
@@ -484,27 +472,8 @@ public final class AutoEatTaskProvider
         return;
       }
       cleanedUp = true;
-      bot.minecraft().options.keyUse.setDown(false);
-      var player = bot.minecraft().player;
-      var gameMode = bot.minecraft().gameMode;
-      if (player != null && gameMode != null && player.isUsingItem()) {
-        gameMode.releaseUsingItem(player);
-      }
+      stopHeldUse(bot);
     }
   }
 
-  private static void click(BotTaskContext context, int slot) {
-    var player = context.bot().minecraft().player;
-    var gameMode = context.bot().minecraft().gameMode;
-    if (player == null || gameMode == null) {
-      throw new IllegalStateException("Bot player or game mode is unavailable");
-    }
-    gameMode.handleContainerInput(
-      player.inventoryMenu.containerId,
-      slot,
-      0,
-      ContainerInput.PICKUP,
-      player
-    );
-  }
 }

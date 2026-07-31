@@ -51,6 +51,11 @@ public interface DelegatePathConstraint extends PathConstraint {
   }
 
   @Override
+  default boolean isPlaceableBlockDrop(BlockState blockState) {
+    return delegate().isPlaceableBlockDrop(blockState);
+  }
+
+  @Override
   default boolean isTool(ItemStack item) {
     return delegate().isTool(item);
   }
@@ -81,6 +86,11 @@ public interface DelegatePathConstraint extends PathConstraint {
   }
 
   @Override
+  default boolean allowsInstruction(GraphInstructions instruction) {
+    return delegate().allowsInstruction(instruction);
+  }
+
+  @Override
   default double breakBlockPenalty() {
     return delegate().breakBlockPenalty();
   }
@@ -98,6 +108,11 @@ public interface DelegatePathConstraint extends PathConstraint {
   @Override
   default boolean disablePruning() {
     return delegate().disablePruning();
+  }
+
+  @Override
+  default boolean sprint() {
+    return delegate().sprint();
   }
 
   @Override

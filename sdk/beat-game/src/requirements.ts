@@ -20,6 +20,8 @@ export const COOKED_FOOD_ITEM_IDS = [
   "minecraft:cooked_mutton",
   "minecraft:cooked_chicken",
   "minecraft:cooked_rabbit",
+  "minecraft:cooked_cod",
+  "minecraft:cooked_salmon",
   "minecraft:bread",
   "minecraft:baked_potato",
 ] as const;
@@ -30,6 +32,8 @@ export const RAW_FOOD_TO_COOKED = {
   "minecraft:mutton": "minecraft:cooked_mutton",
   "minecraft:chicken": "minecraft:cooked_chicken",
   "minecraft:rabbit": "minecraft:cooked_rabbit",
+  "minecraft:cod": "minecraft:cooked_cod",
+  "minecraft:salmon": "minecraft:cooked_salmon",
   "minecraft:potato": "minecraft:baked_potato",
 } as const;
 
@@ -83,6 +87,18 @@ const REQUIREMENTS: Readonly<
       120,
     ),
     itemRequirement(
+      "basic-melee-weapon",
+      [
+        "minecraft:netherite_sword",
+        "minecraft:diamond_sword",
+        "minecraft:iron_sword",
+        "minecraft:stone_sword",
+        "minecraft:wooden_sword",
+      ],
+      () => 1,
+      115,
+    ),
+    itemRequirement(
       "cobblestone",
       ["minecraft:cobblestone"],
       ({ targetCobblestoneCount }) => targetCobblestoneCount,
@@ -109,7 +125,13 @@ const REQUIREMENTS: Readonly<
       "iron",
       ["minecraft:iron_ingot"],
       ({ targetIronCount }) => targetIronCount,
-      70,
+      104,
+    ),
+    itemRequirement(
+      "shield",
+      ["minecraft:shield"],
+      () => 1,
+      103,
     ),
     itemRequirement(
       "pickaxe",
@@ -128,12 +150,6 @@ const REQUIREMENTS: Readonly<
       ["minecraft:flint_and_steel", "minecraft:fire_charge"],
       () => 1,
       60,
-    ),
-    itemRequirement(
-      "shield",
-      ["minecraft:shield"],
-      () => 1,
-      67,
     ),
   ],
   [BeatGamePhase.ENTER_NETHER]: [
@@ -255,7 +271,7 @@ function prepareOverworldRequirements(
 
 function overworldLogTarget(inventory: BeatGameInventory): number {
   if ((inventory.counts["minecraft:shield"] ?? 0) > 0) {
-    return 0;
+    return 2;
   }
   if (
     (inventory.counts["minecraft:raw_iron"] ?? 0) > 0
@@ -283,6 +299,9 @@ function portalRequirements(
   inventory: BeatGameInventory,
   strategy: BeatGameStrategy,
 ): readonly BeatGameRequirementDefinition[] {
+  const survivalRequirements = REQUIREMENTS[
+    BeatGamePhase.PREPARE_OVERWORLD
+  ].filter(({ key }) => key !== "water-bucket" && key !== "ignition");
   const hasCompleteObsidianFrame =
     (inventory.counts["minecraft:obsidian"] ?? 0)
       >= strategy.targetObsidianCount;
@@ -292,6 +311,7 @@ function portalRequirements(
       && hasCompleteObsidianFrame
     );
   return [
+    ...survivalRequirements,
     ...(
       useObsidian
         && !hasCompleteObsidianFrame

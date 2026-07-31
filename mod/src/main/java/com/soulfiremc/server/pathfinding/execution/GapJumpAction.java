@@ -27,8 +27,14 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @RequiredArgsConstructor
 public final class GapJumpAction implements WorldAction {
+  private static final int MINIMUM_RUN_UP_TICKS = 2;
+  private static final int MAXIMUM_RUN_UP_TICKS = 3;
+  private static final double MINIMUM_FORWARD_SPEED = 0.08;
+
   @Getter
   private final SFVec3i blockPosition;
+  private int runUpTicks;
+  private boolean startedJumping;
 
   @Override
   public boolean isCompleted(BotConnection connection) {
@@ -71,7 +77,25 @@ public final class GapJumpAction implements WorldAction {
 
     connection.controlState().sprint(true);
     connection.controlState().up(true);
-    connection.controlState().jump(true);
+    if (!startedJumping && clientEntity.onGround()) {
+      runUpTicks++;
+      var velocity = VectorHelper.toVector2dXZ(clientEntity.getDeltaMovement());
+      var targetDirection = VectorHelper.toVector2dXZ(
+        targetMiddleBlock.subtract(clientEntity.position())
+      );
+      var forwardSpeed = velocity.equals(0, 0) || targetDirection.equals(0, 0)
+        ? 0
+        : velocity.dot(targetDirection.normalize());
+      startedJumping = shouldStartJump(runUpTicks, forwardSpeed);
+    }
+    if (startedJumping) {
+      connection.controlState().jump(true);
+    }
+  }
+
+  static boolean shouldStartJump(int runUpTicks, double forwardSpeed) {
+    return runUpTicks >= MAXIMUM_RUN_UP_TICKS
+      || (runUpTicks >= MINIMUM_RUN_UP_TICKS && forwardSpeed >= MINIMUM_FORWARD_SPEED);
   }
 
   @Override

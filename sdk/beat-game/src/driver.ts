@@ -10,6 +10,7 @@ import {
   type BlockSnapshot,
   type SchematicBlock,
   type SoulFireBot,
+  type SoulFireBotControlLease,
 } from "@soulfiremc/sdk";
 import { Effect, Stream } from "effect";
 
@@ -144,6 +145,7 @@ export type BeatGameTask =
     readonly tags?: readonly string[];
     readonly count: number;
     readonly searchRadius: number;
+    readonly avoidSubmergedTargets?: boolean;
   }
   | {
     readonly type: "excavate";
@@ -164,6 +166,7 @@ export type BeatGameTask =
     readonly selectBestWeapon?: boolean;
     readonly weapon?: BeatGameItemSelector;
     readonly restoreSelectedSlot?: boolean;
+    readonly useOffhandShield?: boolean;
   }
   | {
     readonly type: "ranged-attack";
@@ -345,6 +348,11 @@ export type BeatGamePrimitiveAction =
     readonly selector: BeatGameItemSelector;
   }
   | {
+    readonly type: "toss-items";
+    readonly selector: BeatGameItemSelector;
+    readonly count: number;
+  }
+  | {
     readonly type: "use-item";
     readonly hand?: BeatGameHand;
   }
@@ -480,9 +488,51 @@ export function makeSoulFireBeatGameDriver(
 ): BeatGameDriver {
   const mapError = (operation: string) => (cause: unknown) =>
     driverError(operation, cause);
+  const controlMutex = Effect.runSync(Effect.makeSemaphore(1));
+  let controlLease: SoulFireBotControlLease | undefined;
+  let controlUsers = 0;
+  const acquireSharedControl = controlMutex.withPermits(1)(
+    Effect.gen(function* () {
+      if (controlLease === undefined) {
+        controlLease = yield* bot.acquireControl(
+          CONTROL_LEASE_TTL_SECONDS,
+        );
+      }
+      controlUsers += 1;
+      return controlLease;
+    }),
+  );
+  const releaseSharedControl = (
+    lease: SoulFireBotControlLease,
+  ): Effect.Effect<void> =>
+    controlMutex.withPermits(1)(Effect.gen(function* () {
+      if (controlLease !== lease) {
+        return;
+      }
+      controlUsers = Math.max(0, controlUsers - 1);
+      if (controlUsers > 0) {
+        return;
+      }
+      yield* lease.release().pipe(
+        Effect.ensuring(Effect.sync(() => {
+          if (controlLease === lease) {
+            controlLease = undefined;
+          }
+        })),
+        Effect.catchAll(() => Effect.void),
+      );
+    }));
   const pathOptions = (policy: BeatGamePathPolicy) => ({
     allowMining: policy.allowMining,
     allowPlacing: policy.allowPlacing,
+    avoidFluids: policy.avoidFluids ?? false,
+    ...(policy.additionalPlaceItemIds === undefined
+        || policy.additionalPlaceItemIds.length === 0
+      ? {}
+      : {
+        additionalPlaceItemIds: [...policy.additionalPlaceItemIds],
+      }),
+    ...(policy.sprint === undefined ? {} : { sprint: policy.sprint }),
     timeoutSeconds: Math.max(1, Math.ceil(policy.maxSearchTimeMs / 1_000)),
     searchTimeoutSeconds: Math.max(
       1,
@@ -500,6 +550,7 @@ export function makeSoulFireBeatGameDriver(
       const rotation = required(player.rotation, "player.rotation");
       const counts: Record<string, number> = {};
       const hotbar: Record<number, string> = {};
+      let occupiedPlayerSlots = 0;
       const equipment = Object.fromEntries(
         Object.entries(player.equipment).map(([slot, item]) => [
           slot,
@@ -520,6 +571,12 @@ export function makeSoulFireBeatGameDriver(
         }
         counts[slot.item.itemId] =
           (counts[slot.item.itemId] ?? 0) + slot.item.count;
+        if (
+          slot.area === InventoryArea.MAIN
+          || slot.area === InventoryArea.HOTBAR
+        ) {
+          occupiedPlayerSlots += 1;
+        }
         if (slot.area === InventoryArea.HOTBAR) {
           hotbar[slot.slot] = slot.item.itemId;
         }
@@ -530,12 +587,14 @@ export function makeSoulFireBeatGameDriver(
           position: toPosition(position),
           rotation: { yaw: rotation.yaw, pitch: rotation.pitch },
           velocity: { x: velocity.x, y: velocity.y, z: velocity.z },
+          onGround: player.onGround,
           equipment,
           health: player.health,
           maxHealth: player.maxHealth,
           food: player.food,
           air: player.air,
           maxAir: player.maxAir,
+          fireTicks: player.fireTicks,
           dead: player.dead,
           sleeping: player.sleeping,
           usingItem: player.usingItem,
@@ -545,6 +604,7 @@ export function makeSoulFireBeatGameDriver(
         inventory: {
           revision: inventory.revision,
           selectedHotbarSlot: inventory.selectedHotbarSlot,
+          emptyPlayerSlots: Math.max(0, 36 - occupiedPlayerSlots),
           counts,
           hotbar,
         },
@@ -577,6 +637,7 @@ export function makeSoulFireBeatGameDriver(
             tags: task.tags ?? [],
             count: task.count,
             searchRadius: task.searchRadius,
+            avoidSubmergedTargets: task.avoidSubmergedTargets ?? false,
             path,
           });
         case "excavate":
@@ -619,6 +680,9 @@ export function makeSoulFireBeatGameDriver(
             ...(task.restoreSelectedSlot === undefined
               ? {}
               : { restoreSelectedSlot: task.restoreSelectedSlot }),
+            ...(task.useOffhandShield === undefined
+              ? {}
+              : { useOffhandShield: task.useOffhandShield }),
           });
         case "ranged-attack":
           return bot.tasks.rangedAttack(task.target, {
@@ -1184,19 +1248,18 @@ export function makeSoulFireBeatGameDriver(
         Effect.mapError(mapError(`act.${action.type}`)),
       ),
     withControl: (effect) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const lease = yield* bot.acquireControlScoped(
-            CONTROL_LEASE_TTL_SECONDS,
-          );
+      Effect.acquireUseRelease(
+        acquireSharedControl,
+        (lease) => {
           const renew = Effect.sleep(
             CONTROL_LEASE_RENEWAL_INTERVAL_MS,
           ).pipe(
             Effect.zipRight(lease.renew(CONTROL_LEASE_TTL_SECONDS)),
             Effect.forever,
           );
-          return yield* Effect.raceFirst(effect, renew);
-        }),
+          return Effect.raceFirst(effect, renew);
+        },
+        releaseSharedControl,
       ).pipe(Effect.mapError((cause) =>
         cause instanceof BeatGameDriverError
           ? cause
@@ -1223,6 +1286,11 @@ function executePrimitive(
           case: "selector",
           value: itemSelector(action.selector),
         },
+      });
+    case "toss-items":
+      return bot.inventory.toss({
+        selector: itemSelector(action.selector),
+        count: action.count,
       });
     case "use-item":
       return bot.useItem({ hand: hand(action.hand) });

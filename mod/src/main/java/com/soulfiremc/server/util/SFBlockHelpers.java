@@ -29,6 +29,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.CarpetBlock;
 import net.minecraft.world.level.block.DoorBlock;
 import net.minecraft.world.level.block.FenceGateBlock;
+import net.minecraft.world.level.block.FallingBlock;
 import net.minecraft.world.level.block.SlabBlock;
 import net.minecraft.world.level.block.SnowLayerBlock;
 import net.minecraft.world.level.block.StairBlock;
@@ -85,6 +86,12 @@ public final class SFBlockHelpers {
   public static boolean isHurtOnTouchFluid(Fluid fluidType) {
     return fluidType == Fluids.LAVA
       || fluidType == Fluids.FLOWING_LAVA;
+  }
+
+  public static boolean isSwimmableWaterBlock(BlockState state) {
+    var fluidType = state.getFluidState().getType();
+    return (fluidType == Fluids.WATER || fluidType == Fluids.FLOWING_WATER)
+      && isCollisionShapeEmpty(state);
   }
 
   public static boolean isHurtOnTouchSide(BlockState blockState) {
@@ -153,6 +160,10 @@ public final class SFBlockHelpers {
 
   public static boolean isDiggable(Block type) {
     return type.defaultDestroyTime() != -1;
+  }
+
+  public static boolean isGravityAffected(BlockState state) {
+    return state.getBlock() instanceof FallingBlock;
   }
 
   public static boolean isUsableBlockItem(Block blockType) {

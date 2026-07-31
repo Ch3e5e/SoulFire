@@ -85,6 +85,9 @@ export interface BeatGamePathPolicy {
   readonly allowPlacing: boolean;
   readonly maxFallDistance: number;
   readonly maxSearchTimeMs: number;
+  readonly avoidFluids?: boolean;
+  readonly additionalPlaceItemIds?: readonly string[];
+  readonly sprint?: boolean;
 }
 
 export interface BeatGameStrategy {
@@ -159,6 +162,7 @@ export interface BeatGameItemRequirement {
 export interface BeatGameInventory {
   readonly revision: bigint;
   readonly selectedHotbarSlot: number;
+  readonly emptyPlayerSlots?: number;
   readonly counts: Readonly<Record<string, number>>;
   readonly hotbar: Readonly<Record<number, string>>;
 }
@@ -167,12 +171,14 @@ export interface BeatGamePlayerObservation {
   readonly position: BeatGamePosition;
   readonly rotation: BeatGameRotation;
   readonly velocity: Readonly<{ x: number; y: number; z: number }>;
+  readonly onGround: boolean;
   readonly equipment: Readonly<Record<string, string>>;
   readonly health: number;
   readonly maxHealth: number;
   readonly food: number;
   readonly air: number;
   readonly maxAir: number;
+  readonly fireTicks: number;
   readonly dead: boolean;
   readonly sleeping: boolean;
   readonly usingItem: boolean;
@@ -224,6 +230,10 @@ export interface BeatGameMemoryEntry<T> {
   readonly confidence: number;
 }
 
+export interface BeatGameDeathPosition extends BeatGamePosition {
+  readonly inventoryCounts?: Readonly<Record<string, number>>;
+}
+
 export interface BeatGameWorldMemory {
   readonly blocks: readonly BeatGameMemoryEntry<BeatGameBlockObservation>[];
   readonly entities: readonly BeatGameMemoryEntry<BeatGameEntityObservation>[];
@@ -231,7 +241,9 @@ export interface BeatGameWorldMemory {
   readonly portals: readonly BeatGameMemoryEntry<BeatGameBlockObservation>[];
   readonly unreachable: readonly BeatGameMemoryEntry<BeatGamePosition>[];
   readonly eyeSamples: readonly BeatGameEyeSample[];
-  readonly deathPositions: readonly BeatGameMemoryEntry<BeatGamePosition>[];
+  readonly deathPositions: readonly BeatGameMemoryEntry<
+    BeatGameDeathPosition
+  >[];
   readonly strongholdEstimate?: BeatGamePosition;
 }
 

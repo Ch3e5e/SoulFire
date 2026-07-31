@@ -158,7 +158,8 @@ public final class DownMovement extends GraphAction implements Cloneable {
       downMovement.breakCost = new MovementMiningCost(
         absoluteKey,
         cacheableMiningCost.miningCost(),
-        cacheableMiningCost.willDropUsableBlockItem(),
+        cacheableMiningCost.willDropUsableBlockItem()
+          && graph.pathConstraint().isPlaceableBlockDrop(blockState),
         blockBreakSideHint);
       return MinecraftGraph.SubscriptionSingleResult.CONTINUE;
     }

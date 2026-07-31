@@ -180,6 +180,7 @@ public final class PathfinderServiceImpl
     return switch (result) {
       case RouteFinder.FoundRouteResult found -> found.actions();
       case RouteFinder.PartialRouteResult partial -> partial.actions();
+      case RouteFinder.SearchExpiredResult expired -> expired.actions();
       default -> List.of();
     };
   }

@@ -21,10 +21,14 @@ import { execFile as execFileCallback } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
   appendFile,
+  lstat,
   mkdir,
+  readFile,
+  readlink,
   readdir,
   realpath,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
@@ -56,12 +60,42 @@ const minecraftDataRootDirectory = path.resolve(
     path.join(repositoryRoot, "temp", "beat-game-minecraft"),
   ),
 );
+const soulfireDownloadCacheDirectory = path.resolve(
+  environment(
+    "SOULFIRE_E2E_SOULFIRE_DOWNLOAD_CACHE",
+    path.join(
+      repositoryRoot,
+      "temp",
+      "beat-game-e2e-cache",
+      "mc-downloads",
+    ),
+  ),
+);
+const soulfireRuntimeDirectory = path.resolve(
+  environment(
+    "SOULFIRE_E2E_SOULFIRE_RUNTIME",
+    path.join(
+      repositoryRoot,
+      "temp",
+      "beat-game-e2e-cache",
+      "soulfire-runtime",
+    ),
+  ),
+);
+const soulfireProcessFile = path.join(
+  soulfireRuntimeDirectory,
+  "process.json",
+);
 const botName = environment("SOULFIRE_E2E_BOT_NAME", "SFSmokeBot");
 const smokeMode = booleanEnvironment("SOULFIRE_E2E_CONTROLLED", false)
   ? "controlled"
   : "survival";
 const debugBlockBreak = booleanEnvironment(
   "SOULFIRE_E2E_DEBUG_BLOCK_BREAK",
+  false,
+);
+const debugWorldNeighborhood = booleanEnvironment(
+  "SOULFIRE_E2E_DEBUG_WORLD_NEIGHBORHOOD",
   false,
 );
 const minecraftPort = 25_565;
@@ -94,6 +128,12 @@ interface CommandResult {
   readonly stderr: string;
 }
 
+interface SoulFireProcessRecord {
+  readonly jarPath: string;
+  readonly pid: number;
+  readonly runDirectory: string;
+}
+
 interface BaseMinecraftFixture {
   readonly containerName: string;
   readonly dataDirectory?: string;
@@ -124,6 +164,7 @@ const program = Effect.scoped(Effect.gen(function* () {
   );
   yield* writeJson("configuration.json", {
     runId,
+    soulfireRuntimeDirectory,
     botName,
     timeoutMs,
     fixtureConfiguration,
@@ -142,8 +183,14 @@ const program = Effect.scoped(Effect.gen(function* () {
       [findDedicatedJar, findJava],
       { concurrency: "unbounded" },
     );
+    yield* fromPromise("reset reusable SoulFire runtime", () =>
+      resetReusableSoulFireRuntime(
+        soulfireRuntimeDirectory,
+        dedicatedJar,
+      )
+    );
     const soulfire = yield* SoulFire.install({
-      directory: path.join(artifactDirectory, `soulfire-${runId}`),
+      directory: soulfireRuntimeDirectory,
       jarPath: dedicatedJar,
       javaPath,
       javaArgs: [
@@ -166,6 +213,29 @@ const program = Effect.scoped(Effect.gen(function* () {
         );
       },
     });
+    const localServer = soulfire.localServer;
+    if (localServer === undefined) {
+      return yield* Effect.fail(new Error(
+        "Auto-provisioned SoulFire did not expose its local process",
+      ));
+    }
+    yield* fromPromise("record SoulFire process", () =>
+      writeFile(soulfireProcessFile, `${json({
+        pid: localServer.pid,
+        jarPath: localServer.jarPath,
+        runDirectory: localServer.runDirectory,
+      }, 2)}\n`)
+    );
+    yield* Effect.addFinalizer(() =>
+      soulfire.stopLocalServer().pipe(
+        Effect.ignore,
+        Effect.zipRight(
+          fromPromise("remove SoulFire process record", () =>
+            rm(soulfireProcessFile, { force: true })
+          ).pipe(Effect.ignore),
+        ),
+      )
+    );
     return { dedicatedJar, javaPath, soulfire };
   }), smokeScope));
   const [fixture, soulfireRuntime] = yield* Effect.all(
@@ -324,6 +394,42 @@ const program = Effect.scoped(Effect.gen(function* () {
     player: joinedPlayer,
     inventory: initialInventory,
   });
+  if (debugWorldNeighborhood && joinedPlayer.position !== undefined) {
+    const center = {
+      x: Math.floor(joinedPlayer.position.x),
+      y: Math.floor(joinedPlayer.position.y),
+      z: Math.floor(joinedPlayer.position.z),
+    };
+    const blocks = yield* Effect.forEach(
+      Array.from({ length: 7 }, (_, xOffset) =>
+        Array.from({ length: 7 }, (_, yOffset) =>
+          Array.from({ length: 7 }, (_, zOffset) => ({
+            x: center.x + xOffset - 3,
+            y: center.y + yOffset - 3,
+            z: center.z + zOffset - 3,
+          }))
+        )
+      ).flat(2),
+      (position) =>
+        bot.world.block({
+          position: {
+            ...position,
+            dimension: joinedPlayer.position?.dimension ?? "",
+          },
+          includeShapes: true,
+        }).pipe(
+          Effect.map(({ block }) => ({
+            position,
+            blockId: block?.blockId,
+            properties: block?.properties,
+            fluid: block?.fluid,
+            collisionShape: block?.collisionShape,
+          })),
+        ),
+      { concurrency: 32 },
+    );
+    yield* record("world-neighborhood", { center, blocks });
+  }
   if (
     fixture.mode === "survival"
     && fixture.freshWorld
@@ -935,6 +1041,222 @@ function stopMinecraftFixture(
       }
     }
   });
+}
+
+async function resetReusableSoulFireRuntime(
+  soulfireDirectory: string,
+  dedicatedJar: string,
+): Promise<void> {
+  const serverDirectory = path.join(soulfireDirectory, "server");
+  await mkdir(serverDirectory, { recursive: true });
+  await stopReusableSoulFireProcesses(serverDirectory, dedicatedJar);
+  await Promise.all([
+    rm(path.join(serverDirectory, "soulfire.sqlite"), { force: true }),
+    rm(path.join(serverDirectory, "soulfire.sqlite-shm"), { force: true }),
+    rm(path.join(serverDirectory, "soulfire.sqlite-wal"), { force: true }),
+    rm(path.join(serverDirectory, "object-storage"), {
+      recursive: true,
+      force: true,
+    }),
+    rm(path.join(serverDirectory, "logs"), { recursive: true, force: true }),
+    rm(path.join(serverDirectory, "minecraft", "logs"), {
+      recursive: true,
+      force: true,
+    }),
+  ]);
+  await rm(soulfireProcessFile, { force: true });
+  await prepareSoulFireDownloadCache(soulfireDirectory);
+}
+
+async function stopReusableSoulFireProcesses(
+  serverDirectory: string,
+  dedicatedJar: string,
+): Promise<void> {
+  const [expectedRunDirectory, expectedJar] = await Promise.all([
+    realpath(serverDirectory),
+    realpath(dedicatedJar),
+  ]);
+  const recorded = await readSoulFireProcessRecord();
+  const processIds = new Set<number>();
+  if (recorded !== undefined && isProcessRunning(recorded.pid)) {
+    const [recordedRunDirectory, recordedJar] = await Promise.all([
+      realpath(recorded.runDirectory),
+      realpath(recorded.jarPath),
+    ]);
+    if (
+      recordedRunDirectory !== expectedRunDirectory
+      || recordedJar !== expectedJar
+    ) {
+      throw new Error(
+        `Refusing to stop recorded process ${recorded.pid}: its SoulFire runtime does not match ${expectedRunDirectory}`,
+      );
+    }
+    processIds.add(recorded.pid);
+  }
+
+  const procEntries = await readdir("/proc", { withFileTypes: true });
+  await Promise.all(procEntries.flatMap((entry) => {
+    const pid = Number(entry.name);
+    if (!entry.isDirectory() || !Number.isSafeInteger(pid) || pid < 1) {
+      return [];
+    }
+    return [matchesSoulFireProcess(
+      pid,
+      expectedRunDirectory,
+      expectedJar,
+    ).then((matches) => {
+      if (matches) {
+        processIds.add(pid);
+      }
+    })];
+  }));
+
+  for (const pid of processIds) {
+    await stopProcess(pid);
+  }
+}
+
+async function readSoulFireProcessRecord(): Promise<
+  SoulFireProcessRecord | undefined
+> {
+  let source: string;
+  try {
+    source = await readFile(soulfireProcessFile, "utf8");
+  } catch (cause) {
+    if (isNodeError(cause, "ENOENT")) {
+      return undefined;
+    }
+    throw cause;
+  }
+  const value: unknown = JSON.parse(source);
+  if (
+    typeof value !== "object"
+    || value === null
+    || !("pid" in value)
+    || !Number.isSafeInteger(value.pid)
+    || Number(value.pid) < 1
+    || !("jarPath" in value)
+    || typeof value.jarPath !== "string"
+    || !("runDirectory" in value)
+    || typeof value.runDirectory !== "string"
+  ) {
+    throw new Error(`Invalid SoulFire process record at ${soulfireProcessFile}`);
+  }
+  return {
+    jarPath: value.jarPath,
+    pid: Number(value.pid),
+    runDirectory: value.runDirectory,
+  };
+}
+
+async function matchesSoulFireProcess(
+  pid: number,
+  expectedRunDirectory: string,
+  expectedJar: string,
+): Promise<boolean> {
+  try {
+    const [workingDirectory, commandLine] = await Promise.all([
+      realpath(`/proc/${pid}/cwd`),
+      readFile(`/proc/${pid}/cmdline`, "utf8"),
+    ]);
+    if (workingDirectory !== expectedRunDirectory) {
+      return false;
+    }
+    const arguments_ = commandLine.split("\0").filter(Boolean);
+    const jarFlag = arguments_.lastIndexOf("-jar");
+    const jarArgument = arguments_[jarFlag + 1];
+    return jarFlag >= 0
+      && jarArgument !== undefined
+      && await realpath(jarArgument) === expectedJar;
+  } catch (cause) {
+    if (isNodeError(cause, "ENOENT") || isNodeError(cause, "EACCES")) {
+      return false;
+    }
+    throw cause;
+  }
+}
+
+async function stopProcess(pid: number): Promise<void> {
+  if (!isProcessRunning(pid)) {
+    return;
+  }
+  process.kill(pid, "SIGTERM");
+  if (await waitForProcessExit(pid, 5_000)) {
+    return;
+  }
+  process.kill(pid, "SIGKILL");
+  if (!await waitForProcessExit(pid, 2_000)) {
+    throw new Error(`SoulFire process ${pid} did not stop`);
+  }
+}
+
+async function waitForProcessExit(
+  pid: number,
+  timeoutMs: number,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isProcessRunning(pid)) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return !isProcessRunning(pid);
+}
+
+function isProcessRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (cause) {
+    if (isNodeError(cause, "ESRCH")) {
+      return false;
+    }
+    if (isNodeError(cause, "EPERM")) {
+      return true;
+    }
+    throw cause;
+  }
+}
+
+function isNodeError(cause: unknown, code: string): cause is NodeJS.ErrnoException {
+  return cause instanceof Error && "code" in cause && cause.code === code;
+}
+
+async function prepareSoulFireDownloadCache(
+  soulfireDirectory: string,
+): Promise<void> {
+  const serverDirectory = path.join(soulfireDirectory, "server");
+  const sessionDownloadDirectory = path.join(
+    serverDirectory,
+    "mc-downloads",
+  );
+  await Promise.all([
+    mkdir(serverDirectory, { recursive: true }),
+    mkdir(soulfireDownloadCacheDirectory, { recursive: true }),
+  ]);
+  try {
+    const metadata = await lstat(sessionDownloadDirectory);
+    if (metadata.isSymbolicLink()) {
+      const target = await readlink(sessionDownloadDirectory);
+      if (
+        path.resolve(serverDirectory, target)
+        === soulfireDownloadCacheDirectory
+      ) {
+        return;
+      }
+    }
+    await rm(sessionDownloadDirectory, { recursive: true, force: true });
+  } catch (cause) {
+    if (!isNodeError(cause, "ENOENT")) {
+      throw cause;
+    }
+  }
+  await symlink(
+    soulfireDownloadCacheDirectory,
+    sessionDownloadDirectory,
+    "dir",
+  );
 }
 
 function provisionBot(

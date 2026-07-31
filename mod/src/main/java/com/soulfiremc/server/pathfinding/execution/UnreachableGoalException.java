@@ -34,4 +34,17 @@ public final class UnreachableGoalException extends IllegalStateException {
         + " consecutive partial routes"
     );
   }
+
+  public static UnreachableGoalException stalledAction(
+    int actionCount,
+    String action
+  ) {
+    return new UnreachableGoalException(
+      "Pathfinding stalled on "
+        + action
+        + " across "
+        + actionCount
+        + " consecutive attempts"
+    );
+  }
 }

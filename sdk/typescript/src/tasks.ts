@@ -186,6 +186,7 @@ export interface AttackEntityTaskOptions extends TaskStartOptions {
   selectBestWeapon?: boolean;
   weapon?: MessageInitShape<typeof ItemSelectorSchema>;
   restoreSelectedSlot?: boolean;
+  useOffhandShield?: boolean;
 }
 
 export interface AttackNearestTaskOptions extends TaskStartOptions {
@@ -350,6 +351,7 @@ export interface CollectBlocksTaskOptions extends TaskStartOptions {
   tags?: readonly string[];
   count?: number;
   searchRadius?: number;
+  avoidSubmergedTargets?: boolean;
   path?: MessageInitShape<typeof PathfindOptionsSchema>;
 }
 
@@ -726,6 +728,7 @@ export class SoulFireTasks {
       selectBestWeapon = true,
       weapon,
       restoreSelectedSlot = true,
+      useOffhandShield = false,
       ...taskOptions
     } = options;
     return this.start(
@@ -740,6 +743,7 @@ export class SoulFireTasks {
         selectBestWeapon,
         ...(weapon === undefined ? {} : { weapon }),
         restoreSelectedSlot,
+        useOffhandShield,
       },
       AttackEntityTaskResultSchema,
       taskOptions,
@@ -759,6 +763,7 @@ export class SoulFireTasks {
       selectBestWeapon = true,
       weapon,
       restoreSelectedSlot = true,
+      useOffhandShield = false,
       ...taskOptions
     } = options;
     return this.run(
@@ -773,6 +778,7 @@ export class SoulFireTasks {
         selectBestWeapon,
         ...(weapon === undefined ? {} : { weapon }),
         restoreSelectedSlot,
+        useOffhandShield,
       },
       taskOptions,
     );
@@ -1599,6 +1605,7 @@ export class SoulFireTasks {
       tags = [],
       count = 1,
       searchRadius = 32,
+      avoidSubmergedTargets = false,
       path,
       ...taskOptions
     } = options;
@@ -1609,6 +1616,7 @@ export class SoulFireTasks {
         tags: [...tags],
         count,
         searchRadius,
+        avoidSubmergedTargets,
         ...(path === undefined ? {} : { options: path }),
       },
       CollectBlocksTaskResultSchema,
@@ -1624,6 +1632,7 @@ export class SoulFireTasks {
       tags = [],
       count = 1,
       searchRadius = 32,
+      avoidSubmergedTargets = false,
       path,
       ...taskOptions
     } = options;
@@ -1634,6 +1643,7 @@ export class SoulFireTasks {
         tags: [...tags],
         count,
         searchRadius,
+        avoidSubmergedTargets,
         ...(path === undefined ? {} : { options: path }),
       },
       taskOptions,

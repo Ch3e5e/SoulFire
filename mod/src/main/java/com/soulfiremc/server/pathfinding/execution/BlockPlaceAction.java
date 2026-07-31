@@ -19,8 +19,10 @@ package com.soulfiremc.server.pathfinding.execution;
 
 import com.soulfiremc.server.bot.BlockPredictionSupport;
 import com.soulfiremc.server.bot.BotConnection;
+import com.soulfiremc.server.bot.BotInteractionSupport;
 import com.soulfiremc.server.pathfinding.BlockPlaceAgainstData;
 import com.soulfiremc.server.pathfinding.SFVec3i;
+import com.soulfiremc.server.pathfinding.graph.constraint.PathConstraint;
 import com.soulfiremc.server.util.SFBlockHelpers;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
@@ -33,11 +35,15 @@ import net.minecraft.world.phys.Vec3;
 @Slf4j
 @RequiredArgsConstructor
 public final class BlockPlaceAction implements WorldAction {
+  private static final int MAX_CONFIRMATION_TICKS = 40;
   @Getter
   private final SFVec3i blockPosition;
   private final BlockPlaceAgainstData blockPlaceAgainstData;
-  private boolean putOnHotbar;
+  private final PathConstraint pathConstraint;
+  private InteractionHand placementHand;
   private boolean finishedPlacing;
+  private boolean interactionRejected;
+  private int confirmationTicks;
 
   @Override
   public boolean isCompleted(BotConnection connection) {
@@ -59,10 +65,31 @@ public final class BlockPlaceAction implements WorldAction {
 
   public boolean isRejected(BotConnection connection) {
     var position = blockPosition.toBlockPos();
-    return finishedPlacing
-      && !BlockPredictionSupport.hasPendingPrediction(connection, position)
-      && !SFBlockHelpers.isCollisionShapeFullBlock(
-      connection.minecraft().level.getBlockState(position)
+    return placementWasRejected(
+      interactionRejected,
+      finishedPlacing,
+      BlockPredictionSupport.hasPendingPrediction(connection, position),
+      SFBlockHelpers.isCollisionShapeFullBlock(
+        connection.minecraft().level.getBlockState(position)
+      ),
+      confirmationTicks
+    );
+  }
+
+  static boolean placementWasRejected(
+    boolean interactionRejected,
+    boolean finishedPlacing,
+    boolean pendingPrediction,
+    boolean fullBlockPresent,
+    int confirmationTicks
+  ) {
+    return interactionRejected
+      || (
+      finishedPlacing
+        && (
+        (!pendingPrediction && !fullBlockPresent)
+          || confirmationTicks >= MAX_CONFIRMATION_TICKS
+      )
     );
   }
 
@@ -77,15 +104,16 @@ public final class BlockPlaceAction implements WorldAction {
 
     connection.controlState().resetAll();
 
-    if (!putOnHotbar) {
-      if (ItemPlaceHelper.placeBestBlockInHand(connection)) {
-        putOnHotbar = true;
-      }
-
+    if (placementHand == null) {
+      placementHand = ItemPlaceHelper.placeBestBlockInHand(
+        connection,
+        pathConstraint
+      );
       return;
     }
 
     if (finishedPlacing) {
+      confirmationTicks++;
       return;
     }
 
@@ -96,21 +124,28 @@ public final class BlockPlaceAction implements WorldAction {
       return;
     }
 
-    var hand = InteractionHand.MAIN_HAND;
-    if (connection.minecraft().gameMode.useItemOn(
+    var hand = placementHand;
+    var interaction = BotInteractionSupport.withSneaking(
       clientEntity,
-      hand,
-      new BlockHitResult(
-        placeTarget,
-        blockPlaceAgainstData.blockFace().toDirection(),
-        blockPlaceAgainstData.againstPos().toBlockPos(),
-        false
+      true,
+      () -> connection.minecraft().gameMode.useItemOn(
+        clientEntity,
+        hand,
+        new BlockHitResult(
+          placeTarget,
+          blockPlaceAgainstData.blockFace().toDirection(),
+          blockPlaceAgainstData.againstPos().toBlockPos(),
+          false
+        )
       )
-    ) instanceof InteractionResult.Success success) {
+    );
+    if (interaction instanceof InteractionResult.Success success) {
       if (success.swingSource() == InteractionResult.SwingSource.CLIENT) {
         clientEntity.swing(hand);
       }
       finishedPlacing = true;
+    } else {
+      interactionRejected = true;
     }
   }
 

@@ -35,8 +35,11 @@ import com.soulfiremc.server.pathfinding.execution.PathExecutor;
 import com.soulfiremc.server.util.SFInventoryHelpers;
 import com.soulfiremc.server.util.SFItemHelpers;
 import io.grpc.Status;
+import net.minecraft.client.multiplayer.MultiPlayerGameMode;
+import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -55,10 +58,19 @@ public final class AttackEntityTaskProvider
   private static final int MAX_CONSECUTIVE_PATH_FAILURES = 3;
   private static final float DEFAULT_ATTACK_RANGE = 3.0F;
   private static final float MAX_ATTACK_RANGE = 6.0F;
+  private static final double DIRECT_PURSUIT_RANGE = 12.0;
+  private static final double DIRECT_PURSUIT_VERTICAL_RANGE = 2.5;
   private static final Set<ControlResource> RESOURCES = Set.of(
     ControlResource.MOVEMENT,
     ControlResource.ROTATION,
     ControlResource.MAIN_HAND,
+    ControlResource.INVENTORY
+  );
+  private static final Set<ControlResource> SHIELD_RESOURCES = Set.of(
+    ControlResource.MOVEMENT,
+    ControlResource.ROTATION,
+    ControlResource.MAIN_HAND,
+    ControlResource.OFF_HAND,
     ControlResource.INVENTORY
   );
 
@@ -74,7 +86,7 @@ public final class AttackEntityTaskProvider
 
   @Override
   public Set<ControlResource> resources(AttackEntityTask input) {
-    return RESOURCES;
+    return input.getUseOffhandShield() ? SHIELD_RESOURCES : RESOURCES;
   }
 
   @Override
@@ -118,6 +130,7 @@ public final class AttackEntityTaskProvider
       !input.hasSelectBestWeapon() || input.getSelectBestWeapon(),
       input.hasWeapon() ? input.getWeapon() : null,
       input.getRestoreSelectedSlot(),
+      input.getUseOffhandShield(),
       resolved,
       constraint,
       result
@@ -153,6 +166,16 @@ public final class AttackEntityTaskProvider
     return Math.sqrt(x * x + y * y + z * z);
   }
 
+  static boolean shouldPursueDirectly(
+    double distance,
+    double verticalDistance,
+    boolean hasLineOfSight
+  ) {
+    return hasLineOfSight
+      && distance <= DIRECT_PURSUIT_RANGE
+      && verticalDistance <= DIRECT_PURSUIT_VERTICAL_RANGE;
+  }
+
   private static final class AttackControl implements ControlTask {
     private final BotTaskContext context;
     private final EntityReference target;
@@ -163,6 +186,7 @@ public final class AttackEntityTaskProvider
     private final boolean selectBestWeapon;
     private final @Nullable ItemSelector weaponSelector;
     private final boolean restoreSelectedSlot;
+    private final boolean useOffhandShield;
     private final int originalSelectedSlot;
     private final PathfindingSupport.ResolvedGoal goal;
     private final com.soulfiremc.server.pathfinding.graph.constraint.PathConstraint
@@ -185,6 +209,7 @@ public final class AttackEntityTaskProvider
       boolean selectBestWeapon,
       @Nullable ItemSelector weaponSelector,
       boolean restoreSelectedSlot,
+      boolean useOffhandShield,
       PathfindingSupport.ResolvedGoal goal,
       com.soulfiremc.server.pathfinding.graph.constraint.PathConstraint
         constraint,
@@ -199,6 +224,7 @@ public final class AttackEntityTaskProvider
       this.selectBestWeapon = selectBestWeapon;
       this.weaponSelector = weaponSelector;
       this.restoreSelectedSlot = restoreSelectedSlot;
+      this.useOffhandShield = useOffhandShield;
       this.originalSelectedSlot = Objects.requireNonNull(
         context.bot().minecraft().player
       ).getInventory().getSelectedSlot();
@@ -265,7 +291,22 @@ public final class AttackEntityTaskProvider
           .build());
       }
       if (distance > attackRange) {
-        continuePath();
+        if (shouldPursueDirectly(
+          distance,
+          Math.abs(player.getY() - entity.getY()),
+          player.hasLineOfSight(entity)
+        )) {
+          stopPath(ControlStopReason.CANCELLED, null);
+          bot.controlState().resetAll();
+          bot.rotationControl().lookAt(visiblePoint);
+          raiseShield(player, gameMode);
+          bot.controlState().up(true);
+          bot.controlState().sprint(sprinting);
+          bot.controlState().jump(player.onGround() && distance > 4.0);
+        } else {
+          raiseShield(player, gameMode);
+          continuePath();
+        }
         return;
       }
 
@@ -278,8 +319,10 @@ public final class AttackEntityTaskProvider
       bot.rotationControl().lookAt(visiblePoint);
       if (player.getAttackStrengthScale(0) < 1.0F
         || !bot.rotationControl().isFacing(visiblePoint)) {
+        raiseShield(player, gameMode);
         return;
       }
+      lowerShield(player, gameMode);
       var wasSprinting = player.isSprinting();
       player.setSprinting(sprinting);
       try {
@@ -362,12 +405,44 @@ public final class AttackEntityTaskProvider
       AttackEntityCompletionReason reason,
       boolean targetAlive
     ) {
+      var player = context.bot().minecraft().player;
+      var gameMode = context.bot().minecraft().gameMode;
+      if (player != null && gameMode != null) {
+        lowerShield(player, gameMode);
+      }
       result.complete(AttackEntityTaskResult.newBuilder()
         .setFinalPosition(BotTaskSupport.position(context.bot()))
         .setReason(reason)
         .setAttacks(attacks)
         .setTargetAlive(targetAlive)
         .build());
+    }
+
+    private void raiseShield(
+      LocalPlayer player,
+      MultiPlayerGameMode gameMode
+    ) {
+      if (!useOffhandShield || !player.getOffhandItem().is(Items.SHIELD)) {
+        return;
+      }
+      if (player.isUsingItem()) {
+        if (player.getUsedItemHand() == InteractionHand.OFF_HAND) {
+          return;
+        }
+        gameMode.releaseUsingItem(player);
+      }
+      gameMode.useItem(player, InteractionHand.OFF_HAND);
+    }
+
+    private void lowerShield(
+      LocalPlayer player,
+      MultiPlayerGameMode gameMode
+    ) {
+      if (useOffhandShield
+        && player.isUsingItem()
+        && player.getUsedItemHand() == InteractionHand.OFF_HAND) {
+        gameMode.releaseUsingItem(player);
+      }
     }
 
     private boolean ensureBestWeapon() {
@@ -455,6 +530,10 @@ public final class AttackEntityTaskProvider
       stopPath(reason, cause);
       context.bot().controlState().resetAll();
       var player = context.bot().minecraft().player;
+      var gameMode = context.bot().minecraft().gameMode;
+      if (player != null && gameMode != null) {
+        lowerShield(player, gameMode);
+      }
       if (restoreSelectedSlot && player != null) {
         player.getInventory().setSelectedSlot(originalSelectedSlot);
       }

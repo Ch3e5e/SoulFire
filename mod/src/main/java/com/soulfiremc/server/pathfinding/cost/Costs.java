@@ -50,6 +50,9 @@ public final class Costs {
   public static final double ONE_GAP_JUMP = JUMP_LAND_GROUND + STRAIGHT + STRAIGHT;
   /// Interacting with a simple passage block like a door or gate is cheap but not free.
   public static final double INTERACT_OPENABLE = 0.25;
+  /// Submerged travel is slower and consumes air. Prefer the water surface
+  /// whenever both routes cover the same horizontal distance.
+  public static final double SUBMERGED_MOVEMENT = 4;
   /// Falling 1 block takes ~5.63 ticks.
   public static final double FALL_1 = 5.63 / TICKS_PER_BLOCK;
   /// Falling 2 blocks takes ~7.79 ticks.

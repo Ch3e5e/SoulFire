@@ -24,16 +24,84 @@ import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.ItemAttributeModifiers;
 import net.minecraft.world.item.consume_effects.ApplyStatusEffectsConsumeEffect;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.block.FallingBlock;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
 
 import java.util.Optional;
+import java.util.Set;
 
 public final class SFItemHelpers {
+  private static final Set<Block> DISPOSABLE_PATH_BLOCKS = Set.of(
+    Blocks.DIRT,
+    Blocks.COARSE_DIRT,
+    Blocks.ROOTED_DIRT,
+    Blocks.GRASS_BLOCK,
+    Blocks.PODZOL,
+    Blocks.MYCELIUM,
+    Blocks.MUD,
+    Blocks.MOSS_BLOCK,
+    Blocks.CLAY,
+    Blocks.STONE,
+    Blocks.COBBLESTONE,
+    Blocks.GRANITE,
+    Blocks.DIORITE,
+    Blocks.ANDESITE,
+    Blocks.DEEPSLATE,
+    Blocks.COBBLED_DEEPSLATE,
+    Blocks.TUFF,
+    Blocks.CALCITE,
+    Blocks.DRIPSTONE_BLOCK,
+    Blocks.SANDSTONE,
+    Blocks.RED_SANDSTONE,
+    Blocks.TERRACOTTA,
+    Blocks.NETHERRACK,
+    Blocks.BASALT,
+    Blocks.SMOOTH_BASALT,
+    Blocks.BLACKSTONE,
+    Blocks.END_STONE,
+    Blocks.SNOW_BLOCK
+  );
+
   private SFItemHelpers() {}
 
   public static boolean isSafeFullBlockItem(ItemStack itemStack) {
     var blockType = BlockItems.getBlock(itemStack.getItem());
-    return blockType.isPresent() && !(blockType.get() instanceof FallingBlock);
+    return blockType.isPresent() && isSafeFullBlock(blockType.get());
+  }
+
+  public static boolean isSafeFullBlock(Block block) {
+    return BlockItems.hasItem(block) && !(block instanceof FallingBlock);
+  }
+
+  public static boolean isDisposableFullBlockItem(ItemStack itemStack) {
+    var blockType = BlockItems.getBlock(itemStack.getItem());
+    return blockType.isPresent() && isDisposableFullBlock(blockType.get());
+  }
+
+  public static boolean isPathBuildingBlockItem(ItemStack itemStack) {
+    var blockType = BlockItems.getBlock(itemStack.getItem());
+    return blockType.isPresent() && isPathBuildingBlock(blockType.get());
+  }
+
+  public static boolean isPathBuildingBlock(Block block) {
+    return isDisposableFullBlock(block);
+  }
+
+  public static boolean isDisposableFullBlock(Block block) {
+    if (block instanceof FallingBlock) {
+      return false;
+    }
+    var state = block.defaultBlockState();
+    return DISPOSABLE_PATH_BLOCKS.contains(block)
+      || state.is(BlockTags.DIRT)
+      || state.is(BlockTags.MUD)
+      || state.is(BlockTags.MOSS_BLOCKS)
+      || state.is(BlockTags.GRASS_BLOCKS)
+      || state.is(BlockTags.TERRACOTTA)
+      || state.is(BlockTags.BASE_STONE_OVERWORLD)
+      || state.is(BlockTags.BASE_STONE_NETHER);
   }
 
   public static boolean isTool(ItemStack itemStack) {

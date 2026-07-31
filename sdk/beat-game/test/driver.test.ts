@@ -32,7 +32,15 @@ function effectBot(
     eat?: readonly unknown[];
     equip?: Readonly<Record<string, unknown>>;
     cancellations: number;
-  } = { cancellations: 0 };
+    controlAcquisitions: number;
+    controlReleases: number;
+    controlRenewals: number;
+  } = {
+    cancellations: 0,
+    controlAcquisitions: 0,
+    controlReleases: 0,
+    controlRenewals: 0,
+  };
   const taskHandle = {
     result: () => taskResult,
     cancel: () =>
@@ -147,15 +155,38 @@ function effectBot(
       calls.attack = request;
       return Effect.succeed({});
     },
-    acquireControlScoped: () =>
-      Effect.succeed({
-        renew: () => Effect.succeed({}),
+    acquireControl: () =>
+      Effect.sync(() => {
+        calls.controlAcquisitions += 1;
+        return {
+          renew: () =>
+            Effect.sync(() => {
+              calls.controlRenewals += 1;
+              return {};
+            }),
+          release: () =>
+            Effect.sync(() => {
+              calls.controlReleases += 1;
+            }),
+        };
       }),
   };
   return { bot: bot as unknown as SoulFireBot, calls };
 }
 
 describe("production SoulFire beat-game driver", () => {
+  it("shares one control lease across nested control scopes", async () => {
+    const { bot, calls } = effectBot();
+    const driver = makeSoulFireBeatGameDriver(bot);
+
+    await Effect.runPromise(driver.withControl(
+      driver.withControl(Effect.void),
+    ));
+
+    expect(calls.controlAcquisitions).toBe(1);
+    expect(calls.controlReleases).toBe(1);
+  });
+
   it("maps public snapshots into the stable planner observation", async () => {
     const { bot } = effectBot();
     const driver = makeSoulFireBeatGameDriver(bot);
@@ -178,6 +209,7 @@ describe("production SoulFire beat-game driver", () => {
     expect(current.inventory).toMatchObject({
       revision: 9n,
       selectedHotbarSlot: 2,
+      emptyPlayerSlots: 34,
       counts: { "minecraft:spruce_log": 5 },
       hotbar: { 36: "minecraft:spruce_log" },
     });
@@ -193,13 +225,18 @@ describe("production SoulFire beat-game driver", () => {
       tags: ["minecraft:logs"],
       count: 3,
       searchRadius: 40,
-    }, defaultBeatGameStrategy.path, {
+    }, {
+      ...defaultBeatGameStrategy.path,
+      additionalPlaceItemIds: ["minecraft:oak_log"],
+      sprint: false,
+    }, {
       idempotencyKey: "beat-game:test-action",
     }));
 
     expect(calls.collect).toEqual([
       ["minecraft:oak_log"],
       {
+        avoidSubmergedTargets: false,
         conflictPolicy: BotTaskConflictPolicy.QUEUE,
         tags: ["minecraft:logs"],
         count: 3,
@@ -209,6 +246,9 @@ describe("production SoulFire beat-game driver", () => {
         path: {
           allowMining: true,
           allowPlacing: true,
+          avoidFluids: false,
+          additionalPlaceItemIds: ["minecraft:oak_log"],
+          sprint: false,
           timeoutSeconds: 30,
           searchTimeoutSeconds: 30,
         },
