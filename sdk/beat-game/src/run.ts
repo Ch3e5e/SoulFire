@@ -2284,6 +2284,7 @@ function escapeFromTarget(
       safeNavigation,
       monitorEscapeSafety(
         state,
+        target,
         latest,
         options.continueEscapingWhenHit ?? false,
       ),
@@ -2305,10 +2306,11 @@ function escapeFromTarget(
 
 function monitorEscapeSafety(
   state: RunState,
+  target: BeatGameEntityObservation,
   previousObservation: BeatGameObservation,
   continueEscapingWhenHit: boolean,
 ): Effect.Effect<
-  | { readonly type: "dead" | "unsafe-air" }
+  | { readonly type: "dead" | "safe" | "unsafe-air" }
   | {
     readonly type: "defend" | "escape";
     readonly target: BeatGameEntityObservation;
@@ -2326,35 +2328,45 @@ function monitorEscapeSafety(
       if (hasUnsafeAir(observation)) {
         return Effect.succeed({ type: "unsafe-air" } as const);
       }
-      if (observation.player.health >= previousObservation.player.health) {
-        return monitorEscapeSafety(
-          state,
-          observation,
-          continueEscapingWhenHit,
-        );
-      }
-      if (continueEscapingWhenHit) {
-        return monitorEscapeSafety(
-          state,
-          observation,
-          true,
-        );
-      }
-      return findNearbyAttackThreat(state, observation).pipe(
-        Effect.flatMap((threat) =>
-          threat === undefined
-            ? monitorEscapeSafety(
+      return state.driver.queryEntities({
+        origin: observation.player.position,
+        radius: THREAT_ESCAPE_SAFE_DISTANCE,
+        selector: {
+          networkId: target.networkId,
+          alive: true,
+        },
+        maximumResults: 1,
+      }).pipe(
+        Effect.flatMap(([currentTarget]) => {
+          if (currentTarget === undefined) {
+            return Effect.succeed({ type: "safe" } as const);
+          }
+          if (observation.player.health >= previousObservation.player.health) {
+            return monitorEscapeSafety(
               state,
+              currentTarget,
               observation,
               continueEscapingWhenHit,
-            )
-            : Effect.succeed({
-              type: threat.response === "flee"
-                ? "escape"
-                : "defend",
-              target: threat.target,
-            } as const)
-        ),
+            );
+          }
+          return findNearbyAttackThreat(state, observation).pipe(
+            Effect.flatMap((threat) =>
+              threat === undefined
+                ? monitorEscapeSafety(
+                  state,
+                  currentTarget,
+                  observation,
+                  continueEscapingWhenHit,
+                )
+                : Effect.succeed({
+                  type: continueEscapingWhenHit || threat.response === "flee"
+                    ? "escape"
+                    : "defend",
+                  target: threat.target,
+                } as const)
+            ),
+          );
+        }),
       );
     }),
   );

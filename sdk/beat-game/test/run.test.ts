@@ -2491,7 +2491,7 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
-  it("keeps the active corpse recovery escape route when hit again", async () => {
+  it("reorients a corpse recovery escape when the bot is hit again", async () => {
     const driver = new FakeBeatGameDriver();
     const deathPosition = {
       x: 24,
@@ -2521,7 +2521,10 @@ describe("beat-game run lifecycle", () => {
     });
     driver.entityResults = [zombie];
     driver.entityQueryResolver = (query) =>
-      query.selector.categories?.includes(2) ? driver.entityResults : [];
+      query.selector.categories?.includes(2)
+        || query.selector.networkId === zombie.networkId
+        ? driver.entityResults
+        : [];
     let interruptedEscapePaths = 0;
     driver.xzPathResolver = (x, z, dimension, radius, policy) =>
       Effect.sync(() => {
@@ -2553,7 +2556,9 @@ describe("beat-game run lifecycle", () => {
               yield* Effect.sleep(1);
             }
             driver.currentObservation = observation({ health: 3 });
-            yield* Effect.sleep(1_500);
+            while (driver.xzPaths.length < 2) {
+              yield* Effect.sleep(1);
+            }
             activePathsBeforeStop = driver.xzPaths.length;
             interruptionsBeforeStop = interruptedEscapePaths;
             yield* run.stop;
@@ -2563,8 +2568,8 @@ describe("beat-game run lifecycle", () => {
       ),
     ));
 
-    expect(activePathsBeforeStop).toBe(1);
-    expect(interruptionsBeforeStop).toBe(0);
+    expect(activePathsBeforeStop).toBeGreaterThanOrEqual(2);
+    expect(interruptionsBeforeStop).toBeGreaterThanOrEqual(1);
   }, 10_000);
 
   it("keeps monitoring for new attackers after resuming item recovery", async () => {
@@ -4579,6 +4584,74 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks.some((task) =>
       task.type === "attack-nearest" || task.type === "attack-entity"
     )).toBe(false);
+  });
+
+  it("stops an escape route once its threat is no longer nearby", async () => {
+    const driver = new FakeBeatGameDriver();
+    const skeleton = {
+      connectionEpoch: "epoch-1",
+      networkId: 17,
+      entityType: "minecraft:skeleton",
+      position: {
+        x: 6,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.currentObservation = observation({ health: 8 });
+    driver.entityResults = [skeleton];
+    let targetNearby = true;
+    driver.entityQueryResolver = (query) =>
+      query.selector.networkId === skeleton.networkId
+        ? targetNearby ? [skeleton] : []
+        : query.selector.categories?.includes(2)
+        ? driver.entityResults
+        : [];
+    let interruptedEscapePaths = 0;
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+        targetNearby = false;
+      }).pipe(
+        Effect.zipRight(Effect.never),
+        Effect.onInterrupt(() =>
+          Effect.sync(() => {
+            interruptedEscapePaths += 1;
+          })
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (interruptedEscapePaths === 0) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.xzPaths).toHaveLength(1);
+    expect(interruptedEscapePaths).toBe(1);
+    expect(driver.entityQueries).toContainEqual(expect.objectContaining({
+      radius: 24,
+      selector: {
+        networkId: skeleton.networkId,
+        alive: true,
+      },
+      maximumResults: 1,
+    }));
   });
 
   it("interrupts work and fights back bare-handed after taking damage", async () => {
