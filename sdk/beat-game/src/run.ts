@@ -2589,6 +2589,12 @@ function knockBackAndSprintAway(
     );
     yield* state.driver.withControl(Effect.gen(function* () {
       if (distance <= EMERGENCY_KNOCKBACK_RANGE) {
+        if (hasMeleeWeapon(observation)) {
+          yield* state.driver.act({
+            type: "select-item",
+            selector: { itemIds: MELEE_WEAPON_ITEM_IDS },
+          });
+        }
         const toward = rotationToward(playerPosition, threat.position);
         yield* state.driver.act({
           type: "look",
@@ -4318,6 +4324,12 @@ function satisfyRequirementFromWorld(
     requirement.targetCount - requirement.currentCount,
   );
   switch (requirement.key) {
+    case "food-supply":
+      return satisfyFoodSupplyRequirement(
+        state,
+        requirement,
+        observation,
+      );
     case "food":
       return satisfyFoodRequirement(
         state,
@@ -4496,6 +4508,44 @@ function satisfyRequirementFromWorld(
   }
 }
 
+function satisfyFoodSupplyRequirement(
+  state: RunState,
+  requirement: BeatGameItemRequirement,
+  observation: BeatGameObservation,
+): Effect.Effect<void, BeatGameError | BeatGameDriverError> {
+  const armamentPreparation = prepareForFoodHunt(state, observation);
+  if (armamentPreparation !== undefined) {
+    return armamentPreparation;
+  }
+  return recoverNearbyFurnaceContents(state, observation).pipe(
+    Effect.flatMap(({ observation: current, recovered }) => {
+      if (recovered) {
+        return Effect.void;
+      }
+      const currentFoodCount = requirementCount(
+        current.inventory,
+        requirement,
+      );
+      const missing = Math.max(0, requirement.targetCount - currentFoodCount);
+      if (missing === 0) {
+        return Effect.void;
+      }
+      return tryFishForFood(state, current).pipe(
+        Effect.flatMap((fished) =>
+          fished
+            ? Effect.void
+            : huntForFoodRequirement(
+              state,
+              current,
+              bufferedCollectionCount("food", missing),
+              "satisfy:food-supply",
+            )
+        ),
+      );
+    }),
+  );
+}
+
 function satisfyFoodRequirement(
   state: RunState,
   requirement: BeatGameItemRequirement,
@@ -4644,12 +4694,13 @@ function huntForFoodRequirement(
   state: RunState,
   observation: BeatGameObservation,
   maximumTargets: number,
+  action = "satisfy:food",
 ): Effect.Effect<void, BeatGameError | BeatGameDriverError> {
   return Ref.get(state.checkpoint).pipe(
     Effect.map((checkpoint) =>
       countTrailingActions(
         checkpoint.planner.completedActions,
-        "satisfy:food",
+        action,
       ) >= FOOD_SEARCH_AQUATIC_ESCALATION_ATTEMPTS
     ),
     Effect.flatMap((allowAquaticTargets) =>
@@ -10283,6 +10334,8 @@ function requirementCollectionBuffer(requirementKey: string): number {
     case "iron":
     case "logs":
       return RESOURCE_COLLECTION_BUFFERS[requirementKey];
+    case "food-supply":
+      return RESOURCE_COLLECTION_BUFFERS.food;
     default:
       return 0;
   }

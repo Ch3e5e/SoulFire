@@ -101,6 +101,12 @@ const REQUIREMENTS: Readonly<
       115,
     ),
     itemRequirement(
+      "food-supply",
+      EDIBLE_FOOD_ITEM_IDS,
+      ({ targetFoodCount }) => Math.min(targetFoodCount, 8),
+      112,
+    ),
+    itemRequirement(
       "cobblestone",
       ["minecraft:cobblestone"],
       ({ targetCobblestoneCount }) => targetCobblestoneCount,

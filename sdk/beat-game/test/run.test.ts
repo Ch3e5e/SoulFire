@@ -5192,6 +5192,9 @@ describe("beat-game run lifecycle", () => {
 
   it("hits a close spider directly when pursuit pathfinding fails", async () => {
     const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      counts: { "minecraft:stone_sword": 1 },
+    });
     const spider = {
       connectionEpoch: "epoch-1",
       networkId: 54,
@@ -5249,6 +5252,16 @@ describe("beat-game run lifecycle", () => {
       ),
     ));
 
+    expect(driver.actions).toContainEqual({
+      type: "select-item",
+      selector: { itemIds: [
+        "minecraft:netherite_sword",
+        "minecraft:diamond_sword",
+        "minecraft:iron_sword",
+        "minecraft:stone_sword",
+        "minecraft:wooden_sword",
+      ] },
+    });
     expect(driver.actions).toContainEqual({
       type: "attack-entity",
       connectionEpoch: spider.connectionEpoch,
@@ -8977,7 +8990,7 @@ describe("beat-game run lifecycle", () => {
         ...initial.planner,
         completedActions: Array.from(
           { length: 4 },
-          () => "satisfy:food",
+          () => "satisfy:food-supply",
         ),
       },
     }, undefined));
@@ -9335,7 +9348,7 @@ describe("beat-game run lifecycle", () => {
         const firstFailure = yield* run.events.pipe(
           Stream.filter((event) =>
             event.type === "action-failed"
-            && event.action === "satisfy:food"
+            && event.action === "satisfy:food-supply"
           ),
           Stream.runHead,
           Effect.timeout("5 seconds"),
@@ -9344,7 +9357,7 @@ describe("beat-game run lifecycle", () => {
           run.events.pipe(
             Stream.filter((event) =>
               event.type === "action-started"
-              && event.action === "satisfy:food"
+              && event.action === "satisfy:food-supply"
             ),
             Stream.drop(1),
             Stream.runHead,

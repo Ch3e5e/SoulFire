@@ -56,6 +56,7 @@ describe("beat-game requirements", () => {
     expect(requirements.map(({ key }) => key)).toEqual([
       "logs",
       "basic-melee-weapon",
+      "food-supply",
       "cobblestone",
       "melee-weapon",
       "food",
@@ -65,6 +66,36 @@ describe("beat-game requirements", () => {
       "water-bucket",
       "ignition",
     ]);
+  });
+
+  it("secures an edible supply before spending time on stone", () => {
+    const requirements = requirementsForPhase(
+      BeatGamePhase.PREPARE_OVERWORLD,
+      observation({
+        counts: {
+          "minecraft:oak_log": 8,
+          "minecraft:wooden_sword": 1,
+          "minecraft:beef": 8,
+        },
+      }).inventory,
+      defaultBeatGameStrategy,
+    );
+
+    expect(requirements.find(({ key }) => key === "food-supply"))
+      .toMatchObject({
+        currentCount: 8,
+        targetCount: 8,
+        satisfied: true,
+      });
+    expect(requirements.find(({ key }) => key === "food")).toMatchObject({
+      currentCount: 0,
+      targetCount: 8,
+      satisfied: false,
+    });
+    expect(requirements.findIndex(({ key }) => key === "food-supply"))
+      .toBeLessThan(
+        requirements.findIndex(({ key }) => key === "cobblestone"),
+      );
   });
 
   it("shrinks the bootstrap log reserve as durable equipment comes online", () => {
@@ -125,6 +156,7 @@ describe("beat-game requirements", () => {
     ).map(({ key }) => key)).toEqual([
       "logs",
       "basic-melee-weapon",
+      "food-supply",
       "cobblestone",
       "diamond-pickaxe",
       "melee-weapon",
