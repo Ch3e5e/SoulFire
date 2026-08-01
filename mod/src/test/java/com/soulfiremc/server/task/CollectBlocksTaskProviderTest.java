@@ -150,8 +150,23 @@ final class CollectBlocksTaskProviderTest {
 
     assertEquals(
       Set.of(adjacentTarget),
-      CollectBlocksTaskProvider.stalledAdjacentTargets(
+      CollectBlocksTaskProvider.stalledTargets(
         Set.of(adjacentTarget, overheadTarget, distantTarget),
+        playerPosition
+      )
+    );
+  }
+
+  @Test
+  void retriesOnlyTheNearestTargetWhenNoTargetIsAdjacent() {
+    var playerPosition = new SFVec3i(10, 64, -5);
+    var overheadTarget = playerPosition.add(0, 3, 0);
+    var distantTarget = playerPosition.add(4, 0, 0);
+
+    assertEquals(
+      Set.of(overheadTarget),
+      CollectBlocksTaskProvider.stalledTargets(
+        Set.of(overheadTarget, distantTarget),
         playerPosition
       )
     );

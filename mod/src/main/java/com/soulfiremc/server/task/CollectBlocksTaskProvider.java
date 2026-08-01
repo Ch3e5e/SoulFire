@@ -210,16 +210,23 @@ public final class CollectBlocksTaskProvider
       && blockHit.getBlockPos().equals(target);
   }
 
-  static Set<SFVec3i> stalledAdjacentTargets(
+  static Set<SFVec3i> stalledTargets(
     Set<SFVec3i> attemptedTargets,
     SFVec3i playerPosition
   ) {
-    return attemptedTargets.stream()
+    var adjacentTargets = attemptedTargets.stream()
       .filter(target -> AdjacentToBlockGoal.isAdjacentPosition(
         target,
         playerPosition
       ))
       .collect(Collectors.toUnmodifiableSet());
+    if (!adjacentTargets.isEmpty()) {
+      return adjacentTargets;
+    }
+    return attemptedTargets.stream()
+      .min(Comparator.comparingDouble(playerPosition::distance))
+      .map(Set::of)
+      .orElseGet(Set::of);
   }
 
   static boolean recordFailedApproach(
@@ -518,7 +525,7 @@ public final class CollectBlocksTaskProvider
       }
       var playerPosition = SFVec3i.fromInt(player.blockPosition());
       var rejectedAny = false;
-      for (var target : stalledAdjacentTargets(
+      for (var target : stalledTargets(
         attemptedTargets,
         playerPosition
       )) {
