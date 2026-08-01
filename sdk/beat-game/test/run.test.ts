@@ -9517,7 +9517,7 @@ describe("beat-game run lifecycle", () => {
       networkId: 48,
       entityType: "minecraft:salmon",
       position: {
-        x: 3,
+        x: 20,
         y: 61,
         z: 0,
         dimension: "minecraft:overworld",
@@ -9689,7 +9689,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.xzPaths[1]?.policy.avoidFluids).toBe(false);
   }, 10_000);
 
-  it("attacks shallow fish after intentionally entering water", async () => {
+  it("prefers a shallow fish and hands its pursuit directly to combat", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
@@ -9718,13 +9718,13 @@ describe("beat-game run lifecycle", () => {
         "minecraft:stone_sword": 1,
       },
     });
-    driver.entityResults = [{
+    const deepSalmon = {
       connectionEpoch: "epoch-1",
       networkId: 47,
       entityType: "minecraft:salmon",
       position: {
-        x: 9,
-        y: 60,
+        x: 3,
+        y: 57,
         z: 0,
         dimension: "minecraft:overworld",
       },
@@ -9732,34 +9732,17 @@ describe("beat-game run lifecycle", () => {
       alive: true,
       health: 3,
       observedAt: "2026-01-01T00:00:00.000Z",
-    }];
-    driver.pathResolver = (position, radius, policy) =>
-      Effect.sync(() => {
-        driver.paths.push({ position, radius, policy });
-        driver.currentObservation = observation({
-          health: 20,
-          food: 16,
-          position,
-          counts: {
-            "minecraft:cobblestone": 20,
-            "minecraft:iron_ingot": 7,
-            "minecraft:oak_log": 8,
-            "minecraft:shield": 1,
-            "minecraft:stone_pickaxe": 1,
-            "minecraft:stone_sword": 1,
-          },
-        });
-      });
-    driver.blockQueryResolver = ({ center, selector }) =>
-      driver.paths.length > 0
-          && selector.blockIds?.includes("minecraft:water") === true
-        ? [blockObservation({
-          x: Math.floor(center.x),
-          y: Math.floor(center.y),
-          z: Math.floor(center.z),
-          dimension: center.dimension,
-        }, { blockId: "minecraft:water" })]
-        : [];
+    } as const;
+    const shallowSalmon = {
+      ...deepSalmon,
+      networkId: 48,
+      position: {
+        ...deepSalmon.position,
+        x: 10,
+        y: 62,
+      },
+    } as const;
+    driver.entityResults = [deepSalmon, shallowSalmon];
 
     await Effect.runPromise(Effect.scoped(
       beatGameWithDriver(driver, {
@@ -9780,25 +9763,11 @@ describe("beat-game run lifecycle", () => {
       ),
     ));
 
-    expect(driver.paths[0]).toEqual(expect.objectContaining({
-      position: {
-        x: 9,
-        y: 60,
-        z: 0,
-        dimension: "minecraft:overworld",
-      },
-      radius: 2,
-      policy: expect.objectContaining({
-        allowMining: false,
-        allowPlacing: false,
-        avoidFluids: false,
-        sprint: true,
-      }),
-    }));
     expect(driver.tasks).toContainEqual(expect.objectContaining({
       type: "attack-entity",
-      target: expect.objectContaining({ networkId: 47 }),
+      target: expect.objectContaining({ networkId: shallowSalmon.networkId }),
     }));
+    expect(driver.paths).toHaveLength(0);
   }, 10_000);
 
   it("arms an injured bot before sending it on a food hunt", async () => {
@@ -9935,7 +9904,7 @@ describe("beat-game run lifecycle", () => {
     });
     expect(driver.paths).toContainEqual(expect.objectContaining({
       position: salmon.position,
-      radius: 4,
+      radius: 12,
       policy: expect.objectContaining({
         allowMining: false,
         allowPlacing: false,

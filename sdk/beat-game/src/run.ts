@@ -276,7 +276,8 @@ const SUBSTANTIAL_RENEWABLE_DEATH_RECOVERY_ITEM_COUNT = 8;
 const SUBSTANTIAL_RENEWABLE_DEATH_RECOVERY_MAX_DISTANCE = 256;
 const FURNACE_FUEL_SEARCH_RADIUS = 16;
 const HUNT_ATTACK_APPROACH_RADIUS = 24;
-const AQUATIC_HUNT_ATTACK_APPROACH_RADIUS = 4;
+const AQUATIC_HUNT_ATTACK_APPROACH_RADIUS = 12;
+const AQUATIC_HUNT_VERTICAL_ROUTE_COST = 4;
 const HUNT_APPROACH_BUFFER = 4;
 const HUNT_APPROACH_GOAL_RADIUS = 2;
 const HUNT_MAXIMUM_APPROACH_DISTANCE = 48;
@@ -6766,13 +6767,13 @@ function huntOrExplore(
       >(
         (nearest, candidate) =>
           nearest === undefined
-            || directedHuntRouteCost(
-                candidate.position,
+            || huntingTargetRouteCost(
+                candidate,
                 current.player.position,
                 targetPreference?.explorationTarget,
               )
-                < directedHuntRouteCost(
-                  nearest.position,
+                < huntingTargetRouteCost(
+                  nearest,
                   current.player.position,
                   targetPreference?.explorationTarget,
                 )
@@ -9025,6 +9026,23 @@ function directedHuntRouteCost(
   return approachDistance + Math.sqrt(
     horizontalDistanceSquared(candidate, destination),
   );
+}
+
+function huntingTargetRouteCost(
+  candidate: BeatGameEntityObservation,
+  origin: BeatGamePosition,
+  destination?: BeatGamePosition,
+): number {
+  const routeCost = directedHuntRouteCost(
+    candidate.position,
+    origin,
+    destination,
+  );
+  return AQUATIC_FOOD_ENTITY_TYPES.has(candidate.entityType)
+    ? routeCost
+      + Math.abs(candidate.position.y - origin.y)
+        * AQUATIC_HUNT_VERTICAL_ROUTE_COST
+    : routeCost;
 }
 
 function isWithinDirectedHuntDetour(
