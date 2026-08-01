@@ -14768,7 +14768,7 @@ describe("beat-game run lifecycle", () => {
     })));
   });
 
-  it("makes only the required charcoal before cooking a food batch", async () => {
+  it("buffers charcoal before cooking a food batch", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
       counts: {
@@ -14824,7 +14824,7 @@ describe("beat-game run lifecycle", () => {
         input: {
           itemIds: expect.arrayContaining(["minecraft:oak_log"]),
         },
-        count: 1,
+        count: 3,
         fuel: {
           itemIds: [
             "minecraft:oak_planks",
@@ -14895,7 +14895,7 @@ describe("beat-game run lifecycle", () => {
         driver.currentObservation = observation({
           counts: {
             ...initialCounts,
-            "minecraft:oak_log": 6,
+            "minecraft:oak_log": 10,
           },
         });
       }
@@ -14926,14 +14926,14 @@ describe("beat-game run lifecycle", () => {
       expect.objectContaining({
         type: "collect-blocks",
         blockIds: expect.arrayContaining(["minecraft:oak_log"]),
-        count: 5,
+        count: 8,
       }),
       expect.objectContaining({
         type: "smelt",
         input: {
           itemIds: expect.arrayContaining(["minecraft:oak_log"]),
         },
-        count: 1,
+        count: 3,
         fuel: {
           itemIds: expect.arrayContaining(["minecraft:oak_log"]),
         },
@@ -14954,7 +14954,7 @@ describe("beat-game run lifecycle", () => {
         "minecraft:oak_planks": 3,
         "minecraft:cobblestone": 20,
         "minecraft:stone_sword": 1,
-        "minecraft:porkchop": 1,
+        "minecraft:porkchop": 8,
         "minecraft:charcoal": 1,
         "minecraft:iron_ingot": 7,
         "minecraft:iron_pickaxe": 1,
@@ -15001,7 +15001,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks.filter((task) => task.type === "smelt")).toEqual([
       expect.objectContaining({
         input: { itemIds: ["minecraft:porkchop"] },
-        count: 1,
+        count: 8,
         fuel: {
           itemIds: ["minecraft:coal", "minecraft:charcoal"],
         },

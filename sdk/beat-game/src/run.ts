@@ -5439,7 +5439,7 @@ function ensureEfficientFurnaceFuel(
       }
     }
 
-    const charcoalCount = missingFuel;
+    const charcoalCount = bufferedCollectionCount("fuel", missingFuel);
     const starterFuelItems = Math.ceil(charcoalCount / 1.5);
     const countItems = (
       current: BeatGameObservation,
