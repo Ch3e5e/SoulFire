@@ -6761,23 +6761,33 @@ function huntOrExplore(
             - (HUNT_ATTACK_APPROACH_RADIUS - HUNT_APPROACH_BUFFER),
         );
         const approachRatio = approachDistance / targetDistance;
-        const approached = yield* pathfindExplorationTarget(
-          state,
-          current.player.position,
-          {
-            x: current.player.position.x
-              + (target.position.x - current.player.position.x)
-                * approachRatio,
-            z: current.player.position.z
-              + (target.position.z - current.player.position.z)
-                * approachRatio,
-          },
-          HUNT_APPROACH_GOAL_RADIUS,
-          targetExplorationPath,
-          !aquaticTarget,
-          current.player.health >= state.strategy.minimumHealth
-            && current.player.food > CRITICAL_HUNGER_FOOD_LEVEL,
-        ).pipe(
+        const approachTarget = {
+          x: current.player.position.x
+            + (target.position.x - current.player.position.x)
+              * approachRatio,
+          z: current.player.position.z
+            + (target.position.z - current.player.position.z)
+              * approachRatio,
+        };
+        const approach = aquaticTarget
+          ? pathfindExplorationTarget(
+            state,
+            current.player.position,
+            approachTarget,
+            HUNT_APPROACH_GOAL_RADIUS,
+            targetExplorationPath,
+            false,
+            current.player.health >= state.strategy.minimumHealth
+              && current.player.food > CRITICAL_HUNGER_FOOD_LEVEL,
+          )
+          : state.driver.pathfindXZ(
+            approachTarget.x,
+            approachTarget.z,
+            current.player.position.dimension,
+            HUNT_APPROACH_GOAL_RADIUS,
+            targetExplorationPath,
+          );
+        const approached = yield* approach.pipe(
           Effect.as(true),
           Effect.catchAll((cause) =>
             cause.operation === "pathfind"

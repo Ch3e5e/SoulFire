@@ -11545,7 +11545,7 @@ describe("beat-game run lifecycle", () => {
       radius: 2,
       policy: expect.objectContaining({
         allowMining: false,
-        allowPlacing: true,
+        allowPlacing: false,
         avoidFluids: true,
       }),
     }));
@@ -11555,7 +11555,7 @@ describe("beat-game run lifecycle", () => {
       radius: 2,
       policy: expect.objectContaining({
         allowMining: false,
-        allowPlacing: true,
+        allowPlacing: false,
         avoidFluids: true,
       }),
     }));
@@ -11565,7 +11565,7 @@ describe("beat-game run lifecycle", () => {
       radius: 2,
       policy: expect.objectContaining({
         allowMining: false,
-        allowPlacing: true,
+        allowPlacing: false,
         avoidFluids: true,
       }),
     }));
@@ -11645,9 +11645,9 @@ describe("beat-game run lifecycle", () => {
       radius: 2,
       policy: expect.objectContaining({
         allowMining: false,
-        allowPlacing: true,
+        allowPlacing: false,
         avoidFluids: true,
-        maxFallDistance: 1,
+        maxFallDistance: 3,
         sprint: false,
       }),
     }));
@@ -11685,22 +11685,12 @@ describe("beat-game run lifecycle", () => {
       },
     });
     driver.entityResults = [cow];
-    driver.surfaceColumns = [{
-      x: 5,
-      z: 0,
-      loaded: true,
-      surfaceY: 63,
-      blockId: "minecraft:grass_block",
-      biomeId: "minecraft:plains",
-      skyLight: 15,
-      blockLight: 0,
-    }];
-    driver.pathResolver = (position, radius, policy) =>
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
       Effect.sync(() => {
-        driver.paths.push({ position, radius, policy });
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
         driver.currentObservation = observation({
           counts: preparedItems,
-          position,
+          position: { x, y: 64, z, dimension },
         });
       });
     driver.taskObserver = (task) => {
@@ -11730,14 +11720,11 @@ describe("beat-game run lifecycle", () => {
       ),
     ));
 
-    expect(driver.paths).toHaveLength(1);
-    expect(driver.paths[0]).toEqual(expect.objectContaining({
-      position: {
-        x: 5.5,
-        y: 64,
-        z: 0.5,
-        dimension: "minecraft:overworld",
-      },
+    expect(driver.xzPaths).toHaveLength(1);
+    expect(driver.xzPaths[0]).toEqual(expect.objectContaining({
+      x: 5.5,
+      z: 0.5,
+      dimension: "minecraft:overworld",
       radius: 2,
     }));
     expect(driver.tasks).toContainEqual(expect.objectContaining({
