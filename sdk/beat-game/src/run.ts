@@ -282,6 +282,9 @@ const HUNT_MAXIMUM_APPROACH_DISTANCE = 48;
 const DIRECTED_HUNT_MAXIMUM_DETOUR = 32;
 const AQUATIC_HUNT_MAXIMUM_HORIZONTAL_DISTANCE = 10;
 const AQUATIC_HUNT_MAXIMUM_VERTICAL_DISTANCE = 6;
+const URGENT_AQUATIC_HUNT_MAXIMUM_HORIZONTAL_DISTANCE = 64;
+const URGENT_AQUATIC_HUNT_MAXIMUM_VERTICAL_DISTANCE = 16;
+const URGENT_AQUATIC_HUNT_FOOD_LEVEL = 10;
 const AQUATIC_HUNT_CHASE_TIMEOUT_MS = 8_000;
 const AQUATIC_WATER_ENTRY_SEARCH_RADIUS = 3;
 const AQUATIC_WATER_ENTRY_ATTEMPTS = 12;
@@ -4717,6 +4720,8 @@ function huntForFoodRequirement(
           preferredEntityTypes: HIGH_YIELD_FOOD_ANIMAL_TYPES,
           preferredRadius: HIGH_YIELD_FOOD_PREFERENCE_RADIUS,
           allowAquaticTargets,
+          allowUrgentAquaticTargets:
+            observation.player.food <= URGENT_AQUATIC_HUNT_FOOD_LEVEL,
           allowFluidFallback: false,
           path: {
             ...state.strategy.path,
@@ -6437,6 +6442,7 @@ interface HuntTargetPreference {
   readonly preferredEntityTypes: ReadonlySet<string>;
   readonly preferredRadius: number;
   readonly allowAquaticTargets?: boolean;
+  readonly allowUrgentAquaticTargets?: boolean;
   readonly maximumExplorationHops?: number;
   readonly path?: BeatGameStrategy["path"];
   readonly explorationTarget?: BeatGamePosition;
@@ -7089,6 +7095,7 @@ function isEligibleHuntingTarget(
     && (
       !AQUATIC_FOOD_ENTITY_TYPES.has(target.entityType)
       || targetPreference?.allowAquaticTargets === true
+      || targetPreference?.allowUrgentAquaticTargets === true
       || targetPreference?.allowFluidFallback !== false
       || observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
     )
@@ -7117,21 +7124,30 @@ function isHuntingTargetWithinReach(
     const emergencyAquaticFallback =
       targetPreference?.allowAquaticTargets === true
       && targetPreference.allowFluidFallback === true;
+    const urgentAquaticHunt =
+      targetPreference?.allowUrgentAquaticTargets === true;
     return (
       observation.player.health >= minimumHealth
       || observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
       || emergencyAquaticFallback
+      || urgentAquaticHunt
     )
       && Math.abs(target.position.y - observation.player.position.y)
-        <= AQUATIC_HUNT_MAXIMUM_VERTICAL_DISTANCE
+        <= (
+          urgentAquaticHunt
+            ? URGENT_AQUATIC_HUNT_MAXIMUM_VERTICAL_DISTANCE
+            : AQUATIC_HUNT_MAXIMUM_VERTICAL_DISTANCE
+        )
       && horizontalDistanceSquared(
-          target.position,
-          observation.player.position,
-        ) <= (
-          emergencyAquaticFallback
+        target.position,
+        observation.player.position,
+      ) <= (
+        emergencyAquaticFallback
             ? Math.max(32, AQUATIC_HUNT_MAXIMUM_HORIZONTAL_DISTANCE)
+            : urgentAquaticHunt
+            ? URGENT_AQUATIC_HUNT_MAXIMUM_HORIZONTAL_DISTANCE
             : AQUATIC_HUNT_MAXIMUM_HORIZONTAL_DISTANCE
-        ) ** 2;
+      ) ** 2;
   }
   const maximumVerticalDistance =
     observation.player.health < minimumHealth ? 12 : 32;

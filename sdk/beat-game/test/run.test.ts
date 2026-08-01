@@ -8936,6 +8936,68 @@ describe("beat-game run lifecycle", () => {
     expect(driver.xzPaths[0]?.policy.avoidFluids).toBe(true);
   }, 10_000);
 
+  it("approaches deeper fish when an injured bot is urgently hungry", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      health: 17,
+      food: 8,
+      counts: {
+        "minecraft:cobblestone": 20,
+        "minecraft:iron_ingot": 7,
+        "minecraft:oak_log": 8,
+        "minecraft:shield": 1,
+        "minecraft:stone_pickaxe": 1,
+        "minecraft:stone_sword": 1,
+      },
+    });
+    driver.entityResults = [{
+      connectionEpoch: "epoch-1",
+      networkId: 47,
+      entityType: "minecraft:salmon",
+      position: {
+        x: 40,
+        y: 52,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 3,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    }];
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (driver.paths.length === 0) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.paths[0]).toEqual(expect.objectContaining({
+      position: expect.objectContaining({ z: 0 }),
+      policy: expect.objectContaining({
+        allowMining: false,
+        allowPlacing: false,
+        avoidFluids: false,
+        sprint: false,
+      }),
+    }));
+    expect(driver.paths[0]?.position.x).toBeGreaterThan(0);
+  }, 10_000);
+
   it("arms an injured bot before sending it on a food hunt", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
