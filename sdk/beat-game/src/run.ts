@@ -496,6 +496,7 @@ const ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES = new Set([
 ]);
 const PROACTIVE_ESCAPE_ONLY_EVASION_RADIUS = 12;
 const PROACTIVE_RANGED_ENGAGEMENT_RADIUS = 16;
+const DEFENSIVE_PURSUIT_MAX_DISTANCE = 12;
 const EMERGENCY_KNOCKBACK_RANGE = 3.5;
 const EMERGENCY_ESCAPE_SPRINT_MS = 1_250;
 const CREEPER_ESCAPE_SPRINT_MS = 2_500;
@@ -3296,6 +3297,7 @@ function defendAgainstTarget(
     ...state.strategy.path,
     allowMining: false,
     allowPlacing: false,
+    avoidFluids: true,
     maxSearchTimeMs: Math.min(
       state.strategy.path.maxSearchTimeMs,
       3_000,
@@ -3333,11 +3335,18 @@ function defendAgainstTarget(
           state,
           target,
           observation.player.health,
+          observation.player.position,
         ),
       ).pipe(
         Effect.flatMap((outcome) =>
           outcome === "defended"
             ? Effect.void
+            : outcome === "unsafe-air"
+            ? state.driver.observe.pipe(
+              Effect.flatMap((latest) =>
+                emergencyAirAscent(state, latest.player.position)
+              ),
+            )
             : escapeFromTarget(state, target, {
               continueEscapingWhenHit: true,
             })
@@ -3352,7 +3361,8 @@ function monitorDefenseHealth(
   state: RunState,
   target: BeatGameEntityObservation,
   engagementHealth: number,
-): Effect.Effect<"disengage", BeatGameDriverError> {
+  engagementPosition: BeatGamePosition,
+): Effect.Effect<"disengage" | "unsafe-air", BeatGameDriverError> {
   return Effect.sleep(
     Math.max(MINIMUM_RECOVERY_POLL_MS, state.strategy.observationPollMs),
   ).pipe(
@@ -3361,13 +3371,30 @@ function monitorDefenseHealth(
       if (observation.player.dead) {
         return Effect.succeed("disengage" as const);
       }
+      if (hasUnsafeAir(observation)) {
+        return Effect.succeed("unsafe-air" as const);
+      }
+      if (
+        observation.player.position.dimension !== engagementPosition.dimension
+        || distanceSquared(
+          observation.player.position,
+          engagementPosition,
+        ) > DEFENSIVE_PURSUIT_MAX_DISTANCE ** 2
+      ) {
+        return Effect.succeed("disengage" as const);
+      }
       if (
         observation.player.health >= state.strategy.minimumHealth
         || observation.player.health >= engagementHealth
         || shouldCommitToMeleeFight(observation, target)
         || shouldCommitToRangedFight(observation, target)
       ) {
-        return monitorDefenseHealth(state, target, engagementHealth);
+        return monitorDefenseHealth(
+          state,
+          target,
+          engagementHealth,
+          engagementPosition,
+        );
       }
       return Effect.succeed("disengage" as const);
     }),

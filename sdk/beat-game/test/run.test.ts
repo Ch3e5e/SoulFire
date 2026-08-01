@@ -4850,10 +4850,94 @@ describe("beat-game run lifecycle", () => {
     expect(driver.taskPolicies[attackIndex]).toEqual(expect.objectContaining({
       allowMining: false,
       allowPlacing: false,
+      avoidFluids: true,
       maxSearchTimeMs: 3_000,
     }));
     expect(driver.maximumActiveControlScopes).toBe(1);
   });
+
+  it("stops pursuing an attacker beyond the defensive leash", async () => {
+    const driver = new FakeBeatGameDriver();
+    const attacker = {
+      connectionEpoch: "epoch-1",
+      networkId: 24,
+      entityType: "minecraft:zombie",
+      position: {
+        x: 2,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:01.000Z",
+    } as const;
+    let interruptedDefensiveAttacks = 0;
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2) ? driver.entityResults : [];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        driver.taskObserver(task);
+      }).pipe(
+        Effect.zipRight(
+          task.type === "collect-blocks"
+            ? Effect.never
+            : task.type === "attack-entity"
+            ? Effect.never.pipe(
+              Effect.onInterrupt(() =>
+                Effect.sync(() => {
+                  interruptedDefensiveAttacks += 1;
+                })
+              ),
+            )
+            : Effect.succeed({}),
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (
+              !driver.tasks.some((task) => task.type === "collect-blocks")
+            ) {
+              yield* Effect.sleep(1);
+            }
+            driver.entityResults = [attacker];
+            driver.currentObservation = observation({ health: 19 });
+            while (
+              !driver.tasks.some((task) => task.type === "attack-entity")
+            ) {
+              yield* Effect.sleep(1);
+            }
+            driver.currentObservation = observation({
+              health: 19,
+              position: { x: 13 },
+            });
+            while (interruptedDefensiveAttacks === 0) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(interruptedDefensiveAttacks).toBe(1);
+    const attackIndex = driver.tasks.findIndex((task) =>
+      task.type === "attack-entity"
+    );
+    expect(driver.taskPolicies[attackIndex]).toEqual(expect.objectContaining({
+      allowMining: false,
+      allowPlacing: false,
+      avoidFluids: true,
+    }));
+  }, 10_000);
 
   it("interrupts work to fight multiple attackers after taking damage", async () => {
     const driver = new FakeBeatGameDriver();
