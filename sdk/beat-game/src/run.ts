@@ -6046,9 +6046,10 @@ function huntOrExplore(
               ),
             );
           } else if (explorationOutcome === "route-failed") {
+            const latest = yield* state.driver.observe;
             yield* recoverLocalNavigationTrap(
               state,
-              current.player.position,
+              latest.player.position,
             );
           }
         }

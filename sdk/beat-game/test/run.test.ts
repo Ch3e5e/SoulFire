@@ -8012,6 +8012,9 @@ describe("beat-game run lifecycle", () => {
       { x: 3, z: 0 },
       { x: 3, z: 1 },
       { x: 4, z: 0 },
+      { x: 13, z: 0 },
+      { x: 13, z: 1 },
+      { x: 14, z: 0 },
     ].map(({ x, z }) => ({
       x,
       z,
@@ -8025,6 +8028,17 @@ describe("beat-game run lifecycle", () => {
     driver.xzPathResolver = (x, z, dimension, radius, policy) =>
       Effect.sync(() => {
         driver.xzPaths.push({ x, z, dimension, radius, policy });
+        const current = driver.currentObservation;
+        driver.currentObservation = {
+          ...current,
+          player: {
+            ...current.player,
+            position: {
+              ...current.player.position,
+              x: 10,
+            },
+          },
+        };
       }).pipe(Effect.zipRight(Effect.fail(new BeatGameDriverError({
         operation: "pathfindXZ",
         code: "unreachable",
@@ -8065,6 +8079,7 @@ describe("beat-game run lifecycle", () => {
       localTarget.x - driver.currentObservation.player.position.x,
       localTarget.z - driver.currentObservation.player.position.z,
     )).toBeGreaterThanOrEqual(3);
+    expect(localTarget.x).toBeGreaterThanOrEqual(13);
   }, 10_000);
 
   it("keeps exploring when a hunting target only flickers into view", async () => {
