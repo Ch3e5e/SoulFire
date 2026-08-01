@@ -1933,8 +1933,9 @@ describe("beat-game run lifecycle", () => {
       allowMining: false,
       allowPlacing: false,
       avoidFluids: false,
-      sprint: false,
+      sprint: true,
     });
+    expect(driver.paths).toHaveLength(0);
   });
 
   it("crosses water directly while urgently searching for corpse recovery food", async () => {
@@ -8968,7 +8969,7 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
-  it("enters water for fish found during critical-hunger exploration", async () => {
+  it("pursues fish through water after critical-hunger exploration", async () => {
     const driver = new FakeBeatGameDriver();
     const salmon = {
       connectionEpoch: "epoch-1",
@@ -9015,6 +9016,15 @@ describe("beat-game run lifecycle", () => {
           message: "The dry route is blocked by water",
         }))),
       );
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+        driver.currentObservation = observation({
+          position,
+          food: 5,
+          health: 8,
+        });
+      });
     driver.taskResolver = (task) =>
       Effect.sync(() => {
         driver.tasks.push(task);
@@ -9045,7 +9055,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.xzPaths[0]).toMatchObject({
       x: 16,
       z: 0,
-      policy: { avoidFluids: true },
+      policy: { avoidFluids: false },
     });
     expect(driver.xzPaths[0]?.policy.maxFallDistance).toBe(3);
     expect(driver.tasks).toContainEqual(expect.objectContaining({
@@ -9062,7 +9072,7 @@ describe("beat-game run lifecycle", () => {
       allowMining: false,
       allowPlacing: false,
       avoidFluids: false,
-      sprint: false,
+      sprint: true,
     });
     expect(driver.entityQueries.find(({ selector }) =>
       selector.entityTypes?.includes("minecraft:chicken") === true
@@ -9216,7 +9226,7 @@ describe("beat-game run lifecycle", () => {
         allowMining: false,
         allowPlacing: false,
         avoidFluids: false,
-        sprint: false,
+        sprint: true,
       }),
     }));
   }, 10_000);
@@ -9284,7 +9294,7 @@ describe("beat-game run lifecycle", () => {
       networkId: 44,
       entityType: "minecraft:salmon",
       position: {
-        x: 3,
+        x: 7,
         y: 63,
         z: 0,
         dimension: "minecraft:overworld",
@@ -9341,8 +9351,9 @@ describe("beat-game run lifecycle", () => {
       allowMining: false,
       allowPlacing: false,
       avoidFluids: false,
-      sprint: false,
+      sprint: true,
     });
+    expect(driver.paths).toHaveLength(0);
   });
 
   it("keeps an injured bot on dry land after aquatic food escalation", async () => {
@@ -9565,16 +9576,12 @@ describe("beat-game run lifecycle", () => {
       avoidFluids: true,
     });
     expect(driver.paths[0]).toMatchObject({
-      position: {
-        x: 8,
-        y: 64,
-        z: 0,
-        dimension: "minecraft:overworld",
-      },
+      position: salmon.position,
       policy: {
         allowMining: false,
         allowPlacing: false,
         avoidFluids: false,
+        sprint: true,
       },
     });
     expect(driver.actions).toContainEqual({
@@ -9598,7 +9605,7 @@ describe("beat-game run lifecycle", () => {
       allowMining: false,
       allowPlacing: false,
       avoidFluids: false,
-      sprint: false,
+      sprint: true,
     });
   });
 

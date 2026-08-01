@@ -516,6 +516,52 @@ describe("beat-game behavior programs", () => {
     ]);
   });
 
+  it("uses the drop's full position when collecting through water", async () => {
+    const driver = new FakeBeatGameDriver();
+    const position = {
+      x: 4,
+      y: 59,
+      z: -2,
+      dimension: "minecraft:overworld",
+    };
+    const drop = {
+      connectionEpoch: "epoch-1",
+      networkId: 12,
+      entityType: "minecraft:item",
+      itemId: "minecraft:salmon",
+      position: {
+        x: 7,
+        y: 62,
+        z: -4,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.currentObservation = observation({ position });
+    driver.entityQueryResolver = () =>
+      driver.paths.length === 0 ? [drop] : [];
+
+    await Effect.runPromise(collectNearbyDrops(driver, {
+      itemIds: ["minecraft:salmon"],
+      settleDelayMs: 0,
+      path: { avoidFluids: false, sprint: true },
+    }));
+
+    expect(driver.xzPaths).toHaveLength(0);
+    expect(driver.paths).toEqual([
+      expect.objectContaining({
+        position: drop.position,
+        radius: 1.25,
+        policy: expect.objectContaining({
+          avoidFluids: false,
+          sprint: true,
+        }),
+      }),
+    ]);
+  });
+
   it("limits a drop sweep to requested resource items", async () => {
     const driver = new FakeBeatGameDriver();
     const position = {
