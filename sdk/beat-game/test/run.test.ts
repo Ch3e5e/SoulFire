@@ -11383,6 +11383,97 @@ describe("beat-game run lifecycle", () => {
       .toEqual([0, 10, 20]);
   });
 
+  it("crosses nearby water to collect food after a hunt", async () => {
+    const driver = new FakeBeatGameDriver();
+    const preparedItems = {
+      "minecraft:oak_log": 2,
+      "minecraft:cobblestone": 20,
+      "minecraft:stone_sword": 1,
+      "minecraft:iron_ingot": 7,
+      "minecraft:iron_pickaxe": 1,
+      "minecraft:water_bucket": 1,
+      "minecraft:flint_and_steel": 1,
+      "minecraft:shield": 1,
+    };
+    const cow = {
+      connectionEpoch: "epoch-1",
+      networkId: 5,
+      entityType: "minecraft:cow",
+      position: {
+        x: 1,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    const droppedBeef = {
+      connectionEpoch: "epoch-1",
+      networkId: 6,
+      entityType: "minecraft:item",
+      itemId: "minecraft:beef",
+      itemCount: 1,
+      position: {
+        x: 6,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      observedAt: "2026-01-01T00:00:01.000Z",
+    } as const;
+    let cowDefeated = false;
+    driver.currentObservation = observation({ counts: preparedItems });
+    driver.entityQueryResolver = (query) => {
+      if (query.selector.entityTypes?.includes("minecraft:item")) {
+        return cowDefeated ? [droppedBeef] : [];
+      }
+      return query.selector.entityTypes?.includes("minecraft:cow")
+          && !cowDefeated
+        ? [cow]
+        : [];
+    };
+    driver.taskObserver = (task) => {
+      if (task.type === "attack-entity") {
+        cowDefeated = true;
+      }
+    };
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (!driver.paths.some(({ position }) =>
+              position.x === droppedBeef.position.x
+              && position.z === droppedBeef.position.z
+            )) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.paths).toContainEqual(expect.objectContaining({
+      position: droppedBeef.position,
+      policy: expect.objectContaining({
+        allowPlacing: false,
+        avoidFluids: false,
+      }),
+    }));
+  });
+
   it("refreshes a distant animal between bounded approach segments", async () => {
     const driver = new FakeBeatGameDriver();
     const preparedItems = {

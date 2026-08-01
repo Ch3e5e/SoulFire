@@ -6918,6 +6918,14 @@ function huntOrExplore(
       if (!defeated) {
         continue;
       }
+      const shouldCrossFluidsForFoodDrops =
+        current.player.position.dimension === "minecraft:overworld"
+        && expectedDropItemIds.some((itemId) =>
+          EDIBLE_FOOD_ITEM_IDS.includes(itemId)
+          || EMERGENCY_FOOD_ITEM_IDS.some((foodItemId) =>
+            foodItemId === itemId
+          )
+        );
       yield* collectNearbyDrops(state.driver, {
         ...(expectedDropItemIds.length === 0
           ? {}
@@ -6925,7 +6933,9 @@ function huntOrExplore(
         radius: 8,
         maximumDrops: 16,
         settleDelayMs: 500,
-        path: targetHuntingPath,
+        path: shouldCrossFluidsForFoodDrops
+          ? { ...targetHuntingPath, avoidFluids: false }
+          : targetHuntingPath,
       });
       attacked += 1;
     }
