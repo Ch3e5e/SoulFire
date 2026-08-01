@@ -3027,9 +3027,7 @@ function recoverFromFluid(
     ),
   ).pipe(
     Effect.flatMap((recovered) =>
-      recovered
-        ? swimToNearbyDrySurface(state)
-        : Effect.succeed(false)
+      swimToNearbyDrySurface(state, !recovered)
     ),
     Effect.flatMap((reachedDrySurface) =>
       reachedDrySurface
@@ -3109,6 +3107,7 @@ function waitForAirRecovery(
 
 function swimToNearbyDrySurface(
   state: RunState,
+  swimDirectly = false,
 ): Effect.Effect<boolean, BeatGameDriverError> {
   return Effect.gen(function* () {
     const observation = yield* state.driver.observe;
@@ -3147,42 +3146,47 @@ function swimToNearbyDrySurface(
         z: surface.z + 0.5,
         dimension: observation.player.position.dimension,
       };
-      const routed = yield* state.driver.pathfind(
-        target,
-        DRY_SURFACE_APPROACH_RADIUS,
-        {
-          ...survivalPathPolicy(
-            state.strategy.path,
-            observation.player.health,
-            state.strategy.minimumHealth,
-          ),
-          allowMining: false,
-          allowPlacing: false,
-          avoidFluids: false,
-          sprint: observation.player.food > CRITICAL_HUNGER_FOOD_LEVEL,
-          maxSearchTimeMs: Math.min(
-            state.strategy.path.maxSearchTimeMs,
-            SHORE_PATH_MAX_SEARCH_TIME_MS,
-          ),
-        },
-      ).pipe(
-        Effect.timeoutFail({
-          duration: SHORE_PATH_TIMEOUT_MS,
-          onTimeout: () => new BeatGameDriverError({
-            operation: "pathfind",
-            code: "unreachable",
-            retryable: true,
-            message: `Timed out pathfinding toward dry surface at ${
-              positionKey(target)
-            }`,
+      if (!swimDirectly) {
+        const routed = yield* state.driver.pathfind(
+          target,
+          DRY_SURFACE_APPROACH_RADIUS,
+          {
+            ...survivalPathPolicy(
+              state.strategy.path,
+              observation.player.health,
+              state.strategy.minimumHealth,
+            ),
+            allowMining: false,
+            allowPlacing: false,
+            avoidFluids: false,
+            sprint: observation.player.food > CRITICAL_HUNGER_FOOD_LEVEL,
+            maxSearchTimeMs: Math.min(
+              state.strategy.path.maxSearchTimeMs,
+              SHORE_PATH_MAX_SEARCH_TIME_MS,
+            ),
+          },
+        ).pipe(
+          Effect.timeoutFail({
+            duration: SHORE_PATH_TIMEOUT_MS,
+            onTimeout: () => new BeatGameDriverError({
+              operation: "pathfind",
+              code: "unreachable",
+              retryable: true,
+              message: `Timed out pathfinding toward dry surface at ${
+                positionKey(target)
+              }`,
+            }),
           }),
-        }),
-        Effect.either,
-      );
-      if (routed._tag === "Right") {
-        const current = yield* state.driver.observe;
-        if (!(yield* isPlayerInFluid(state.driver, current.player.position))) {
-          return true;
+          Effect.either,
+        );
+        if (routed._tag === "Right") {
+          const current = yield* state.driver.observe;
+          if (!(yield* isPlayerInFluid(
+            state.driver,
+            current.player.position,
+          ))) {
+            return true;
+          }
         }
       }
       const reached = yield* swimTowardDrySurface(state, surface);
@@ -4396,6 +4400,7 @@ function satisfyRequirementFromWorld(
         count: bufferedCollectionCount("logs", missing),
         progressItemIds: requirement.itemIds,
         purpose: "find-logs",
+        avoidSubmergedTargets: true,
       });
     case "cobblestone":
       return collectBlocksOrExplore(state, observation, {
@@ -4729,6 +4734,7 @@ function prepareForFoodHunt(
       count: EMERGENCY_ARMAMENT_LOG_COUNT - logCount,
       progressItemIds: LOG_ITEM_IDS,
       purpose: "prepare-food-hunt",
+      avoidSubmergedTargets: true,
       path: {
         ...state.strategy.path,
         allowPlacing: false,
@@ -5338,6 +5344,7 @@ function ensureEfficientFurnaceFuel(
         ),
         progressItemIds: LOG_ITEM_IDS,
         purpose: "find-furnace-fuel",
+        avoidSubmergedTargets: true,
       });
       currentObservation = yield* state.driver.observe;
     }
@@ -9683,6 +9690,7 @@ function prepareForDistantDeathRecovery(
           count: EMERGENCY_ARMAMENT_LOG_COUNT - logs,
           progressItemIds: LOG_ITEM_IDS,
           purpose: "prepare-corpse-recovery",
+          avoidSubmergedTargets: true,
           path: protectedRecoveryPath,
         });
         current = yield* state.driver.observe;
@@ -9730,6 +9738,7 @@ function prepareForDistantDeathRecovery(
           count: additionalLogs,
           progressItemIds: LOG_ITEM_IDS,
           purpose: "prepare-corpse-recovery-pickaxe",
+          avoidSubmergedTargets: true,
           path: protectedRecoveryPath,
         });
         current = yield* state.driver.observe;
@@ -9758,6 +9767,7 @@ function prepareForDistantDeathRecovery(
         count: DEATH_RECOVERY_BOOTSTRAP_LOG_COUNT - bufferedLogs,
         progressItemIds: LOG_ITEM_IDS,
         purpose: "prepare-corpse-recovery-log-buffer",
+        avoidSubmergedTargets: true,
         path: protectedRecoveryPath,
       });
       current = yield* state.driver.observe;
