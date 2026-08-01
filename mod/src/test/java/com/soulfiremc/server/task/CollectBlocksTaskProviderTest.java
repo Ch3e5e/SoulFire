@@ -158,7 +158,7 @@ final class CollectBlocksTaskProviderTest {
   }
 
   @Test
-  void abandonsATargetAfterFourDistinctFailedApproaches() {
+  void abandonsATargetWhenThePathfinderRepeatsAFailedApproach() {
     var target = new SFVec3i(10, 64, -5);
     var failedApproaches = new HashMap<SFVec3i, Set<SFVec3i>>();
     var rejectedTargets = new HashSet<SFVec3i>();
@@ -170,11 +170,28 @@ final class CollectBlocksTaskProviderTest {
       target,
       firstApproach
     ));
-    assertFalse(CollectBlocksTaskProvider.recordFailedApproach(
+    assertTrue(CollectBlocksTaskProvider.recordFailedApproach(
       failedApproaches,
       rejectedTargets,
       target,
       firstApproach
+    ));
+
+    assertEquals(Set.of(target), rejectedTargets);
+    assertFalse(failedApproaches.containsKey(target));
+  }
+
+  @Test
+  void abandonsATargetAfterFourDistinctFailedApproaches() {
+    var target = new SFVec3i(10, 64, -5);
+    var failedApproaches = new HashMap<SFVec3i, Set<SFVec3i>>();
+    var rejectedTargets = new HashSet<SFVec3i>();
+
+    assertTrue(CollectBlocksTaskProvider.recordFailedApproach(
+      failedApproaches,
+      rejectedTargets,
+      target,
+      target.add(1, 0, 0)
     ));
     assertTrue(CollectBlocksTaskProvider.recordFailedApproach(
       failedApproaches,

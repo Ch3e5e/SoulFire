@@ -233,7 +233,8 @@ public final class CollectBlocksTaskProvider
       _ -> new HashSet<>()
     );
     if (!positions.add(playerPosition)) {
-      return false;
+      failedApproaches.remove(target);
+      return rejectedTargets.add(target);
     }
     if (positions.size() >= MAX_FAILED_APPROACHES_PER_TARGET) {
       failedApproaches.remove(target);
