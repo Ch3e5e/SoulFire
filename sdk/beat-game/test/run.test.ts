@@ -1979,7 +1979,7 @@ describe("beat-game run lifecycle", () => {
       .toBe(16);
   });
 
-  it("keeps searching for corpse recovery food beyond the action retry budget", async () => {
+  it("abandons distant recovery after three bounded food searches", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const deathPosition = {
@@ -2039,7 +2039,7 @@ describe("beat-game run lifecycle", () => {
         driver.xzPaths.push({ x, z, dimension, radius, policy });
       }).pipe(Effect.zipRight(Effect.sleep(1)));
 
-    const outcome = await Effect.runPromise(Effect.scoped(
+    const recoveryPathCount = await Effect.runPromise(Effect.scoped(
       beatGameWithDriver(driver, {
         runId: "resumable-corpse-food-run",
         team: { teamId: "resumable-corpse-food-team" },
@@ -2052,29 +2052,33 @@ describe("beat-game run lifecycle", () => {
         Effect.flatMap((run) =>
           Effect.gen(function* () {
             yield* Effect.gen(function* () {
-              while (driver.xzPaths.length < 17) {
+              while (
+                (yield* store.load("resumable-corpse-food-run"))
+                    ?.memory.deathPositions.length !== 0
+              ) {
                 yield* Effect.sleep(1);
               }
             }).pipe(Effect.timeoutFail({
               duration: "5 seconds",
               onTimeout: () =>
-                new Error("The corpse food search stopped making progress"),
+                new Error("The bounded corpse food search did not finish"),
             }));
+            const pathCount = driver.xzPaths.length;
             yield* run.stop;
             yield* run.awaitCompletion.pipe(Effect.either);
-            return "search-progress" as const;
+            return pathCount;
           })
         ),
       ),
     ));
 
-    expect(outcome).toBe("search-progress");
+    expect(recoveryPathCount).toBe(6);
     const saved = await Effect.runPromise(
       store.load("resumable-corpse-food-run"),
     );
     expect(saved?.planner.retryCount).toBe(0);
-    expect(saved?.memory.deathPositions).toHaveLength(1);
-    expect(driver.xzPaths.slice(0, 8).every(({ x, z }) =>
+    expect(saved?.memory.deathPositions).toHaveLength(0);
+    expect(driver.xzPaths.every(({ x, z }) =>
       x > 0 && z === 0
     )).toBe(true);
     expect(driver.paths).not.toContainEqual(expect.objectContaining({
@@ -2150,7 +2154,7 @@ describe("beat-game run lifecycle", () => {
         Effect.flatMap((run) =>
           Effect.gen(function* () {
             yield* Effect.gen(function* () {
-              while (driver.xzPaths.length < 9) {
+              while (driver.xzPaths.length < 2) {
                 yield* Effect.sleep(1);
               }
             }).pipe(Effect.timeoutFail({

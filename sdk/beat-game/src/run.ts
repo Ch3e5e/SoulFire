@@ -142,6 +142,8 @@ const DEATH_RECOVERY_BOOTSTRAP_LOG_COUNT = 12;
 const DEATH_RECOVERY_BOOTSTRAP_BLOCK_COUNT = 16;
 const DEATH_RECOVERY_BOOTSTRAP_FOOD_COUNT = 8;
 const DEATH_RECOVERY_MINIMUM_FOOD_COUNT = 3;
+const DEATH_RECOVERY_FOOD_SEARCH_PENDING =
+  "still searching for enough travel food for distant corpse recovery";
 const DISPOSABLE_DEATH_RECOVERY_ITEM_IDS = new Set([
   "minecraft:coarse_dirt",
   "minecraft:dirt",
@@ -1276,6 +1278,30 @@ function executeDecision(
                 respawned,
               );
               if (preparationPending !== undefined) {
+                if (
+                  preparationPending !== DEATH_RECOVERY_FOOD_SEARCH_PENDING
+                ) {
+                  return {
+                    replanReason: preparationPending,
+                  } satisfies ActionResult;
+                }
+                const preparationFailures =
+                  yield* recordDeathRecoveryFailure(
+                    state,
+                    pendingDeath.observedAt,
+                  );
+                if (
+                  preparationFailures
+                    >= MAX_SAFE_DEATH_RECOVERY_FAILURES
+                ) {
+                  const current = yield* state.driver.observe;
+                  return yield* abandonPendingDeath(
+                    state,
+                    pendingDeath,
+                    current,
+                    "Abandoned a distant corpse after three bounded supply searches",
+                  );
+                }
                 return {
                   replanReason: preparationPending,
                 } satisfies ActionResult;
@@ -1357,22 +1383,12 @@ function executeDecision(
               pendingDeath.observedAt,
             );
             if (recoveryFailures >= MAX_SAFE_DEATH_RECOVERY_FAILURES) {
-              yield* emit(state, {
-                type: "items-recovered",
-                detail:
-                  "Abandoned an unrecoverable corpse after three safe recovery attempts",
-              });
-              return {
-                checkpoint: (checkpoint) =>
-                  resetAfterCatastrophicInventoryLoss(
-                    forgetDeathPosition(
-                      checkpoint,
-                      pendingDeath.observedAt,
-                    ),
-                    current,
-                  ),
-                completedPendingDeath: pendingDeath.observedAt,
-              } satisfies ActionResult;
+              return yield* abandonPendingDeath(
+                state,
+                pendingDeath,
+                current,
+                "Abandoned an unrecoverable corpse after three safe recovery attempts",
+              );
             }
             if (
               yield* needsOverworldSurfaceRecovery(
@@ -8267,6 +8283,27 @@ function completePendingDeath(
   ], { discard: true });
 }
 
+function abandonPendingDeath(
+  state: RunState,
+  pendingDeath: PendingDeath,
+  observation: BeatGameObservation,
+  detail: string,
+): Effect.Effect<ActionResult> {
+  return emit(state, {
+    type: "items-recovered",
+    detail,
+  }).pipe(
+    Effect.as({
+      checkpoint: (checkpoint) =>
+        resetAfterCatastrophicInventoryLoss(
+          forgetDeathPosition(checkpoint, pendingDeath.observedAt),
+          observation,
+        ),
+      completedPendingDeath: pendingDeath.observedAt,
+    } satisfies ActionResult),
+  );
+}
+
 function forgetDeathPosition(
   checkpoint: BeatGameCheckpoint,
   observedAt: string,
@@ -8395,7 +8432,7 @@ function prepareForDistantDeathRecovery(
         {
           preferredEntityTypes: HIGH_YIELD_FOOD_ANIMAL_TYPES,
           preferredRadius: HIGH_YIELD_FOOD_PREFERENCE_RADIUS,
-          maximumExplorationHops: 8,
+          maximumExplorationHops: 2,
           path: protectedRecoveryPath,
           explorationTarget: pendingDeath.position,
           allowFluidFallback: false,
@@ -8465,7 +8502,7 @@ function prepareForDistantDeathRecovery(
     ) {
       current = yield* ensureTravelFood(current);
       if (travelFoodCount(current) < DEATH_RECOVERY_MINIMUM_FOOD_COUNT) {
-        return "still searching for enough travel food for distant corpse recovery";
+        return DEATH_RECOVERY_FOOD_SEARCH_PENDING;
       }
     }
     if (
@@ -8538,7 +8575,7 @@ function prepareForDistantDeathRecovery(
       current = yield* ensureTravelFood(current);
     }
     if (travelFoodCount(current) < DEATH_RECOVERY_MINIMUM_FOOD_COUNT) {
-      return "still searching for enough travel food for distant corpse recovery";
+      return DEATH_RECOVERY_FOOD_SEARCH_PENDING;
     }
     current = yield* ensureBuildingMaterials(current);
     if (
