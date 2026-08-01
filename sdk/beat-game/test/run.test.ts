@@ -15295,6 +15295,97 @@ describe("beat-game run lifecycle", () => {
     ]);
   });
 
+  it("moves a furnace batch after fuel gathering changes elevation", async () => {
+    const driver = new FakeBeatGameDriver();
+    const initialCounts = {
+      "minecraft:oak_log": 2,
+      "minecraft:cobblestone": 20,
+      "minecraft:stone_sword": 1,
+      "minecraft:beef": 8,
+      "minecraft:iron_ingot": 7,
+      "minecraft:iron_pickaxe": 1,
+      "minecraft:water_bucket": 1,
+      "minecraft:flint_and_steel": 1,
+      "minecraft:shield": 1,
+    };
+    driver.currentObservation = observation({
+      counts: initialCounts,
+      position: { x: 0, y: 48, z: 0 },
+    });
+    const undergroundFurnace = blockObservation({
+      x: 1,
+      y: 48,
+      z: 0,
+      dimension: "minecraft:overworld",
+    }, { blockId: "minecraft:furnace" });
+    const surfaceFurnace = blockObservation({
+      x: 3,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    }, { blockId: "minecraft:furnace" });
+    driver.blockQueryResolver = ({ selector }) =>
+      selector.blockIds?.includes("minecraft:furnace") === true
+        ? [driver.currentObservation.player.position.y >= 64
+          ? surfaceFurnace
+          : undergroundFurnace]
+        : [];
+    let resolveFoodSmelt!: () => void;
+    const foodSmeltStarted = new Promise<void>((resolve) => {
+      resolveFoodSmelt = resolve;
+    });
+    driver.taskResolver = (task) => {
+      driver.tasks.push(task);
+      if (
+        task.type === "collect-blocks"
+        && task.blockIds.includes("minecraft:oak_log")
+      ) {
+        driver.currentObservation = observation({
+          counts: {
+            ...initialCounts,
+            "minecraft:oak_log": 10,
+          },
+          position: { x: 2, y: 64, z: 0 },
+        });
+      }
+      if (
+        task.type === "smelt"
+        && task.input.itemIds?.includes("minecraft:beef")
+      ) {
+        resolveFoodSmelt();
+        return Effect.never;
+      }
+      return Effect.void;
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      yield* Effect.promise(() => foodSmeltStarted).pipe(
+        Effect.timeout("5 seconds"),
+      );
+      yield* run.stop;
+    })));
+
+    expect(driver.tasks.filter((task) => task.type === "smelt")).toEqual([
+      expect.objectContaining({
+        input: {
+          itemIds: expect.arrayContaining(["minecraft:oak_log"]),
+        },
+        station: surfaceFurnace.position,
+      }),
+      expect.objectContaining({
+        input: { itemIds: ["minecraft:beef"] },
+        station: surfaceFurnace.position,
+      }),
+    ]);
+    expect(driver.tasks).not.toContainEqual(expect.objectContaining({
+      type: "smelt",
+      station: undergroundFurnace.position,
+    }));
+  });
+
   it("uses existing efficient fuel without manufacturing a spare", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({

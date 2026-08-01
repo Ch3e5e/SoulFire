@@ -5269,7 +5269,7 @@ function cookRawFoodBatch(
             batch.count,
           );
           if (currentBatchCount === 0) {
-            return Effect.void;
+            return Effect.succeed(workstation);
           }
           const directWoodFuel = directWoodFurnaceFuelItemIds(
             current,
@@ -5282,26 +5282,30 @@ function cookRawFoodBatch(
               fuel: { itemIds: directWoodFuel },
               station: workstation.position,
               path: state.strategy.path,
-            });
+            }).pipe(Effect.as(workstation));
           }
           return ensureEfficientFurnaceFuel(
             state,
             current,
-            workstation.position,
+            workstation,
             currentBatchCount,
           ).pipe(
-            Effect.zipRight(smelt(state.driver, {
-              input: { itemIds: [batch.rawItemId] },
-              count: currentBatchCount,
-              fuel: {
-                itemIds: ["minecraft:coal", "minecraft:charcoal"],
-              },
-              station: workstation.position,
-              path: state.strategy.path,
-            })),
+            Effect.flatMap((activeWorkstation) =>
+              smelt(state.driver, {
+                input: { itemIds: [batch.rawItemId] },
+                count: currentBatchCount,
+                fuel: {
+                  itemIds: ["minecraft:coal", "minecraft:charcoal"],
+                },
+                station: activeWorkstation.position,
+                path: state.strategy.path,
+              }).pipe(Effect.as(activeWorkstation))
+            ),
           );
         }),
-        Effect.zipRight(reclaimPlacedFurnace(state, workstation)),
+        Effect.flatMap((activeWorkstation) =>
+          reclaimPlacedFurnace(state, activeWorkstation)
+        ),
       )
     ),
   );
@@ -5420,18 +5424,19 @@ function reclaimPlacedFurnace(
 function ensureEfficientFurnaceFuel(
   state: RunState,
   observation: BeatGameObservation,
-  station: BeatGameBlockPosition,
+  workstation: PreparedWorkstation,
   outputCount: number,
-): Effect.Effect<void, BeatGameDriverError> {
+): Effect.Effect<PreparedWorkstation, BeatGameDriverError> {
   return Effect.gen(function* () {
     const requiredFuel = Math.ceil(outputCount / 8);
     let currentObservation = observation;
+    let activeWorkstation = workstation;
     let missingFuel = Math.max(
       0,
       requiredFuel - furnaceFuelCount(currentObservation),
     );
     if (missingFuel === 0) {
-      return;
+      return activeWorkstation;
     }
 
     currentObservation = yield* state.driver.observe;
@@ -5440,7 +5445,7 @@ function ensureEfficientFurnaceFuel(
       requiredFuel - furnaceFuelCount(currentObservation),
     );
     if (missingFuel === 0) {
-      return;
+      return activeWorkstation;
     }
 
     const visibleCoal = yield* state.driver.queryBlocks({
@@ -5470,12 +5475,17 @@ function ensureEfficientFurnaceFuel(
         path: state.strategy.path,
       });
       currentObservation = yield* state.driver.observe;
+      activeWorkstation = yield* ensureAccessibleFurnaceForBatch(
+        state,
+        currentObservation,
+        activeWorkstation,
+      );
       missingFuel = Math.max(
         0,
         requiredFuel - furnaceFuelCount(currentObservation),
       );
       if (missingFuel === 0) {
-        return;
+        return activeWorkstation;
       }
     }
 
@@ -5515,6 +5525,11 @@ function ensureEfficientFurnaceFuel(
         avoidSubmergedTargets: true,
       });
       currentObservation = yield* state.driver.observe;
+      activeWorkstation = yield* ensureAccessibleFurnaceForBatch(
+        state,
+        currentObservation,
+        activeWorkstation,
+      );
     }
     if (!hasEnoughCharcoalMaterials(currentObservation)) {
       return yield* Effect.fail(new BeatGameDriverError({
@@ -5534,10 +5549,29 @@ function ensureEfficientFurnaceFuel(
       input: { itemIds: LOG_ITEM_IDS },
       count: charcoalCount,
       fuel: { itemIds: charcoalFuelItemIds },
-      station,
+      station: activeWorkstation.position,
       path: state.strategy.path,
     });
+    return activeWorkstation;
   });
+}
+
+function ensureAccessibleFurnaceForBatch(
+  state: RunState,
+  observation: BeatGameObservation,
+  previous: PreparedWorkstation,
+): Effect.Effect<PreparedWorkstation, BeatGameDriverError> {
+  return ensureWorkstation(
+    state,
+    observation,
+    "minecraft:furnace",
+  ).pipe(
+    Effect.map((current) =>
+      sameBlockPosition(current.position, previous.position)
+        ? previous
+        : current
+    ),
+  );
 }
 
 function furnaceFuelCount(observation: BeatGameObservation): number {
@@ -5986,19 +6020,24 @@ function satisfyIronRequirement(
         ensureEfficientFurnaceFuel(
           state,
           observation,
-          workstation.position,
+          workstation,
           batchCount,
         ).pipe(
-          Effect.zipRight(smelt(state.driver, {
-            input: { itemIds: ["minecraft:raw_iron"] },
-            count: batchCount,
-            fuel: {
-              itemIds: ["minecraft:coal", "minecraft:charcoal"],
-            },
-            station: workstation.position,
-            path: state.strategy.path,
-          })),
-          Effect.zipRight(reclaimPlacedFurnace(state, workstation)),
+          Effect.flatMap((activeWorkstation) =>
+            smelt(state.driver, {
+              input: { itemIds: ["minecraft:raw_iron"] },
+              count: batchCount,
+              fuel: {
+                itemIds: ["minecraft:coal", "minecraft:charcoal"],
+              },
+              station: activeWorkstation.position,
+              path: state.strategy.path,
+            }).pipe(
+              Effect.zipRight(
+                reclaimPlacedFurnace(state, activeWorkstation),
+              ),
+            )
+          ),
         )
       ),
     );
