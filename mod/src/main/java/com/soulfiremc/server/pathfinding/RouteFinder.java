@@ -218,6 +218,7 @@ public record RouteFinder(MinecraftGraph baseGraph, GoalScorer scorer, Executor 
     // Store block positions that we need to look at
     var openSet = new ObjectHeapPriorityQueue<MinecraftRouteNode>();
     var bestGlobalNode = new ObjectReference<MinecraftRouteNode>();
+    var bestBoundaryNode = new ObjectReference<MinecraftRouteNode>();
     var visitedNodes = 0;
     var nodesAtFirstBoundary = -1;
 
@@ -309,6 +310,18 @@ public record RouteFinder(MinecraftGraph baseGraph, GoalScorer scorer, Executor 
           }
         );
         if (nodeReachedLevelBoundary) {
+          if (
+            current.parent() != null
+              && (
+                bestBoundaryNode.value == null
+                  || comparePartialRouteCandidates(
+                    current,
+                    bestBoundaryNode.value
+                  ) < 0
+              )
+          ) {
+            bestBoundaryNode.value = current;
+          }
           if (nodesAtFirstBoundary < 0) {
             nodesAtFirstBoundary = visitedNodes;
           }
@@ -335,7 +348,11 @@ public record RouteFinder(MinecraftGraph baseGraph, GoalScorer scorer, Executor 
           stopwatch.elapsed().toMillis()
         );
         return new PartialRouteResult(
-          reconstructPath(bestGlobalNode.value)
+          reconstructPath(
+            bestBoundaryNode.value == null
+              ? bestGlobalNode.value
+              : bestBoundaryNode.value
+          )
         );
       }
     }
@@ -347,11 +364,28 @@ public record RouteFinder(MinecraftGraph baseGraph, GoalScorer scorer, Executor 
         stopwatch.elapsed().toMillis()
       );
       return new PartialRouteResult(
-        reconstructPath(bestGlobalNode.value)
+        reconstructPath(
+          bestBoundaryNode.value == null
+            ? bestGlobalNode.value
+            : bestBoundaryNode.value
+        )
       );
     }
     log.info("Failed to find route after {}ms", stopwatch.elapsed().toMillis());
     return NoRouteFoundResult.INSTANCE;
+  }
+
+  static int comparePartialRouteCandidates(
+    MinecraftRouteNode left,
+    MinecraftRouteNode right
+  ) {
+    var totalCostComparison = Double.compare(
+      left.totalRouteScore(),
+      right.totalRouteScore()
+    );
+    return totalCostComparison != 0
+      ? totalCostComparison
+      : Double.compare(left.targetCost(), right.targetCost());
   }
 
   private static boolean hasProjectedFloor(MinecraftRouteNode node) {

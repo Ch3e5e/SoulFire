@@ -52,4 +52,31 @@ final class RouteFinderTest {
       new RouteFinder.FoundRouteResult(List.of())
     ));
   }
+
+  @Test
+  void partialRoutesPreferEfficientChunkBoundariesOverLongDetours() {
+    var efficientBoundary = new MinecraftRouteNode(
+      new NodeState(new SFVec3i(1, 64, 0), 0),
+      List.of(),
+      1,
+      99,
+      100
+    );
+    var closerAfterDetour = new MinecraftRouteNode(
+      new NodeState(new SFVec3i(10, 64, 0), 0),
+      List.of(),
+      80,
+      90,
+      170
+    );
+
+    assertTrue(RouteFinder.comparePartialRouteCandidates(
+      efficientBoundary,
+      closerAfterDetour
+    ) < 0);
+    assertTrue(RouteFinder.comparePartialRouteCandidates(
+      closerAfterDetour,
+      efficientBoundary
+    ) > 0);
+  }
 }
