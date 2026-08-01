@@ -9461,7 +9461,7 @@ function prepareForDistantDeathRecovery(
       }
       const canSafelyHuntAquaticFood =
         value.player.health >= state.strategy.minimumHealth
-        && value.player.food > CRITICAL_HUNGER_FOOD_LEVEL;
+        || value.player.food <= URGENT_AQUATIC_HUNT_FOOD_LEVEL;
       return huntOrExplore(
         state,
         value,

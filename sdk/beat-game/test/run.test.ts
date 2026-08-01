@@ -1835,7 +1835,7 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
-  it("hunts nearby fish instead of detouring around water during recovery", async () => {
+  it("hunts nearby fish when urgent recovery hunger makes dry detours unsafe", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const deathPosition = {
@@ -1880,15 +1880,18 @@ describe("beat-game run lifecycle", () => {
       observedAt: "2026-01-01T00:00:00.000Z",
     } as const;
     driver.currentObservation = observation({
-      food: 15,
-      health: 20,
+      food: 7,
+      health: 12,
       counts: {
         "minecraft:dirt": 16,
         "minecraft:oak_log": 12,
         "minecraft:wooden_sword": 1,
       },
     });
-    driver.entityResults = [salmon];
+    driver.entityQueryResolver = (query) =>
+      query.selector.entityTypes?.includes("minecraft:salmon") === true
+        ? [salmon]
+        : [];
     driver.taskResolver = (task) =>
       Effect.sync(() => {
         driver.tasks.push(task);
