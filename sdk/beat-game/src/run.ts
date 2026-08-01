@@ -1997,7 +1997,12 @@ function monitorObservedSafety(
   }
   if (
     decision.type === "satisfy-requirement"
-    && actionObservedComplete(decision, observation, state.strategy)
+    && actionObservedComplete(
+      decision,
+      observation,
+      state.strategy,
+      state.hooks.satisfyRequirement === undefined,
+    )
   ) {
     return Effect.succeed({});
   }
@@ -9870,6 +9875,7 @@ function actionObservedComplete(
   >,
   observation: BeatGameObservation,
   strategy: BeatGameStrategy,
+  includeCollectionBuffer = false,
 ): boolean {
   switch (decision.type) {
     case "recover-death":
@@ -9882,7 +9888,11 @@ function actionObservedComplete(
       return requirementCount(
         observation.inventory,
         decision.requirement,
-      ) >= decision.requirement.targetCount;
+      ) >= decision.requirement.targetCount + (
+        includeCollectionBuffer
+          ? requirementCollectionBuffer(decision.requirement.key)
+          : 0
+      );
     case "build-and-enter-nether":
       return isNether(observation.player.position.dimension);
     case "return-through-portal":
@@ -9898,6 +9908,21 @@ function actionObservedComplete(
     case "search-stronghold":
     case "fight-ender-dragon":
       return false;
+  }
+}
+
+function requirementCollectionBuffer(requirementKey: string): number {
+  switch (requirementKey) {
+    case "blaze-rods":
+    case "cobblestone":
+    case "ender-pearls":
+    case "food":
+    case "gold":
+    case "iron":
+    case "logs":
+      return RESOURCE_COLLECTION_BUFFERS[requirementKey];
+    default:
+      return 0;
   }
 }
 

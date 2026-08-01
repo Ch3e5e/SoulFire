@@ -10936,6 +10936,74 @@ describe("beat-game run lifecycle", () => {
     )).toHaveLength(1);
   });
 
+  it("keeps collecting cobblestone until the requested buffer is full", async () => {
+    const driver = new FakeBeatGameDriver();
+    const baseCounts = {
+      "minecraft:cooked_beef": 12,
+      "minecraft:oak_log": 8,
+      "minecraft:cobblestone": 8,
+      "minecraft:stone_sword": 1,
+      "minecraft:wooden_pickaxe": 1,
+    };
+    driver.currentObservation = observation({ counts: baseCounts });
+    let resolveCollectionStarted!: () => void;
+    const collectionStarted = new Promise<void>((resolve) => {
+      resolveCollectionStarted = resolve;
+    });
+    let collectionInterrupted = false;
+    driver.taskResolver = (task) => {
+      driver.tasks.push(task);
+      if (
+        task.type === "collect-blocks"
+        && task.blockIds.includes("minecraft:stone")
+      ) {
+        resolveCollectionStarted();
+        return Effect.never.pipe(
+          Effect.onInterrupt(() =>
+            Effect.sync(() => {
+              collectionInterrupted = true;
+            })
+          ),
+        );
+      }
+      return Effect.void;
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      yield* Effect.promise(() => collectionStarted).pipe(
+        Effect.timeout("5 seconds"),
+      );
+      driver.currentObservation = observation({
+        counts: {
+          ...baseCounts,
+          "minecraft:cobblestone": 20,
+        },
+      });
+      yield* Effect.sleep(25);
+      expect(collectionInterrupted).toBe(false);
+      driver.currentObservation = observation({
+        counts: {
+          ...baseCounts,
+          "minecraft:cobblestone": 32,
+        },
+      });
+      while (!collectionInterrupted) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    expect(collectionInterrupted).toBe(true);
+    expect(driver.tasks.filter((task) =>
+      task.type === "collect-blocks"
+      && task.blockIds.includes("minecraft:stone")
+    )).toHaveLength(1);
+  });
+
   it("upgrades a missing or broken wooden pickaxe before mining iron", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
