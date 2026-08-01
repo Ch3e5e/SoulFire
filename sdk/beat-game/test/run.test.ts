@@ -4079,7 +4079,7 @@ describe("beat-game run lifecycle", () => {
   it("raises a shield and attacks a ranged hostile at critical health", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
-      health: 8,
+      health: 3,
       counts: {
         "minecraft:cooked_beef": 1,
         "minecraft:shield": 1,
@@ -4605,6 +4605,73 @@ describe("beat-game run lifecycle", () => {
     expect(driver.actions.some((action) =>
       action.type === "set-movement" && action.forward === true
     )).toBe(false);
+    expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
+  });
+
+  it("does not flee after a shielded ranged attack route fails", async () => {
+    const driver = new FakeBeatGameDriver();
+    const skeleton = {
+      connectionEpoch: "epoch-1",
+      networkId: 18,
+      entityType: "minecraft:skeleton",
+      position: {
+        x: 6,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.currentObservation = observation({
+      health: 10,
+      counts: {
+        "minecraft:shield": 1,
+        "minecraft:stone_sword": 1,
+      },
+    });
+    driver.entityResults = [skeleton];
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2) ? driver.entityResults : [];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(
+        Effect.zipRight(
+          task.type === "attack-entity"
+            ? Effect.fail(new BeatGameDriverError({
+              operation: "task.attack-entity",
+              code: "unreachable",
+              retryable: true,
+              message: "The defensive route was blocked",
+            }))
+            : Effect.void,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (
+              driver.tasks.filter((task) => task.type === "attack-entity")
+                .length < 2
+            ) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.tasks.filter((task) => task.type === "attack-entity"))
+      .toHaveLength(2);
     expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
   });
 

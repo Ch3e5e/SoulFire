@@ -2165,6 +2165,9 @@ function shouldDisengageFromThreat(
   if (ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(target.entityType)) {
     return true;
   }
+  if (shouldCommitToRangedFight(observation, target)) {
+    return false;
+  }
   if (observation.player.health <= LETHAL_MELEE_DISENGAGE_HEALTH) {
     return true;
   }
@@ -2394,7 +2397,10 @@ function escapeFromTarget(
       | { readonly type: "defended" };
     const mustContinueEscaping =
       ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(target.entityType)
-      || PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
+      || (
+        PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
+        && !shouldCommitToRangedFight(latest, target)
+      )
       || (
         PROACTIVE_MELEE_HOSTILE_ENTITY_TYPES.has(target.entityType)
         && !shouldCommitToMeleeFight(latest, target)
@@ -2900,10 +2906,23 @@ function respondToAirRecoveryThreat(
               || error.operation === "task.attack-nearest"
               || error.code === "not_found"
               || error.code === "unreachable"
-            ? escapeFromTarget(state, threat.target)
+            ? recoverFromFailedDefense(state, threat.target)
             : Effect.fail(error),
       ),
     );
+}
+
+function recoverFromFailedDefense(
+  state: RunState,
+  target: BeatGameEntityObservation,
+): Effect.Effect<void, BeatGameDriverError> {
+  return state.driver.observe.pipe(
+    Effect.flatMap((observation) =>
+      shouldCommitToRangedFight(observation, target)
+        ? Effect.void
+        : escapeFromTarget(state, target)
+    ),
+  );
 }
 
 function recoverFromFluid(
@@ -4090,7 +4109,10 @@ function retreatAndRecover(
                     || error.code === "not_found"
                     || error.code === "unreachable"
                   ) {
-                    return escapeFromTarget(state, threat.target).pipe(
+                    return recoverFromFailedDefense(
+                      state,
+                      threat.target,
+                    ).pipe(
                       Effect.catchTag("BeatGameDriverError", () => Effect.void),
                     );
                   }
