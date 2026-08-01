@@ -1049,11 +1049,11 @@ describe("beat-game run lifecycle", () => {
     expect(saved?.memory.deathPositions).toHaveLength(1);
   });
 
-  it("returns to a distant corpse containing substantial renewable progress", async () => {
+  it("races barehanded to substantial renewable progress within recovery range", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const deathPosition = {
-      x: 160,
+      x: 240,
       y: 64,
       z: 0,
       dimension: "minecraft:overworld",
@@ -1130,6 +1130,8 @@ describe("beat-game run lifecycle", () => {
       position: deathPosition,
       radius: 2,
     }));
+    expect(driver.tasks.some((task) => task.type === "collect-blocks"))
+      .toBe(false);
   });
 
   it("abandons substantial renewable progress when replacement is cheaper than travel", async () => {
@@ -1386,7 +1388,7 @@ describe("beat-game run lifecycle", () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const deathPosition = {
-      x: 176,
+      x: 320,
       y: 64,
       z: 0,
       dimension: "minecraft:overworld",
