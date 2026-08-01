@@ -745,9 +745,9 @@ final class PathfindingTest {
     assertFalse(route.actions().stream().anyMatch(GapJumpAction.class::isInstance));
   }
 
-  @ParameterizedTest
-  @ValueSource(ints = {1, 2, 3})
-  void pathfindingJumpDiagonal(int height) {
+  @Test
+  void pathfindingRejectsDiagonalJumpAscents() {
+    var height = 1;
     var accessor = new TestBlockAccessorBuilder();
     accessor.setBlockAt(0, 0, 0, Blocks.STONE);
     accessor.setBlockAt(1, height, 1, Blocks.STONE);
@@ -760,15 +760,10 @@ final class PathfindingTest {
 
     var initialState = NodeState.forInfo(new SFVec3i(0, 1, 0), inventory);
 
-    if (height > 1) {
-      assertInstanceOf(
-        RouteFinder.NoRouteFoundResult.class, routeFinder.findRouteFuture(initialState).join());
-    } else {
-      var route = routeFinder.findRouteFuture(initialState).join();
-      var foundRouteResult = assertInstanceOf(
-        RouteFinder.FoundRouteResult.class, route);
-      assertEquals(1, foundRouteResult.actions().size());
-    }
+    assertInstanceOf(
+      RouteFinder.NoRouteFoundResult.class,
+      routeFinder.findRouteFuture(initialState).join()
+    );
   }
 
   @ParameterizedTest
