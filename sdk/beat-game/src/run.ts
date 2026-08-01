@@ -153,6 +153,7 @@ const DEATH_RECOVERY_BOOTSTRAP_LOG_COUNT = 12;
 const DEATH_RECOVERY_BOOTSTRAP_BLOCK_COUNT = 16;
 const DEATH_RECOVERY_BOOTSTRAP_FOOD_COUNT = 8;
 const DEATH_RECOVERY_MINIMUM_FOOD_COUNT = 3;
+const DEATH_RECOVERY_FOOD_SEARCH_TIMEOUT_MS = 60_000;
 const DEATH_RECOVERY_FOOD_SEARCH_PENDING =
   "still searching for enough travel food for distant corpse recovery";
 const DISPOSABLE_DEATH_RECOVERY_ITEM_IDS = new Set([
@@ -9774,7 +9775,7 @@ function prepareForDistantDeathRecovery(
       const foodSearchPath = needsUrgentAquaticFood
         ? { ...protectedRecoveryPath, avoidFluids: false }
         : protectedRecoveryPath;
-      return huntOrExplore(
+      const search = huntOrExplore(
         state,
         value,
         {
@@ -9794,6 +9795,10 @@ function prepareForDistantDeathRecovery(
           allowFluidFallback: canSafelyHuntAquaticFood,
           fallbackToLocalExploration: true,
         },
+      );
+      return Effect.raceFirst(
+        search,
+        Effect.sleep(DEATH_RECOVERY_FOOD_SEARCH_TIMEOUT_MS),
       ).pipe(Effect.zipRight(state.driver.observe));
     };
     const recoveryDistanceSquared = distanceSquared(
