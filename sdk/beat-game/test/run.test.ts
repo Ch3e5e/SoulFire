@@ -237,6 +237,84 @@ describe("beat-game run lifecycle", () => {
     expect(recoveryPosition).toEqual(deathPosition);
   });
 
+  it("delays respawn when another corpse recovery is already pending", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const firstObservedAt = new Date(Date.now() - 60_000).toISOString();
+    const secondObservedAt = new Date().toISOString();
+    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
+      runId: "chained-death-cooldown-run",
+      teamId: "chained-death-cooldown-team",
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        deathPositions: [
+          {
+            key: `death:${firstObservedAt}`,
+            value: {
+              x: 80,
+              y: 64,
+              z: 0,
+              dimension: "minecraft:overworld",
+              inventoryCounts: { "minecraft:iron_ingot": 7 },
+            },
+            observedAt: firstObservedAt,
+            confidence: 1,
+          },
+          {
+            key: `death:${secondObservedAt}`,
+            value: {
+              x: 4,
+              y: 64,
+              z: 0,
+              dimension: "minecraft:overworld",
+              inventoryCounts: { "minecraft:oak_log": 4 },
+            },
+            observedAt: secondObservedAt,
+            confidence: 1,
+          },
+        ],
+      },
+    }, undefined));
+    driver.currentObservation = observation({ dead: true, health: 0 });
+
+    const diagnostic = await Effect.runPromise(Effect.scoped(
+      Effect.gen(function* () {
+        const run = yield* beatGameWithDriver(driver, {
+          runId: "chained-death-cooldown-run",
+          team: { teamId: "chained-death-cooldown-team" },
+          checkpointStore: store,
+          strategy: { observationPollMs: 1 },
+        });
+        const event = yield* run.events.pipe(
+          Stream.filter((candidate) =>
+            candidate.type === "diagnostic"
+            && candidate.message
+              === "Delaying respawn after a chained corpse-recovery death"
+          ),
+          Stream.runHead,
+          Effect.timeout("5 seconds"),
+        );
+        yield* run.stop;
+        yield* run.awaitCompletion.pipe(Effect.either);
+        return event;
+      }),
+    ));
+
+    expect(Option.getOrUndefined(diagnostic)).toMatchObject({
+      type: "diagnostic",
+      data: {
+        cooldownMs: 60_000,
+        pendingDeaths: 2,
+      },
+    });
+    expect(driver.tasks).not.toContainEqual(expect.objectContaining({
+      type: "auto-respawn",
+    }));
+  });
+
   it("heals before resuming a restored corpse journey", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();

@@ -540,6 +540,7 @@ const LETHAL_MELEE_DISENGAGE_HEALTH = 7;
 const THREAT_ESCAPE_SAFE_DISTANCE = 24;
 const SINGLE_THREAT_MAXIMUM_ESCAPES = 4;
 const DURABLE_DEATH_RECOVERY_WINDOW_MS = 8 * 60 * 60 * 1_000;
+const CHAINED_DEATH_RESPAWN_COOLDOWN_MS = 60_000;
 const RENEWABLE_DEATH_RECOVERY_MAX_DISTANCE = 64;
 const UNKNOWN_DEATH_RECOVERY_MAX_DISTANCE = 64;
 const RECOVERY_DURATION_MS = 20_000;
@@ -1292,6 +1293,24 @@ function executeDecision(
           if (customRecovery !== undefined) {
             yield* customRecovery(policyContext);
           } else {
+            const beforeRespawn = yield* observeDriverFresh(state);
+            const recoverableDeaths = (yield* Ref.get(state.pendingDeaths))
+              .filter(isPendingDeathRecoverable);
+            if (
+              beforeRespawn.player.dead
+              && recoverableDeaths.length > 1
+            ) {
+              yield* emit(state, {
+                type: "diagnostic",
+                message:
+                  "Delaying respawn after a chained corpse-recovery death",
+                data: {
+                  cooldownMs: CHAINED_DEATH_RESPAWN_COOLDOWN_MS,
+                  pendingDeaths: recoverableDeaths.length,
+                },
+              });
+              yield* Effect.sleep(CHAINED_DEATH_RESPAWN_COOLDOWN_MS);
+            }
             yield* respawnAndRecover(state.driver, {
               path: state.strategy.path,
             });
