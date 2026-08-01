@@ -56,12 +56,29 @@ describe("beat-game planner", () => {
     });
   });
 
-  it("eats raw food before hunger interrupts another action", () => {
+  it("cooks raw food instead of consuming it at the normal hunger threshold", () => {
     const decision = decideBeatGameAction({
       checkpoint: checkpoint(BeatGamePhase.PREPARE_OVERWORLD),
       observation: observation({
         counts: { "minecraft:porkchop": 3 },
         food: defaultBeatGameStrategy.eatBelowFood,
+      }),
+      strategy: defaultBeatGameStrategy,
+    });
+
+    expect(decision).toMatchObject({
+      type: "satisfy-requirement",
+      action: "satisfy:food",
+      requirement: { key: "food" },
+    });
+  });
+
+  it("eats raw food when hunger becomes critical", () => {
+    const decision = decideBeatGameAction({
+      checkpoint: checkpoint(BeatGamePhase.PREPARE_OVERWORLD),
+      observation: observation({
+        counts: { "minecraft:porkchop": 3 },
+        food: 6,
       }),
       strategy: defaultBeatGameStrategy,
     });

@@ -7,10 +7,16 @@ import {
   type BeatGameStrategy,
 } from "./model.js";
 import {
+  CRITICAL_HUNGER_FOOD_LEVEL,
   EDIBLE_FOOD_ITEM_IDS,
   EMERGENCY_FOOD_ITEM_IDS,
+  RAW_FOOD_TO_COOKED,
   requirementsForPhase,
 } from "./requirements.js";
+
+const COOKABLE_RAW_FOOD_ITEM_IDS = new Set(
+  Object.keys(RAW_FOOD_TO_COOKED),
+);
 
 export type BeatGamePlannerDecision =
   | {
@@ -90,6 +96,11 @@ export function decideBeatGameAction(
   if (
     observation.player.food <= strategy.eatBelowFood
     && hasEdibleFood(observation)
+    && (
+      hasReadyFood(observation)
+      || phase !== BeatGamePhase.PREPARE_OVERWORLD
+      || observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
+    )
   ) {
     return { type: "eat", action: "eat" };
   }
@@ -98,6 +109,16 @@ export function decideBeatGameAction(
     observation.inventory,
     strategy,
   );
+  if (
+    phase === BeatGamePhase.PREPARE_OVERWORLD
+    && observation.player.food <= strategy.eatBelowFood
+    && hasCookableRawFood(observation)
+  ) {
+    const food = requirements.find(({ key }) => key === "food");
+    if (food !== undefined && !food.satisfied) {
+      return requirementDecision(food);
+    }
+  }
   if (observation.player.health < strategy.minimumHealth) {
     const food = requirements.find(({ key }) => key === "food");
     if (
@@ -211,6 +232,20 @@ function hasFood(
 
 function hasEdibleFood(observation: BeatGameObservation): boolean {
   return [...EDIBLE_FOOD_ITEM_IDS, ...EMERGENCY_FOOD_ITEM_IDS].some((itemId) =>
+    (observation.inventory.counts[itemId] ?? 0) > 0
+  );
+}
+
+function hasReadyFood(observation: BeatGameObservation): boolean {
+  return [...EDIBLE_FOOD_ITEM_IDS, ...EMERGENCY_FOOD_ITEM_IDS].some(
+    (itemId) =>
+      !COOKABLE_RAW_FOOD_ITEM_IDS.has(itemId)
+      && (observation.inventory.counts[itemId] ?? 0) > 0,
+  );
+}
+
+function hasCookableRawFood(observation: BeatGameObservation): boolean {
+  return Object.keys(RAW_FOOD_TO_COOKED).some((itemId) =>
     (observation.inventory.counts[itemId] ?? 0) > 0
   );
 }

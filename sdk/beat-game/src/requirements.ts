@@ -48,6 +48,8 @@ export const EMERGENCY_FOOD_ITEM_IDS = [
   "minecraft:rotten_flesh",
 ] as const;
 
+export const CRITICAL_HUNGER_FOOD_LEVEL = 6;
+
 export const LOG_ITEM_IDS = [
   "minecraft:oak_log",
   "minecraft:spruce_log",
