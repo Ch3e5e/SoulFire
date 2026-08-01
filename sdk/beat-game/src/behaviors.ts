@@ -4431,6 +4431,7 @@ function castNetherPortalFromLavaPool(
       return frame;
     }
     const castingStand = portalCastingStand(frame);
+    yield* clearPortalInterior(driver, frame, options.path);
     yield* clearPortalCastingCells(
       driver,
       uniquePositions([
@@ -4462,30 +4463,13 @@ function castNetherPortalFromLavaPool(
     }
     const frameKeys = new Set(frame.blocks.map(positionKey));
     const castingStandSupport = below(castingStand);
-    const supportCandidates = uniquePositions([
-      ...targets.flatMap((target) => {
-        const support = below(target);
-        const water = castingWaterPosition(frame, target);
-        return [
-          ...(frameKeys.has(positionKey(support)) ? [] : [support]),
-          below(water),
-        ];
-      }),
-      castingStandSupport,
-    ]);
     const temporarySupports: BeatGameBlockPosition[] = [];
-    for (const support of supportCandidates) {
-      const observedSupport = yield* observeExactBlock(driver, support);
-      if (observedSupport === undefined || observedSupport.replaceable) {
-        temporarySupports.push(support);
-      }
-    }
-    yield* ensurePortalCastingSupports(
+    temporarySupports.push(...(yield* buildTemporaryPortalCastingSupports(
       driver,
       frame,
-      temporarySupports,
+      [castingStandSupport],
       options.path,
-    );
+    )));
     yield* driver.withControl(Effect.gen(function* () {
       for (const [index, target] of targets.entries()) {
         if (index > 0) {
@@ -4507,12 +4491,24 @@ function castNetherPortalFromLavaPool(
           });
           yield* useBucketToward(driver, blockCenter(source.position));
         }
+        const targetSupport = below(target);
+        const water = castingWaterPosition(frame, target);
+        temporarySupports.push(...(yield* buildTemporaryPortalCastingSupports(
+          driver,
+          frame,
+          uniquePositions([
+            ...(frameKeys.has(positionKey(targetSupport))
+              ? []
+              : [targetSupport]),
+            below(water),
+          ]),
+          options.path,
+        )));
         yield* driver.pathfind(
           castingStand,
           0,
           mergePathPolicy(options.path),
         );
-        const water = castingWaterPosition(frame, target);
         yield* Effect.uninterruptible(Effect.gen(function* () {
           yield* driver.act({
             type: "select-item",
@@ -4572,6 +4568,33 @@ function castNetherPortalFromLavaPool(
       driver.act({ type: "reset-movement" }).pipe(Effect.ignore),
     )));
     return frame;
+  });
+}
+
+function buildTemporaryPortalCastingSupports(
+  driver: BeatGameDriver,
+  frame: PortalFrame,
+  candidates: readonly BeatGameBlockPosition[],
+  path?: Partial<BeatGamePathPolicy>,
+): Effect.Effect<
+  readonly BeatGameBlockPosition[],
+  BeatGameDriverError
+> {
+  return Effect.gen(function* () {
+    const missing: BeatGameBlockPosition[] = [];
+    for (const support of candidates) {
+      const observedSupport = yield* observeExactBlock(driver, support);
+      if (observedSupport === undefined || observedSupport.replaceable) {
+        missing.push(support);
+      }
+    }
+    yield* ensurePortalCastingSupports(
+      driver,
+      frame,
+      missing,
+      path,
+    );
+    return missing;
   });
 }
 

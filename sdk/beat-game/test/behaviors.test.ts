@@ -3048,6 +3048,10 @@ describe("beat-game behavior programs", () => {
       throw new Error("Expected a portal frame target");
     }
     const water = { ...target, z: target.z - 1 };
+    const interior = frame.interior[0];
+    if (interior === undefined) {
+      throw new Error("Expected a portal interior");
+    }
     const castingStand = {
       ...origin,
       x: origin.x + 1,
@@ -3074,6 +3078,10 @@ describe("beat-game behavior programs", () => {
     blocks.set(
       key(water),
       blockObservation(water, { blockId: "minecraft:deepslate" }),
+    );
+    blocks.set(
+      key(interior),
+      blockObservation(interior, { blockId: "minecraft:deepslate" }),
     );
     for (const support of [
       { ...target, y: target.y - 1 },
@@ -3192,6 +3200,10 @@ describe("beat-game behavior programs", () => {
     expect(driver.actions).toContainEqual({
       type: "dig-block",
       position: water,
+    });
+    expect(driver.actions).toContainEqual({
+      type: "dig-block",
+      position: interior,
     });
     expect(driver.actions.findIndex((action) =>
       action.type === "dig-block"
@@ -3369,9 +3381,119 @@ describe("beat-game behavior programs", () => {
     }));
 
     const builds = driver.tasks.filter((task) => task.type === "build");
-    expect(builds).toHaveLength(2);
+    expect(builds).toHaveLength(3);
+    expect(builds[0]?.blocks).toEqual(builds[1]?.blocks);
     expect(builds[1]?.blocks).toHaveLength(1);
     expect(blocks.get(key(target))?.blockId).toBe("minecraft:obsidian");
+  });
+
+  it("builds portal casting supports one layer at a time", async () => {
+    const driver = new FakeBeatGameDriver();
+    const origin = {
+      x: 0,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    const frame = createNetherPortalFrame(origin);
+    const firstTarget = [...frame.blocks].sort((left, right) =>
+      left.y - right.y || left.x - right.x || left.z - right.z
+    )[0];
+    const nextLayerTarget = frame.blocks.find(({ y }) => y === origin.y + 1);
+    if (firstTarget === undefined || nextLayerTarget === undefined) {
+      throw new Error("Expected portal targets on multiple layers");
+    }
+    const key = (position: BeatGameBlockPosition) =>
+      `${position.dimension}:${position.x}:${position.y}:${position.z}`;
+    const blocks = new Map<string, ReturnType<typeof blockObservation>>();
+    const lavaSources = Array.from({ length: frame.blocks.length - 1 }, (_, index) => {
+      const position = {
+        x: 16 + index,
+        y: 63,
+        z: 16,
+        dimension: origin.dimension,
+      };
+      return blockObservation(position, {
+        blockId: "minecraft:lava",
+        replaceable: true,
+      });
+    });
+    driver.currentObservation = observation({
+      counts: {
+        "minecraft:bucket": 1,
+        "minecraft:cobblestone": 64,
+        "minecraft:lava_bucket": 1,
+        "minecraft:water_bucket": 1,
+      },
+      position: origin,
+    });
+    driver.blockQueryResolver = ({ center, selector }) => {
+      if (selector.blockIds?.includes("minecraft:lava") === true) {
+        return lavaSources;
+      }
+      if (selector.blockIds?.includes("minecraft:obsidian") === true) {
+        return [];
+      }
+      const position = queriedBlockPosition(center);
+      return [blocks.get(key(position)) ?? blockObservation(position, {
+        blockId: "minecraft:air",
+        replaceable: true,
+      })];
+    };
+    driver.taskObserver = (task) => {
+      if (task.type !== "build") {
+        return;
+      }
+      for (const block of task.blocks) {
+        const position = {
+          x: task.origin.x + block.offset.x,
+          y: task.origin.y + block.offset.y,
+          z: task.origin.z + block.offset.z,
+          dimension: task.origin.dimension,
+        };
+        blocks.set(key(position), blockObservation(position, {
+          blockId: block.blockId,
+        }));
+      }
+    };
+    driver.actionObserver = (action) => {
+      if (action.type !== "look") {
+        return;
+      }
+      driver.currentObservation = observation({
+        counts: driver.currentObservation.inventory.counts,
+        position: driver.currentObservation.player.position,
+        rotation: {
+          yaw: action.yaw,
+          pitch: action.pitch,
+        },
+      });
+    };
+
+    await expect(Effect.runPromise(castNetherPortal(driver, {
+      origin,
+      ignite: false,
+    }))).rejects.toThrow("Portal casting lava missed");
+
+    const builtPositions = driver.tasks
+      .filter((task) => task.type === "build")
+      .flatMap((task) => task.blocks.map((block) => ({
+        x: task.origin.x + block.offset.x,
+        y: task.origin.y + block.offset.y,
+        z: task.origin.z + block.offset.z,
+        dimension: task.origin.dimension,
+      })));
+    const futureWaterSupport = {
+      ...nextLayerTarget,
+      y: nextLayerTarget.y - 1,
+      z: nextLayerTarget.z - 1,
+    };
+    expect(builtPositions).not.toContainEqual(futureWaterSupport);
+    expect(builtPositions).toContainEqual({
+      ...firstTarget,
+      y: firstTarget.y - 1,
+      z: firstTarget.z - 1,
+    });
   });
 
   it("does not report End portal activation before portal blocks appear", async () => {
