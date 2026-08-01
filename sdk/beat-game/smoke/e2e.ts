@@ -447,9 +447,24 @@ const program = Effect.scoped(Effect.gen(function* () {
     500,
   );
   yield* record("bot-online", { instanceId: instance.id, profileId });
+  let lastTaskProgressFingerprint: string | undefined;
   yield* bot.tasks.watch({ includeSnapshot: false }).pipe(
     Stream.runForEach((event) => {
       const task = event.task;
+      const fingerprint = json(task === undefined
+        ? {}
+        : {
+          taskId: task.taskId,
+          taskType: task.taskType,
+          status: task.status,
+          summary: task.summary,
+          progress: task.progress,
+          failure: task.failure,
+        });
+      if (fingerprint === lastTaskProgressFingerprint) {
+        return Effect.void;
+      }
+      lastTaskProgressFingerprint = fingerprint;
       return record("task-progress-observed", {
         sequence: event.sequence,
         ...(task === undefined
