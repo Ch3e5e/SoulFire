@@ -3710,8 +3710,13 @@ function defendAgainstTarget(
           state,
           observation.player.health,
           observation.player.position,
-          !(canBlockWithShield
-            && PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)),
+          !(
+            (
+              canBlockWithShield
+              && PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
+            )
+            || shouldCommitToFastMeleePursuerFight(observation, target)
+          ),
         ),
       ).pipe(
         Effect.flatMap((outcome) =>
