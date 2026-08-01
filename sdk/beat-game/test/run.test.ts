@@ -1835,7 +1835,7 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
-  it("uses a bounded local water fallback while preparing a distant recovery", async () => {
+  it("hunts nearby fish instead of detouring around water during recovery", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const deathPosition = {
@@ -1889,20 +1889,12 @@ describe("beat-game run lifecycle", () => {
       },
     });
     driver.entityResults = [salmon];
-    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+    driver.taskResolver = (task) =>
       Effect.sync(() => {
-        driver.xzPaths.push({ x, z, dimension, radius, policy });
-        return driver.xzPaths.length;
+        driver.tasks.push(task);
       }).pipe(
-        Effect.flatMap((attempt) =>
-          attempt <= 2
-            ? Effect.fail(new BeatGameDriverError({
-              operation: "pathfindXZ",
-              code: "unreachable",
-              retryable: true,
-              message: "The dry route is blocked by water",
-            }))
-            : Effect.never
+        Effect.zipRight(
+          task.type === "attack-entity" ? Effect.never : Effect.void,
         ),
       );
 
@@ -1915,7 +1907,9 @@ describe("beat-game run lifecycle", () => {
       }).pipe(
         Effect.flatMap((run) =>
           Effect.gen(function* () {
-            while (driver.xzPaths.length < 3) {
+            while (
+              !driver.tasks.some((task) => task.type === "attack-entity")
+            ) {
               yield* Effect.sleep(1);
             }
             yield* run.stop;
@@ -1925,13 +1919,19 @@ describe("beat-game run lifecycle", () => {
       ),
     ));
 
-    expect(driver.xzPaths.map(({ policy }) => policy.avoidFluids)).toEqual([
-      true,
-      true,
-      false,
-    ]);
-    expect(driver.tasks.some((task) => task.type === "attack-entity"))
-      .toBe(false);
+    expect(driver.xzPaths).toHaveLength(0);
+    const attackIndex = driver.tasks.findIndex(
+      (task) => task.type === "attack-entity",
+    );
+    expect(driver.tasks[attackIndex]).toEqual(expect.objectContaining({
+      target: expect.objectContaining({ networkId: salmon.networkId }),
+    }));
+    expect(driver.taskPolicies[attackIndex]).toMatchObject({
+      allowMining: false,
+      allowPlacing: false,
+      avoidFluids: false,
+      sprint: false,
+    });
   });
 
   it("protects the corpse recovery building reserve while hunting for food", async () => {

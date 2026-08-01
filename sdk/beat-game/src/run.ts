@@ -9459,6 +9459,9 @@ function prepareForDistantDeathRecovery(
       if (food >= DEATH_RECOVERY_MINIMUM_FOOD_COUNT) {
         return Effect.succeed(value);
       }
+      const canSafelyHuntAquaticFood =
+        value.player.health >= state.strategy.minimumHealth
+        && value.player.food > CRITICAL_HUNGER_FOOD_LEVEL;
       return huntOrExplore(
         state,
         value,
@@ -9474,7 +9477,9 @@ function prepareForDistantDeathRecovery(
           maximumExplorationHops: 2,
           path: protectedRecoveryPath,
           explorationTarget: pendingDeath.position,
-          allowFluidFallback: false,
+          allowAquaticTargets: canSafelyHuntAquaticFood,
+          allowUrgentAquaticTargets: canSafelyHuntAquaticFood,
+          allowFluidFallback: canSafelyHuntAquaticFood,
           fallbackToLocalExploration: true,
         },
       ).pipe(Effect.zipRight(state.driver.observe));
