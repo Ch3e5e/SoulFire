@@ -8434,7 +8434,7 @@ describe("beat-game run lifecycle", () => {
         return [];
       }
       foodQueries += 1;
-      return foodQueries === 1 ? [] : [cow];
+      return foodQueries === 2 || foodQueries === 3 ? [cow] : [];
     };
     driver.xzPathResolver = (x, z, dimension, radius, policy) =>
       Effect.sync(() => {

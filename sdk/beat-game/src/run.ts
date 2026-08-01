@@ -6087,6 +6087,7 @@ function huntOrExplore(
     );
     const attemptedTargets = new Set<string>();
     const locallyUnreachable = new Set<string>();
+    let confirmedVisibleTarget: BeatGameEntityObservation | undefined;
     let attacked = 0;
     let explorationHops = 0;
     while (true) {
@@ -6139,7 +6140,7 @@ function huntOrExplore(
           )
           .map(({ key }) => key),
       ]);
-      const targets = yield* state.driver.queryEntities({
+      const observedTargets = yield* state.driver.queryEntities({
         origin: current.player.position,
         radius: state.strategy.entitySearchRadius,
         selector,
@@ -6148,6 +6149,16 @@ function huntOrExplore(
           Math.max(16, maximumTargets + attemptedTargets.size),
         ),
       });
+      const targets = confirmedVisibleTarget === undefined
+        ? observedTargets
+        : [
+          confirmedVisibleTarget,
+          ...observedTargets.filter((target) =>
+            target.connectionEpoch !== confirmedVisibleTarget?.connectionEpoch
+            || target.networkId !== confirmedVisibleTarget.networkId
+          ),
+        ];
+      confirmedVisibleTarget = undefined;
       const candidates = targets.filter((target) =>
         !unreachableTargets.has(
           `target:${target.connectionEpoch}:${target.networkId}`,
@@ -6245,11 +6256,11 @@ function huntOrExplore(
             );
           const explorationOutcome = yield* Effect.raceFirst(
             advance.pipe(
-              Effect.as("advanced" as const),
+              Effect.as({ type: "advanced" } as const),
               Effect.catchAll((cause) =>
                 cause.operation === "pathfind"
                     || cause.operation === "pathfindXZ"
-                  ? Effect.succeed("route-failed" as const)
+                  ? Effect.succeed({ type: "route-failed" } as const)
                   : Effect.fail(cause)
               ),
             ),
@@ -6259,10 +6270,18 @@ function huntOrExplore(
               attemptedTargets,
               unreachableTargets,
               targetPreference,
-            ).pipe(Effect.as("target-visible" as const)),
+            ).pipe(
+              Effect.map((target) => ({
+                type: "target-visible" as const,
+                target,
+              })),
+            ),
           );
+          if (explorationOutcome.type === "target-visible") {
+            confirmedVisibleTarget = explorationOutcome.target;
+          }
           if (
-            explorationOutcome === "route-failed"
+            explorationOutcome.type === "route-failed"
             && targetPreference?.fallbackToLocalExploration === true
           ) {
             yield* advanceExplorationFrontier(
@@ -6281,7 +6300,7 @@ function huntOrExplore(
                   : Effect.fail(cause)
               ),
             );
-          } else if (explorationOutcome === "route-failed") {
+          } else if (explorationOutcome.type === "route-failed") {
             const latest = yield* state.driver.observe;
             yield* recoverLocalNavigationTrap(
               state,
@@ -6498,10 +6517,10 @@ function waitForVisibleHuntingTarget(
   attemptedTargets: ReadonlySet<string>,
   unreachableTargets: ReadonlySet<string>,
   targetPreference?: HuntTargetPreference,
-): Effect.Effect<void, BeatGameDriverError> {
+): Effect.Effect<BeatGameEntityObservation, BeatGameDriverError> {
   const poll = (
     previouslyVisibleTargets: ReadonlySet<string>,
-  ): Effect.Effect<void, BeatGameDriverError> =>
+  ): Effect.Effect<BeatGameEntityObservation, BeatGameDriverError> =>
     Effect.sleep(Math.max(100, state.strategy.observationPollMs)).pipe(
       Effect.zipRight(state.driver.observe),
       Effect.flatMap((observation) =>
@@ -6512,7 +6531,7 @@ function waitForVisibleHuntingTarget(
           maximumResults: 64,
         }).pipe(
           Effect.flatMap((targets) => {
-            const visibleTargets = new Set(targets.filter((target) =>
+            const visibleTargets = targets.filter((target) =>
               !unreachableTargets.has(
                 `target:${target.connectionEpoch}:${target.networkId}`,
               )
@@ -6525,15 +6544,19 @@ function waitForVisibleHuntingTarget(
                 state.strategy.minimumHealth,
                 targetPreference,
               )
-            ).map((target) =>
-              `${target.connectionEpoch}:${target.networkId}`
-            ));
-            const confirmed = [...visibleTargets].some((targetId) =>
-              previouslyVisibleTargets.has(targetId)
             );
-            return confirmed
-              ? Effect.void
-              : Effect.suspend(() => poll(visibleTargets));
+            const confirmed = visibleTargets.find((target) =>
+              previouslyVisibleTargets.has(
+                `${target.connectionEpoch}:${target.networkId}`,
+              )
+            );
+            return confirmed === undefined
+              ? Effect.suspend(() =>
+                poll(new Set(visibleTargets.map((target) =>
+                  `${target.connectionEpoch}:${target.networkId}`
+                )))
+              )
+              : Effect.succeed(confirmed);
           }),
         )
       ),
