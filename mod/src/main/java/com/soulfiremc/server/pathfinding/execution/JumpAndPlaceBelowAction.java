@@ -25,13 +25,11 @@ import com.soulfiremc.server.pathfinding.SFVec3i;
 import com.soulfiremc.server.pathfinding.graph.constraint.PathConstraint;
 import com.soulfiremc.server.util.SFBlockHelpers;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 
-@Slf4j
 @RequiredArgsConstructor
 public final class JumpAndPlaceBelowAction implements WorldAction {
   private static final int MAX_CONFIRMATION_TICKS = 40;
@@ -131,10 +129,6 @@ public final class JumpAndPlaceBelowAction implements WorldAction {
       return;
     }
 
-    var placeTarget = Vec3.atCenterOf(blockPlaceAgainstData.againstPos().toBlockPos()).add(
-      blockPlaceAgainstData.blockFace().toDirection().getUnitVec3().multiply(0.5, 0.5, 0.5));
-    connection.rotationControl().lookAt(placeTarget);
-
     if (placementHand == null) {
       placementHand = ItemPlaceHelper.placeBestBlockInHand(
         connection,
@@ -158,11 +152,18 @@ public final class JumpAndPlaceBelowAction implements WorldAction {
       // the block being placed. Releasing jump on the first airborne tick
       // sends use-item-on while the player still occupies the target cell,
       // which authoritative servers reject.
+      // Keep the view level while swimming. A swimming player follows their
+      // pitch, so aiming at the block below while ascending can pin them in
+      // flowing water and prevent the pillar jump from ever starting.
+      connection.rotationControl().lookHorizontallyAt(placementCenter);
       connection.controlState().jump(true);
       return;
     }
     connection.controlState().jump(false);
 
+    var placeTarget = Vec3.atCenterOf(blockPlaceAgainstData.againstPos().toBlockPos()).add(
+      blockPlaceAgainstData.blockFace().toDirection().getUnitVec3().multiply(0.5, 0.5, 0.5));
+    connection.rotationControl().lookAt(placeTarget);
     var hand = placementHand;
     if (!connection.rotationControl().isFacing(placeTarget)) {
       return;

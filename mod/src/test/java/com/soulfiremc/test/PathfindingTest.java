@@ -24,6 +24,7 @@ import com.soulfiremc.server.pathfinding.execution.BlockBreakAction;
 import com.soulfiremc.server.pathfinding.execution.BlockPlaceAction;
 import com.soulfiremc.server.pathfinding.execution.GapJumpAction;
 import com.soulfiremc.server.pathfinding.execution.InteractBlockAction;
+import com.soulfiremc.server.pathfinding.execution.JumpAndPlaceBelowAction;
 import com.soulfiremc.server.pathfinding.execution.MovementAction;
 import com.soulfiremc.server.pathfinding.goals.AdjacentToBlockGoal;
 import com.soulfiremc.server.pathfinding.goals.PosGoal;
@@ -249,6 +250,43 @@ final class PathfindingTest {
     ).join();
 
     assertInstanceOf(RouteFinder.FoundRouteResult.class, route);
+  }
+
+  @Test
+  void pathfindingSwimsStraightUpWithoutPlacementBlocks() {
+    var accessor = new TestBlockAccessorBuilder();
+    accessor.setBlockAt(0, 0, 0, Blocks.DIRT);
+    accessor.setBlockAt(0, 1, 0, Blocks.WATER);
+    accessor.setBlockAt(0, 2, 0, Blocks.WATER);
+    var level = accessor.build();
+    var constraint = new AvoidFluidConstraint(
+      TestPathConstraint.INSTANCE,
+      level,
+      OptionalInt.of(1)
+    );
+    var inventory = new ProjectedInventory(
+      List.of(),
+      TestMiningCostCalculator.INSTANCE,
+      constraint
+    );
+    var routeFinder = new RouteFinder(
+      new MinecraftGraph(level, inventory, constraint),
+      new PosGoal(0, 2, 0)
+    );
+
+    var route = routeFinder.findRouteFuture(
+      NodeState.forInfo(new SFVec3i(0, 1, 0), inventory)
+    ).join();
+
+    var foundRouteResult = assertInstanceOf(
+      RouteFinder.FoundRouteResult.class,
+      route
+    );
+    assertEquals(1, foundRouteResult.actions().size());
+    assertInstanceOf(MovementAction.class, foundRouteResult.actions().getFirst());
+    assertFalse(foundRouteResult.actions().stream().anyMatch(
+      JumpAndPlaceBelowAction.class::isInstance
+    ));
   }
 
   @Test

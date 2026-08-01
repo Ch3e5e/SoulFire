@@ -22,6 +22,7 @@ import com.soulfiremc.server.pathfinding.SFVec3i;
 import com.soulfiremc.server.pathfinding.cost.Costs;
 import com.soulfiremc.server.pathfinding.execution.BlockBreakAction;
 import com.soulfiremc.server.pathfinding.execution.JumpAndPlaceBelowAction;
+import com.soulfiremc.server.pathfinding.execution.MovementAction;
 import com.soulfiremc.server.pathfinding.execution.WorldAction;
 import com.soulfiremc.server.pathfinding.graph.BlockFace;
 import com.soulfiremc.server.pathfinding.graph.GraphInstructions;
@@ -49,6 +50,10 @@ public final class UpMovement extends GraphAction implements Cloneable {
   private boolean[] unsafeToBreak;
   // Mutable
   private boolean[] noNeedToBreak;
+  // Mutable
+  private boolean sourceFeetInSwimmableWater;
+  // Mutable
+  private boolean targetFeetInSwimmableWater;
 
   private UpMovement(SubscriptionConsumer blockSubscribers) {
     super(ActionDirection.UP);
@@ -60,6 +65,7 @@ public final class UpMovement extends GraphAction implements Cloneable {
     this.noNeedToBreak = new boolean[arraySize];
 
     this.registerBlockPlacePosition(blockSubscribers);
+    this.registerTargetFeet(blockSubscribers);
   }
 
   public static void registerUpMovements(Consumer<GraphAction> callback, SubscriptionConsumer blockSubscribers) {
@@ -92,6 +98,10 @@ public final class UpMovement extends GraphAction implements Cloneable {
     blockSubscribers.subscribe(FEET_POSITION_RELATIVE_BLOCK, MovementSolidSubscription.INSTANCE);
   }
 
+  private void registerTargetFeet(SubscriptionConsumer blockSubscribers) {
+    blockSubscribers.subscribe(targetFeetBlock, MovementTargetWaterSubscription.INSTANCE);
+  }
+
   @Override
   public List<GraphInstructions> getInstructions(MinecraftGraph graph, SFVec3i node) {
     var actions = new ArrayList<WorldAction>();
@@ -113,6 +123,30 @@ public final class UpMovement extends GraphAction implements Cloneable {
 
     var requiresOneBlock = usableBlockItemsDiff <= 0;
     var absoluteTargetFeetBlock = node.add(targetFeetBlock);
+
+    if (sourceFeetInSwimmableWater) {
+      if (!targetFeetInSwimmableWater) {
+        // Reaching the top of a water block does not create solid footing in
+        // the air above it. Route sideways to a bank instead of planning a
+        // follow-up pillar jump from a node the player cannot stand on.
+        return Collections.emptyList();
+      }
+
+      cost += Costs.SUBMERGED_MOVEMENT;
+      actions.add(new MovementAction(
+        absoluteTargetFeetBlock,
+        false,
+        graph.pathConstraint()
+      ));
+      return Collections.singletonList(new GraphInstructions(
+        absoluteTargetFeetBlock,
+        usableBlockItemsDiff,
+        false,
+        actionDirection,
+        cost,
+        actions
+      ));
+    }
 
     // We need a block to place below us
     if (graph.pathConstraint().doUsableBlocksDecreaseWhenPlaced()) {
@@ -199,6 +233,11 @@ public final class UpMovement extends GraphAction implements Cloneable {
     @Override
     public MinecraftGraph.SubscriptionSingleResult processBlock(MinecraftGraph graph, SFVec3i key, UpMovement upMovement,
                                                                 BlockState blockState, SFVec3i absoluteKey) {
+      if (SFBlockHelpers.isSwimmableWaterBlock(blockState)) {
+        upMovement.sourceFeetInSwimmableWater = true;
+        return MinecraftGraph.SubscriptionSingleResult.CONTINUE;
+      }
+
       // Towering requires placing a block at old feet position
       if (!graph.pathConstraint().canPlaceBlock(absoluteKey)
         || !blockState.canBeReplaced()) {
@@ -242,6 +281,17 @@ public final class UpMovement extends GraphAction implements Cloneable {
       // we know it's unsafe
       upMovement.unsafeToBreak[blockArrayIndex] = true;
 
+      return MinecraftGraph.SubscriptionSingleResult.CONTINUE;
+    }
+  }
+
+  private record MovementTargetWaterSubscription() implements UpMovementSubscription {
+    private static final MovementTargetWaterSubscription INSTANCE = new MovementTargetWaterSubscription();
+
+    @Override
+    public MinecraftGraph.SubscriptionSingleResult processBlock(MinecraftGraph graph, SFVec3i key, UpMovement upMovement,
+                                                                BlockState blockState, SFVec3i absoluteKey) {
+      upMovement.targetFeetInSwimmableWater = SFBlockHelpers.isSwimmableWaterBlock(blockState);
       return MinecraftGraph.SubscriptionSingleResult.CONTINUE;
     }
   }
