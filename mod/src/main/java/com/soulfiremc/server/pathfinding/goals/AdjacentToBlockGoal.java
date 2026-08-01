@@ -25,15 +25,19 @@ import com.soulfiremc.server.pathfinding.graph.MinecraftGraph;
 import java.util.List;
 import java.util.Set;
 
-/// Reaches a safe standing position beside a block without standing on it.
+/// Reaches a safe standing position beside or directly below a block.
 ///
 /// This lets a caller perform an interaction from the side after the route
 /// completes. In particular, a block directly supporting the player can be
-/// approached from an adjacent floor block before it is mined.
+/// approached from an adjacent floor block before it is mined, while an
+/// overhead block can be reached from directly below it.
 public record AdjacentToBlockGoal(
   SFVec3i block,
   Set<SFVec3i> excludedPositions
 ) implements GoalScorer {
+  private static final int MINIMUM_OVERHEAD_REACH = 2;
+  private static final int MAXIMUM_OVERHEAD_REACH = 6;
+
   public AdjacentToBlockGoal {
     excludedPositions = Set.copyOf(excludedPositions);
   }
@@ -49,6 +53,20 @@ public record AdjacentToBlockGoal(
     List<WorldAction> actions
   ) {
     var closestDistance = Double.POSITIVE_INFINITY;
+    for (
+      var deltaY = MINIMUM_OVERHEAD_REACH;
+      deltaY <= MAXIMUM_OVERHEAD_REACH;
+      deltaY++
+    ) {
+      var candidate = block.add(0, -deltaY, 0);
+      if (excludedPositions.contains(candidate)) {
+        continue;
+      }
+      closestDistance = Math.min(
+        closestDistance,
+        position.distance(candidate)
+      );
+    }
     for (var x = -1; x <= 1; x++) {
       for (var z = -1; z <= 1; z++) {
         if (x == 0 && z == 0) {
@@ -85,6 +103,10 @@ public record AdjacentToBlockGoal(
     var deltaZ = block.z - position.z;
     var horizontalDistanceSquared =
       deltaX * deltaX + deltaZ * deltaZ;
+    if (horizontalDistanceSquared == 0) {
+      return deltaY >= MINIMUM_OVERHEAD_REACH
+        && deltaY <= MAXIMUM_OVERHEAD_REACH;
+    }
     return horizontalDistanceSquared >= 1
       && horizontalDistanceSquared <= 2
       && deltaY >= -1

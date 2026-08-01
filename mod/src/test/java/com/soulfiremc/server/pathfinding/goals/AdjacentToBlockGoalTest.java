@@ -42,6 +42,18 @@ final class AdjacentToBlockGoalTest {
   }
 
   @Test
+  void acceptsAReachablePositionDirectlyBelowAnOverheadBlock() {
+    var overheadTarget = new SFVec3i(10, 69, -4);
+    var goal = new AdjacentToBlockGoal(overheadTarget);
+    var position = new SFVec3i(10, 63, -4);
+
+    assertTrue(goal.isFinished(node(position)));
+    assertEquals(0.0D, goal.computeScore(null, position, List.of()));
+    assertFalse(goal.isFinished(node(new SFVec3i(10, 62, -4))));
+    assertFalse(goal.isFinished(node(new SFVec3i(10, 68, -4))));
+  }
+
+  @Test
   void rejectsPositionsOutsideInteractionHeight() {
     assertFalse(GOAL.isFinished(node(new SFVec3i(11, 65, -4))));
     assertFalse(GOAL.isFinished(node(new SFVec3i(11, 60, -4))));
