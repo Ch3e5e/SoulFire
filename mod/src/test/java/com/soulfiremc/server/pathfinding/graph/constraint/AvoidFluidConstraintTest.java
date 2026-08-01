@@ -18,7 +18,9 @@
 package com.soulfiremc.server.pathfinding.graph.constraint;
 
 import com.soulfiremc.server.pathfinding.SFVec3i;
+import com.soulfiremc.server.pathfinding.execution.BlockBreakAction;
 import com.soulfiremc.server.pathfinding.execution.GapJumpAction;
+import com.soulfiremc.server.pathfinding.graph.BlockFace;
 import com.soulfiremc.server.pathfinding.graph.GraphInstructions;
 import com.soulfiremc.server.pathfinding.graph.actions.movement.ActionDirection;
 import com.soulfiremc.test.utils.TestBlockAccessorBuilder;
@@ -51,6 +53,31 @@ final class AvoidFluidConstraintTest {
     assertTrue(AvoidFluidConstraint.isDryDestination(
       level,
       instruction(2, 64, 0)
+    ));
+  }
+
+  @Test
+  void rejectsMiningADestinationThatAdjacentFluidWillFill() {
+    var blocks = new TestBlockAccessorBuilder();
+    blocks.setBlockAt(0, 64, 0, Blocks.STONE);
+    blocks.setBlockAt(1, 64, 0, Blocks.WATER);
+    var level = blocks.build();
+    var target = SFVec3i.from(0, 64, 0);
+
+    assertTrue(AvoidFluidConstraint.isDryDestination(
+      level,
+      instruction(0, 64, 0)
+    ));
+    assertFalse(AvoidFluidConstraint.isDryDestination(
+      level,
+      new GraphInstructions(
+        target,
+        0,
+        false,
+        ActionDirection.NORTH,
+        1,
+        List.of(new BlockBreakAction(target, BlockFace.TOP))
+      )
     ));
   }
 

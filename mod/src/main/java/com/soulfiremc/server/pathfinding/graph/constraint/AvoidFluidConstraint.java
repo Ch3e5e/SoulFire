@@ -17,9 +17,11 @@
  */
 package com.soulfiremc.server.pathfinding.graph.constraint;
 
+import com.soulfiremc.server.pathfinding.execution.BlockBreakAction;
 import com.soulfiremc.server.pathfinding.execution.GapJumpAction;
 import com.soulfiremc.server.pathfinding.graph.GraphInstructions;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.BlockGetter;
 import org.jspecify.annotations.Nullable;
 
@@ -59,8 +61,32 @@ public record AvoidFluidConstraint(
     GraphInstructions instruction
   ) {
     var feet = instruction.blockPosition().toBlockPos();
-    return level.getFluidState(feet).isEmpty()
-      && level.getFluidState(feet.above()).isEmpty();
+    return remainsDryAfterInstruction(level, instruction, feet)
+      && remainsDryAfterInstruction(level, instruction, feet.above());
+  }
+
+  private static boolean remainsDryAfterInstruction(
+    BlockGetter level,
+    GraphInstructions instruction,
+    BlockPos position
+  ) {
+    if (!level.getFluidState(position).isEmpty()) {
+      return false;
+    }
+    var breaksPosition = instruction.actions().stream()
+      .filter(BlockBreakAction.class::isInstance)
+      .map(BlockBreakAction.class::cast)
+      .anyMatch(action ->
+        action.blockPosition().toBlockPos().equals(position)
+      );
+    if (!breaksPosition) {
+      return true;
+    }
+    return level.getFluidState(position.above()).isEmpty()
+      && level.getFluidState(position.north()).isEmpty()
+      && level.getFluidState(position.south()).isEmpty()
+      && level.getFluidState(position.east()).isEmpty()
+      && level.getFluidState(position.west()).isEmpty();
   }
 
   static boolean isAscendingFluidEscape(
