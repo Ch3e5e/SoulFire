@@ -105,6 +105,7 @@ const debugWorldNeighborhood = booleanEnvironment(
   "SOULFIRE_E2E_DEBUG_WORLD_NEIGHBORHOOD",
   false,
 );
+const verboseOutput = booleanEnvironment("SOULFIRE_E2E_VERBOSE", false);
 const minecraftPort = 25_565;
 const attachedMinecraftContainer = optionalEnvironment(
   "SOULFIRE_E2E_MINECRAFT_CONTAINER",
@@ -223,6 +224,7 @@ const program = Effect.scoped(Effect.gen(function* () {
     artifactLogMaximumBytes,
     artifactLogFiles,
     artifactRuns,
+    verboseOutput,
     fixtureConfiguration,
   });
 
@@ -262,7 +264,9 @@ const program = Effect.scoped(Effect.gen(function* () {
       startupTimeoutMs: 180_000,
       defaultTimeoutMs: 10 * 60_000,
       onLog: (line) => {
-        process.stdout.write(`[soulfire] ${line}\n`);
+        if (verboseOutput) {
+          process.stdout.write(`[soulfire] ${line}\n`);
+        }
         void soulfireLog.append(`${line}\n`).catch((cause: unknown) => {
           process.stderr.write(`Could not write SoulFire log: ${String(cause)}\n`);
         });
@@ -1623,7 +1627,9 @@ function record(
 ): Effect.Effect<void, Error> {
   return Effect.suspend(() => {
     const line = json({ observedAt: new Date().toISOString(), kind, ...value });
-    process.stdout.write(`${line}\n`);
+    if (verboseOutput) {
+      process.stdout.write(`${line}\n`);
+    }
     return fromPromise(`record ${kind}`, () =>
       eventLog.append(`${line}\n`)
     );
