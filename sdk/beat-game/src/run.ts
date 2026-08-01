@@ -1343,9 +1343,13 @@ function executeDecision(
                     pendingDeath.observedAt,
                     "preparation",
                   );
+                const recoveryClass = classifyDeathRecoveryInventory(
+                  pendingDeath.inventoryCounts,
+                );
                 if (
                   preparationFailures
                     >= MAX_SAFE_DEATH_RECOVERY_FAILURES
+                  && recoveryClass !== "valuable"
                 ) {
                   const current = yield* state.driver.observe;
                   return yield* abandonPendingDeath(
@@ -1354,6 +1358,20 @@ function executeDecision(
                     current,
                     "Abandoned a distant corpse after three bounded preparation attempts",
                   );
+                }
+                if (
+                  preparationFailures >= MAX_SAFE_DEATH_RECOVERY_FAILURES
+                  && recoveryClass === "valuable"
+                ) {
+                  yield* emit(state, {
+                    type: "diagnostic",
+                    message:
+                      "Continuing preparation for a valuable distant corpse",
+                    data: {
+                      preparationFailures,
+                      reason: preparationPending,
+                    },
+                  });
                 }
                 return {
                   replanReason: preparationPending,
@@ -1388,6 +1406,14 @@ function executeDecision(
                 completedPendingDeath: pendingDeath.observedAt,
               } satisfies ActionResult;
             }
+          }
+          if (recoveryAttempted) {
+            yield* sweepRemainingDeathDrops(
+              state,
+              pendingDeath.inventoryCounts,
+            ).pipe(
+              Effect.catchTag("BeatGameDriverError", () => Effect.void),
+            );
           }
           if (
             recoveryAttempted
@@ -1459,10 +1485,11 @@ function executeDecision(
               );
             }
             if (
-              yield* needsOverworldSurfaceRecovery(
+              (yield* needsOverworldSurfaceRecovery(
                 state,
                 current.player.position,
-              )
+              ))
+              && remainingCorpseDrops.length === 0
             ) {
               yield* escapeToOverworldSurface(
                 state,
@@ -2065,16 +2092,6 @@ function monitorObservedSafety(
     return Effect.succeed({});
   }
   if (
-    decision.type === "recover-death"
-    && previousObservation.player.food > CRITICAL_HUNGER_FOOD_LEVEL
-    && observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
-    && !hasUsableFood(observation)
-  ) {
-    return Effect.succeed({
-      replanReason: "hunger became critical during corpse recovery",
-    } satisfies ActionResult);
-  }
-  if (
     decision.type !== "recover-death"
     && decision.type !== "retreat"
     && decision.type !== "eat"
@@ -2317,7 +2334,6 @@ function shouldCommitToCloseMeleeFight(
   return COMMITTABLE_CLOSE_MELEE_ENTITY_TYPES.has(target.entityType)
     && distanceSquared(observation.player.position, target.position)
       <= EMERGENCY_KNOCKBACK_RANGE ** 2
-    && observation.player.health > LETHAL_MELEE_DISENGAGE_HEALTH
     && (
       hasMeleeWeapon(observation)
       || observation.player.health >= MELEE_DISENGAGE_HEALTH
@@ -3865,6 +3881,9 @@ function defendAgainstTarget(
           }
         }))
         : Effect.void;
+      const commitThroughLethalWound =
+        shouldCommitToCloseRangedFight(observation, target)
+        || shouldCommitToFastMeleePursuerFight(observation, target);
       const guardedAttack = Effect.raceFirst(
         attack.pipe(Effect.as("defended" as const)),
         monitorDefenseHealth(
@@ -3879,6 +3898,7 @@ function defendAgainstTarget(
             || shouldCommitToCloseRangedFight(observation, target)
             || shouldCommitToFastMeleePursuerFight(observation, target)
           ),
+          commitThroughLethalWound,
         ),
       ).pipe(
         Effect.flatMap((outcome) =>
@@ -3905,6 +3925,7 @@ function monitorDefenseHealth(
   engagementHealth: number,
   engagementPosition: BeatGamePosition,
   disengageWhenWounded = true,
+  commitThroughLethalWound = false,
 ): Effect.Effect<"disengage" | "unsafe-air", BeatGameDriverError> {
   return Effect.sleep(
     Math.max(MINIMUM_RECOVERY_POLL_MS, state.strategy.observationPollMs),
@@ -3930,13 +3951,16 @@ function monitorDefenseHealth(
         return Effect.succeed("disengage" as const);
       }
       if (
+        !commitThroughLethalWound
+        && observation.player.health <= LETHAL_MELEE_DISENGAGE_HEALTH
+      ) {
+        return Effect.succeed("disengage" as const);
+      }
+      if (
         !disengageWhenWounded
         || (
-          observation.player.health > LETHAL_MELEE_DISENGAGE_HEALTH
-          && (
-            observation.player.health >= state.strategy.minimumHealth
-            || observation.player.health >= engagementHealth
-          )
+          observation.player.health >= state.strategy.minimumHealth
+          || observation.player.health >= engagementHealth
         )
       ) {
         return monitorDefenseHealth(
@@ -3944,6 +3968,7 @@ function monitorDefenseHealth(
           engagementHealth,
           engagementPosition,
           disengageWhenWounded,
+          commitThroughLethalWound,
         );
       }
       return Effect.succeed("disengage" as const);
@@ -3957,6 +3982,9 @@ function defendAndRecover(
 ): Effect.Effect<void, BeatGameDriverError> {
   return defendAgainstTarget(state, target).pipe(
     Effect.zipRight(
+      retreatAndRecover(state, POST_DEFENSE_RECOVERY_DURATION_MS),
+    ),
+    Effect.zipRight(
       collectNearbyDrops(state.driver, {
         radius: 8,
         maximumDrops: 16,
@@ -3967,9 +3995,6 @@ function defendAndRecover(
           avoidFluids: true,
         },
       }),
-    ),
-    Effect.zipRight(
-      retreatAndRecover(state, POST_DEFENSE_RECOVERY_DURATION_MS),
     ),
     Effect.catchTag(
       "BeatGameDriverError",
@@ -4239,7 +4264,6 @@ function retreatAndRecover(
       Effect.flatMap((observation) => {
         if (
           observation.player.dead
-          || observation.player.health >= state.strategy.minimumHealth
           || attemptsRemaining === 0
         ) {
           return Effect.void;
@@ -4247,6 +4271,11 @@ function retreatAndRecover(
         return findNearbyAttackThreat(state, observation).pipe(
           Effect.flatMap((threat) => {
             if (threat === undefined) {
+              if (
+                observation.player.health >= state.strategy.minimumHealth
+              ) {
+                return Effect.void;
+              }
               if (
                 observation.player.food < 18
                 && !hasUsableFood(observation)
@@ -5766,15 +5795,16 @@ function fillLiquidBucket(
       );
       current = yield* state.driver.observe;
     }
-    const source = (yield* state.driver.queryBlocks({
+    const sources = yield* state.driver.queryBlocks({
       center: current.player.position,
       radius: state.strategy.blockSearchRadius,
       selector: {
         blockIds: [`minecraft:${liquid}`],
         properties: { level: "0" },
       },
-      maximumResults: 1,
-    }))[0];
+      maximumResults: liquid === "lava" ? 32 : 1,
+    });
+    let source = sources[0];
     if (source === undefined) {
       if (liquid === "lava") {
         const canCraftIronPickaxe =
@@ -5876,7 +5906,11 @@ function fillLiquidBucket(
     yield* ensureApproachPickaxe(current);
     current = yield* state.driver.observe;
     if (liquid === "lava") {
-      yield* approachLavaSourceFromSide(state, current, source.position);
+      source = yield* approachLavaSourceFromSide(
+        state,
+        current,
+        sources,
+      );
     } else {
       yield* state.driver.pathfind(
         source.position,
@@ -6336,32 +6370,65 @@ function queryExactBlockAt(
 function approachLavaSourceFromSide(
   state: RunState,
   observation: BeatGameObservation,
-  source: BeatGameBlockPosition,
-): Effect.Effect<void, BeatGameDriverError> {
+  sources: readonly BeatGameBlockObservation[],
+): Effect.Effect<BeatGameBlockObservation, BeatGameDriverError> {
   return Effect.gen(function* () {
-    const candidates = lavaInteractionStandCandidates(source)
-      .sort((left, right) =>
-        distanceSquared(observation.player.position, left)
-        - distanceSquared(observation.player.position, right)
-      );
-    for (const candidate of candidates) {
-      if (!(yield* isSafeLavaInteractionStand(state.driver, candidate))) {
-        continue;
+    const nearbySources = [...sources].sort((left, right) =>
+      distanceSquared(observation.player.position, left.position)
+      - distanceSquared(observation.player.position, right.position)
+    );
+    const preparedSources = yield* Effect.forEach(
+      nearbySources,
+      (source) =>
+        queryLavaInteractionVolume(state.driver, source.position).pipe(
+          Effect.map((blocks) => ({
+            source,
+            blocks,
+            candidates: lavaInteractionStandCandidates(source.position)
+              .sort((left, right) =>
+                distanceSquared(observation.player.position, left)
+                - distanceSquared(observation.player.position, right)
+              ),
+          })),
+        ),
+      { concurrency: 1 },
+    );
+
+    for (const prepared of preparedSources) {
+      for (const candidate of prepared.candidates) {
+        if (!isSafeLavaInteractionStand(prepared.blocks, candidate)) {
+          continue;
+        }
+        const reached = yield* pathfindToLavaInteractionStand(
+          state,
+          candidate,
+          false,
+        );
+        if (reached) {
+          return prepared.source;
+        }
       }
-      const reached = yield* state.driver.pathfind(
-        candidate,
-        LIQUID_INTERACTION_STAND_RADIUS,
-        {
-          ...state.strategy.path,
-          avoidFluids: true,
-          maxFallDistance: Math.min(state.strategy.path.maxFallDistance, 1),
-        },
-      ).pipe(
-        Effect.as(true),
-        Effect.catchTag("BeatGameDriverError", () => Effect.succeed(false)),
-      );
-      if (reached) {
-        return;
+    }
+
+    for (const prepared of preparedSources) {
+      for (const candidate of prepared.candidates) {
+        if (
+          !isExcavatableLavaInteractionStand(
+            prepared.source.position,
+            prepared.blocks,
+            candidate,
+          )
+        ) {
+          continue;
+        }
+        const reached = yield* pathfindToLavaInteractionStand(
+          state,
+          candidate,
+          true,
+        );
+        if (reached) {
+          return prepared.source;
+        }
       }
     }
     return yield* Effect.fail(new BeatGameDriverError({
@@ -6369,11 +6436,50 @@ function approachLavaSourceFromSide(
       code: "unreachable",
       retryable: true,
       message:
-        `Could not reach a safe side-on stand beside the lava source at ${
-          positionKey(source)
-        }`,
+        `Could not reach or excavate a safe side-on stand beside ${
+          nearbySources.length
+        } nearby lava source${nearbySources.length === 1 ? "" : "s"}`,
     }));
   });
+}
+
+function queryLavaInteractionVolume(
+  driver: BeatGameDriver,
+  source: BeatGameBlockPosition,
+): Effect.Effect<
+  ReadonlyMap<string, BeatGameBlockObservation>,
+  BeatGameDriverError
+> {
+  return driver.queryBlocks({
+    center: blockCenter(source),
+    radius: 4.9,
+    selector: {},
+    maximumResults: 500,
+  }).pipe(
+    Effect.map((blocks) =>
+      new Map(blocks.map((block) => [positionKey(block.position), block]))
+    ),
+  );
+}
+
+function pathfindToLavaInteractionStand(
+  state: RunState,
+  candidate: BeatGamePosition,
+  allowMining: boolean,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  return state.driver.pathfind(
+    candidate,
+    LIQUID_INTERACTION_STAND_RADIUS,
+    {
+      ...state.strategy.path,
+      allowMining,
+      avoidFluids: true,
+      maxFallDistance: Math.min(state.strategy.path.maxFallDistance, 1),
+    },
+  ).pipe(
+    Effect.as(true),
+    Effect.catchTag("BeatGameDriverError", () => Effect.succeed(false)),
+  );
 }
 
 function lavaInteractionStandCandidates(
@@ -6391,7 +6497,7 @@ function lavaInteractionStandCandidates(
       if (xOffset === 0 && zOffset === 0) {
         continue;
       }
-      for (let yOffset = -3; yOffset <= 3; yOffset++) {
+      for (let yOffset = -1; yOffset <= 3; yOffset++) {
         const candidate = {
           x: source.x + xOffset + 0.5,
           y: source.y + yOffset,
@@ -6415,24 +6521,43 @@ function lavaInteractionStandCandidates(
 }
 
 function isSafeLavaInteractionStand(
-  driver: BeatGameDriver,
+  blocks: ReadonlyMap<string, BeatGameBlockObservation>,
   candidate: BeatGamePosition,
-): Effect.Effect<boolean, BeatGameDriverError> {
+): boolean {
   const body = floorBlockPosition(candidate);
-  return Effect.all([
-    queryExactBlockAt(driver, body),
-    queryExactBlockAt(driver, { ...body, y: body.y + 1 }),
-    queryExactBlockAt(driver, { ...body, y: body.y - 1 }),
-  ]).pipe(
-    Effect.map(([feet, head, support]) =>
-      feet?.replaceable === true
-      && head?.replaceable === true
-      && isStableStaircaseAnchor(support)
-      && ![feet, head, support].some(({ blockId }) =>
-        isPlayerFluidBlock(blockId)
-      )
-    ),
+  const feet = blocks.get(positionKey(body));
+  const head = blocks.get(positionKey({ ...body, y: body.y + 1 }));
+  const support = blocks.get(positionKey({ ...body, y: body.y - 1 }));
+  return feet?.replaceable === true
+    && head?.replaceable === true
+    && isStableStaircaseAnchor(support)
+    && ![feet, head, support].some((block) =>
+      block !== undefined && isPlayerFluidBlock(block.blockId)
+    );
+}
+
+function isExcavatableLavaInteractionStand(
+  source: BeatGameBlockPosition,
+  blocks: ReadonlyMap<string, BeatGameBlockObservation>,
+  candidate: BeatGamePosition,
+): boolean {
+  const body = floorBlockPosition(candidate);
+  const feet = blocks.get(positionKey(body));
+  const head = blocks.get(positionKey({ ...body, y: body.y + 1 }));
+  const support = blocks.get(positionKey({ ...body, y: body.y - 1 }));
+  const horizontalDistance = Math.max(
+    Math.abs(body.x - source.x),
+    Math.abs(body.z - source.z),
   );
+  return horizontalDistance >= 2
+    && isStableStaircaseAnchor(support)
+    && [feet, head].every((block) =>
+      block !== undefined
+      && !isPlayerFluidBlock(block.blockId)
+      && (block.replaceable
+        || block.diggable
+          && !isGravityAffectedBlockId(block.blockId))
+    );
 }
 
 function isPlayerStabilityBlock(
@@ -9419,7 +9544,7 @@ function waitForDeathRecoveryInventory(
           expectedCounts === undefined
             ? hasMeaningfulRecoveryInventory(observation)
             : hasRecoveredDeathInventory(
-              observation.inventory.counts,
+              observation,
               expectedCounts,
             )
         )
@@ -9454,7 +9579,16 @@ function updateObservedState(
       (previous) => [previous, observation] as const,
     );
     if (!observation.player.dead) {
-      yield* Ref.set(state.lastLivingObservation, observation);
+      const lastLivingObservation = yield* Ref.get(
+        state.lastLivingObservation,
+      );
+      const inventoryWasClearedBeforeDeathState =
+        hasMeaningfulRecoveryInventory(lastLivingObservation)
+        && !hasMeaningfulRecoveryInventory(observation)
+        && inventoryItemCount(observation) === 0;
+      if (!inventoryWasClearedBeforeDeathState) {
+        yield* Ref.set(state.lastLivingObservation, observation);
+      }
       return;
     }
     if (previousObservation.player.dead) {
@@ -9652,9 +9786,9 @@ function restorePendingDeaths(
       inventoryCounts === undefined && observation.player.dead
       || (
         inventoryCounts === undefined
-        ? hasMeaningfulRecoveryInventory(observation)
-        : hasRecoveredDeathInventory(
-          observation.inventory.counts,
+          ? hasMeaningfulRecoveryInventory(observation)
+          : hasRecoveredDeathInventory(
+          observation,
           inventoryCounts,
         )
       )
@@ -9676,12 +9810,52 @@ function restorePendingDeaths(
 }
 
 function hasRecoveredDeathInventory(
-  currentCounts: Readonly<Record<string, number>>,
+  observation: BeatGameObservation,
   deathCounts: Readonly<Record<string, number>>,
 ): boolean {
-  return Object.entries(deathCounts).every(
-    ([itemId, count]) => count <= 0 || (currentCounts[itemId] ?? 0) >= count,
+  const expectedEntries = Object.entries(deathCounts)
+    .filter(([, count]) => count > 0);
+  const valuableEntries = expectedEntries.filter(
+    ([itemId]) => !RENEWABLE_DEATH_RECOVERY_ITEM_IDS.has(itemId),
   );
+  const requiredEntries = valuableEntries.length > 0
+    ? valuableEntries
+    : expectedEntries;
+  return requiredEntries.every(
+    ([itemId, count]) => (observation.inventory.counts[itemId] ?? 0) >= count,
+  );
+}
+
+function sweepRemainingDeathDrops(
+  state: RunState,
+  expectedCounts: Readonly<Record<string, number>> | undefined,
+): Effect.Effect<void, BeatGameDriverError> {
+  if (expectedCounts === undefined) {
+    return Effect.void;
+  }
+  return Effect.gen(function* () {
+    const observation = yield* state.driver.observe;
+    const missingItemIds = Object.entries(expectedCounts)
+      .filter(([itemId, count]) =>
+        count > 0 && (observation.inventory.counts[itemId] ?? 0) < count
+      )
+      .map(([itemId]) => itemId);
+    if (missingItemIds.length === 0) {
+      return;
+    }
+    yield* collectNearbyDrops(state.driver, {
+      itemIds: missingItemIds,
+      radius: 24,
+      maximumDrops: 64,
+      settleDelayMs: 500,
+      maximumVerticalDistance: 16,
+      path: {
+        ...state.strategy.path,
+        allowPlacing: false,
+        avoidFluids: true,
+      },
+    });
+  });
 }
 
 function isPendingDeathRecoverable(pendingDeath: PendingDeath): boolean {
