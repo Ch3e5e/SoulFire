@@ -8701,7 +8701,7 @@ describe("beat-game run lifecycle", () => {
       networkId: 46,
       entityType: "minecraft:salmon",
       position: {
-        x: 24,
+        x: 28,
         y: 61,
         z: 0,
         dimension: "minecraft:overworld",
@@ -8732,6 +8732,22 @@ describe("beat-game run lifecycle", () => {
         retryable: true,
         message: "No dry route leaves the island",
       }))));
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+        driver.currentObservation = observation({
+          position,
+          food: 12,
+          health: 8,
+          counts: {
+            "minecraft:iron_ingot": 7,
+            "minecraft:oak_log": 8,
+            "minecraft:shield": 1,
+            "minecraft:stone_pickaxe": 1,
+            "minecraft:stone_sword": 1,
+          },
+        });
+      });
     driver.taskResolver = (task) =>
       Effect.sync(() => {
         driver.tasks.push(task);
@@ -8757,6 +8773,19 @@ describe("beat-game run lifecycle", () => {
       allowMining: false,
       allowPlacing: false,
       avoidFluids: true,
+    });
+    expect(driver.paths[0]).toMatchObject({
+      position: {
+        x: 8,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      policy: {
+        allowMining: false,
+        allowPlacing: false,
+        avoidFluids: false,
+      },
     });
     const attackIndex = driver.tasks.findIndex(
       (task) => task.type === "attack-entity",

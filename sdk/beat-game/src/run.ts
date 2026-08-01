@@ -6596,7 +6596,7 @@ function huntOrExplore(
           },
           HUNT_APPROACH_GOAL_RADIUS,
           targetExplorationPath,
-          true,
+          !aquaticTarget,
           current.player.health >= state.strategy.minimumHealth
             && current.player.food > CRITICAL_HUNGER_FOOD_LEVEL,
         ).pipe(
