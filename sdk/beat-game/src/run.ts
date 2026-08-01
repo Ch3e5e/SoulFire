@@ -1766,13 +1766,15 @@ function executeDecision(
       const response = result.airEscapePosition !== undefined
         ? emergencyAirAscent(state, result.airEscapePosition)
         : result.escapeTarget !== undefined
-        ? escapeFromTarget(state, result.escapeTarget, {
-          continueEscapingWhenHit: decision.type === "recover-death",
-        }).pipe(
-          Effect.zipRight(
-            retreatAndRecover(state, POST_DEFENSE_RECOVERY_DURATION_MS),
-          ),
-        )
+        ? decision.type === "recover-death"
+          ? escapeFromTarget(state, result.escapeTarget, {
+            continueEscapingWhenHit: true,
+          })
+          : escapeFromTarget(state, result.escapeTarget).pipe(
+            Effect.zipRight(
+              retreatAndRecover(state, POST_DEFENSE_RECOVERY_DURATION_MS),
+            ),
+          )
         : result.defenseTarget !== undefined
         ? defendAndRecover(state, result.defenseTarget)
         : result.travelMealRequested === true

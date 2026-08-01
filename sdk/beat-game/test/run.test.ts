@@ -2699,13 +2699,85 @@ describe("beat-game run lifecycle", () => {
 
     expect(recoveries).toBe(2);
     expect(driver.tasks).toContainEqual(expect.objectContaining({
-      type: "attack-nearest",
-      selector: {
-        categories: [2],
-        alive: true,
-      },
+      type: "attack-entity",
+      target: expect.objectContaining({
+        connectionEpoch: zombie.connectionEpoch,
+        networkId: zombie.networkId,
+      }),
       selectBestWeapon: true,
     }));
+  });
+
+  it("resumes promptly after evading a corpse recovery attacker", async () => {
+    const driver = new FakeBeatGameDriver();
+    const deathPosition = {
+      x: 24,
+      y: 64,
+      z: -12,
+      dimension: "minecraft:overworld",
+    };
+    const spider = {
+      connectionEpoch: "epoch-1",
+      networkId: 33,
+      entityType: "minecraft:spider",
+      position: {
+        x: 2,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 16,
+      observedAt: "2026-01-01T00:00:01.000Z",
+    } as const;
+    driver.currentObservation = observation({
+      dead: true,
+      health: 0,
+      position: deathPosition,
+      counts: { "minecraft:iron_ingot": 7 },
+    });
+    driver.taskObserver = (task) => {
+      if (task.type === "flee") {
+        driver.entityResults = [];
+      }
+    };
+    let recoveries = 0;
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+        hooks: {
+          recoverDeath: () => {
+            const waitForInterruption = recoveries === 0;
+            return Effect.sync(() => {
+              recoveries += 1;
+              if (recoveries === 1) {
+                driver.currentObservation = observation({ health: 6 });
+                driver.entityResults = [spider];
+              }
+            }).pipe(
+              Effect.zipRight(
+                waitForInterruption ? Effect.never : Effect.void,
+              ),
+            );
+          },
+        },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (recoveries < 2) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(recoveries).toBe(2);
+    expect(driver.tasks.filter((task) => task.type === "flee")).toHaveLength(1);
   });
 
   it("reorients a corpse recovery escape when the bot is hit again", async () => {
