@@ -6350,6 +6350,7 @@ function huntOrExplore(
       const explorationPath = {
         ...huntingPath,
         allowMining: false,
+        allowPlacing: false,
         sprint: false,
       };
       if (yield* needsOverworldSurfaceRecovery(state, current.player.position)) {
@@ -6551,6 +6552,7 @@ function huntOrExplore(
       const targetExplorationPath = {
         ...targetHuntingPath,
         allowMining: false,
+        allowPlacing: false,
         sprint: false,
       };
       const targetDistanceSquared = horizontalDistanceSquared(

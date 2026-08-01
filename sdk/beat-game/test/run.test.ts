@@ -8673,6 +8673,8 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks.some((task) => task.type === "attack-entity"))
       .toBe(false);
     expect(driver.xzPaths[0]?.policy).toMatchObject({
+      allowMining: false,
+      allowPlacing: false,
       avoidFluids: true,
     });
   });
