@@ -2307,6 +2307,21 @@ function escapeFromTarget(
     if (observation.player.dead) {
       return;
     }
+    if (shouldCommitToCloseRangedFight(observation, target)) {
+      yield* defendAgainstTarget(state, target).pipe(
+        Effect.catchTag(
+          "BeatGameDriverError",
+          (error) =>
+            error.operation === "task.attack-entity"
+                || error.operation === "task.attack-nearest"
+                || error.code === "not_found"
+                || error.code === "unreachable"
+              ? knockBackAndSprintAway(state, observation, target)
+              : Effect.fail(error),
+        ),
+      );
+      return;
+    }
     if (
       target.entityType === "minecraft:creeper"
       || PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
