@@ -9510,6 +9510,118 @@ describe("beat-game run lifecycle", () => {
     ]);
   });
 
+  it("resumes an urgent aquatic food hunt after replenishing air", async () => {
+    const driver = new FakeBeatGameDriver();
+    const salmon = {
+      connectionEpoch: "epoch-1",
+      networkId: 48,
+      entityType: "minecraft:salmon",
+      position: {
+        x: 3,
+        y: 61,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 3,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.currentObservation = observation({
+      food: 5,
+      health: 8,
+      counts: { "minecraft:wooden_sword": 1 },
+    });
+    driver.entityResults = [salmon];
+    driver.blockQueryResolver = (query) =>
+      query.selector.blockIds?.includes("minecraft:water") === true
+          && driver.currentObservation.player.position.x >= 2
+        ? [blockObservation({
+          x: Math.floor(query.center.x),
+          y: Math.floor(query.center.y),
+          z: Math.floor(query.center.z),
+          dimension: query.center.dimension,
+        }, {
+          blockId: "minecraft:water",
+          diggable: false,
+          replaceable: true,
+        })]
+        : [];
+    let firstPursuit = true;
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.suspend(() => {
+        driver.paths.push({ position, radius, policy });
+        if (position.x === salmon.position.x && firstPursuit) {
+          firstPursuit = false;
+          driver.currentObservation = observation({
+            food: 5,
+            health: 8,
+            air: 100,
+            position: {
+              x: salmon.position.x,
+              y: 59,
+              z: salmon.position.z,
+              dimension: salmon.position.dimension,
+            },
+            counts: { "minecraft:wooden_sword": 1 },
+          });
+          return Effect.never;
+        }
+        return Effect.void;
+      });
+    driver.actionObserver = (action) => {
+      if (
+        action.type !== "set-movement"
+        || action.forward !== true
+        || action.jump !== true
+      ) {
+        return;
+      }
+      driver.currentObservation = observation({
+        food: 5,
+        health: 8,
+        air: 300,
+        position: {
+          x: salmon.position.x,
+          y: 62,
+          z: salmon.position.z,
+          dimension: salmon.position.dimension,
+        },
+        counts: { "minecraft:wooden_sword": 1 },
+      });
+    };
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (task.type === "attack-entity") {
+          driver.entityResults = [];
+        }
+      });
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some((task) => task.type === "attack-entity")) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    })));
+
+    expect(driver.actions).toContainEqual(expect.objectContaining({
+      type: "look",
+      pitch: -90,
+    }));
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+      target: expect.objectContaining({ networkId: salmon.networkId }),
+    }));
+    expect(driver.paths).toHaveLength(1);
+    expect(driver.surfaceQueries.every(({ radius }) => radius === 4)).toBe(
+      true,
+    );
+  }, 10_000);
+
   it("crosses water when a healthy food search has no dry route", async () => {
     const driver = new FakeBeatGameDriver();
     const salmon = {

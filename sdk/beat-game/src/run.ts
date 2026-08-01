@@ -1770,7 +1770,17 @@ function executeDecision(
     ).pipe(
       Effect.flatMap((result) => {
       const response = result.airEscapePosition !== undefined
-        ? emergencyAirAscent(state, result.airEscapePosition)
+        ? emergencyAirAscent(
+          state,
+          result.airEscapePosition,
+          {
+            seekDrySurfaceAfterRecovery:
+              !shouldResumeUrgentAquaticFoodHunt(
+                decision,
+                safetyObservation,
+              ),
+          },
+        )
         : result.escapeTarget !== undefined
         ? decision.type === "recover-death"
           ? escapeFromTarget(state, result.escapeTarget, {
@@ -2890,6 +2900,21 @@ function hasUnsafeAir(observation: BeatGameObservation): boolean {
       <= Math.min(MINIMUM_SAFE_AIR_TICKS, observation.player.maxAir * 2 / 3);
 }
 
+function shouldResumeUrgentAquaticFoodHunt(
+  decision: Exclude<
+    BeatGamePlannerDecision,
+    { readonly type: "advance-phase" }
+  >,
+  observation: BeatGameObservation,
+): boolean {
+  return decision.type === "satisfy-requirement"
+    && (
+      decision.requirement.key === "food"
+      || decision.requirement.key === "food-supply"
+    )
+    && observation.player.food <= URGENT_AQUATIC_HUNT_FOOD_LEVEL;
+}
+
 function waitForUnsafeAir(
   state: RunState,
 ): Effect.Effect<"dead" | "unsafe-air", BeatGameDriverError> {
@@ -2913,8 +2938,15 @@ function waitForUnsafeAir(
 function emergencyAirAscent(
   state: RunState,
   position: BeatGamePosition,
-  attemptsRemaining = AIR_ESCAPE_MAXIMUM_RECOVERY_ATTEMPTS,
+  options: {
+    readonly attemptsRemaining?: number;
+    readonly seekDrySurfaceAfterRecovery?: boolean;
+  } = {},
 ): Effect.Effect<void, BeatGameDriverError> {
+  const attemptsRemaining = options.attemptsRemaining
+    ?? AIR_ESCAPE_MAXIMUM_RECOVERY_ATTEMPTS;
+  const seekDrySurfaceAfterRecovery =
+    options.seekDrySurfaceAfterRecovery ?? true;
   return state.driver.observe.pipe(
     Effect.flatMap((observation) =>
       observation.player.dead
@@ -2931,6 +2963,7 @@ function emergencyAirAscent(
                   position,
                   attemptsRemaining,
                   observation,
+                  seekDrySurfaceAfterRecovery,
                 ).pipe(
                   Effect.as({ type: "recovered" } as const),
                 ),
@@ -3019,6 +3052,7 @@ function recoverFromFluid(
   originalPosition: BeatGamePosition,
   attemptsRemaining: number,
   observation: BeatGameObservation,
+  seekDrySurfaceAfterRecovery: boolean,
 ): Effect.Effect<void, BeatGameDriverError> {
   return state.driver.withControl(
     state.driver.act({
@@ -3043,7 +3077,9 @@ function recoverFromFluid(
     ),
   ).pipe(
     Effect.flatMap((recovered) =>
-      swimToNearbyDrySurface(state, !recovered)
+      recovered && !seekDrySurfaceAfterRecovery
+        ? Effect.succeed(true)
+        : swimToNearbyDrySurface(state, !recovered)
     ),
     Effect.flatMap((reachedDrySurface) =>
       reachedDrySurface
@@ -3065,7 +3101,10 @@ function recoverFromFluid(
                     ? emergencyAirAscent(
                       state,
                       latest.player.position,
-                      attemptsRemaining - 1,
+                      {
+                        attemptsRemaining: attemptsRemaining - 1,
+                        seekDrySurfaceAfterRecovery,
+                      },
                     )
                     : Effect.fail(new BeatGameDriverError({
                       operation: "recover-air",
@@ -4963,7 +5002,9 @@ function tryFishForFood(
           yield* emergencyAirAscent(
             state,
             current.player.position,
-            AIR_ESCAPE_MAXIMUM_RECOVERY_ATTEMPTS,
+            {
+              attemptsRemaining: AIR_ESCAPE_MAXIMUM_RECOVERY_ATTEMPTS,
+            },
           );
           continue;
         }
@@ -6604,7 +6645,9 @@ function huntOrExplore(
     const attemptedTargets = new Set<string>();
     const locallyUnreachable = new Set<string>();
     let confirmedVisibleTarget: BeatGameEntityObservation | undefined;
-    let allowEmergencyAquaticFallback = false;
+    let allowEmergencyAquaticFallback =
+      targetPreference?.allowUrgentAquaticTargets === true
+      && observation.player.food <= URGENT_AQUATIC_HUNT_FOOD_LEVEL;
     let aquaticPursuitActive = false;
     let attacked = 0;
     let explorationHops = 0;
