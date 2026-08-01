@@ -6223,6 +6223,122 @@ describe("beat-game run lifecycle", () => {
     expect(driver.actions).toContainEqual({ type: "reset-movement" });
   });
 
+  it("keeps ascending before responding to an underwater threat", async () => {
+    const driver = new FakeBeatGameDriver();
+    const creeper = {
+      connectionEpoch: "epoch-1",
+      networkId: 54,
+      entityType: "minecraft:creeper",
+      position: {
+        x: 2,
+        y: 51,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:01.000Z",
+    } satisfies BeatGameEntityObservation;
+    driver.blockQueryResolver = (query) =>
+      query.selector.blockIds?.includes("minecraft:water") === true
+        ? [blockObservation({
+          x: Math.floor(query.center.x),
+          y: Math.floor(query.center.y),
+          z: Math.floor(query.center.z),
+          dimension: query.center.dimension,
+        }, {
+          blockId: "minecraft:water",
+          diggable: false,
+          replaceable: true,
+        })]
+        : [];
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2) === true ? [creeper] : [];
+    let ascending = false;
+    let responseAir: number | undefined;
+    driver.actionObserver = (action) => {
+      if (
+        action.type === "set-movement"
+        && action.forward === true
+        && action.jump === true
+      ) {
+        ascending = true;
+      } else if (action.type === "reset-movement") {
+        ascending = false;
+      } else if (action.type === "attack-entity") {
+        responseAir ??= driver.currentObservation.player.air;
+      }
+    };
+    driver.observationResolver = () =>
+      Effect.sync(() => {
+        if (!ascending) {
+          return driver.currentObservation;
+        }
+        driver.currentObservation = {
+          ...driver.currentObservation,
+          player: {
+            ...driver.currentObservation.player,
+            air: Math.min(
+              driver.currentObservation.player.maxAir,
+              driver.currentObservation.player.air + 40,
+            ),
+            position: {
+              ...driver.currentObservation.player.position,
+              y: driver.currentObservation.player.position.y + 0.75,
+            },
+          },
+        };
+        return driver.currentObservation;
+      });
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (task.type === "flee") {
+          responseAir ??= driver.currentObservation.player.air;
+        }
+      }).pipe(
+        Effect.zipRight(
+          task.type === "collect-blocks" ? Effect.never : Effect.void,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (
+              !driver.tasks.some((task) => task.type === "collect-blocks")
+            ) {
+              yield* Effect.sleep(1);
+            }
+            driver.currentObservation = observation({
+              air: 100,
+              health: 3,
+              position: { x: 0, y: 51, z: 0 },
+            });
+            while (responseAir === undefined) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(responseAir).toBeGreaterThan(200);
+    expect(driver.actions).toContainEqual({
+      type: "set-movement",
+      forward: true,
+      jump: true,
+      sprint: true,
+    });
+    expect(driver.actions).toContainEqual({ type: "reset-movement" });
+  });
+
   it("widens the shore search after replenishing air in open water", async () => {
     const driver = new FakeBeatGameDriver();
     const distantSurfaceColumns = [

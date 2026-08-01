@@ -2806,6 +2806,8 @@ function monitorAirRecoveryThreat(
       Effect.flatMap((observation) =>
         observation.player.dead
           ? Effect.never
+          : hasUnsafeAir(observation)
+          ? Effect.suspend(poll)
           : findImmediateThreat(state, observation).pipe(
             Effect.flatMap((threat) =>
               threat === undefined
