@@ -3752,6 +3752,12 @@ function waitForDrySurfaceApproach(
   );
 }
 
+function isAggressiveNeutralMob(
+  entity: BeatGameEntityObservation,
+): boolean {
+  return entity.target !== undefined;
+}
+
 function findNearbyAttackThreat(
   state: RunState,
   observation: BeatGameObservation,
@@ -3782,7 +3788,10 @@ function findNearbyAttackThreat(
   ]).pipe(
     Effect.map(([hostiles, dangerousNeutralMobs]) => {
       const threats = new Map(
-        [...hostiles, ...dangerousNeutralMobs].map((entity) => [
+        [
+          ...hostiles,
+          ...dangerousNeutralMobs.filter(isAggressiveNeutralMob),
+        ].map((entity) => [
           `${entity.connectionEpoch}:${entity.networkId}`,
           entity,
         ]),
@@ -4232,9 +4241,10 @@ function retreatAndRecover(
           entityTypes: DANGEROUS_NEUTRAL_ENTITY_TYPES,
           alive: true,
         },
-        maximumResults: 1,
+        maximumResults: 8,
       }).pipe(
-        Effect.flatMap(([threat]) =>
+        Effect.map((entities) => entities.find(isAggressiveNeutralMob)),
+        Effect.flatMap((threat) =>
           threat === undefined
             ? Effect.void
             : flee(state.driver, {
@@ -7032,7 +7042,11 @@ function huntOrExplore(
               current.player.position,
             ) <= targetPreference.preferredRadius ** 2
         );
-      const rankedCandidates = preferredCandidates.length > 0
+      const recoveringHealth =
+        current.player.health < state.strategy.minimumHealth;
+      const rankedCandidates = recoveringHealth
+        ? candidates
+        : preferredCandidates.length > 0
         ? preferredCandidates
         : candidates;
       const target = rankedCandidates.reduce<
@@ -7043,12 +7057,16 @@ function huntOrExplore(
             || huntingTargetRouteCost(
                 candidate,
                 current.player.position,
-                targetPreference?.explorationTarget,
+                recoveringHealth
+                  ? undefined
+                  : targetPreference?.explorationTarget,
               )
                 < huntingTargetRouteCost(
                   nearest,
                   current.player.position,
-                  targetPreference?.explorationTarget,
+                  recoveringHealth
+                    ? undefined
+                    : targetPreference?.explorationTarget,
                 )
             ? candidate
             : nearest,
@@ -10044,9 +10062,6 @@ function prepareForDistantDeathRecovery(
       }
       const needsUrgentAquaticFood =
         value.player.food <= URGENT_AQUATIC_HUNT_FOOD_LEVEL;
-      const canSafelyHuntAquaticFood =
-        value.player.health >= state.strategy.minimumHealth
-        || needsUrgentAquaticFood;
       const foodSearchPath = needsUrgentAquaticFood
         ? { ...protectedRecoveryPath, avoidFluids: false }
         : protectedRecoveryPath;
@@ -10065,9 +10080,9 @@ function prepareForDistantDeathRecovery(
           maximumExplorationHops: 2,
           path: foodSearchPath,
           explorationTarget: pendingDeath.position,
-          allowAquaticTargets: canSafelyHuntAquaticFood,
-          allowUrgentAquaticTargets: canSafelyHuntAquaticFood,
-          allowFluidFallback: canSafelyHuntAquaticFood,
+          allowAquaticTargets: true,
+          allowUrgentAquaticTargets: true,
+          allowFluidFallback: true,
           fallbackToLocalExploration: true,
         },
       );

@@ -1111,6 +1111,17 @@ export function makeSoulFireBeatGameDriver(
               ...(entity.item === undefined
                 ? {}
                 : { itemId: entity.item.itemId }),
+              ...(entity.target === undefined
+                ? {}
+                : {
+                  target: {
+                    connectionEpoch: entity.target.connectionEpoch,
+                    networkId: entity.target.networkId,
+                    ...(entity.target.uuid === undefined
+                      ? {}
+                      : { uuid: entity.target.uuid }),
+                  },
+                }),
               observedAt: new Date().toISOString(),
             };
           })

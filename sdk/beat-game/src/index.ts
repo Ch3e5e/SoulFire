@@ -138,6 +138,7 @@ export {
   type BeatGameClaim,
   type BeatGameDeathPosition,
   type BeatGameEntityObservation,
+  type BeatGameEntityReference,
   type BeatGameEvent,
   type BeatGameEyeSample,
   type BeatGameInventory,

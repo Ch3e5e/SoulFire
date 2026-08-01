@@ -196,7 +196,14 @@ export interface BeatGameEntityObservation {
   readonly alive: boolean;
   readonly health?: number;
   readonly itemId?: string;
+  readonly target?: BeatGameEntityReference;
   readonly observedAt: string;
+}
+
+export interface BeatGameEntityReference {
+  readonly connectionEpoch: string;
+  readonly networkId: number;
+  readonly uuid?: string;
 }
 
 export interface BeatGameBlockObservation {

@@ -1466,6 +1466,110 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("hunts nearby fish before distant livestock for wounded recovery", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const deathPosition = {
+      x: 700,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    const observedAt = new Date().toISOString();
+    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
+      runId: "aquatic-corpse-food-run",
+      teamId: "aquatic-corpse-food-team",
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        deathPositions: [{
+          key: `death:${observedAt}`,
+          value: {
+            ...deathPosition,
+            inventoryCounts: { "minecraft:iron_ingot": 7 },
+          },
+          observedAt,
+          confidence: 1,
+        }],
+      },
+    }, undefined));
+    const salmon = {
+      connectionEpoch: "epoch-1",
+      networkId: 30,
+      entityType: "minecraft:salmon",
+      position: {
+        x: 3,
+        y: 62,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 3,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    const pig = {
+      ...salmon,
+      networkId: 31,
+      entityType: "minecraft:pig",
+      position: { ...salmon.position, x: 96 },
+      health: 10,
+    } as const;
+    driver.currentObservation = observation({
+      health: 6,
+      food: 9,
+      counts: {
+        "minecraft:dirt": 16,
+        "minecraft:oak_log": 12,
+        "minecraft:wooden_pickaxe": 1,
+        "minecraft:wooden_sword": 1,
+      },
+    });
+    driver.entityQueryResolver = (query) =>
+      query.selector.entityTypes?.includes("minecraft:salmon") === true
+        ? [salmon, pig]
+        : [];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(
+        Effect.zipRight(
+          task.type === "attack-entity" ? Effect.never : Effect.void,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        runId: "aquatic-corpse-food-run",
+        team: { teamId: "aquatic-corpse-food-team" },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (!driver.tasks.some((task) =>
+              task.type === "attack-entity"
+            )) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+      target: expect.objectContaining({
+        networkId: salmon.networkId,
+        entityType: salmon.entityType,
+      }),
+    }));
+  });
+
   it("does not replenish a healthy food reserve after every recovery meal", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
@@ -4788,13 +4892,27 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
   });
 
-  it("escapes dangerous neutral mobs before checking for nearby hostiles", async () => {
+  it("escapes aggressive neutral mobs while ignoring calm ones", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
       health: 8,
       counts: { "minecraft:cooked_beef": 1 },
     });
     driver.entityResults = [{
+      connectionEpoch: "epoch-1",
+      networkId: 11,
+      entityType: "minecraft:wolf",
+      position: {
+        x: 1,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 8,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    }, {
       connectionEpoch: "epoch-1",
       networkId: 12,
       entityType: "minecraft:polar_bear",
@@ -4807,6 +4925,10 @@ describe("beat-game run lifecycle", () => {
       velocity: { x: 0, y: 0, z: 0 },
       alive: true,
       health: 30,
+      target: {
+        connectionEpoch: "epoch-1",
+        networkId: 99,
+      },
       observedAt: "2026-01-01T00:00:00.000Z",
     }];
     driver.taskObserver = (task) => {
@@ -4839,7 +4961,7 @@ describe("beat-game run lifecycle", () => {
         entityTypes: expect.arrayContaining(["minecraft:polar_bear"]),
         alive: true,
       },
-      maximumResults: 1,
+      maximumResults: 8,
     });
     expect(driver.tasks.filter((task) => task.type === "flee")).toEqual([
       expect.objectContaining({
