@@ -301,6 +301,7 @@ const HUNT_DROP_ITEM_IDS_BY_ENTITY_TYPE: Readonly<
 const LIQUID_INTERACTION_APPROACH_RADIUS = 3;
 const LIQUID_INTERACTION_STAND_RADIUS = 0.75;
 const LIQUID_INTERACTION_REACH = 4.5;
+const FISHING_SHORE_SEARCH_RADIUS = Math.ceil(LIQUID_INTERACTION_REACH);
 const MAXIMUM_LIQUID_SIGHT_CLEARING_BLOCKS = 4;
 const LAVA_RETREAT_DISTANCE = 8;
 const LAVA_EMERGENCY_SPRINT_MS = 1_500;
@@ -4285,15 +4286,7 @@ function tryFishForFood(
     if (caughtFoodCount(current) > caughtFoodBeforeCollection) {
       return true;
     }
-    const water = yield* state.driver.queryBlocks({
-      center: current.player.position,
-      radius: state.strategy.blockSearchRadius,
-      selector: {
-        blockIds: ["minecraft:water"],
-        properties: { level: "0" },
-      },
-      maximumResults: 256,
-    });
+    let water = yield* queryFishingWater(state, current.player.position);
     if (water.length === 0) {
       return false;
     }
@@ -4311,6 +4304,10 @@ function tryFishForFood(
       });
       current = yield* state.driver.observe;
       if ((current.inventory.counts["minecraft:fishing_rod"] ?? 0) === 0) {
+        return false;
+      }
+      water = yield* queryFishingWater(state, current.player.position);
+      if (water.length === 0) {
         return false;
       }
     }
@@ -4356,58 +4353,107 @@ function tryFishForFood(
       if (!exposed) {
         continue;
       }
-      const approached = yield* state.driver.pathfind(
-        candidate.position,
-        LIQUID_INTERACTION_APPROACH_RADIUS,
-        {
-          ...state.strategy.path,
-          allowMining: false,
-          avoidFluids: true,
-        },
-      ).pipe(
-        Effect.as(true),
-        Effect.catchTag("BeatGameDriverError", () => Effect.succeed(false)),
+      const waterTarget = blockCenter(candidate.position);
+      const surfaceColumns = yield* state.driver.sampleSurface(
+        waterTarget,
+        FISHING_SHORE_SEARCH_RADIUS,
+        1,
       );
-      if (!approached) {
-        continue;
+      const castingPositions = selectStableSurfaceEscapeColumns(
+        surfaceColumns,
+        waterTarget,
+      ).map((surface) => ({
+        x: surface.x + 0.5,
+        y: surface.surfaceY + 1,
+        z: surface.z + 0.5,
+        dimension: candidate.position.dimension,
+      })).filter((position) =>
+        distanceSquared(position, waterTarget)
+          <= LIQUID_INTERACTION_REACH ** 2
+      ).sort((left, right) =>
+        distanceSquared(left, current.player.position)
+          - distanceSquared(right, current.player.position)
+      );
+      for (const castingPosition of castingPositions) {
+        const approached = yield* state.driver.pathfind(
+          castingPosition,
+          DRY_SURFACE_APPROACH_RADIUS,
+          {
+            ...state.strategy.path,
+            allowMining: false,
+            avoidFluids: true,
+          },
+        ).pipe(
+          Effect.as(true),
+          Effect.catchTag("BeatGameDriverError", () => Effect.succeed(false)),
+        );
+        if (!approached) {
+          continue;
+        }
+        current = yield* state.driver.observe;
+        if (yield* isPlayerInFluid(state.driver, current.player.position)) {
+          yield* emergencyAirAscent(
+            state,
+            current.player.position,
+            AIR_ESCAPE_MAXIMUM_RECOVERY_ATTEMPTS,
+          );
+          continue;
+        }
+        const eyePosition = {
+          ...current.player.position,
+          y: current.player.position.y + 1.62,
+        };
+        const target = {
+          x: candidate.position.x + 0.5,
+          y: candidate.position.y + 0.75,
+          z: candidate.position.z + 0.5,
+        };
+        const rotation = rotationToward(eyePosition, target);
+        yield* state.driver.act({
+          type: "look",
+          yaw: rotation.yaw,
+          pitch: rotation.pitch,
+        });
+        yield* waitForViewRotation(
+          state.driver,
+          rotation.yaw,
+          rotation.pitch,
+          40,
+        );
+        yield* fish(state.driver, {
+          maximumCatches: 1,
+          path: state.strategy.path,
+        });
+        yield* collectNearbyDrops(state.driver, {
+          itemIds: ["minecraft:cod", "minecraft:salmon"],
+          radius: 8,
+          maximumDrops: 16,
+          settleDelayMs: 500,
+          path: state.strategy.path,
+        });
+        current = yield* state.driver.observe;
+        return caughtFoodCount(current) > caughtFoodBeforeCollection;
       }
-      current = yield* state.driver.observe;
-      const eyePosition = {
-        ...current.player.position,
-        y: current.player.position.y + 1.62,
-      };
-      const target = {
-        x: candidate.position.x + 0.5,
-        y: candidate.position.y + 0.75,
-        z: candidate.position.z + 0.5,
-      };
-      const rotation = rotationToward(eyePosition, target);
-      yield* state.driver.act({
-        type: "look",
-        yaw: rotation.yaw,
-        pitch: rotation.pitch,
-      });
-      yield* waitForViewRotation(
-        state.driver,
-        rotation.yaw,
-        rotation.pitch,
-        40,
-      );
-      yield* fish(state.driver, {
-        maximumCatches: 1,
-        path: state.strategy.path,
-      });
-      yield* collectNearbyDrops(state.driver, {
-        itemIds: ["minecraft:cod", "minecraft:salmon"],
-        radius: 8,
-        maximumDrops: 16,
-        settleDelayMs: 500,
-        path: state.strategy.path,
-      });
-      current = yield* state.driver.observe;
-      return caughtFoodCount(current) > caughtFoodBeforeCollection;
     }
     return false;
+  });
+}
+
+function queryFishingWater(
+  state: RunState,
+  position: BeatGamePosition,
+): Effect.Effect<
+  readonly BeatGameBlockObservation[],
+  BeatGameDriverError
+> {
+  return state.driver.queryBlocks({
+    center: position,
+    radius: state.strategy.blockSearchRadius,
+    selector: {
+      blockIds: ["minecraft:water"],
+      properties: { level: "0" },
+    },
+    maximumResults: 256,
   });
 }
 

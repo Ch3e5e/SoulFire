@@ -10967,6 +10967,15 @@ describe("beat-game run lifecycle", () => {
       z: 0,
       dimension: "minecraft:overworld",
     }, { blockId: "minecraft:air", replaceable: true });
+    driver.surfaceColumns = [-1, 0, 1].map((z) => ({
+      x: 1,
+      z,
+      loaded: true,
+      surfaceY: 63,
+      blockId: "minecraft:grass_block",
+      skyLight: 15,
+      blockLight: 0,
+    }));
     driver.blockQueryResolver = ({ center, radius, selector }) =>
       radius > 1
         && selector.blockIds?.includes("minecraft:water") === true
@@ -11022,12 +11031,164 @@ describe("beat-game run lifecycle", () => {
       selector.entityTypes?.includes("minecraft:cow") === true
     )).toBe(false);
     expect(driver.paths).toContainEqual(expect.objectContaining({
-      position: water.position,
-      radius: 3,
+      position: {
+        x: 1.5,
+        y: 64,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+      radius: 0.75,
       policy: expect.objectContaining({
         allowMining: false,
         avoidFluids: true,
       }),
+    }));
+  });
+
+  it("refreshes water after crafting a fishing rod and casts from shore", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      health: 6.5,
+      food: 14,
+      counts: {
+        "minecraft:stick": 3,
+        "minecraft:string": 2,
+      },
+    });
+    const initialWater = blockObservation({
+      x: 3,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    }, {
+      blockId: "minecraft:water",
+      properties: { level: "0" },
+    });
+    const refreshedWater = blockObservation({
+      x: 33,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    }, {
+      blockId: "minecraft:water",
+      properties: { level: "0" },
+    });
+    const craftingTable = blockObservation({
+      x: 1,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    }, { blockId: "minecraft:crafting_table" });
+    driver.surfaceColumns = [-1, 0, 1].map((z) => ({
+      x: 31,
+      z,
+      loaded: true,
+      surfaceY: 63,
+      blockId: "minecraft:grass_block",
+      skyLight: 15,
+      blockLight: 0,
+    }));
+    driver.recipeResolver = (resultItemId) => [{
+      recipeId: resultItemId,
+      recipeType: "minecraft:crafting",
+      resultItemId,
+      resultCount: 1,
+      ingredients: [],
+    }];
+    driver.craftabilityResolver = () => ({
+      canCraft: true,
+      maximumCraftCount: 1,
+      requiredStation: "minecraft:crafting_table",
+      missing: [],
+    });
+    driver.blockQueryResolver = ({ center, radius, selector }) => {
+      if (
+        radius > 1
+        && selector.blockIds?.includes("minecraft:water") === true
+        && selector.properties?.level === "0"
+      ) {
+        return center.x < 10 ? [initialWater] : [refreshedWater];
+      }
+      if (
+        selector.blockIds?.includes("minecraft:crafting_table") === true
+      ) {
+        return [craftingTable];
+      }
+      if (selector.replaceable === true) {
+        const water = center.x < 10 ? initialWater : refreshedWater;
+        return Math.floor(center.x) === water.position.x
+            && Math.floor(center.y) === water.position.y + 1
+            && Math.floor(center.z) === water.position.z
+          ? [blockObservation({
+            ...water.position,
+            y: water.position.y + 1,
+          }, { blockId: "minecraft:air", replaceable: true })]
+          : [];
+      }
+      return [];
+    };
+    driver.actionResolver = (action) =>
+      Effect.sync(() => {
+        if (action.type === "look") {
+          driver.currentObservation = {
+            ...driver.currentObservation,
+            player: {
+              ...driver.currentObservation.player,
+              rotation: { yaw: action.yaw, pitch: action.pitch },
+            },
+          };
+        }
+        return {};
+      });
+    let resolveFishingStarted!: () => void;
+    const fishingStarted = new Promise<void>((resolve) => {
+      resolveFishingStarted = resolve;
+    });
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (
+          task.type === "craft"
+          && task.recipeId === "minecraft:fishing_rod"
+        ) {
+          driver.currentObservation = observation({
+            health: 6.5,
+            food: 14,
+            position: { x: 30, y: 64, z: 0 },
+            counts: { "minecraft:fishing_rod": 1 },
+          });
+        }
+        if (task.type === "fish") {
+          resolveFishingStarted();
+        }
+        return {};
+      });
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      yield* Effect.promise(() => fishingStarted).pipe(
+        Effect.timeout("5 seconds"),
+      );
+      yield* run.stop;
+    })));
+
+    const waterQueryCenters = driver.blockQueries.filter(({ selector }) =>
+      selector.blockIds?.includes("minecraft:water") === true
+      && selector.properties?.level === "0"
+    ).map(({ center }) => center.x);
+    expect(waterQueryCenters).toContain(0);
+    expect(waterQueryCenters).toContain(30);
+    expect(driver.paths).toContainEqual(expect.objectContaining({
+      position: {
+        x: 31.5,
+        y: 64,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+      radius: 0.75,
+      policy: expect.objectContaining({ avoidFluids: true }),
     }));
   });
 
@@ -11059,6 +11220,15 @@ describe("beat-game run lifecycle", () => {
       z: 0,
       dimension: "minecraft:overworld",
     }, { blockId: "minecraft:air", replaceable: true });
+    driver.surfaceColumns = [-1, 0, 1].map((z) => ({
+      x: 1,
+      z,
+      loaded: true,
+      surfaceY: 63,
+      blockId: "minecraft:grass_block",
+      skyLight: 15,
+      blockLight: 0,
+    }));
     driver.blockQueryResolver = ({ center, radius, selector }) =>
       radius > 1
         && selector.blockIds?.includes("minecraft:water") === true
