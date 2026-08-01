@@ -516,6 +516,7 @@ const ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES = new Set([
 ]);
 const PROACTIVE_ESCAPE_ONLY_EVASION_RADIUS = 12;
 const PROACTIVE_RANGED_ENGAGEMENT_RADIUS = 16;
+const PROACTIVE_THREAT_MAXIMUM_VERTICAL_DISTANCE = 6;
 const RANGED_THREAT_ESCAPE_TRIGGER_RADIUS = 24;
 const RANGED_THREAT_ESCAPE_SAFE_DISTANCE = 32;
 const DEFENSIVE_PURSUIT_MAX_DISTANCE = 12;
@@ -2110,6 +2111,11 @@ function findImmediateThreat(
         ]),
       );
       const candidates = [...hostiles.values()]
+        .filter((target) =>
+          Math.abs(
+            target.position.y - observation.player.position.y,
+          ) <= PROACTIVE_THREAT_MAXIMUM_VERTICAL_DISTANCE
+        )
         .map((target) => ({
           target,
           distanceSquared: distanceSquared(

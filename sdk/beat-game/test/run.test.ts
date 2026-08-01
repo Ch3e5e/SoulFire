@@ -6934,6 +6934,64 @@ describe("beat-game run lifecycle", () => {
       .toBe(false);
   });
 
+  it("does not abandon the surface to pursue a hostile far below", async () => {
+    const driver = new FakeBeatGameDriver();
+    const skeleton = {
+      connectionEpoch: "epoch-1",
+      networkId: 243,
+      entityType: "minecraft:skeleton",
+      position: {
+        x: 4,
+        y: 53,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:01.000Z",
+    } as const;
+    driver.currentObservation = observation({
+      position: {
+        x: 0,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      counts: { "minecraft:wooden_sword": 1 },
+    });
+    driver.entityResults = [skeleton];
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2) ? driver.entityResults : [];
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (
+              !driver.entityQueries.some((query) =>
+                query.selector.requireLineOfSight === true
+              )
+            ) {
+              yield* Effect.sleep(1);
+            }
+            yield* Effect.sleep(5);
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.tasks.some((task) =>
+      task.type === "attack-nearest"
+      || task.type === "attack-entity"
+      || task.type === "flee"
+    )).toBe(false);
+  });
+
   it("keeps escaping at low health when no route can be found", async () => {
     const driver = new FakeBeatGameDriver();
     const attacker = {
