@@ -9623,6 +9623,16 @@ describe("beat-game run lifecycle", () => {
       },
     });
     driver.entityResults = [salmon];
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+        driver.currentObservation = observation({
+          food: 12,
+          health: 20,
+          position,
+          counts: driver.currentObservation.inventory.counts,
+        });
+      });
     driver.taskResolver = (task) =>
       Effect.sync(() => {
         driver.tasks.push(task);
@@ -9659,7 +9669,16 @@ describe("beat-game run lifecycle", () => {
       avoidFluids: false,
       sprint: true,
     });
-    expect(driver.paths).toHaveLength(0);
+    expect(driver.paths).toContainEqual(expect.objectContaining({
+      position: salmon.position,
+      radius: 2,
+      policy: expect.objectContaining({
+        allowMining: false,
+        allowPlacing: false,
+        avoidFluids: false,
+        sprint: true,
+      }),
+    }));
   });
 
   it("keeps an injured bot on dry land after aquatic food escalation", async () => {
