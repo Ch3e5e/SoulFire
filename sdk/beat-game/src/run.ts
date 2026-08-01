@@ -6520,7 +6520,12 @@ function huntOrExplore(
         current.player.health,
         state.strategy.minimumHealth,
       );
-      const huntingPath = survivalPath;
+      const urgentAquaticExploration =
+        targetPreference?.allowUrgentAquaticTargets === true
+        && current.player.food <= URGENT_AQUATIC_HUNT_FOOD_LEVEL;
+      const huntingPath = urgentAquaticExploration
+        ? { ...survivalPath, avoidFluids: false }
+        : survivalPath;
       const explorationPath = {
         ...huntingPath,
         allowMining: false,
@@ -9459,9 +9464,14 @@ function prepareForDistantDeathRecovery(
       if (food >= DEATH_RECOVERY_MINIMUM_FOOD_COUNT) {
         return Effect.succeed(value);
       }
+      const needsUrgentAquaticFood =
+        value.player.food <= URGENT_AQUATIC_HUNT_FOOD_LEVEL;
       const canSafelyHuntAquaticFood =
         value.player.health >= state.strategy.minimumHealth
-        || value.player.food <= URGENT_AQUATIC_HUNT_FOOD_LEVEL;
+        || needsUrgentAquaticFood;
+      const foodSearchPath = needsUrgentAquaticFood
+        ? { ...protectedRecoveryPath, avoidFluids: false }
+        : protectedRecoveryPath;
       return huntOrExplore(
         state,
         value,
@@ -9475,7 +9485,7 @@ function prepareForDistantDeathRecovery(
           preferredEntityTypes: HIGH_YIELD_FOOD_ANIMAL_TYPES,
           preferredRadius: HIGH_YIELD_FOOD_PREFERENCE_RADIUS,
           maximumExplorationHops: 2,
-          path: protectedRecoveryPath,
+          path: foodSearchPath,
           explorationTarget: pendingDeath.position,
           allowAquaticTargets: canSafelyHuntAquaticFood,
           allowUrgentAquaticTargets: canSafelyHuntAquaticFood,
