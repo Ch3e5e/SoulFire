@@ -2932,11 +2932,15 @@ function recoverFromFailedDefense(
   target: BeatGameEntityObservation,
 ): Effect.Effect<void, BeatGameDriverError> {
   return state.driver.observe.pipe(
-    Effect.flatMap((observation) =>
-      shouldCommitToRangedFight(observation, target)
-        ? Effect.void
-        : escapeFromTarget(state, target)
-    ),
+    Effect.flatMap((observation) => {
+      if (shouldCommitToRangedFight(observation, target)) {
+        return Effect.void;
+      }
+      if (shouldCommitToMeleeFight(observation, target)) {
+        return knockBackAndSprintAway(state, observation, target);
+      }
+      return escapeFromTarget(state, target);
+    }),
   );
 }
 
@@ -3808,6 +3812,14 @@ function defendAndRecover(
     ),
     Effect.zipRight(
       retreatAndRecover(state, POST_DEFENSE_RECOVERY_DURATION_MS),
+    ),
+    Effect.catchTag(
+      "BeatGameDriverError",
+      (error) =>
+        error.operation === "task.attack-entity"
+            || error.operation === "task.attack-nearest"
+          ? recoverFromFailedDefense(state, target)
+          : Effect.fail(error),
     ),
   );
 }
