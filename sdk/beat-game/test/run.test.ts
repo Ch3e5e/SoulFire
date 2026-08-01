@@ -9842,7 +9842,7 @@ describe("beat-game run lifecycle", () => {
     )).toBe(false);
   });
 
-  it("hunts nearby fish after repeated dry food searches find nothing", async () => {
+  it("hunts visible fish after repeated dry food searches find nothing", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
@@ -9864,7 +9864,7 @@ describe("beat-game run lifecycle", () => {
       networkId: 44,
       entityType: "minecraft:salmon",
       position: {
-        x: 7,
+        x: 40,
         y: 63,
         z: 0,
         dimension: "minecraft:overworld",
@@ -9943,6 +9943,7 @@ describe("beat-game run lifecycle", () => {
         sprint: true,
       }),
     }));
+    expect(driver.xzPaths).toHaveLength(0);
   });
 
   it("keeps an injured bot on dry land after aquatic food escalation", async () => {
