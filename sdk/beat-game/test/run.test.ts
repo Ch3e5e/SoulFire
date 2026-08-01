@@ -5311,6 +5311,64 @@ describe("beat-game run lifecycle", () => {
     )).toBe(false);
   });
 
+  it("escapes a close zombie below minimum health despite having a weapon", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      health: 17,
+      counts: {
+        "minecraft:cooked_beef": 1,
+        "minecraft:wooden_sword": 1,
+      },
+    });
+    driver.entityResults = [{
+      connectionEpoch: "epoch-1",
+      networkId: 26,
+      entityType: "minecraft:zombie",
+      position: {
+        x: 2,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:01.000Z",
+    }];
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2) ? driver.entityResults : [];
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (
+              !driver.actions.some((action) =>
+                action.type === "set-movement" && action.sprint === true
+              )
+            ) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.actions).toContainEqual({
+      type: "attack-entity",
+      connectionEpoch: "epoch-1",
+      networkId: 26,
+      sprinting: true,
+    });
+    expect(driver.tasks.some((task) =>
+      task.type === "attack-nearest" || task.type === "attack-entity"
+    )).toBe(false);
+  });
+
   it("disengages when health becomes unsafe during a melee fight", async () => {
     const driver = new FakeBeatGameDriver();
     const zombie = {

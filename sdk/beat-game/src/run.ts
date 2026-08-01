@@ -2148,8 +2148,7 @@ function shouldDisengageFromThreat(
     return !shouldEngageRangedFight(state, observation, target);
   }
   if (PROACTIVE_MELEE_HOSTILE_ENTITY_TYPES.has(target.entityType)) {
-    return !hasMeleeWeapon(observation)
-      && observation.player.health < state.strategy.minimumHealth;
+    return observation.player.health < state.strategy.minimumHealth;
   }
   if (
     observation.player.health
