@@ -8294,7 +8294,7 @@ describe("beat-game run lifecycle", () => {
     } as const;
     driver.currentObservation = observation({
       food: 12,
-      health: 8,
+      health: 20,
       counts: {
         "minecraft:cobblestone": 20,
         "minecraft:iron_ingot": 7,
@@ -8340,6 +8340,75 @@ describe("beat-game run lifecycle", () => {
       allowPlacing: false,
       avoidFluids: false,
       sprint: false,
+    });
+  });
+
+  it("keeps an injured bot on dry land after aquatic food escalation", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
+      runId: "injured-aquatic-food-run",
+      teamId: "injured-aquatic-food-team",
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      planner: {
+        ...initial.planner,
+        completedActions: Array.from(
+          { length: 4 },
+          () => "satisfy:food",
+        ),
+      },
+    }, undefined));
+    driver.currentObservation = observation({
+      food: 12,
+      health: 8,
+      counts: {
+        "minecraft:cobblestone": 20,
+        "minecraft:iron_ingot": 7,
+        "minecraft:oak_log": 8,
+        "minecraft:shield": 1,
+        "minecraft:stone_pickaxe": 1,
+        "minecraft:stone_sword": 1,
+      },
+    });
+    driver.entityResults = [{
+      connectionEpoch: "epoch-1",
+      networkId: 45,
+      entityType: "minecraft:salmon",
+      position: {
+        x: 3,
+        y: 61,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 3,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    }];
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        runId: "injured-aquatic-food-run",
+        team: { teamId: "injured-aquatic-food-team" },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      });
+      while (driver.xzPaths.length === 0) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    })));
+
+    expect(driver.tasks.some((task) => task.type === "attack-entity"))
+      .toBe(false);
+    expect(driver.xzPaths[0]?.policy).toMatchObject({
+      avoidFluids: true,
     });
   });
 

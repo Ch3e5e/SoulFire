@@ -6711,7 +6711,6 @@ function isHuntingTargetWithinReach(
   if (AQUATIC_FOOD_ENTITY_TYPES.has(target.entityType)) {
     return (
       observation.player.health >= minimumHealth
-      || targetPreference?.allowAquaticTargets === true
       || observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
     )
       && Math.abs(target.position.y - observation.player.position.y)
