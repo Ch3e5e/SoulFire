@@ -5904,9 +5904,9 @@ describe("beat-game run lifecycle", () => {
     expect(driver.actions).toContainEqual({ type: "reset-movement" });
   });
 
-  it("replenishes air fully and swims onto nearby dry ground", async () => {
+  it("widens the shore search after replenishing air in open water", async () => {
     const driver = new FakeBeatGameDriver();
-    driver.surfaceColumns = [
+    const distantSurfaceColumns = [
       {
         x: 1,
         z: -1,
@@ -5962,6 +5962,8 @@ describe("beat-game run lifecycle", () => {
         blockLight: 0,
       },
     ];
+    driver.surfaceQueryResolver = (_center, radius) =>
+      radius > 16 ? distantSurfaceColumns : [];
     driver.blockQueryResolver = (query) =>
       query.selector.blockIds?.includes("minecraft:water") === true
           && driver.currentObservation.player.position.x < 4
@@ -6083,6 +6085,14 @@ describe("beat-game run lifecycle", () => {
     })));
 
     expect(ascentObservations).toBeGreaterThanOrEqual(3);
+    expect(driver.surfaceQueries).toContainEqual(expect.objectContaining({
+      radius: 16,
+      sampleStep: 1,
+    }));
+    expect(driver.surfaceQueries).toContainEqual(expect.objectContaining({
+      radius: 96,
+      sampleStep: 4,
+    }));
     expect(driver.actions).toContainEqual(expect.objectContaining({
       type: "look",
       pitch: -20,

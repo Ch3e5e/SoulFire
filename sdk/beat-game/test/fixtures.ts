@@ -145,6 +145,11 @@ export class FakeBeatGameDriver implements BeatGameDriver {
   public readonly blockQueries: BeatGameQueryBlocks[] = [];
   public readonly entityQueries: BeatGameQueryEntities[] = [];
   public readonly raycasts: BeatGameRaycastQuery[] = [];
+  public readonly surfaceQueries: {
+    readonly center: BeatGamePosition;
+    readonly radius: number;
+    readonly sampleStep: number;
+  }[] = [];
   public readonly tasks: BeatGameTask[] = [];
   public readonly taskExecutions: BeatGameTaskExecutionOptions[] = [];
   public readonly taskPolicies: BeatGamePathPolicy[] = [];
@@ -201,6 +206,11 @@ export class FakeBeatGameDriver implements BeatGameDriver {
   public raycastResolver: (
     query: BeatGameRaycastQuery,
   ) => BeatGameRaycastObservation = () => ({ distance: 0 });
+  public surfaceQueryResolver: (
+    center: BeatGamePosition,
+    radius: number,
+    sampleStep: number,
+  ) => readonly BeatGameSurfaceColumn[] = () => this.surfaceColumns;
   public observationResolver: () => Effect.Effect<
     BeatGameObservation,
     BeatGameDriverError
@@ -253,8 +263,15 @@ export class FakeBeatGameDriver implements BeatGameDriver {
       return this.raycastResolver(query);
     });
 
-  public readonly sampleSurface: BeatGameDriver["sampleSurface"] = () =>
-    Effect.sync(() => this.surfaceColumns);
+  public readonly sampleSurface: BeatGameDriver["sampleSurface"] = (
+    center,
+    radius = 8,
+    sampleStep = 2,
+  ) =>
+    Effect.sync(() => {
+      this.surfaceQueries.push({ center, radius, sampleStep });
+      return this.surfaceQueryResolver(center, radius, sampleStep);
+    });
 
   public readonly recipesFor: BeatGameDriver["recipesFor"] = (resultItemId) =>
     Effect.sync(() => this.recipeResolver(resultItemId));

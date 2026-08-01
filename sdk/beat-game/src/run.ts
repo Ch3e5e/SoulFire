@@ -312,6 +312,8 @@ const PORTAL_CASTING_ADDITIONAL_LAVA_SOURCE_COUNT =
   NETHER_PORTAL_FRAME_OBSIDIAN_COUNT - 1;
 const EXPLORATION_REANCHOR_DISTANCE = 16;
 const AIR_ESCAPE_SURFACE_SEARCH_RADIUS = 16;
+const AIR_ESCAPE_EXTENDED_SURFACE_SEARCH_RADIUS = 96;
+const AIR_ESCAPE_EXTENDED_SURFACE_SAMPLE_STEP = 4;
 const AIR_ESCAPE_SURFACE_APPROACH_ATTEMPTS = 180;
 const AIR_ESCAPE_STAGNANT_OBSERVATIONS = 30;
 const AIR_ESCAPE_MAXIMUM_RECOVERY_ATTEMPTS = 3;
@@ -2786,15 +2788,10 @@ function swimToNearbyDrySurface(
     if (observation.player.dead) {
       return true;
     }
-    const columns = yield* state.driver.sampleSurface(
+    const surfaces = (yield* findDrySurfaceEscapeColumns(
+      state,
       observation.player.position,
-      AIR_ESCAPE_SURFACE_SEARCH_RADIUS,
-      1,
-    );
-    const surfaces = selectStableSurfaceEscapeColumns(
-      columns,
-      observation.player.position,
-    ).filter((surface) =>
+    )).filter((surface) =>
       surface.surfaceY - observation.player.position.y
         <= AIR_ESCAPE_MAXIMUM_SWIMMABLE_RISE
     );
@@ -2868,6 +2865,37 @@ function swimToNearbyDrySurface(
     }
     return false;
   });
+}
+
+function findDrySurfaceEscapeColumns(
+  state: RunState,
+  position: BeatGamePosition,
+): Effect.Effect<
+  readonly { readonly x: number; readonly z: number; readonly surfaceY: number }[],
+  BeatGameDriverError
+> {
+  return state.driver.sampleSurface(
+    position,
+    AIR_ESCAPE_SURFACE_SEARCH_RADIUS,
+    1,
+  ).pipe(
+    Effect.map((columns) =>
+      selectStableSurfaceEscapeColumns(columns, position)
+    ),
+    Effect.flatMap((nearbySurfaces) =>
+      nearbySurfaces.length > 0
+        ? Effect.succeed(nearbySurfaces)
+        : state.driver.sampleSurface(
+          position,
+          AIR_ESCAPE_EXTENDED_SURFACE_SEARCH_RADIUS,
+          AIR_ESCAPE_EXTENDED_SURFACE_SAMPLE_STEP,
+        ).pipe(
+          Effect.map((columns) =>
+            selectSurfaceEscapeColumns(columns, position)
+          ),
+        )
+    ),
+  );
 }
 
 function escapeToOverworldSurface(
