@@ -2021,6 +2021,16 @@ function monitorObservedSafety(
     return Effect.succeed({});
   }
   if (
+    decision.type === "recover-death"
+    && previousObservation.player.food > CRITICAL_HUNGER_FOOD_LEVEL
+    && observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
+    && !hasUsableFood(observation)
+  ) {
+    return Effect.succeed({
+      replanReason: "hunger became critical during corpse recovery",
+    } satisfies ActionResult);
+  }
+  if (
     decision.type !== "recover-death"
     && decision.type !== "retreat"
     && decision.type !== "eat"
@@ -9682,6 +9692,15 @@ function prepareForDistantDeathRecovery(
       }).pipe(Effect.zipRight(state.driver.observe));
     };
 
+    if (
+      current.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
+      && travelFoodCount(current) < DEATH_RECOVERY_MINIMUM_FOOD_COUNT
+    ) {
+      current = yield* ensureTravelFood(current);
+      if (travelFoodCount(current) < DEATH_RECOVERY_MINIMUM_FOOD_COUNT) {
+        return DEATH_RECOVERY_FOOD_SEARCH_PENDING;
+      }
+    }
     if (!hasMeleeWeapon(current)) {
       const logs = logCount(current);
       if (logs < EMERGENCY_ARMAMENT_LOG_COUNT) {
