@@ -8936,11 +8936,26 @@ describe("beat-game run lifecycle", () => {
     expect(driver.xzPaths[0]?.policy.avoidFluids).toBe(true);
   }, 10_000);
 
-  it("approaches deeper fish when an injured bot is urgently hungry", async () => {
+  it("approaches deeper fish after repeated safe searches", async () => {
     const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
+      runId: "wounded-aquatic-food-run",
+      teamId: "wounded-aquatic-food-team",
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      planner: {
+        ...initial.planner,
+        completedActions: Array.from(
+          { length: 4 },
+          () => "satisfy:food",
+        ),
+      },
+    }, undefined));
     driver.currentObservation = observation({
       health: 17,
-      food: 8,
+      food: 16,
       counts: {
         "minecraft:cobblestone": 20,
         "minecraft:iron_ingot": 7,
@@ -8972,6 +8987,9 @@ describe("beat-game run lifecycle", () => {
 
     await Effect.runPromise(Effect.scoped(
       beatGameWithDriver(driver, {
+        runId: "wounded-aquatic-food-run",
+        team: { teamId: "wounded-aquatic-food-team" },
+        checkpointStore: store,
         strategy: { observationPollMs: 1 },
       }).pipe(
         Effect.flatMap((run) =>
