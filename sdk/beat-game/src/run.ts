@@ -2213,6 +2213,7 @@ function shouldEngageRangedFight(
   target: BeatGameEntityObservation,
 ): boolean {
   return shouldCommitToRangedFight(observation, target)
+    || isReadyForBarehandedDefense(observation)
     || (
       hasMeleeWeapon(observation)
       && observation.player.health >= state.strategy.minimumHealth
@@ -2251,8 +2252,15 @@ function shouldCommitToFastMeleePursuerFight(
   return FAST_MELEE_PURSUER_ENTITY_TYPES.has(target.entityType)
     && (
       hasMeleeWeapon(observation)
-      || observation.player.health >= MELEE_DISENGAGE_HEALTH
+      || isReadyForBarehandedDefense(observation)
     );
+}
+
+function isReadyForBarehandedDefense(
+  observation: BeatGameObservation,
+): boolean {
+  return observation.player.health >= MELEE_DISENGAGE_HEALTH
+    && observation.player.food >= 18;
 }
 
 function shouldCommitToMeleeFight(
