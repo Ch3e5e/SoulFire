@@ -140,6 +140,7 @@ const LOCAL_NAVIGATION_RECOVERY_TIMEOUT_MS = 15_000;
 const EXPLORATION_MAXIMUM_LEG_DISTANCE = 32;
 const EXPLORATION_MAXIMUM_SURFACE_ELEVATION_CHANGE = 12;
 const MAX_SAFE_DEATH_RECOVERY_FAILURES = 3;
+const FOOD_SEARCH_AQUATIC_ESCALATION_ATTEMPTS = 4;
 const DISTANT_DEATH_RECOVERY_BOOTSTRAP_DISTANCE = 128;
 const DEATH_RECOVERY_ARMAMENT_LOG_COUNT = 2;
 const DEATH_RECOVERY_BOOTSTRAP_LOG_COUNT = 12;
@@ -4087,24 +4088,10 @@ function satisfyFoodRequirement(
           Effect.flatMap((fished) =>
             fished
               ? Effect.void
-              : huntOrExplore(
+              : huntForFoodRequirement(
                 state,
                 current,
-                {
-                  entityTypes: foodHuntEntityTypes(current.player.food),
-                  alive: true,
-                },
                 bufferedCollectionCount("food", remainingRawFood),
-                "find-food-animals",
-                {
-                  preferredEntityTypes: HIGH_YIELD_FOOD_ANIMAL_TYPES,
-                  preferredRadius: HIGH_YIELD_FOOD_PREFERENCE_RADIUS,
-                  allowFluidFallback: false,
-                  path: {
-                    ...state.strategy.path,
-                    avoidFluids: true,
-                  },
-                },
               )
           ),
         );
@@ -4116,25 +4103,7 @@ function satisfyFoodRequirement(
       Effect.flatMap(({ observation: current, recovered }) =>
         recovered
           ? Effect.void
-          : huntOrExplore(
-            state,
-            current,
-            {
-              entityTypes: foodHuntEntityTypes(current.player.food),
-              alive: true,
-            },
-            1,
-            "find-food-animals",
-            {
-              preferredEntityTypes: HIGH_YIELD_FOOD_ANIMAL_TYPES,
-              preferredRadius: HIGH_YIELD_FOOD_PREFERENCE_RADIUS,
-              allowFluidFallback: false,
-              path: {
-                ...state.strategy.path,
-                avoidFluids: true,
-              },
-            },
-          )
+          : huntForFoodRequirement(state, current, 1)
       ),
     );
   }
@@ -4164,6 +4133,57 @@ function satisfyFoodRequirement(
     );
   }
   return cookRawFoodBatch(state, observation, batch);
+}
+
+function huntForFoodRequirement(
+  state: RunState,
+  observation: BeatGameObservation,
+  maximumTargets: number,
+): Effect.Effect<void, BeatGameError | BeatGameDriverError> {
+  return Ref.get(state.checkpoint).pipe(
+    Effect.map((checkpoint) =>
+      countTrailingActions(
+        checkpoint.planner.completedActions,
+        "satisfy:food",
+      ) >= FOOD_SEARCH_AQUATIC_ESCALATION_ATTEMPTS
+    ),
+    Effect.flatMap((allowAquaticTargets) =>
+      huntOrExplore(
+        state,
+        observation,
+        {
+          entityTypes: foodHuntEntityTypes(observation.player.food),
+          alive: true,
+        },
+        maximumTargets,
+        "find-food-animals",
+        {
+          preferredEntityTypes: HIGH_YIELD_FOOD_ANIMAL_TYPES,
+          preferredRadius: HIGH_YIELD_FOOD_PREFERENCE_RADIUS,
+          allowAquaticTargets,
+          allowFluidFallback: false,
+          path: {
+            ...state.strategy.path,
+            avoidFluids: true,
+          },
+        },
+      )
+    ),
+  );
+}
+
+function countTrailingActions(
+  actions: readonly string[],
+  action: string,
+): number {
+  let count = 0;
+  for (let index = actions.length - 1; index >= 0; index -= 1) {
+    if (actions[index] !== action) {
+      break;
+    }
+    count += 1;
+  }
+  return count;
 }
 
 function tryFishForFood(
@@ -5816,6 +5836,7 @@ function ensureArrowIngredients(
 interface HuntTargetPreference {
   readonly preferredEntityTypes: ReadonlySet<string>;
   readonly preferredRadius: number;
+  readonly allowAquaticTargets?: boolean;
   readonly maximumExplorationHops?: number;
   readonly path?: BeatGameStrategy["path"];
   readonly explorationTarget?: BeatGamePosition;
@@ -6311,9 +6332,15 @@ function isEligibleHuntingTarget(
   minimumHealth: number,
   targetPreference?: HuntTargetPreference,
 ): boolean {
-  return isHuntingTargetWithinReach(target, observation, minimumHealth)
+  return isHuntingTargetWithinReach(
+    target,
+    observation,
+    minimumHealth,
+    targetPreference,
+  )
     && (
       !AQUATIC_FOOD_ENTITY_TYPES.has(target.entityType)
+      || targetPreference?.allowAquaticTargets === true
       || targetPreference?.allowFluidFallback !== false
       || observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
     )
@@ -6328,6 +6355,7 @@ function isHuntingTargetWithinReach(
   target: BeatGameEntityObservation,
   observation: BeatGameObservation,
   minimumHealth: number,
+  targetPreference?: HuntTargetPreference,
 ): boolean {
   if (EMERGENCY_FOOD_ENTITY_TYPE_SET.has(target.entityType)) {
     return Math.abs(target.position.y - observation.player.position.y)
@@ -6340,6 +6368,7 @@ function isHuntingTargetWithinReach(
   if (AQUATIC_FOOD_ENTITY_TYPES.has(target.entityType)) {
     return (
       observation.player.health >= minimumHealth
+      || targetPreference?.allowAquaticTargets === true
       || observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
     )
       && Math.abs(target.position.y - observation.player.position.y)
