@@ -11035,7 +11035,7 @@ describe("beat-game run lifecycle", () => {
 
     expect(driver.tasks).toContainEqual({
       type: "fish",
-      maximumCatches: 1,
+      maximumCatches: 3,
     });
     expect(driver.entityQueries.some(({ selector }) =>
       selector.entityTypes?.includes("minecraft:cow") === true

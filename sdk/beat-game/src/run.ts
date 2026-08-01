@@ -302,6 +302,7 @@ const LIQUID_INTERACTION_APPROACH_RADIUS = 3;
 const LIQUID_INTERACTION_STAND_RADIUS = 0.75;
 const LIQUID_INTERACTION_REACH = 4.5;
 const FISHING_SHORE_SEARCH_RADIUS = Math.ceil(LIQUID_INTERACTION_REACH);
+const FISHING_COLLECTION_BATCH_SIZE = 3;
 const MAXIMUM_LIQUID_SIGHT_CLEARING_BLOCKS = 4;
 const LAVA_RETREAT_DISTANCE = 8;
 const LAVA_EMERGENCY_SPRINT_MS = 1_500;
@@ -4449,7 +4450,7 @@ function tryFishForFood(
           40,
         );
         yield* fish(state.driver, {
-          maximumCatches: 1,
+          maximumCatches: FISHING_COLLECTION_BATCH_SIZE,
           path: state.strategy.path,
         });
         yield* collectNearbyDrops(state.driver, {
