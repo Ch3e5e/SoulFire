@@ -34,23 +34,47 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Blocks;
 
+import java.util.Optional;
+
 @Slf4j
 public final class ItemPlaceHelper {
   private ItemPlaceHelper() {
   }
 
-  public static InteractionHand placeBestBlockInHand(
+  public static Optional<InteractionHand> placeBestBlockInHand(
     BotConnection connection,
     PathConstraint pathConstraint
   ) {
     var player = connection.minecraft().player;
     var playerInventory = player.inventoryMenu;
 
+    var bestItem = selectBestPathBuildingItem(
+      playerInventory.slots.stream().map(slot -> slot.getItem()).toList(),
+      pathConstraint
+    );
+    if (bestItem.isEmpty()) {
+      return Optional.empty();
+    }
+
+    var selectedItem = bestItem.orElseThrow();
+    var slot = SFInventoryHelpers.findMatchingSlotForAction(player.getInventory(), playerInventory,
+        candidate -> candidate.getItem() == selectedItem)
+      .orElseThrow(() -> new IllegalStateException("Failed to find item stack to use"));
+    if (slot == InventoryMenu.SHIELD_SLOT) {
+      return Optional.of(InteractionHand.OFF_HAND);
+    }
+    placeInHand(connection.minecraft().gameMode, player, slot);
+    return Optional.of(InteractionHand.MAIN_HAND);
+  }
+
+  static Optional<Item> selectBestPathBuildingItem(
+    Iterable<ItemStack> items,
+    PathConstraint pathConstraint
+  ) {
     Item bestItem = null;
     var bestPriority = Integer.MAX_VALUE;
     var bestDestroyTime = 0F;
-    for (var slot : playerInventory.slots) {
-      var slotItemStack = slot.getItem();
+    for (var slotItemStack : items) {
       if (
         slotItemStack.isEmpty()
           || !pathConstraint.isPlaceable(slotItemStack)
@@ -82,21 +106,7 @@ public final class ItemPlaceHelper {
       }
     }
 
-    if (bestItem == null) {
-      throw new IllegalStateException(
-        "Failed to find a path building block to place"
-      );
-    }
-
-    var selectedItem = bestItem;
-    var slot = SFInventoryHelpers.findMatchingSlotForAction(player.getInventory(), playerInventory,
-        candidate -> candidate.getItem() == selectedItem)
-      .orElseThrow(() -> new IllegalStateException("Failed to find item stack to use"));
-    if (slot == InventoryMenu.SHIELD_SLOT) {
-      return InteractionHand.OFF_HAND;
-    }
-    placeInHand(connection.minecraft().gameMode, player, slot);
-    return InteractionHand.MAIN_HAND;
+    return Optional.ofNullable(bestItem);
   }
 
   public static boolean placeBestToolInHand(BotConnection connection, SFVec3i blockPosition) {

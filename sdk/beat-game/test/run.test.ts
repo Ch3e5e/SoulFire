@@ -7937,6 +7937,64 @@ describe("beat-game run lifecycle", () => {
     expect(driver.xzPaths[0]?.policy.avoidFluids).toBe(true);
   }, 10_000);
 
+  it("backs off food searches that make no observable progress", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      food: 12,
+      counts: {
+        "minecraft:cobblestone": 20,
+        "minecraft:iron_ingot": 7,
+        "minecraft:oak_log": 8,
+        "minecraft:shield": 1,
+        "minecraft:stone_pickaxe": 1,
+        "minecraft:stone_sword": 1,
+      },
+    });
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+      }).pipe(Effect.zipRight(Effect.fail(new BeatGameDriverError({
+        operation: "pathfindXZ",
+        code: "unreachable",
+        retryable: true,
+        message: "No dry food route is reachable",
+      }))));
+
+    const [firstFailure, repeatedImmediately] = await Effect.runPromise(
+      Effect.scoped(Effect.gen(function* () {
+        const run = yield* beatGameWithDriver(driver, {
+          strategy: { observationPollMs: 1 },
+        });
+        const firstFailure = yield* run.events.pipe(
+          Stream.filter((event) =>
+            event.type === "action-failed"
+            && event.action === "satisfy:food"
+          ),
+          Stream.runHead,
+          Effect.timeout("5 seconds"),
+        );
+        const repeatedImmediately = yield* Effect.race(
+          run.events.pipe(
+            Stream.filter((event) =>
+              event.type === "action-started"
+              && event.action === "satisfy:food"
+            ),
+            Stream.drop(1),
+            Stream.runHead,
+            Effect.as(true),
+          ),
+          Effect.sleep(100).pipe(Effect.as(false)),
+        );
+        yield* run.stop;
+        return [firstFailure, repeatedImmediately] as const;
+      })),
+    );
+
+    expect(Option.isSome(firstFailure)).toBe(true);
+    expect(repeatedImmediately).toBe(false);
+    expect(driver.xzPaths).toHaveLength(1);
+  }, 10_000);
+
   it("keeps exploring when a hunting target only flickers into view", async () => {
     const driver = new FakeBeatGameDriver();
     const cow = {

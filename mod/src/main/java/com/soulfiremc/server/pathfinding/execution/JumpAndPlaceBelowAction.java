@@ -139,7 +139,7 @@ public final class JumpAndPlaceBelowAction implements WorldAction {
       placementHand = ItemPlaceHelper.placeBestBlockInHand(
         connection,
         pathConstraint
-      );
+      ).orElse(null);
       return;
     }
 

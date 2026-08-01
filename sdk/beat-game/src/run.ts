@@ -133,6 +133,7 @@ const SHORE_PATH_TIMEOUT_MS = 10_000;
 const DRY_SURFACE_APPROACH_RADIUS = 0.75;
 const FURNACE_RECOVERY_RADIUS = 12;
 const RESOURCE_COLLECTION_RESERVED_SLOTS = 3;
+const REQUIREMENT_NO_PROGRESS_REPLAN_DELAY_MS = 1_000;
 const EXPLORATION_MAXIMUM_LEG_DISTANCE = 32;
 const EXPLORATION_MAXIMUM_SURFACE_ELEVATION_CHANGE = 12;
 const MAX_SAFE_DEATH_RECOVERY_FAILURES = 3;
@@ -586,6 +587,7 @@ interface ActionResult {
   ) => BeatGameCheckpoint;
   readonly phase?: BeatGamePhase;
   readonly replanReason?: string;
+  readonly replanDelayMs?: number;
   readonly defenseTarget?: BeatGameEntityObservation;
   readonly escapeTarget?: BeatGameEntityObservation;
   readonly airEscapePosition?: BeatGamePosition;
@@ -1139,6 +1141,9 @@ function runDecisionWithRetry(
           attempt: number,
           detail: `Interrupted for replanning: ${result.replanReason}`,
         });
+        if (result.replanDelayMs !== undefined) {
+          yield* Effect.sleep(result.replanDelayMs);
+        }
         return;
       }
       if (result.phase !== undefined) {
@@ -1445,18 +1450,28 @@ function executeDecision(
               path: state.strategy.path,
             })
         ).pipe(Effect.as({} satisfies ActionResult));
-      case "satisfy-requirement":
-        if (state.hooks.satisfyRequirement !== undefined) {
-          return state.hooks.satisfyRequirement({
+      case "satisfy-requirement": {
+        const satisfy = state.hooks.satisfyRequirement === undefined
+          ? satisfyRequirement(
+            state,
+            decision.requirement,
+            observation,
+          )
+          : state.hooks.satisfyRequirement({
             ...policyContext,
             requirement: decision.requirement,
-          }).pipe(Effect.as({} satisfies ActionResult));
-        }
-        return satisfyRequirement(
-          state,
-          decision.requirement,
-          observation,
-        ).pipe(Effect.as({} satisfies ActionResult));
+          });
+        return satisfy.pipe(
+          Effect.zipRight(state.driver.observe),
+          Effect.map((current) =>
+            requirementActionResult(
+              decision.requirement,
+              observation,
+              current,
+            )
+          ),
+        );
+      }
       case "build-and-enter-nether": {
         if (state.hooks.buildAndEnterNether !== undefined) {
           return state.hooks.buildAndEnterNether(policyContext).pipe(
@@ -3784,6 +3799,49 @@ function policyContextFor(
     observation,
     strategy: state.strategy,
   };
+}
+
+function requirementActionResult(
+  requirement: BeatGameItemRequirement,
+  before: BeatGameObservation,
+  after: BeatGameObservation,
+): ActionResult {
+  const afterRequirementCount = requirementCount(
+    after.inventory,
+    requirement,
+  );
+  const requirementProgressed = afterRequirementCount
+    > requirementCount(before.inventory, requirement);
+  const inventoryChanged = inventoryCountsChanged(
+    before.inventory.counts,
+    after.inventory.counts,
+  );
+  const moved = before.player.position.dimension
+      !== after.player.position.dimension
+    || distanceSquared(before.player.position, after.player.position) >= 0.25;
+  if (
+    afterRequirementCount >= requirement.targetCount
+    || requirementProgressed
+    || inventoryChanged
+    || moved
+  ) {
+    return {};
+  }
+  return {
+    replanReason:
+      `no observable progress while satisfying ${requirement.key}`,
+    replanDelayMs: REQUIREMENT_NO_PROGRESS_REPLAN_DELAY_MS,
+  };
+}
+
+function inventoryCountsChanged(
+  before: Readonly<Record<string, number>>,
+  after: Readonly<Record<string, number>>,
+): boolean {
+  const itemIds = new Set([...Object.keys(before), ...Object.keys(after)]);
+  return [...itemIds].some((itemId) =>
+    (before[itemId] ?? 0) !== (after[itemId] ?? 0)
+  );
 }
 
 function satisfyRequirement(

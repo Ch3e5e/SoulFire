@@ -108,7 +108,7 @@ public final class BlockPlaceAction implements WorldAction {
       placementHand = ItemPlaceHelper.placeBestBlockInHand(
         connection,
         pathConstraint
-      );
+      ).orElse(null);
       return;
     }
 
