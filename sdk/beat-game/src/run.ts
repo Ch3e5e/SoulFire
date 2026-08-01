@@ -147,6 +147,7 @@ const EXPLORATION_MAXIMUM_SURFACE_ELEVATION_CHANGE = 12;
 const MAX_SAFE_DEATH_RECOVERY_FAILURES = 3;
 const FOOD_SEARCH_AQUATIC_ESCALATION_ATTEMPTS = 4;
 const DISTANT_DEATH_RECOVERY_BOOTSTRAP_DISTANCE = 128;
+const ACTIVE_CORPSE_RECOVERY_DISTANCE = 160;
 const DEATH_RECOVERY_ARMAMENT_LOG_COUNT = 2;
 const DEATH_RECOVERY_BOOTSTRAP_LOG_COUNT = 12;
 const DEATH_RECOVERY_BOOTSTRAP_BLOCK_COUNT = 16;
@@ -9337,6 +9338,12 @@ function prepareForDistantDeathRecovery(
       current.player.position,
       pendingDeath.position,
     );
+    if (
+      recoveryDistanceSquared <= ACTIVE_CORPSE_RECOVERY_DISTANCE ** 2
+      && current.player.health >= state.strategy.minimumHealth
+    ) {
+      return undefined;
+    }
     const recoveryRequiresExcavation =
       pendingDeath.position.y < current.player.position.y - 8;
     const ensureBuildingMaterials = (
