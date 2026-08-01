@@ -4701,6 +4701,81 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
   });
 
+  it("retreats from unarmed spider packs as one hostile group", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({ health: 20 });
+    driver.entityResults = [
+      {
+        connectionEpoch: "epoch-1",
+        networkId: 51,
+        entityType: "minecraft:spider",
+        position: {
+          x: 2,
+          y: 64,
+          z: 0,
+          dimension: "minecraft:overworld",
+        },
+        velocity: { x: 0, y: 0, z: 0 },
+        alive: true,
+        health: 16,
+        observedAt: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        connectionEpoch: "epoch-1",
+        networkId: 52,
+        entityType: "minecraft:spider",
+        position: {
+          x: 5,
+          y: 64,
+          z: 0,
+          dimension: "minecraft:overworld",
+        },
+        velocity: { x: 0, y: 0, z: 0 },
+        alive: true,
+        health: 16,
+        observedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ];
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2) ? driver.entityResults : [];
+    driver.taskObserver = (task) => {
+      if (task.type === "flee") {
+        driver.entityResults = [];
+      }
+    };
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            let attempts = 3_000;
+            while (
+              !driver.tasks.some((task) => task.type === "flee")
+              && attempts > 0
+            ) {
+              attempts -= 1;
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "flee",
+      selector: { categories: [2], alive: true },
+      triggerRadius: 12,
+      safeDistance: 24,
+    }));
+    expect(driver.tasks.some((task) =>
+      task.type === "attack-nearest" || task.type === "attack-entity"
+    )).toBe(false);
+  }, 10_000);
+
   it("disengages from a close spider fight at lethal health", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
@@ -4748,6 +4823,8 @@ describe("beat-game run lifecycle", () => {
               "minecraft:stone_sword": 1,
             },
           });
+        } else if (task.type === "flee") {
+          driver.entityResults = [];
         }
       }).pipe(
         Effect.zipRight(
@@ -4756,35 +4833,13 @@ describe("beat-game run lifecycle", () => {
             : Effect.void,
         ),
       );
-    const resolvePath = driver.pathResolver;
-    driver.pathResolver = (position, radius, policy) =>
-      resolvePath(position, radius, policy).pipe(
-        Effect.tap(() =>
-          Effect.sync(() => {
-            driver.entityResults = [];
-          })
-        ),
-      );
-    const resolveXZPath = driver.xzPathResolver;
-    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
-      resolveXZPath(x, z, dimension, radius, policy).pipe(
-        Effect.tap(() =>
-          Effect.sync(() => {
-            driver.entityResults = [];
-          })
-        ),
-      );
-
     await Effect.runPromise(Effect.scoped(
       beatGameWithDriver(driver, {
         strategy: { observationPollMs: 1 },
       }).pipe(
         Effect.flatMap((run) =>
           Effect.gen(function* () {
-            while (
-              driver.paths.length === 0
-              && driver.xzPaths.length === 0
-            ) {
+            while (!driver.tasks.some((task) => task.type === "flee")) {
               yield* Effect.sleep(1);
             }
             yield* run.stop;
@@ -4797,12 +4852,12 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks).toContainEqual(expect.objectContaining({
       selectBestWeapon: true,
     }));
-    expect(driver.actions).toContainEqual({
-      type: "set-movement",
-      forward: true,
-      jump: true,
-      sprint: true,
-    });
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "flee",
+      selector: { categories: [2], alive: true },
+      triggerRadius: 12,
+      safeDistance: 24,
+    }));
   });
 
   it("defends against a hostile that approaches during recovery", async () => {

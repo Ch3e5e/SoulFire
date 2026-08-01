@@ -43,6 +43,7 @@ import {
 import {
   makeSoulFireBeatGameDriver,
   type BeatGameDriver,
+  type BeatGameEntitySelector,
   type BeatGameSurfaceColumn,
 } from "./driver.js";
 import {
@@ -2166,6 +2167,12 @@ function shouldDisengageFromThreat(
   if (shouldCommitToMeleeFight(observation, target)) {
     return false;
   }
+  if (
+    FAST_MELEE_PURSUER_ENTITY_TYPES.has(target.entityType)
+    && !hasMeleeWeapon(observation)
+  ) {
+    return true;
+  }
   if (PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)) {
     return !shouldEngageRangedFight(state, observation, target);
   }
@@ -2179,6 +2186,14 @@ function shouldDisengageFromThreat(
     return true;
   }
   return false;
+}
+
+function escapeThreatSelector(
+  target: BeatGameEntityObservation,
+): BeatGameEntitySelector {
+  return FAST_MELEE_PURSUER_ENTITY_TYPES.has(target.entityType)
+    ? { categories: [2], alive: true }
+    : { networkId: target.networkId, alive: true };
 }
 
 function shouldEngageRangedFight(
@@ -2292,10 +2307,7 @@ function escapeFromTarget(
       target.entityType,
     );
     const dynamicEscape = flee(state.driver, {
-      selector: {
-        networkId: target.networkId,
-        alive: true,
-      },
+      selector: escapeThreatSelector(target),
       triggerRadius: rangedThreat
         ? RANGED_THREAT_ESCAPE_TRIGGER_RADIUS
         : PROACTIVE_ESCAPE_ONLY_EVASION_RADIUS,
@@ -2319,9 +2331,10 @@ function escapeFromTarget(
         ),
       },
     });
-    const navigation = (
-      target.entityType === "minecraft:creeper" || rangedThreat
-    )
+    const requiresDynamicEscape = target.entityType === "minecraft:creeper"
+      || rangedThreat
+      || FAST_MELEE_PURSUER_ENTITY_TYPES.has(target.entityType);
+    const navigation = requiresDynamicEscape
       ? dynamicEscape
       : dryEscapeTarget !== undefined
       ? state.driver.pathfind(
@@ -2455,10 +2468,7 @@ function monitorEscapeSafety(
       return state.driver.queryEntities({
         origin: observation.player.position,
         radius: monitoringRadius,
-        selector: {
-          networkId: target.networkId,
-          alive: true,
-        },
+        selector: escapeThreatSelector(target),
         maximumResults: 1,
       }).pipe(
         Effect.flatMap(([currentTarget]) => {
