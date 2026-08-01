@@ -4568,6 +4568,12 @@ describe("beat-game run lifecycle", () => {
         if (task.type === "attack-entity") {
           driver.currentObservation = observation({
             health: 10,
+            position: {
+              x: 20,
+              y: 64,
+              z: 0,
+              dimension: "minecraft:overworld",
+            },
             counts: {
               "minecraft:shield": 1,
               "minecraft:stone_sword": 1,

@@ -3737,10 +3737,13 @@ function monitorDefenseHealth(
       }
       if (
         observation.player.position.dimension !== engagementPosition.dimension
-        || distanceSquared(
-          observation.player.position,
-          engagementPosition,
-        ) > DEFENSIVE_PURSUIT_MAX_DISTANCE ** 2
+        || (
+          disengageWhenWounded
+          && distanceSquared(
+            observation.player.position,
+            engagementPosition,
+          ) > DEFENSIVE_PURSUIT_MAX_DISTANCE ** 2
+        )
       ) {
         return Effect.succeed("disengage" as const);
       }
