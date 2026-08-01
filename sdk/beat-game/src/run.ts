@@ -6314,6 +6314,7 @@ function huntOrExplore(
     const attemptedTargets = new Set<string>();
     const locallyUnreachable = new Set<string>();
     let confirmedVisibleTarget: BeatGameEntityObservation | undefined;
+    let allowEmergencyAquaticFallback = false;
     let attacked = 0;
     let explorationHops = 0;
     while (true) {
@@ -6397,7 +6398,13 @@ function huntOrExplore(
           target,
           current,
           state.strategy.minimumHealth,
-          targetPreference,
+          allowEmergencyAquaticFallback && targetPreference !== undefined
+            ? {
+              ...targetPreference,
+              allowAquaticTargets: true,
+              allowFluidFallback: true,
+            }
+            : targetPreference,
         )
       );
       const preferredCandidates = targetPreference === undefined
@@ -6528,6 +6535,8 @@ function huntOrExplore(
               ),
             );
           } else if (explorationOutcome.type === "route-failed") {
+            allowEmergencyAquaticFallback =
+              targetPreference?.allowAquaticTargets === true;
             const latest = yield* state.driver.observe;
             yield* recoverLocalNavigationTrap(
               state,
@@ -6832,16 +6841,24 @@ function isHuntingTargetWithinReach(
         ) <= EMERGENCY_FOOD_MAXIMUM_HORIZONTAL_DISTANCE ** 2;
   }
   if (AQUATIC_FOOD_ENTITY_TYPES.has(target.entityType)) {
+    const emergencyAquaticFallback =
+      targetPreference?.allowAquaticTargets === true
+      && targetPreference.allowFluidFallback === true;
     return (
       observation.player.health >= minimumHealth
       || observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
+      || emergencyAquaticFallback
     )
       && Math.abs(target.position.y - observation.player.position.y)
         <= AQUATIC_HUNT_MAXIMUM_VERTICAL_DISTANCE
       && horizontalDistanceSquared(
           target.position,
           observation.player.position,
-        ) <= AQUATIC_HUNT_MAXIMUM_HORIZONTAL_DISTANCE ** 2;
+        ) <= (
+          emergencyAquaticFallback
+            ? Math.max(32, AQUATIC_HUNT_MAXIMUM_HORIZONTAL_DISTANCE)
+            : AQUATIC_HUNT_MAXIMUM_HORIZONTAL_DISTANCE
+        ) ** 2;
   }
   const maximumVerticalDistance =
     observation.player.health < minimumHealth ? 12 : 32;

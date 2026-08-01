@@ -8679,6 +8679,102 @@ describe("beat-game run lifecycle", () => {
     });
   });
 
+  it("swims for nearby food when an injured bot has no dry route", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
+      runId: "stranded-aquatic-food-run",
+      teamId: "stranded-aquatic-food-team",
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      planner: {
+        ...initial.planner,
+        completedActions: Array.from(
+          { length: 4 },
+          () => "satisfy:food",
+        ),
+      },
+    }, undefined));
+    const salmon = {
+      connectionEpoch: "epoch-1",
+      networkId: 46,
+      entityType: "minecraft:salmon",
+      position: {
+        x: 24,
+        y: 61,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 3,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.currentObservation = observation({
+      food: 12,
+      health: 8,
+      counts: {
+        "minecraft:iron_ingot": 7,
+        "minecraft:oak_log": 8,
+        "minecraft:shield": 1,
+        "minecraft:stone_pickaxe": 1,
+        "minecraft:stone_sword": 1,
+      },
+    });
+    driver.entityResults = [salmon];
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+      }).pipe(Effect.zipRight(Effect.fail(new BeatGameDriverError({
+        operation: "pathfindXZ",
+        code: "unreachable",
+        retryable: true,
+        message: "No dry route leaves the island",
+      }))));
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (task.type === "attack-entity") {
+          driver.entityResults = [];
+        }
+      });
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        runId: "stranded-aquatic-food-run",
+        team: { teamId: "stranded-aquatic-food-team" },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some((task) => task.type === "attack-entity")) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    })));
+
+    expect(driver.xzPaths[0]?.policy).toMatchObject({
+      allowMining: false,
+      allowPlacing: false,
+      avoidFluids: true,
+    });
+    const attackIndex = driver.tasks.findIndex(
+      (task) => task.type === "attack-entity",
+    );
+    expect(driver.tasks[attackIndex]).toEqual(expect.objectContaining({
+      target: expect.objectContaining({
+        connectionEpoch: salmon.connectionEpoch,
+        networkId: salmon.networkId,
+      }),
+    }));
+    expect(driver.taskPolicies[attackIndex]).toMatchObject({
+      allowMining: false,
+      allowPlacing: false,
+      avoidFluids: false,
+      sprint: false,
+    });
+  });
+
   it("backs off food searches that make no observable progress", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
