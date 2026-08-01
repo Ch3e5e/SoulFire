@@ -20,6 +20,7 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import { execFile as execFileCallback } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
+  lstat,
   mkdir,
   readFile,
   readlink,
