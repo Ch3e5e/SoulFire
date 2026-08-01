@@ -1767,7 +1767,7 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
-  it("falls back to local dry exploration while preparing a distant recovery", async () => {
+  it("uses a bounded local water fallback while preparing a distant recovery", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const deathPosition = {
@@ -1812,8 +1812,8 @@ describe("beat-game run lifecycle", () => {
       observedAt: "2026-01-01T00:00:00.000Z",
     } as const;
     driver.currentObservation = observation({
-      food: 17,
-      health: 8,
+      food: 15,
+      health: 20,
       counts: {
         "minecraft:dirt": 16,
         "minecraft:oak_log": 12,
@@ -1827,12 +1827,12 @@ describe("beat-game run lifecycle", () => {
         return driver.xzPaths.length;
       }).pipe(
         Effect.flatMap((attempt) =>
-          attempt === 1
+          attempt <= 2
             ? Effect.fail(new BeatGameDriverError({
               operation: "pathfindXZ",
               code: "unreachable",
               retryable: true,
-              message: "The directed route enters open water",
+              message: "The dry route is blocked by water",
             }))
             : Effect.never
         ),
@@ -1847,7 +1847,7 @@ describe("beat-game run lifecycle", () => {
       }).pipe(
         Effect.flatMap((run) =>
           Effect.gen(function* () {
-            while (driver.xzPaths.length < 2) {
+            while (driver.xzPaths.length < 3) {
               yield* Effect.sleep(1);
             }
             yield* run.stop;
@@ -1857,9 +1857,11 @@ describe("beat-game run lifecycle", () => {
       ),
     ));
 
-    expect(driver.xzPaths).toHaveLength(2);
-    expect(driver.xzPaths.every(({ policy }) => policy.avoidFluids === true))
-      .toBe(true);
+    expect(driver.xzPaths.map(({ policy }) => policy.avoidFluids)).toEqual([
+      true,
+      true,
+      false,
+    ]);
     expect(driver.tasks.some((task) => task.type === "attack-entity"))
       .toBe(false);
   });
@@ -7811,6 +7813,8 @@ describe("beat-game run lifecycle", () => {
     } as const;
     let foodQueries = 0;
     driver.currentObservation = observation({
+      health: 17,
+      food: 15,
       counts: {
         "minecraft:cobblestone": 20,
         "minecraft:oak_log": 8,

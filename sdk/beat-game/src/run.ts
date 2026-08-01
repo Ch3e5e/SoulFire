@@ -5699,21 +5699,23 @@ function ensureArrowIngredients(
   });
 }
 
+interface HuntTargetPreference {
+  readonly preferredEntityTypes: ReadonlySet<string>;
+  readonly preferredRadius: number;
+  readonly maximumExplorationHops?: number;
+  readonly path?: BeatGameStrategy["path"];
+  readonly explorationTarget?: BeatGamePosition;
+  readonly allowFluidFallback?: boolean;
+  readonly fallbackToLocalExploration?: boolean;
+}
+
 function huntOrExplore(
   state: RunState,
   observation: BeatGameObservation,
   selector: Parameters<BeatGameDriver["queryEntities"]>[0]["selector"],
   maximumTargets: number,
   purpose: string,
-  targetPreference?: {
-    readonly preferredEntityTypes: ReadonlySet<string>;
-    readonly preferredRadius: number;
-    readonly maximumExplorationHops?: number;
-    readonly path?: BeatGameStrategy["path"];
-    readonly explorationTarget?: BeatGamePosition;
-    readonly allowFluidFallback?: boolean;
-    readonly fallbackToLocalExploration?: boolean;
-  },
+  targetPreference?: HuntTargetPreference,
 ): Effect.Effect<void, BeatGameError | BeatGameDriverError> {
   return Effect.gen(function* () {
     const expectedDropItemIds = [
@@ -5803,15 +5805,11 @@ function huntOrExplore(
         && !attemptedTargets.has(
           `${target.connectionEpoch}:${target.networkId}`,
         )
-        && isHuntingTargetWithinReach(
+        && isEligibleHuntingTarget(
           target,
           current,
           state.strategy.minimumHealth,
-        )
-        && isWithinDirectedHuntDetour(
-          current.player.position,
-          target.position,
-          targetPreference?.explorationTarget,
+          targetPreference,
         )
       );
       const preferredCandidates = targetPreference === undefined
@@ -5910,6 +5908,7 @@ function huntOrExplore(
               selector,
               attemptedTargets,
               unreachableTargets,
+              targetPreference,
             ).pipe(Effect.as("target-visible" as const)),
           );
           if (
@@ -5923,7 +5922,7 @@ function huntOrExplore(
               frontierScanRadius,
               explorationPath,
               true,
-              allowFluidFallback,
+              true,
             ).pipe(
               Effect.catchAll((cause) =>
                 cause.operation === "pathfind"
@@ -6142,6 +6141,7 @@ function waitForVisibleHuntingTarget(
   selector: Parameters<BeatGameDriver["queryEntities"]>[0]["selector"],
   attemptedTargets: ReadonlySet<string>,
   unreachableTargets: ReadonlySet<string>,
+  targetPreference?: HuntTargetPreference,
 ): Effect.Effect<void, BeatGameDriverError> {
   const poll = (
     previouslyVisibleTargets: ReadonlySet<string>,
@@ -6163,10 +6163,11 @@ function waitForVisibleHuntingTarget(
               && !attemptedTargets.has(
                 `${target.connectionEpoch}:${target.networkId}`,
               )
-              && isHuntingTargetWithinReach(
+              && isEligibleHuntingTarget(
                 target,
                 observation,
                 state.strategy.minimumHealth,
+                targetPreference,
               )
               && horizontalDistanceSquared(
                   target.position,
@@ -6186,6 +6187,25 @@ function waitForVisibleHuntingTarget(
       ),
     );
   return Effect.suspend(() => poll(new Set()));
+}
+
+function isEligibleHuntingTarget(
+  target: BeatGameEntityObservation,
+  observation: BeatGameObservation,
+  minimumHealth: number,
+  targetPreference?: HuntTargetPreference,
+): boolean {
+  return isHuntingTargetWithinReach(target, observation, minimumHealth)
+    && (
+      !AQUATIC_FOOD_ENTITY_TYPES.has(target.entityType)
+      || targetPreference?.allowFluidFallback !== false
+      || observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
+    )
+    && isWithinDirectedHuntDetour(
+      observation.player.position,
+      target.position,
+      targetPreference?.explorationTarget,
+    );
 }
 
 function isHuntingTargetWithinReach(
