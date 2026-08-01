@@ -2558,6 +2558,14 @@ function escapeFromTarget(
       yield* emergencyAirAscent(state, current.player.position);
       return;
     }
+    if (outcome.type === "escape-route-failed") {
+      const current = yield* state.driver.observe;
+      yield* recoverLocalNavigationTrap(
+        state,
+        current.player.position,
+      );
+      return;
+    }
     if (outcome.type === "defend") {
       yield* defendAndRecover(state, outcome.target);
       return;
@@ -7599,19 +7607,40 @@ function recoverLocalNavigationTrap(
     AIR_ESCAPE_SURFACE_SEARCH_RADIUS,
     1,
   ).pipe(
-    Effect.map((columns) =>
-      selectStableSurfaceEscapeColumns(columns, position)
-        .filter((surface) =>
-          surfaceHorizontalDistanceSquared(surface, position)
-            >= LOCAL_NAVIGATION_RECOVERY_MINIMUM_DISTANCE ** 2
-        )
-        .map((surface) => ({
+    Effect.map((columns) => {
+      const stableColumns = selectStableSurfaceEscapeColumns(
+        columns,
+        position,
+      );
+      const safeColumns = selectSurfaceEscapeColumns(columns, position);
+      const nonTrivial = (surface: (typeof safeColumns)[number]) => {
+        const deltaY = surface.surfaceY + 1 - position.y;
+        return surfaceHorizontalDistanceSquared(surface, position)
+            + deltaY * deltaY
+          > 1.5 ** 2;
+      };
+      const separated = (surface: (typeof safeColumns)[number]) =>
+        surfaceHorizontalDistanceSquared(surface, position)
+          >= LOCAL_NAVIGATION_RECOVERY_MINIMUM_DISTANCE ** 2;
+      const orderedColumns = [
+        ...stableColumns.filter(nonTrivial).filter(separated),
+        ...safeColumns.filter(nonTrivial).filter(separated),
+        ...stableColumns.filter(nonTrivial),
+        ...safeColumns.filter(nonTrivial),
+      ];
+      const uniqueColumns = new Map(
+        orderedColumns.map((surface) => [
+          `${surface.x}:${surface.surfaceY}:${surface.z}`,
+          surface,
+        ]),
+      );
+      return [...uniqueColumns.values()].map((surface) => ({
           x: surface.x + 0.5,
           y: surface.surfaceY + 1,
           z: surface.z + 0.5,
           dimension: position.dimension,
-        }))
-    ),
+        }));
+    }),
     Effect.flatMap((targets) =>
       targets.length === 0
         ? Effect.succeed(false)

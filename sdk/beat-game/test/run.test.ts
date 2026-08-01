@@ -3508,6 +3508,16 @@ describe("beat-game run lifecycle", () => {
 
   it("sprints and dynamically flees a creeper across surface terrain", async () => {
     const driver = new FakeBeatGameDriver();
+    driver.surfaceColumns = Array.from({ length: 18 }, (_, index) => ({
+      x: -(index + 1),
+      z: 0,
+      loaded: true,
+      surfaceY: 63,
+      blockId: "minecraft:grass_block",
+      biomeId: "minecraft:plains",
+      skyLight: 15,
+      blockLight: 0,
+    }));
     driver.entityResults = [{
       connectionEpoch: "epoch-1",
       networkId: 41,
@@ -3714,6 +3724,117 @@ describe("beat-game run lifecycle", () => {
       sprint: true,
     }));
   });
+
+  it("mines out of rough terrain when a creeper escape route fails", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      position: { x: 0, y: 58, z: 0 },
+      counts: {
+        "minecraft:dirt": 16,
+        "minecraft:oak_log": 8,
+        "minecraft:wooden_pickaxe": 1,
+        "minecraft:wooden_sword": 1,
+      },
+    });
+    driver.entityResults = [{
+      connectionEpoch: "epoch-1",
+      networkId: 42,
+      entityType: "minecraft:creeper",
+      position: {
+        x: 6,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:01.000Z",
+    }];
+    driver.surfaceColumns = [
+      {
+        x: 0,
+        z: 0,
+        loaded: true,
+        surfaceY: 57,
+        blockId: "minecraft:grass_block",
+        biomeId: "minecraft:plains",
+        skyLight: 15,
+        blockLight: 0,
+      },
+      {
+        x: 3,
+        z: 0,
+        loaded: true,
+        surfaceY: 64,
+        blockId: "minecraft:grass_block",
+        biomeId: "minecraft:plains",
+        skyLight: 15,
+        blockLight: 0,
+      },
+    ];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(
+        Effect.zipRight(
+          task.type === "flee"
+            ? Effect.fail(new BeatGameDriverError({
+              operation: "task.flee",
+              code: "unreachable",
+              retryable: true,
+              message: "The bot is trapped below the creeper",
+            }))
+            : Effect.never,
+        ),
+      );
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (
+        !driver.tasks.some((task) => task.type === "flee")
+        || !driver.paths.some(({ policy }) =>
+          policy.allowMining === true
+          && policy.allowPlacing === true
+          && policy.maxSearchTimeMs === 5_000
+        )
+      ) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    })));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "flee",
+      selector: { networkId: 42, alive: true },
+    }));
+    expect(driver.paths.find(({ policy }) =>
+      policy.allowMining === true
+      && policy.allowPlacing === true
+      && policy.maxSearchTimeMs === 5_000
+    )).toMatchObject({
+      position: {
+        x: 3.5,
+        y: 65,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+      radius: 1.5,
+      policy: {
+        allowMining: true,
+        allowPlacing: true,
+        avoidFluids: true,
+        sprint: false,
+        maxSearchTimeMs: 5_000,
+      },
+    });
+  }, 10_000);
 
   it("detects nearby creepers without requiring line of sight", async () => {
     const driver = new FakeBeatGameDriver();
