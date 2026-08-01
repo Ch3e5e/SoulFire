@@ -58,10 +58,51 @@ final class AttackEntityTaskProviderTest {
 
   @Test
   void directlyPursuesVisibleNearbyTargetsOnReachableTerrain() {
-    assertTrue(AttackEntityTaskProvider.shouldPursueDirectly(12, 2.5, true));
-    assertFalse(AttackEntityTaskProvider.shouldPursueDirectly(12.01, 2, true));
-    assertFalse(AttackEntityTaskProvider.shouldPursueDirectly(8, 2.51, true));
-    assertFalse(AttackEntityTaskProvider.shouldPursueDirectly(8, 1, false));
+    assertTrue(AttackEntityTaskProvider.shouldPursueDirectly(
+      12,
+      2.5,
+      true,
+      false
+    ));
+    assertFalse(AttackEntityTaskProvider.shouldPursueDirectly(
+      12.01,
+      2,
+      true,
+      false
+    ));
+    assertFalse(AttackEntityTaskProvider.shouldPursueDirectly(
+      8,
+      2.51,
+      true,
+      false
+    ));
+    assertFalse(AttackEntityTaskProvider.shouldPursueDirectly(
+      8,
+      1,
+      false,
+      false
+    ));
+  }
+
+  @Test
+  void directlyPursuesVisibleNearbyTargetsThroughFluidInThreeDimensions() {
+    assertTrue(AttackEntityTaskProvider.shouldPursueDirectly(
+      8,
+      6,
+      true,
+      true
+    ));
+    assertFalse(AttackEntityTaskProvider.shouldPursueDirectly(
+      12.01,
+      6,
+      true,
+      true
+    ));
+
+    assertEquals(1, AttackEntityTaskProvider.fluidVerticalInput(0.36));
+    assertEquals(0, AttackEntityTaskProvider.fluidVerticalInput(0.35));
+    assertEquals(0, AttackEntityTaskProvider.fluidVerticalInput(-0.35));
+    assertEquals(-1, AttackEntityTaskProvider.fluidVerticalInput(-0.36));
   }
 
   @Test

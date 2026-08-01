@@ -169,11 +169,23 @@ public final class AttackEntityTaskProvider
   static boolean shouldPursueDirectly(
     double distance,
     double verticalDistance,
-    boolean hasLineOfSight
+    boolean hasLineOfSight,
+    boolean movingInFluid
   ) {
     return hasLineOfSight
       && distance <= DIRECT_PURSUIT_RANGE
-      && verticalDistance <= DIRECT_PURSUIT_VERTICAL_RANGE;
+      && (movingInFluid
+        || verticalDistance <= DIRECT_PURSUIT_VERTICAL_RANGE);
+  }
+
+  static int fluidVerticalInput(double verticalOffset) {
+    if (verticalOffset > 0.35) {
+      return 1;
+    }
+    if (verticalOffset < -0.35) {
+      return -1;
+    }
+    return 0;
   }
 
   private static final class AttackControl implements ControlTask {
@@ -291,10 +303,12 @@ public final class AttackEntityTaskProvider
           .build());
       }
       if (distance > attackRange) {
+        var movingInFluid = player.isInWater() || player.isInLava();
         if (shouldPursueDirectly(
           distance,
           Math.abs(player.getY() - entity.getY()),
-          player.hasLineOfSight(entity)
+          player.hasLineOfSight(entity),
+          movingInFluid
         )) {
           stopPath(ControlStopReason.CANCELLED, null);
           bot.controlState().resetAll();
@@ -302,7 +316,16 @@ public final class AttackEntityTaskProvider
           raiseShield(player, gameMode);
           bot.controlState().up(true);
           bot.controlState().sprint(sprinting);
-          bot.controlState().jump(player.onGround() && distance > 4.0);
+          if (movingInFluid) {
+            var verticalInput = fluidVerticalInput(
+              entity.getBoundingBox().getCenter().y
+                - player.getBoundingBox().getCenter().y
+            );
+            bot.controlState().jump(verticalInput > 0);
+            bot.controlState().shift(verticalInput < 0);
+          } else {
+            bot.controlState().jump(player.onGround() && distance > 4.0);
+          }
         } else {
           raiseShield(player, gameMode);
           continuePath();

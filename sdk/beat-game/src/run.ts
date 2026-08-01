@@ -286,7 +286,6 @@ const AQUATIC_HUNT_MAXIMUM_VERTICAL_DISTANCE = 6;
 const URGENT_AQUATIC_HUNT_MAXIMUM_HORIZONTAL_DISTANCE = 64;
 const URGENT_AQUATIC_HUNT_MAXIMUM_VERTICAL_DISTANCE = 16;
 const URGENT_AQUATIC_HUNT_FOOD_LEVEL = 10;
-const WOUNDED_AQUATIC_HUNT_MINIMUM_HEALTH = 12;
 const AQUATIC_HUNT_CHASE_TIMEOUT_MS = 8_000;
 const AQUATIC_WATER_ENTRY_SEARCH_RADIUS = 3;
 const AQUATIC_WATER_ENTRY_ATTEMPTS = 12;
@@ -4762,12 +4761,7 @@ function huntForFoodRequirement(
           preferredRadius: HIGH_YIELD_FOOD_PREFERENCE_RADIUS,
           allowAquaticTargets,
           allowUrgentAquaticTargets:
-            observation.player.food <= URGENT_AQUATIC_HUNT_FOOD_LEVEL
-            || (
-              allowAquaticTargets
-              && observation.player.health
-                >= WOUNDED_AQUATIC_HUNT_MINIMUM_HEALTH
-            ),
+            observation.player.food <= URGENT_AQUATIC_HUNT_FOOD_LEVEL,
           allowFluidFallback:
             observation.player.health >= state.strategy.minimumHealth,
           path: {
@@ -6577,6 +6571,7 @@ function huntOrExplore(
     const locallyUnreachable = new Set<string>();
     let confirmedVisibleTarget: BeatGameEntityObservation | undefined;
     let allowEmergencyAquaticFallback = false;
+    let aquaticPursuitActive = false;
     let attacked = 0;
     let explorationHops = 0;
     while (true) {
@@ -6600,6 +6595,7 @@ function huntOrExplore(
       if (
         overworldHunt
         && !allowEmergencyAquaticFallback
+        && !aquaticPursuitActive
         && (yield* isPlayerInFluid(state.driver, current.player.position))
       ) {
         yield* emergencyAirAscent(state, current.player.position);
@@ -6706,6 +6702,8 @@ function huntOrExplore(
             : nearest,
         undefined,
       );
+      aquaticPursuitActive = target !== undefined
+        && AQUATIC_FOOD_ENTITY_TYPES.has(target.entityType);
       if (target === undefined) {
         if (explorationHops >= maximumExplorationHops) {
           return;
