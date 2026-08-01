@@ -1386,15 +1386,29 @@ function executeDecision(
                   current.player.position,
                   pendingDeath.position,
                 ) <= 24 * 24;
+            const corpseItemIds = new Set(
+              Object.entries(pendingDeath.inventoryCounts ?? {})
+                .filter(([, count]) => count > 0)
+                .map(([itemId]) => itemId),
+            );
             const remainingDrops = closeEnoughToInspectDrops
               ? yield* state.driver.queryEntities({
                 origin: pendingDeath.position,
                 radius: 24,
-                selector: { alive: true, categories: [6] },
+                selector: {
+                  alive: true,
+                  categories: [6],
+                },
                 maximumResults: 64,
               })
               : [];
-            if (closeEnoughToInspectDrops && remainingDrops.length === 0) {
+            const remainingCorpseDrops = remainingDrops.filter(({ itemId }) =>
+              itemId !== undefined && corpseItemIds.has(itemId)
+            );
+            if (
+              closeEnoughToInspectDrops
+              && remainingCorpseDrops.length === 0
+            ) {
               yield* emit(state, {
                 type: "items-recovered",
                 detail:

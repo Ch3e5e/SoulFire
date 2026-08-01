@@ -1003,8 +1003,23 @@ describe("beat-game run lifecycle", () => {
         driver.paths.push({ position, radius, policy });
         driver.currentObservation = observation({
           counts: { "minecraft:string": 1 },
+          position: deathPosition,
         });
       });
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(6)
+        ? [{
+          connectionEpoch: "epoch-1",
+          networkId: 44,
+          entityType: "minecraft:item",
+          itemId: "minecraft:string",
+          position: deathPosition,
+          velocity: { x: 0, y: 0, z: 0 },
+          alive: true,
+          health: 5,
+          observedAt: "2026-01-01T00:00:00.000Z",
+        }]
+        : [];
 
     const recoveryDetails: string[] = [];
     await Effect.runPromise(Effect.scoped(
@@ -1028,10 +1043,9 @@ describe("beat-game run lifecycle", () => {
                 })
               ),
               Stream.filter((event) =>
-                event.type === "action-failed"
-                && event.detail?.includes(
-                  "corpse inventory was not recovered",
-                ) === true
+                event.type === "items-recovered"
+                && event.detail
+                  === "No corpse drops remain after the safe recovery attempt"
               ),
               Stream.runHead,
             );
@@ -1046,7 +1060,7 @@ describe("beat-game run lifecycle", () => {
       store.load("unrelated-drop-recovery-run"),
     );
     expect(recoveryDetails).not.toContain("Death recovery completed");
-    expect(saved?.memory.deathPositions).toHaveLength(1);
+    expect(saved?.memory.deathPositions).toHaveLength(0);
   });
 
   it("races barehanded to substantial renewable progress within recovery range", async () => {
