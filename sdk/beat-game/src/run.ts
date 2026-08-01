@@ -2138,6 +2138,9 @@ function shouldDisengageFromThreat(
   if (ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(target.entityType)) {
     return true;
   }
+  if (observation.player.health <= LETHAL_MELEE_DISENGAGE_HEALTH) {
+    return true;
+  }
   if (shouldCommitToMeleeFight(observation, target)) {
     return false;
   }
@@ -2145,11 +2148,8 @@ function shouldDisengageFromThreat(
     return !shouldEngageRangedFight(state, observation, target);
   }
   if (PROACTIVE_MELEE_HOSTILE_ENTITY_TYPES.has(target.entityType)) {
-    return observation.player.health <= LETHAL_MELEE_DISENGAGE_HEALTH
-      || (
-        !hasMeleeWeapon(observation)
-        && observation.player.health < state.strategy.minimumHealth
-      );
+    return !hasMeleeWeapon(observation)
+      && observation.player.health < state.strategy.minimumHealth;
   }
   if (
     observation.player.health
@@ -3405,10 +3405,13 @@ function monitorDefenseHealth(
         return Effect.succeed("disengage" as const);
       }
       if (
-        observation.player.health >= state.strategy.minimumHealth
-        || observation.player.health >= engagementHealth
-        || shouldCommitToMeleeFight(observation, target)
-        || shouldCommitToRangedFight(observation, target)
+        observation.player.health > LETHAL_MELEE_DISENGAGE_HEALTH
+        && (
+          observation.player.health >= state.strategy.minimumHealth
+          || observation.player.health >= engagementHealth
+          || shouldCommitToMeleeFight(observation, target)
+          || shouldCommitToRangedFight(observation, target)
+        )
       ) {
         return monitorDefenseHealth(
           state,
