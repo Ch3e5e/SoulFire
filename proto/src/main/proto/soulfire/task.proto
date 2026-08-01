@@ -452,12 +452,15 @@ message FishTask {
   uint32 bite_timeout_ticks = 4;
   bool complete_when_no_rod = 5;
   bool restore_selected_slot = 6;
+  // Zero allows failed casts until another completion condition is met.
+  uint32 maximum_failed_casts = 7;
 }
 
 enum FishCompletionReason {
   FISH_COMPLETION_REASON_UNSPECIFIED = 0;
   FISH_COMPLETION_REASON_CATCH_LIMIT_REACHED = 1;
   FISH_COMPLETION_REASON_NO_ROD = 2;
+  FISH_COMPLETION_REASON_FAILED_CAST_LIMIT_REACHED = 3;
 }
 
 message FishTaskResult {

@@ -442,6 +442,7 @@ def test_sync_fish_task_preserves_rod_and_catch_policy() -> None:
 
     bot.tasks.fish(
         maximum_catches=3,
+        maximum_failed_casts=4,
         rod=ItemSelector(item_ids=["minecraft:fishing_rod"]),
         cast_timeout_ticks=80,
         bite_timeout_ticks=6_000,
@@ -453,6 +454,7 @@ def test_sync_fish_task_preserves_rod_and_catch_policy() -> None:
     unpacked = FishTask()
     assert service.request.input.Unpack(unpacked)
     assert unpacked.maximum_catches == 3
+    assert unpacked.maximum_failed_casts == 4
     assert list(unpacked.rod.item_ids) == ["minecraft:fishing_rod"]
     assert unpacked.cast_timeout_ticks == 80
     assert unpacked.bite_timeout_ticks == 6_000

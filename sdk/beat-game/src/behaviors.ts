@@ -926,6 +926,7 @@ export function keepTotemEquipped(
 
 export interface FishOptions extends BeatGameBehaviorOptions {
   readonly maximumCatches?: number;
+  readonly maximumFailedCasts?: number;
 }
 
 export function fish(
@@ -937,6 +938,9 @@ export function fish(
     ...(options.maximumCatches === undefined
       ? {}
       : { maximumCatches: options.maximumCatches }),
+    ...(options.maximumFailedCasts === undefined
+      ? {}
+      : { maximumFailedCasts: options.maximumFailedCasts }),
   }, options.path);
 }
 

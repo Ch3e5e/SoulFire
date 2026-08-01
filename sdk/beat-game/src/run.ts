@@ -316,6 +316,7 @@ const LIQUID_INTERACTION_STAND_RADIUS = 0.75;
 const LIQUID_INTERACTION_REACH = 4.5;
 const FISHING_SHORE_SEARCH_RADIUS = Math.ceil(LIQUID_INTERACTION_REACH);
 const FISHING_COLLECTION_BATCH_SIZE = 3;
+const FISHING_MAXIMUM_FAILED_CASTS = 4;
 const FISHING_MINIMUM_CAST_HORIZONTAL_DISTANCE = 2;
 const FISHING_PREFERRED_CAST_HORIZONTAL_DISTANCE = 3;
 const FISHING_MAXIMUM_DOWNWARD_CAST_PITCH = 30;
@@ -5064,8 +5065,10 @@ function tryFishForFood(
         );
         yield* fish(state.driver, {
           maximumCatches: FISHING_COLLECTION_BATCH_SIZE,
+          maximumFailedCasts: FISHING_MAXIMUM_FAILED_CASTS,
           path: state.strategy.path,
         });
+        yield* Effect.yieldNow();
         yield* collectNearbyDrops(state.driver, {
           itemIds: ["minecraft:cod", "minecraft:salmon"],
           radius: 8,
@@ -5074,7 +5077,9 @@ function tryFishForFood(
           path: state.strategy.path,
         });
         current = yield* state.driver.observe;
-        return caughtFoodCount(current) > caughtFoodBeforeCollection;
+        if (caughtFoodCount(current) > caughtFoodBeforeCollection) {
+          return true;
+        }
       }
     }
     return false;

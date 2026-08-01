@@ -252,6 +252,7 @@ export interface SleepTaskOptions extends TaskStartOptions {
 
 export interface FishTaskOptions extends TaskStartOptions {
   maximumCatches?: number;
+  maximumFailedCasts?: number;
   rod?: MessageInitShape<typeof ItemSelectorSchema>;
   castTimeoutTicks?: number;
   biteTimeoutTicks?: number;
@@ -1080,6 +1081,7 @@ export class SoulFireTasks {
   ): Promise<SoulFireTask<typeof FishTaskResultSchema>> {
     const {
       maximumCatches = 1,
+      maximumFailedCasts = 0,
       rod,
       castTimeoutTicks = 100,
       biteTimeoutTicks = 12_000,
@@ -1091,6 +1093,7 @@ export class SoulFireTasks {
       FishTaskSchema,
       {
         maximumCatches,
+        maximumFailedCasts,
         ...(rod === undefined ? {} : { rod }),
         castTimeoutTicks,
         biteTimeoutTicks,
@@ -1107,6 +1110,7 @@ export class SoulFireTasks {
   ): AsyncIterable<BotTaskEvent> {
     const {
       maximumCatches = 0,
+      maximumFailedCasts = 0,
       rod,
       castTimeoutTicks = 100,
       biteTimeoutTicks = 12_000,
@@ -1118,6 +1122,7 @@ export class SoulFireTasks {
       FishTaskSchema,
       {
         maximumCatches,
+        maximumFailedCasts,
         ...(rod === undefined ? {} : { rod }),
         castTimeoutTicks,
         biteTimeoutTicks,

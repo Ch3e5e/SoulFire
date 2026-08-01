@@ -129,6 +129,7 @@ class FishCompletionReason(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     FISH_COMPLETION_REASON_UNSPECIFIED: _ClassVar[FishCompletionReason]
     FISH_COMPLETION_REASON_CATCH_LIMIT_REACHED: _ClassVar[FishCompletionReason]
     FISH_COMPLETION_REASON_NO_ROD: _ClassVar[FishCompletionReason]
+    FISH_COMPLETION_REASON_FAILED_CAST_LIMIT_REACHED: _ClassVar[FishCompletionReason]
 
 class FarmCompletionReason(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -308,6 +309,7 @@ SLEEP_COMPLETION_REASON_NO_BED_FOUND: SleepCompletionReason
 FISH_COMPLETION_REASON_UNSPECIFIED: FishCompletionReason
 FISH_COMPLETION_REASON_CATCH_LIMIT_REACHED: FishCompletionReason
 FISH_COMPLETION_REASON_NO_ROD: FishCompletionReason
+FISH_COMPLETION_REASON_FAILED_CAST_LIMIT_REACHED: FishCompletionReason
 FARM_COMPLETION_REASON_UNSPECIFIED: FarmCompletionReason
 FARM_COMPLETION_REASON_HARVEST_LIMIT_REACHED: FarmCompletionReason
 FARM_COMPLETION_REASON_NO_MATURE_CROPS: FarmCompletionReason
@@ -800,20 +802,22 @@ class SleepTaskResult(_message.Message):
     def __init__(self, bed: _Optional[_Union[_common_pb2.BlockPosition, _Mapping]] = ..., reason: _Optional[_Union[SleepCompletionReason, str]] = ...) -> None: ...
 
 class FishTask(_message.Message):
-    __slots__ = ("maximum_catches", "rod", "cast_timeout_ticks", "bite_timeout_ticks", "complete_when_no_rod", "restore_selected_slot")
+    __slots__ = ("maximum_catches", "rod", "cast_timeout_ticks", "bite_timeout_ticks", "complete_when_no_rod", "restore_selected_slot", "maximum_failed_casts")
     MAXIMUM_CATCHES_FIELD_NUMBER: _ClassVar[int]
     ROD_FIELD_NUMBER: _ClassVar[int]
     CAST_TIMEOUT_TICKS_FIELD_NUMBER: _ClassVar[int]
     BITE_TIMEOUT_TICKS_FIELD_NUMBER: _ClassVar[int]
     COMPLETE_WHEN_NO_ROD_FIELD_NUMBER: _ClassVar[int]
     RESTORE_SELECTED_SLOT_FIELD_NUMBER: _ClassVar[int]
+    MAXIMUM_FAILED_CASTS_FIELD_NUMBER: _ClassVar[int]
     maximum_catches: int
     rod: _inventory_pb2.ItemSelector
     cast_timeout_ticks: int
     bite_timeout_ticks: int
     complete_when_no_rod: bool
     restore_selected_slot: bool
-    def __init__(self, maximum_catches: _Optional[int] = ..., rod: _Optional[_Union[_inventory_pb2.ItemSelector, _Mapping]] = ..., cast_timeout_ticks: _Optional[int] = ..., bite_timeout_ticks: _Optional[int] = ..., complete_when_no_rod: bool = ..., restore_selected_slot: bool = ...) -> None: ...
+    maximum_failed_casts: int
+    def __init__(self, maximum_catches: _Optional[int] = ..., rod: _Optional[_Union[_inventory_pb2.ItemSelector, _Mapping]] = ..., cast_timeout_ticks: _Optional[int] = ..., bite_timeout_ticks: _Optional[int] = ..., complete_when_no_rod: bool = ..., restore_selected_slot: bool = ..., maximum_failed_casts: _Optional[int] = ...) -> None: ...
 
 class FishTaskResult(_message.Message):
     __slots__ = ("reason", "catches", "failed_casts")

@@ -228,6 +228,7 @@ export type BeatGameTask =
   | {
     readonly type: "fish";
     readonly maximumCatches?: number;
+    readonly maximumFailedCasts?: number;
   }
   | {
     readonly type: "farm";
@@ -827,6 +828,9 @@ export function makeSoulFireBeatGameDriver(
             ...(task.maximumCatches === undefined
               ? {}
               : { maximumCatches: task.maximumCatches }),
+            ...(task.maximumFailedCasts === undefined
+              ? {}
+              : { maximumFailedCasts: task.maximumFailedCasts }),
           });
         case "farm":
           return bot.tasks.farm({

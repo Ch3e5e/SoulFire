@@ -88,6 +88,7 @@ public final class FishTaskProvider implements BotTaskProvider<FishTask> {
       new FishControl(
         context,
         input.getMaximumCatches(),
+        input.getMaximumFailedCasts(),
         input.hasRod() ? input.getRod() : null,
         castTimeout,
         biteTimeout,
@@ -103,6 +104,7 @@ public final class FishTaskProvider implements BotTaskProvider<FishTask> {
   private static final class FishControl implements ControlTask {
     private final BotTaskContext context;
     private final int maximumCatches;
+    private final int maximumFailedCasts;
     private final @Nullable ItemSelector rodSelector;
     private final int castTimeoutTicks;
     private final int biteTimeoutTicks;
@@ -116,10 +118,12 @@ public final class FishTaskProvider implements BotTaskProvider<FishTask> {
     private int failedCasts;
     private int outOfWaterTicks;
     private boolean pendingCatch;
+    private boolean completeAfterRetrieval;
 
     private FishControl(
       BotTaskContext context,
       int maximumCatches,
+      int maximumFailedCasts,
       @Nullable ItemSelector rodSelector,
       int castTimeoutTicks,
       int biteTimeoutTicks,
@@ -130,6 +134,7 @@ public final class FishTaskProvider implements BotTaskProvider<FishTask> {
     ) {
       this.context = context;
       this.maximumCatches = maximumCatches;
+      this.maximumFailedCasts = maximumFailedCasts;
       this.rodSelector = rodSelector;
       this.castTimeoutTicks = castTimeoutTicks;
       this.biteTimeoutTicks = biteTimeoutTicks;
@@ -205,6 +210,9 @@ public final class FishTaskProvider implements BotTaskProvider<FishTask> {
       stageTicks++;
       if (stageTicks >= castTimeoutTicks) {
         failedCasts++;
+        if (completeForFailedCastLimit()) {
+          return;
+        }
         transition(Stage.SELECT_ROD, "Cast was not confirmed");
       }
     }
@@ -214,6 +222,9 @@ public final class FishTaskProvider implements BotTaskProvider<FishTask> {
       var hook = player.fishing;
       if (hook == null || hook.isRemoved()) {
         failedCasts++;
+        if (completeForFailedCastLimit()) {
+          return;
+        }
         transition(Stage.RECAST_DELAY, "Fishing line was lost");
         return;
       }
@@ -222,6 +233,9 @@ public final class FishTaskProvider implements BotTaskProvider<FishTask> {
         requireGameMode().useItem(player, InteractionHand.MAIN_HAND);
         failedCasts++;
         pendingCatch = false;
+        if (failedCastLimitReached()) {
+          completeAfterRetrieval = true;
+        }
         transition(
           Stage.WAIT_FOR_RETRIEVAL,
           "Reeling in a cast that missed the water"
@@ -255,12 +269,22 @@ public final class FishTaskProvider implements BotTaskProvider<FishTask> {
         requireGameMode().useItem(player, InteractionHand.MAIN_HAND);
         failedCasts++;
         pendingCatch = false;
+        if (failedCastLimitReached()) {
+          completeAfterRetrieval = true;
+        }
         transition(Stage.WAIT_FOR_RETRIEVAL, "Reeling in timed-out cast");
       }
     }
 
     private void waitForRetrieval() {
       if (requirePlayer().fishing == null) {
+        if (completeAfterRetrieval) {
+          complete(
+            FishCompletionReason
+              .FISH_COMPLETION_REASON_FAILED_CAST_LIMIT_REACHED
+          );
+          return;
+        }
         if (pendingCatch) {
           catches++;
           pendingCatch = false;
@@ -325,6 +349,21 @@ public final class FishTaskProvider implements BotTaskProvider<FishTask> {
           ));
       }
       context.reportProgress(builder.build());
+    }
+
+    private boolean failedCastLimitReached() {
+      return maximumFailedCasts > 0 && failedCasts >= maximumFailedCasts;
+    }
+
+    private boolean completeForFailedCastLimit() {
+      if (!failedCastLimitReached()) {
+        return false;
+      }
+      complete(
+        FishCompletionReason
+          .FISH_COMPLETION_REASON_FAILED_CAST_LIMIT_REACHED
+      );
+      return true;
     }
 
     private void complete(FishCompletionReason reason) {

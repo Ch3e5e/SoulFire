@@ -520,6 +520,7 @@ describe("SoulFireTasks", () => {
 
     await bot.tasks.fish({
       maximumCatches: 3,
+      maximumFailedCasts: 4,
       rod: { itemIds: ["minecraft:fishing_rod"] },
       castTimeoutTicks: 80,
       biteTimeoutTicks: 6_000,
@@ -529,6 +530,7 @@ describe("SoulFireTasks", () => {
 
     expect(anyUnpack(started!.input!, FishTaskSchema)).toMatchObject({
       maximumCatches: 3,
+      maximumFailedCasts: 4,
       rod: { itemIds: ["minecraft:fishing_rod"] },
       castTimeoutTicks: 80,
       biteTimeoutTicks: 6_000,

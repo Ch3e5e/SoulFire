@@ -1081,6 +1081,7 @@ class AsyncSoulFireTasks:
         self,
         *,
         maximum_catches: int = 0,
+        maximum_failed_casts: int = 0,
         rod: ItemSelector | None = None,
         cast_timeout_ticks: int = 100,
         bite_timeout_ticks: int = 12_000,
@@ -1095,6 +1096,7 @@ class AsyncSoulFireTasks:
         return self.run(
             _fish_task(
                 maximum_catches,
+                maximum_failed_casts,
                 rod,
                 cast_timeout_ticks,
                 bite_timeout_ticks,
@@ -1112,6 +1114,7 @@ class AsyncSoulFireTasks:
         self,
         *,
         maximum_catches: int = 1,
+        maximum_failed_casts: int = 0,
         rod: ItemSelector | None = None,
         cast_timeout_ticks: int = 100,
         bite_timeout_ticks: int = 12_000,
@@ -1128,6 +1131,7 @@ class AsyncSoulFireTasks:
         return await self.start(
             _fish_task(
                 maximum_catches,
+                maximum_failed_casts,
                 rod,
                 cast_timeout_ticks,
                 bite_timeout_ticks,
@@ -3236,6 +3240,7 @@ class SoulFireTasks:
         self,
         *,
         maximum_catches: int = 0,
+        maximum_failed_casts: int = 0,
         rod: ItemSelector | None = None,
         cast_timeout_ticks: int = 100,
         bite_timeout_ticks: int = 12_000,
@@ -3250,6 +3255,7 @@ class SoulFireTasks:
         return self.run(
             _fish_task(
                 maximum_catches,
+                maximum_failed_casts,
                 rod,
                 cast_timeout_ticks,
                 bite_timeout_ticks,
@@ -3267,6 +3273,7 @@ class SoulFireTasks:
         self,
         *,
         maximum_catches: int = 1,
+        maximum_failed_casts: int = 0,
         rod: ItemSelector | None = None,
         cast_timeout_ticks: int = 100,
         bite_timeout_ticks: int = 12_000,
@@ -3283,6 +3290,7 @@ class SoulFireTasks:
         return self.start(
             _fish_task(
                 maximum_catches,
+                maximum_failed_casts,
                 rod,
                 cast_timeout_ticks,
                 bite_timeout_ticks,
@@ -4764,6 +4772,7 @@ def _sleep_task(
 
 def _fish_task(
     maximum_catches: int,
+    maximum_failed_casts: int,
     rod: ItemSelector | None,
     cast_timeout_ticks: int,
     bite_timeout_ticks: int,
@@ -4772,12 +4781,15 @@ def _fish_task(
 ) -> FishTask:
     if maximum_catches < 0:
         raise ValueError("maximum_catches must be non-negative")
+    if maximum_failed_casts < 0:
+        raise ValueError("maximum_failed_casts must be non-negative")
     if not 0 < cast_timeout_ticks <= 1_200:
         raise ValueError("cast_timeout_ticks must be between one and 1,200")
     if not 0 < bite_timeout_ticks <= 72_000:
         raise ValueError("bite_timeout_ticks must be between one and 72,000")
     task = FishTask(
         maximum_catches=maximum_catches,
+        maximum_failed_casts=maximum_failed_casts,
         cast_timeout_ticks=cast_timeout_ticks,
         bite_timeout_ticks=bite_timeout_ticks,
         complete_when_no_rod=complete_when_no_rod,
