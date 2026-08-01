@@ -89,6 +89,20 @@ describe("beat-game planner", () => {
     });
   });
 
+  it("secures emergency food before phase work when hunger is critical", () => {
+    const decision = decideBeatGameAction({
+      checkpoint: checkpoint(BeatGamePhase.ENTER_NETHER),
+      observation: observation({ food: 6 }),
+      strategy: defaultBeatGameStrategy,
+    });
+
+    expect(decision).toMatchObject({
+      type: "satisfy-requirement",
+      action: "satisfy:food-supply",
+      requirement: { key: "food-supply" },
+    });
+  });
+
   it("recovers in place when current hunger or emergency food can heal", () => {
     const base = checkpoint(BeatGamePhase.PREPARE_OVERWORLD);
 

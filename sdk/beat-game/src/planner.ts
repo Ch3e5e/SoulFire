@@ -109,6 +109,16 @@ export function decideBeatGameAction(
     observation.inventory,
     strategy,
   );
+  if (observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL) {
+    const foodSupply = requirementsForPhase(
+      BeatGamePhase.PREPARE_OVERWORLD,
+      observation.inventory,
+      strategy,
+    ).find(({ key }) => key === "food-supply");
+    if (foodSupply !== undefined && !foodSupply.satisfied) {
+      return requirementDecision(foodSupply);
+    }
+  }
   if (
     phase === BeatGamePhase.PREPARE_OVERWORLD
     && observation.player.food <= strategy.eatBelowFood

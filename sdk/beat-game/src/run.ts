@@ -1312,18 +1312,11 @@ function executeDecision(
             if (recoveryAttempted) {
               const preparationPending =
                 yield* prepareForDistantDeathRecovery(
-                state,
-                pendingDeath,
-                respawned,
-              );
+                  state,
+                  pendingDeath,
+                  respawned,
+                );
               if (preparationPending !== undefined) {
-                if (
-                  preparationPending !== DEATH_RECOVERY_FOOD_SEARCH_PENDING
-                ) {
-                  return {
-                    replanReason: preparationPending,
-                  } satisfies ActionResult;
-                }
                 const preparationFailures =
                   yield* recordDeathRecoveryFailure(
                     state,
@@ -1339,7 +1332,7 @@ function executeDecision(
                     state,
                     pendingDeath,
                     current,
-                    "Abandoned a distant corpse after three bounded supply searches",
+                    "Abandoned a distant corpse after three bounded preparation attempts",
                   );
                 }
                 return {
@@ -9236,6 +9229,12 @@ function observeFresh(
       },
     );
     if (pendingDeath === undefined) {
+      return observation;
+    }
+    if (
+      !observation.player.dead
+      && observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
+    ) {
       return observation;
     }
     return {

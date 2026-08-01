@@ -1913,6 +1913,68 @@ describe("beat-game run lifecycle", () => {
     expect(collectIndex).toBe(-1);
   });
 
+  it("stabilizes critical hunger before resuming a pending corpse recovery", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const deathPosition = {
+      x: 4,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    const observedAt = new Date().toISOString();
+    const initial = checkpoint(BeatGamePhase.ENTER_NETHER, {
+      runId: "critical-hunger-recovery-run",
+      teamId: "critical-hunger-recovery-team",
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        deathPositions: [{
+          key: `death:${observedAt}`,
+          value: {
+            ...deathPosition,
+            inventoryCounts: { "minecraft:iron_pickaxe": 1 },
+          },
+          observedAt,
+          confidence: 1,
+        }],
+      },
+    }, undefined));
+    driver.currentObservation = observation({
+      food: 6,
+      counts: { "minecraft:wooden_sword": 1 },
+    });
+
+    const firstAction = await Effect.runPromise(Effect.scoped(
+      Effect.gen(function* () {
+        const run = yield* beatGameWithDriver(driver, {
+          runId: "critical-hunger-recovery-run",
+          team: { teamId: "critical-hunger-recovery-team" },
+          checkpointStore: store,
+          strategy: { observationPollMs: 1 },
+        });
+        const action = yield* run.events.pipe(
+          Stream.filter((event) => event.type === "action-started"),
+          Stream.runHead,
+          Effect.timeout("5 seconds"),
+        );
+        yield* run.stop;
+        yield* run.awaitCompletion.pipe(Effect.either);
+        return action;
+      }),
+    ));
+
+    expect(Option.getOrUndefined(firstAction)).toMatchObject({
+      type: "action-started",
+      action: "satisfy:food-supply",
+    });
+    expect(driver.paths).not.toContainEqual(expect.objectContaining({
+      position: deathPosition,
+    }));
+  });
+
   it("only hunts animals along a distant corpse recovery route", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
@@ -2344,7 +2406,7 @@ describe("beat-game run lifecycle", () => {
       },
     }, undefined));
     driver.currentObservation = observation({
-      food: 5,
+      food: 7,
       counts: {
         "minecraft:dirt": 16,
         "minecraft:wooden_sword": 1,
@@ -2424,6 +2486,79 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("abandons distant recovery after three bounded equipment searches", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const deathPosition = {
+      x: 700,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    const observedAt = new Date().toISOString();
+    const initial = checkpoint(BeatGamePhase.ENTER_NETHER, {
+      runId: "bounded-corpse-equipment-run",
+      teamId: "bounded-corpse-equipment-team",
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        deathPositions: [{
+          key: `death:${observedAt}`,
+          value: {
+            ...deathPosition,
+            inventoryCounts: { "minecraft:iron_pickaxe": 1 },
+          },
+          observedAt,
+          confidence: 1,
+        }],
+      },
+    }, undefined));
+    driver.currentObservation = observation();
+
+    const equipmentSearches = await Effect.runPromise(Effect.scoped(
+      Effect.gen(function* () {
+        const run = yield* beatGameWithDriver(driver, {
+          runId: "bounded-corpse-equipment-run",
+          team: { teamId: "bounded-corpse-equipment-team" },
+          checkpointStore: store,
+          strategy: {
+            maximumActionRetries: 1,
+            observationPollMs: 1,
+          },
+        });
+        yield* Effect.gen(function* () {
+          while (
+            (yield* store.load("bounded-corpse-equipment-run"))
+                ?.memory.deathPositions.length !== 0
+          ) {
+            yield* Effect.sleep(1);
+          }
+        }).pipe(Effect.timeoutFail({
+          duration: "5 seconds",
+          onTimeout: () =>
+            new Error("The bounded equipment search did not finish"),
+        }));
+        const searches = driver.tasks.filter((task) =>
+          task.type === "collect-blocks"
+        ).length;
+        yield* run.stop;
+        yield* run.awaitCompletion.pipe(Effect.either);
+        return searches;
+      }),
+    ));
+
+    expect(equipmentSearches).toBe(3);
+    expect(driver.paths).not.toContainEqual(expect.objectContaining({
+      position: deathPosition,
+    }));
+    const saved = await Effect.runPromise(
+      store.load("bounded-corpse-equipment-run"),
+    );
+    expect(saved?.memory.deathPositions).toEqual([]);
+  });
+
   it("does not count preparation misses as corpse pickup failures", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
@@ -2459,7 +2594,7 @@ describe("beat-game run lifecycle", () => {
       "minecraft:cooked_chicken": 3,
     };
     driver.currentObservation = observation({
-      food: 5,
+      food: 7,
       counts: {
         "minecraft:dirt": 16,
         "minecraft:wooden_sword": 1,
