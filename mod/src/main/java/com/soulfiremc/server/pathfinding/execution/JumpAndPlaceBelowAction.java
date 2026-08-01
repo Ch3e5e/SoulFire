@@ -104,6 +104,7 @@ public final class JumpAndPlaceBelowAction implements WorldAction {
   @Override
   public void tick(BotConnection connection) {
     var clientEntity = connection.minecraft().player;
+    var movingInFluid = clientEntity.isInWater() || clientEntity.isInLava();
     connection.controlState().resetAll();
 
     var placementCenter = new Vec3(
@@ -147,22 +148,28 @@ public final class JumpAndPlaceBelowAction implements WorldAction {
       return;
     }
 
+    var placeTarget = Vec3.atCenterOf(blockPlaceAgainstData.againstPos().toBlockPos()).add(
+      blockPlaceAgainstData.blockFace().toDirection().getUnitVec3().multiply(0.5, 0.5, 0.5));
     if (needsAdditionalJumpHeight(clientEntity.getY(), blockPlacePosition.y)) {
       // Keep jumping until the player's collision box no longer intersects
       // the block being placed. Releasing jump on the first airborne tick
       // sends use-item-on while the player still occupies the target cell,
       // which authoritative servers reject.
-      // Keep the view level while swimming. A swimming player follows their
-      // pitch, so aiming at the block below while ascending can pin them in
-      // flowing water and prevent the pillar jump from ever starting.
-      connection.rotationControl().lookHorizontallyAt(placementCenter);
+      if (shouldKeepViewHorizontalWhileAscending(movingInFluid)) {
+        // A swimming player follows their pitch, so aiming at the block below
+        // while ascending can pin them in flowing water and prevent the pillar
+        // jump from ever starting.
+        connection.rotationControl().lookHorizontallyAt(placementCenter);
+      } else {
+        // Pre-aim during a normal jump. Waiting until the player clears the
+        // placement cell leaves too little airtime to rotate down and place.
+        connection.rotationControl().lookAt(placeTarget);
+      }
       connection.controlState().jump(true);
       return;
     }
     connection.controlState().jump(false);
 
-    var placeTarget = Vec3.atCenterOf(blockPlaceAgainstData.againstPos().toBlockPos()).add(
-      blockPlaceAgainstData.blockFace().toDirection().getUnitVec3().multiply(0.5, 0.5, 0.5));
     connection.rotationControl().lookAt(placeTarget);
     var hand = placementHand;
     if (!connection.rotationControl().isFacing(placeTarget)) {
@@ -213,6 +220,10 @@ public final class JumpAndPlaceBelowAction implements WorldAction {
 
   static boolean needsAdditionalJumpHeight(double playerY, int placementY) {
     return playerY < placementY + PLACEMENT_CLEARANCE;
+  }
+
+  static boolean shouldKeepViewHorizontalWhileAscending(boolean movingInFluid) {
+    return movingInFluid;
   }
 
   @Override

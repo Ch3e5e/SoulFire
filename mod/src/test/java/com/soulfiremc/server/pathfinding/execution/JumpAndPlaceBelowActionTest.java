@@ -56,6 +56,14 @@ final class JumpAndPlaceBelowActionTest {
   }
 
   @Test
+  void onlyKeepsTheViewLevelForFluidAscents() {
+    assertTrue(JumpAndPlaceBelowAction
+      .shouldKeepViewHorizontalWhileAscending(true));
+    assertFalse(JumpAndPlaceBelowAction
+      .shouldKeepViewHorizontalWhileAscending(false));
+  }
+
+  @Test
   void rejectsAPlacementWhosePredictionNeverSettles() {
     assertTrue(JumpAndPlaceBelowAction.placementWasRejected(
       false,
