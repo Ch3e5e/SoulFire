@@ -887,7 +887,13 @@ export function respawnAndRecover(
       radius: options.searchRadius ?? 24,
       maximumDrops: 64,
       settleDelayMs: 100,
-      ...(options.path === undefined ? {} : { path: options.path }),
+      ...(options.path === undefined
+        ? {}
+        : {
+          path: options.retryThroughFluids === true
+            ? { ...options.path, avoidFluids: false }
+            : options.path,
+        }),
     });
   });
 }

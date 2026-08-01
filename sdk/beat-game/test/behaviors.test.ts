@@ -276,6 +276,23 @@ describe("beat-game behavior programs", () => {
       z: -48,
       dimension: "minecraft:overworld",
     };
+    const submergedDrop = {
+      connectionEpoch: "epoch-1",
+      networkId: 24,
+      entityType: "minecraft:item",
+      itemId: "minecraft:iron_ingot",
+      position: {
+        ...deathPosition,
+        x: deathPosition.x + 4,
+        y: deathPosition.y - 1,
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 5,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.entityQueryResolver = () =>
+      driver.paths.length === 2 ? [submergedDrop] : [];
     driver.pathResolver = (position, radius, policy) => {
       const recordPath = Effect.sync(() => {
         driver.paths.push({ position, radius, policy });
@@ -308,6 +325,12 @@ describe("beat-game behavior programs", () => {
         policy: expect.objectContaining({ avoidFluids: false }),
       }),
     ]);
+    expect(driver.xzPaths).toContainEqual(expect.objectContaining({
+      x: submergedDrop.position.x,
+      z: submergedDrop.position.z,
+      dimension: submergedDrop.position.dimension,
+      policy: expect.objectContaining({ avoidFluids: false }),
+    }));
     expect(driver.entityQueries).toContainEqual(expect.objectContaining({
       radius: 24,
       selector: {

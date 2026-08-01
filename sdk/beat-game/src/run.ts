@@ -134,6 +134,8 @@ const SHORE_PATH_MAX_SEARCH_TIME_MS = 5_000;
 const SHORE_PATH_TIMEOUT_MS = 10_000;
 const DRY_SURFACE_APPROACH_RADIUS = 0.75;
 const FURNACE_RECOVERY_RADIUS = 12;
+const NEARBY_REQUIREMENT_DROP_RADIUS = 12;
+const NEARBY_REQUIREMENT_DROP_MAXIMUM_VERTICAL_DISTANCE = 6;
 const RESOURCE_COLLECTION_RESERVED_SLOTS = 3;
 const REQUIREMENT_NO_PROGRESS_REPLAN_DELAY_MS = 1_000;
 const LOCAL_NAVIGATION_RECOVERY_MINIMUM_DISTANCE = 3;
@@ -1307,6 +1309,7 @@ function executeDecision(
                   yield* recordDeathRecoveryFailure(
                     state,
                     pendingDeath.observedAt,
+                    "preparation",
                   );
                 if (
                   preparationFailures
@@ -1399,6 +1402,7 @@ function executeDecision(
             const recoveryFailures = yield* recordDeathRecoveryFailure(
               state,
               pendingDeath.observedAt,
+              "pickup",
             );
             if (recoveryFailures >= MAX_SAFE_DEATH_RECOVERY_FAILURES) {
               return yield* abandonPendingDeath(
@@ -4040,6 +4044,82 @@ function inventoryCountsChanged(
 }
 
 function satisfyRequirement(
+  state: RunState,
+  requirement: BeatGameItemRequirement,
+  observation: BeatGameObservation,
+): Effect.Effect<void, BeatGameError | BeatGameDriverError> {
+  return recoverNearbyRequirementDrops(
+    state,
+    requirement,
+    observation,
+  ).pipe(
+    Effect.flatMap((recovered) =>
+      recovered
+        ? Effect.void
+        : satisfyRequirementFromWorld(state, requirement, observation)
+    ),
+  );
+}
+
+function recoverNearbyRequirementDrops(
+  state: RunState,
+  requirement: BeatGameItemRequirement,
+  observation: BeatGameObservation,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  const itemIds = [...new Set(
+    requirement.key === "food"
+      ? [...requirement.itemIds, ...Object.keys(RAW_FOOD_TO_COOKED)]
+      : requirement.itemIds,
+  )];
+  if (itemIds.length === 0) {
+    return Effect.succeed(false);
+  }
+  const itemIdSet = new Set(itemIds);
+  const count = (value: BeatGameObservation): number =>
+    itemIds.reduce(
+      (total, itemId) => total + (value.inventory.counts[itemId] ?? 0),
+      0,
+    );
+  const before = count(observation);
+  return state.driver.queryEntities({
+    origin: observation.player.position,
+    radius: NEARBY_REQUIREMENT_DROP_RADIUS,
+    selector: {
+      entityTypes: ["minecraft:item"],
+      alive: true,
+    },
+    maximumResults: 32,
+  }).pipe(
+    Effect.flatMap((entities) =>
+      entities.some((entity) =>
+          entity.itemId !== undefined
+          && itemIdSet.has(entity.itemId)
+          && Math.abs(
+              entity.position.y - observation.player.position.y,
+            ) <= NEARBY_REQUIREMENT_DROP_MAXIMUM_VERTICAL_DISTANCE
+        )
+        ? collectNearbyDrops(state.driver, {
+          itemIds,
+          radius: NEARBY_REQUIREMENT_DROP_RADIUS,
+          maximumDrops: 32,
+          settleDelayMs: 0,
+          maximumVerticalDistance:
+            NEARBY_REQUIREMENT_DROP_MAXIMUM_VERTICAL_DISTANCE,
+          path: {
+            ...state.strategy.path,
+            allowPlacing: false,
+            avoidFluids: true,
+          },
+        }).pipe(
+          Effect.zipRight(state.driver.observe),
+          Effect.map((current) => count(current) > before),
+        )
+        : Effect.succeed(false)
+    ),
+  );
+}
+
+function satisfyRequirementFromWorld(
   state: RunState,
   requirement: BeatGameItemRequirement,
   observation: BeatGameObservation,
@@ -8770,11 +8850,13 @@ function isPendingDeathRecoverable(pendingDeath: PendingDeath): boolean {
 function recordDeathRecoveryFailure(
   state: RunState,
   observedAt: string,
+  stage: "pickup" | "preparation",
 ): Effect.Effect<number> {
   return Ref.modify(state.deathRecoveryFailures, (failures) => {
-    const nextFailureCount = (failures.get(observedAt) ?? 0) + 1;
+    const key = `${observedAt}:${stage}`;
+    const nextFailureCount = (failures.get(key) ?? 0) + 1;
     const updatedFailures = new Map(failures);
-    updatedFailures.set(observedAt, nextFailureCount);
+    updatedFailures.set(key, nextFailureCount);
     return [nextFailureCount, updatedFailures] as const;
   });
 }
@@ -8792,11 +8874,14 @@ function completePendingDeath(
         ),
     ),
     Ref.update(state.deathRecoveryFailures, (failures) => {
-      if (!failures.has(observedAt)) {
+      const preparationKey = `${observedAt}:preparation`;
+      const pickupKey = `${observedAt}:pickup`;
+      if (!failures.has(preparationKey) && !failures.has(pickupKey)) {
         return failures;
       }
       const updatedFailures = new Map(failures);
-      updatedFailures.delete(observedAt);
+      updatedFailures.delete(preparationKey);
+      updatedFailures.delete(pickupKey);
       return updatedFailures;
     }),
   ], { discard: true });
