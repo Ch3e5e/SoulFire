@@ -2751,7 +2751,7 @@ describe("beat-game run lifecycle", () => {
     ).toHaveLength(2);
   });
 
-  it("sprints and takes a shallow surface route away from a creeper", async () => {
+  it("sprints and dynamically flees a creeper across surface terrain", async () => {
     const driver = new FakeBeatGameDriver();
     driver.entityResults = [{
       connectionEpoch: "epoch-1",
@@ -2768,18 +2768,12 @@ describe("beat-game run lifecycle", () => {
       health: 20,
       observedAt: "2026-01-01T00:00:01.000Z",
     }];
-    const resolvePath = driver.xzPathResolver;
-    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
-      resolvePath(x, z, dimension, radius, policy).pipe(
-        Effect.tap(() =>
-          Effect.sync(() => {
-            driver.entityResults = [];
-          })
-        ),
-      );
     driver.taskResolver = (task) =>
       Effect.sync(() => {
         driver.tasks.push(task);
+        if (task.type === "flee") {
+          driver.entityResults = [];
+        }
       }).pipe(
         Effect.zipRight(
           task.type === "collect-blocks"
@@ -2794,7 +2788,7 @@ describe("beat-game run lifecycle", () => {
       }).pipe(
         Effect.flatMap((run) =>
           Effect.gen(function* () {
-            while (driver.xzPaths.length === 0) {
+            while (!driver.tasks.some((task) => task.type === "flee")) {
               yield* Effect.sleep(1);
             }
             yield* run.stop;
@@ -2804,19 +2798,22 @@ describe("beat-game run lifecycle", () => {
       ),
     ));
 
-    expect(driver.xzPaths).toContainEqual({
-      x: -24,
-      z: 0,
-      dimension: "minecraft:overworld",
-      radius: 4,
-      policy: expect.objectContaining({
-        allowMining: false,
-        allowPlacing: false,
-        avoidFluids: true,
-        maxFallDistance: 3,
-      }),
+    const fleeIndex = driver.tasks.findIndex((task) => task.type === "flee");
+    expect(driver.tasks[fleeIndex]).toEqual(expect.objectContaining({
+      type: "flee",
+      selector: { networkId: 41, alive: true },
+      triggerRadius: 12,
+      safeDistance: 24,
+    }));
+    expect(driver.taskPolicies[fleeIndex]).toMatchObject({
+      allowMining: false,
+      allowPlacing: false,
+      avoidFluids: true,
+      maxFallDistance: 3,
+      sprint: true,
     });
     expect(driver.paths).toHaveLength(0);
+    expect(driver.xzPaths).toHaveLength(0);
     expect(driver.actions).toContainEqual({
       type: "set-movement",
       forward: true,
@@ -2824,7 +2821,6 @@ describe("beat-game run lifecycle", () => {
       sprint: true,
     });
     expect(driver.actions).toContainEqual({ type: "reset-movement" });
-    expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
     expect(driver.tasks).not.toContainEqual(expect.objectContaining({
       type: "attack-entity",
     }));
@@ -2859,14 +2855,12 @@ describe("beat-game run lifecycle", () => {
           replaceable: true,
         })]
         : [];
-    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
-      Effect.sync(() => {
-        driver.xzPaths.push({ x, z, dimension, radius, policy });
-        driver.entityResults = [];
-      });
     driver.taskResolver = (task) =>
       Effect.sync(() => {
         driver.tasks.push(task);
+        if (task.type === "flee") {
+          driver.entityResults = [];
+        }
       }).pipe(
         Effect.zipRight(
           task.type === "collect-blocks"
@@ -2881,7 +2875,7 @@ describe("beat-game run lifecycle", () => {
       }).pipe(
         Effect.flatMap((run) =>
           Effect.gen(function* () {
-            while (driver.xzPaths.length === 0) {
+            while (!driver.tasks.some((task) => task.type === "flee")) {
               yield* Effect.sleep(1);
             }
             yield* run.stop;
@@ -2891,8 +2885,8 @@ describe("beat-game run lifecycle", () => {
       ),
     ));
 
-    expect(driver.xzPaths[0]?.policy).toMatchObject({
-      allowMining: false,
+    const fleeIndex = driver.tasks.findIndex((task) => task.type === "flee");
+    expect(driver.taskPolicies[fleeIndex]).toMatchObject({
       allowPlacing: false,
       avoidFluids: true,
       maxFallDistance: 3,
@@ -2928,16 +2922,17 @@ describe("beat-game run lifecycle", () => {
           replaceable: true,
         })]
         : [];
-    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
-      Effect.sync(() => {
-        driver.xzPaths.push({ x, z, dimension, radius, policy });
-      }).pipe(Effect.zipRight(Effect.never));
     driver.taskResolver = (task) =>
       Effect.sync(() => {
         driver.tasks.push(task);
+        if (task.type === "flee") {
+          driver.entityResults = [];
+        }
       }).pipe(
         Effect.zipRight(
-          task.type === "collect-blocks" ? Effect.never : Effect.void,
+          task.type === "collect-blocks" || task.type === "flee"
+            ? Effect.never
+            : Effect.void,
         ),
       );
 
@@ -2945,13 +2940,14 @@ describe("beat-game run lifecycle", () => {
       const run = yield* beatGameWithDriver(driver, {
         strategy: { observationPollMs: 1 },
       });
-      while (driver.xzPaths.length === 0) {
+      while (!driver.tasks.some((task) => task.type === "flee")) {
         yield* Effect.sleep(1);
       }
       yield* run.stop;
     })));
 
-    expect(driver.xzPaths[0]?.policy).toMatchObject({
+    const fleeIndex = driver.tasks.findIndex((task) => task.type === "flee");
+    expect(driver.taskPolicies[fleeIndex]).toMatchObject({
       allowMining: false,
       allowPlacing: false,
       avoidFluids: true,
@@ -2986,18 +2982,12 @@ describe("beat-game run lifecycle", () => {
         && query.selector.requireLineOfSight !== true
         ? [creeper]
         : [];
-    const resolvePath = driver.pathResolver;
-    driver.pathResolver = (position, radius, policy) =>
-      resolvePath(position, radius, policy).pipe(
-        Effect.tap(() =>
-          Effect.sync(() => {
-            driver.entityQueryResolver = () => [];
-          })
-        ),
-      );
     driver.taskResolver = (task) =>
       Effect.sync(() => {
         driver.tasks.push(task);
+        if (task.type === "flee") {
+          driver.entityQueryResolver = () => [];
+        }
       }).pipe(
         Effect.zipRight(
           task.type === "collect-blocks"
@@ -3012,7 +3002,7 @@ describe("beat-game run lifecycle", () => {
       }).pipe(
         Effect.flatMap((run) =>
           Effect.gen(function* () {
-            while (driver.paths.length === 0) {
+            while (!driver.tasks.some((task) => task.type === "flee")) {
               yield* Effect.sleep(1);
             }
             yield* run.stop;
@@ -3024,10 +3014,10 @@ describe("beat-game run lifecycle", () => {
 
     expect(driver.entityQueries).toContainEqual(expect.objectContaining({
       radius: 12,
-      selector: {
-        entityTypes: ["minecraft:creeper"],
+      selector: expect.objectContaining({
+        entityTypes: expect.arrayContaining(["minecraft:creeper"]),
         alive: true,
-      },
+      }),
     }));
     expect(driver.actions).toContainEqual({
       type: "set-movement",
@@ -3035,9 +3025,8 @@ describe("beat-game run lifecycle", () => {
       jump: true,
       sprint: true,
     });
-    expect([...driver.paths, ...driver.xzPaths].some(({ policy }) =>
-      policy.sprint === true
-    )).toBe(true);
+    const fleeIndex = driver.tasks.findIndex((task) => task.type === "flee");
+    expect(driver.taskPolicies[fleeIndex]?.sprint).toBe(true);
   });
 
   it("keeps escaping a nearby creeper when a ranged attacker deals damage", async () => {
@@ -3064,14 +3053,17 @@ describe("beat-game run lifecycle", () => {
       position: { ...creeper.position, x: 8 },
     } as const;
     driver.entityResults = [creeper];
-    let interruptedEscapePaths = 0;
-    let escapePaths = 0;
-    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+    let interruptedEscapes = 0;
+    let escapes = 0;
+    driver.taskResolver = (task) =>
       Effect.sync(() => {
-        driver.xzPaths.push({ x, z, dimension, radius, policy });
-        const shouldRemainActive = escapePaths === 0;
-        escapePaths += 1;
-        if (escapePaths === 1) {
+        driver.tasks.push(task);
+        if (task.type !== "flee") {
+          return false;
+        }
+        const shouldRemainActive = escapes === 0;
+        escapes += 1;
+        if (escapes === 1) {
           driver.entityResults = [creeper, skeleton];
           driver.currentObservation = observation({ health: 17 });
         } else {
@@ -3084,14 +3076,10 @@ describe("beat-game run lifecycle", () => {
         ),
         Effect.onInterrupt(() =>
           Effect.sync(() => {
-            interruptedEscapePaths += 1;
+            interruptedEscapes += 1;
           })
         ),
       );
-    driver.taskResolver = (task) =>
-      Effect.sync(() => {
-        driver.tasks.push(task);
-      });
 
     await Effect.runPromise(Effect.scoped(
       beatGameWithDriver(driver, {
@@ -3099,7 +3087,7 @@ describe("beat-game run lifecycle", () => {
       }).pipe(
         Effect.flatMap((run) =>
           Effect.gen(function* () {
-            while (escapePaths < 2) {
+            while (escapes < 2) {
               yield* Effect.sleep(1);
             }
             yield* run.stop;
@@ -3109,12 +3097,12 @@ describe("beat-game run lifecycle", () => {
       ),
     ));
 
-    expect(interruptedEscapePaths).toBe(1);
-    expect(escapePaths).toBeGreaterThanOrEqual(2);
+    expect(interruptedEscapes).toBe(1);
+    expect(escapes).toBeGreaterThanOrEqual(2);
     expect(driver.tasks).not.toContainEqual(expect.objectContaining({
       type: "attack-entity",
     }));
-    expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
+    expect(driver.tasks.filter((task) => task.type === "flee")).toHaveLength(2);
   }, 10_000);
 
   it("does not abandon work for a distant creeper", async () => {
@@ -3233,11 +3221,10 @@ describe("beat-game run lifecycle", () => {
     driver.entityResults = [creeper];
     driver.entityQueryResolver = (query) =>
       query.selector.categories?.includes(2) ? driver.entityResults : [];
-    const resolvePath = driver.pathResolver;
-    driver.pathResolver = (position, radius, policy) =>
-      resolvePath(position, radius, policy).pipe(
-        Effect.tap(() =>
-          Effect.sync(() => {
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (task.type === "flee") {
           driver.entityResults = [{
             ...creeper,
             position: { ...creeper.position, x: 16 },
@@ -3246,12 +3233,7 @@ describe("beat-game run lifecycle", () => {
             health: 20,
             counts: { "minecraft:cooked_beef": 1 },
           });
-          })
-        ),
-      );
-    driver.taskResolver = (task) =>
-      Effect.sync(() => {
-        driver.tasks.push(task);
+        }
       }).pipe(
         Effect.zipRight(
           task.type === "collect-blocks" ? Effect.never : Effect.void,
@@ -3277,8 +3259,8 @@ describe("beat-game run lifecycle", () => {
       ),
     ));
 
-    expect(driver.paths).toHaveLength(1);
-    expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
+    expect(driver.paths).toHaveLength(0);
+    expect(driver.tasks.filter((task) => task.type === "flee")).toHaveLength(1);
   });
 
   it("uses a water bucket before food when retreating from lava", async () => {

@@ -2256,7 +2256,31 @@ function escapeFromTarget(
       latest.player.position,
       target.position,
     );
-    const navigation = needsRecovery
+    const dynamicEscape = flee(state.driver, {
+      selector: {
+        networkId: target.networkId,
+        alive: true,
+      },
+      triggerRadius: PROACTIVE_ESCAPE_ONLY_EVASION_RADIUS,
+      safeDistance: THREAT_ESCAPE_SAFE_DISTANCE,
+      completeWhenSafe: true,
+      maximumEscapes: SINGLE_THREAT_MAXIMUM_ESCAPES,
+      path: {
+        ...escapePath,
+        ...(target.entityType === "minecraft:creeper"
+          ? { allowMining: needsRecovery }
+          : {}),
+        allowPlacing: false,
+        avoidFluids: true,
+        maxFallDistance: Math.min(
+          escapePath.maxFallDistance,
+          MAXIMUM_DAMAGE_FREE_FALL_DISTANCE,
+        ),
+      },
+    });
+    const navigation = target.entityType === "minecraft:creeper"
+      ? dynamicEscape
+      : needsRecovery
       ? state.driver.pathfind(
         escapeTarget,
         17,
@@ -2289,25 +2313,7 @@ function escapeFromTarget(
           ),
         },
       )
-      : flee(state.driver, {
-        selector: {
-          networkId: target.networkId,
-          alive: true,
-        },
-        triggerRadius: 12,
-        safeDistance: THREAT_ESCAPE_SAFE_DISTANCE,
-        completeWhenSafe: true,
-        maximumEscapes: SINGLE_THREAT_MAXIMUM_ESCAPES,
-        path: {
-          ...escapePath,
-          allowPlacing: false,
-          avoidFluids: true,
-          maxFallDistance: Math.min(
-            escapePath.maxFallDistance,
-            MAXIMUM_DAMAGE_FREE_FALL_DISTANCE,
-          ),
-        },
-      });
+      : dynamicEscape;
     type EscapeNavigationFallback =
       | { readonly type: "escape-route-failed" }
       | { readonly type: "defended" };
