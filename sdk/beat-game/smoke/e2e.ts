@@ -530,6 +530,7 @@ const program = Effect.scoped(Effect.gen(function* () {
   yield* baseDriver.waitForChunks(4, 60_000);
   yield* record("bot-chunks-ready", { radiusChunks: 4 });
   let lastObservedInventoryRevision: bigint | undefined;
+  const observedEntityFingerprints = new Map<string, string>();
   let lastObservedVitals:
     | Readonly<{
       health: number;
@@ -607,6 +608,35 @@ const program = Effect.scoped(Effect.gen(function* () {
             ? record("block-query", { query, blocks }).pipe(Effect.orDie)
             : Effect.void
         ),
+      ),
+    queryEntities: (
+      query: Parameters<typeof baseDriver.queryEntities>[0],
+    ) =>
+      baseDriver.queryEntities(query).pipe(
+        Effect.tap((entities) => {
+          const selectorKey = json(query.selector);
+          const fingerprint = [...entities]
+            .sort((left, right) =>
+              left.networkId - right.networkId
+            )
+            .map((entity) => [
+              entity.connectionEpoch,
+              entity.networkId,
+              entity.entityType,
+              Math.floor(entity.position.x / 4),
+              Math.floor(entity.position.y / 4),
+              Math.floor(entity.position.z / 4),
+              entity.alive,
+            ].join(":"))
+            .join("|");
+          if (observedEntityFingerprints.get(selectorKey) === fingerprint) {
+            return Effect.void;
+          }
+          observedEntityFingerprints.set(selectorKey, fingerprint);
+          return record("entity-query", { query, entities }).pipe(
+            Effect.orDie,
+          );
+        }),
       ),
     pathfind: (
       position: Parameters<typeof baseDriver.pathfind>[0],
