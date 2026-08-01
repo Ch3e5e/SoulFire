@@ -474,10 +474,7 @@ describe("beat-game run lifecycle", () => {
         Effect.flatMap((run) =>
           Effect.gen(function* () {
             while (
-              !driver.actions.some((action) =>
-                action.type === "set-movement"
-                && action.sprint === true
-              )
+              !driver.tasks.some((task) => task.type === "flee")
             ) {
               yield* Effect.sleep(1);
             }
@@ -488,16 +485,12 @@ describe("beat-game run lifecycle", () => {
       ),
     ));
 
-    expect(driver.paths).toContainEqual(expect.objectContaining({
-      position: deathPosition,
-      policy: expect.objectContaining({ avoidFluids: false }),
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "flee",
+      selector: { networkId: 17, alive: true },
+      triggerRadius: 24,
+      safeDistance: 32,
     }));
-    expect(driver.actions).toContainEqual({
-      type: "set-movement",
-      forward: true,
-      jump: true,
-      sprint: true,
-    });
     expect(driver.tasks.some((task) =>
       task.type === "attack-nearest" || task.type === "attack-entity"
     )).toBe(false);
@@ -4113,6 +4106,19 @@ describe("beat-game run lifecycle", () => {
     }];
     driver.entityQueryResolver = (query) =>
       query.selector.categories?.includes(2) ? driver.entityResults : [];
+    driver.surfaceColumns = Array.from({ length: 10 }, (_, index) =>
+      index + 1
+    ).flatMap((distance) =>
+      [-2, -1, 0, 1, 2].map((z) => ({
+        x: -distance,
+        z,
+        loaded: true,
+        surfaceY: 63,
+        blockId: "minecraft:grass_block",
+        skyLight: 15,
+        blockLight: 0,
+      }))
+    );
 
     await Effect.runPromise(Effect.scoped(
       beatGameWithDriver(driver, {
@@ -4121,10 +4127,7 @@ describe("beat-game run lifecycle", () => {
         Effect.flatMap((run) =>
           Effect.gen(function* () {
             while (
-              !driver.actions.some((action) =>
-                action.type === "set-movement"
-                && action.sprint === true
-              )
+              !driver.tasks.some((task) => task.type === "flee")
             ) {
               yield* Effect.sleep(1);
             }
@@ -4141,12 +4144,28 @@ describe("beat-game run lifecycle", () => {
       jump: true,
       sprint: true,
     });
+    expect(driver.actions).toContainEqual({
+      type: "set-movement",
+      left: true,
+      right: false,
+    });
+    expect(driver.actions).toContainEqual({
+      type: "set-movement",
+      left: false,
+      right: true,
+    });
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "flee",
+      selector: { networkId: 15, alive: true },
+      triggerRadius: 24,
+      safeDistance: 32,
+    }));
     expect(driver.tasks.some((task) =>
       task.type === "attack-nearest" || task.type === "attack-entity"
     )).toBe(false);
   });
 
-  it("routes across dry ground instead of sprinting into water to evade a threat", async () => {
+  it("uses fluid-avoiding dynamic escape instead of sprinting into water", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
       health: 8,
@@ -4202,7 +4221,7 @@ describe("beat-game run lifecycle", () => {
       }).pipe(
         Effect.flatMap((run) =>
           Effect.gen(function* () {
-            while (driver.paths.length === 0) {
+            while (!driver.tasks.some((task) => task.type === "flee")) {
               yield* Effect.sleep(1);
             }
             yield* run.stop;
@@ -4215,26 +4234,25 @@ describe("beat-game run lifecycle", () => {
     expect(driver.actions.some((action) =>
       action.type === "set-movement" && action.forward === true
     )).toBe(false);
-    expect(driver.paths[0]).toMatchObject({
-      position: {
-        y: 64,
-        dimension: "minecraft:overworld",
-      },
-      radius: 1.5,
-      policy: {
-        allowMining: false,
-        allowPlacing: false,
-        avoidFluids: true,
-      },
+    const fleeIndex = driver.tasks.findIndex((task) => task.type === "flee");
+    expect(driver.tasks[fleeIndex]).toMatchObject({
+      type: "flee",
+      selector: { networkId: skeleton.networkId, alive: true },
+      triggerRadius: 24,
+      safeDistance: 32,
     });
-    expect(driver.paths[0]?.position.x).toBeLessThan(-3);
+    expect(driver.taskPolicies[fleeIndex]).toMatchObject({
+      allowMining: false,
+      allowPlacing: false,
+      avoidFluids: true,
+    });
     expect(driver.surfaceQueries).toContainEqual(expect.objectContaining({
       radius: 16,
       sampleStep: 1,
     }));
   });
 
-  it("pathfinds away instead of sprinting off a cliff", async () => {
+  it("uses bounded dynamic pathfinding instead of sprinting off a cliff", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
       health: 8,
@@ -4293,7 +4311,7 @@ describe("beat-game run lifecycle", () => {
       }).pipe(
         Effect.flatMap((run) =>
           Effect.gen(function* () {
-            while (driver.paths.length === 0) {
+            while (!driver.tasks.some((task) => task.type === "flee")) {
               yield* Effect.sleep(1);
             }
             yield* run.stop;
@@ -4306,20 +4324,19 @@ describe("beat-game run lifecycle", () => {
     expect(driver.actions.some((action) =>
       action.type === "set-movement" && action.forward === true
     )).toBe(false);
-    expect(driver.paths[0]).toMatchObject({
-      position: {
-        y: 92,
-        dimension: "minecraft:overworld",
-      },
-      radius: 1.5,
-      policy: {
-        allowMining: false,
-        allowPlacing: false,
-        avoidFluids: true,
-        maxFallDistance: 3,
-      },
+    const fleeIndex = driver.tasks.findIndex((task) => task.type === "flee");
+    expect(driver.tasks[fleeIndex]).toMatchObject({
+      type: "flee",
+      selector: { networkId: skeleton.networkId, alive: true },
+      triggerRadius: 24,
+      safeDistance: 32,
     });
-    expect(driver.paths[0]?.position.x).toBeLessThan(-3);
+    expect(driver.taskPolicies[fleeIndex]).toMatchObject({
+      allowMining: false,
+      allowPlacing: false,
+      avoidFluids: true,
+      maxFallDistance: 3,
+    });
   });
 
   it("evades ranged hostiles while wounded without a shield", async () => {
@@ -4355,10 +4372,7 @@ describe("beat-game run lifecycle", () => {
         Effect.flatMap((run) =>
           Effect.gen(function* () {
             while (
-              !driver.actions.some((action) =>
-                action.type === "set-movement"
-                && action.sprint === true
-              )
+              !driver.tasks.some((task) => task.type === "flee")
             ) {
               yield* Effect.sleep(1);
             }
@@ -4369,12 +4383,11 @@ describe("beat-game run lifecycle", () => {
       ),
     ));
 
-    expect(driver.actions).toContainEqual({
-      type: "set-movement",
-      forward: true,
-      jump: true,
-      sprint: true,
-    });
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "flee",
+      triggerRadius: 24,
+      safeDistance: 32,
+    }));
     expect(driver.tasks.some((task) =>
       task.type === "attack-nearest" || task.type === "attack-entity"
     )).toBe(false);
@@ -4494,25 +4507,6 @@ describe("beat-game run lifecycle", () => {
           task.type === "attack-entity" ? Effect.never : Effect.void,
       ),
     );
-    const resolvePath = driver.pathResolver;
-    driver.pathResolver = (position, radius, policy) =>
-      resolvePath(position, radius, policy).pipe(
-        Effect.tap(() =>
-          Effect.sync(() => {
-            driver.entityResults = [];
-          })
-        ),
-      );
-    const resolveXZPath = driver.xzPathResolver;
-    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
-      resolveXZPath(x, z, dimension, radius, policy).pipe(
-        Effect.tap(() =>
-          Effect.sync(() => {
-            driver.entityResults = [];
-          })
-        ),
-      );
-
     await Effect.runPromise(Effect.scoped(
       beatGameWithDriver(driver, {
         strategy: { observationPollMs: 1 },
@@ -4520,8 +4514,7 @@ describe("beat-game run lifecycle", () => {
         Effect.flatMap((run) =>
           Effect.gen(function* () {
             while (
-              driver.paths.length === 0
-              && driver.xzPaths.length === 0
+              !driver.tasks.some((task) => task.type === "flee")
             ) {
               yield* Effect.sleep(1);
             }
@@ -4539,7 +4532,12 @@ describe("beat-game run lifecycle", () => {
     expect(driver.actions.some((action) =>
       action.type === "set-movement" && action.forward === true
     )).toBe(false);
-    expect(driver.paths.length + driver.xzPaths.length).toBeGreaterThan(0);
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "flee",
+      selector: { networkId: bogged.networkId, alive: true },
+      triggerRadius: 24,
+      safeDistance: 32,
+    }));
   });
 
   it("eats and regenerates after surviving a defensive fight", async () => {
@@ -4946,10 +4944,7 @@ describe("beat-game run lifecycle", () => {
         Effect.flatMap((run) =>
           Effect.gen(function* () {
             while (
-              !driver.actions.some((action) =>
-                action.type === "set-movement"
-                && action.sprint === true
-              )
+              driver.xzPaths.length === 0
             ) {
               yield* Effect.sleep(1);
             }
@@ -4960,15 +4955,15 @@ describe("beat-game run lifecycle", () => {
       ),
     ));
 
-    expect(driver.actions).toContainEqual({
-      type: "set-movement",
-      forward: true,
-      jump: true,
-      sprint: true,
-    });
     expect(driver.tasks.some((task) =>
       task.type === "attack-nearest" || task.type === "attack-entity"
     )).toBe(false);
+    expect(driver.xzPaths[0]?.policy).toMatchObject({
+      allowMining: false,
+      allowPlacing: false,
+      avoidFluids: true,
+      maxFallDistance: 3,
+    });
   });
 
   it("evades a ranged hostile at low health without a shield", async () => {
@@ -5005,10 +5000,7 @@ describe("beat-game run lifecycle", () => {
         Effect.flatMap((run) =>
           Effect.gen(function* () {
             while (
-              !driver.actions.some((action) =>
-                action.type === "set-movement"
-                && action.sprint === true
-              )
+              !driver.tasks.some((task) => task.type === "flee")
             ) {
               yield* Effect.sleep(1);
             }
@@ -5022,6 +5014,12 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks.some((task) =>
       task.type === "attack-nearest" || task.type === "attack-entity"
     )).toBe(false);
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "flee",
+      selector: { networkId: 16, alive: true },
+      triggerRadius: 24,
+      safeDistance: 32,
+    }));
   });
 
   it("stops an escape route once its threat is no longer nearby", async () => {
@@ -5050,16 +5048,21 @@ describe("beat-game run lifecycle", () => {
         : query.selector.categories?.includes(2)
         ? driver.entityResults
         : [];
-    let interruptedEscapePaths = 0;
-    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+    let interruptedEscapes = 0;
+    driver.taskResolver = (task) =>
       Effect.sync(() => {
-        driver.xzPaths.push({ x, z, dimension, radius, policy });
-        targetNearby = false;
+        driver.tasks.push(task);
+        driver.taskObserver(task);
+        if (task.type === "flee") {
+          targetNearby = false;
+        }
       }).pipe(
-        Effect.zipRight(Effect.never),
+        Effect.zipRight(task.type === "flee" ? Effect.never : Effect.void),
         Effect.onInterrupt(() =>
           Effect.sync(() => {
-            interruptedEscapePaths += 1;
+            if (task.type === "flee") {
+              interruptedEscapes += 1;
+            }
           })
         ),
       );
@@ -5070,7 +5073,7 @@ describe("beat-game run lifecycle", () => {
       }).pipe(
         Effect.flatMap((run) =>
           Effect.gen(function* () {
-            while (interruptedEscapePaths === 0) {
+            while (interruptedEscapes === 0) {
               yield* Effect.sleep(1);
             }
             yield* run.stop;
@@ -5080,10 +5083,15 @@ describe("beat-game run lifecycle", () => {
       ),
     ));
 
-    expect(driver.xzPaths).toHaveLength(1);
-    expect(interruptedEscapePaths).toBe(1);
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "flee",
+      selector: { networkId: skeleton.networkId, alive: true },
+      triggerRadius: 24,
+      safeDistance: 32,
+    }));
+    expect(interruptedEscapes).toBe(1);
     expect(driver.entityQueries).toContainEqual(expect.objectContaining({
-      radius: 24,
+      radius: 32,
       selector: {
         networkId: skeleton.networkId,
         alive: true,

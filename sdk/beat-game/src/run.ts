@@ -508,6 +508,8 @@ const ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES = new Set([
 ]);
 const PROACTIVE_ESCAPE_ONLY_EVASION_RADIUS = 12;
 const PROACTIVE_RANGED_ENGAGEMENT_RADIUS = 16;
+const RANGED_THREAT_ESCAPE_TRIGGER_RADIUS = 24;
+const RANGED_THREAT_ESCAPE_SAFE_DISTANCE = 32;
 const DEFENSIVE_PURSUIT_MAX_DISTANCE = 12;
 const EMERGENCY_KNOCKBACK_RANGE = 3.5;
 const EMERGENCY_ESCAPE_SPRINT_MS = 1_250;
@@ -2286,20 +2288,29 @@ function escapeFromTarget(
       state.driver,
       latest.player.position,
     );
+    const rangedThreat = PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(
+      target.entityType,
+    );
     const dynamicEscape = flee(state.driver, {
       selector: {
         networkId: target.networkId,
         alive: true,
       },
-      triggerRadius: PROACTIVE_ESCAPE_ONLY_EVASION_RADIUS,
-      safeDistance: THREAT_ESCAPE_SAFE_DISTANCE,
+      triggerRadius: rangedThreat
+        ? RANGED_THREAT_ESCAPE_TRIGGER_RADIUS
+        : PROACTIVE_ESCAPE_ONLY_EVASION_RADIUS,
+      safeDistance: rangedThreat
+        ? RANGED_THREAT_ESCAPE_SAFE_DISTANCE
+        : THREAT_ESCAPE_SAFE_DISTANCE,
       completeWhenSafe: true,
       maximumEscapes: SINGLE_THREAT_MAXIMUM_ESCAPES,
       path: {
         ...escapePath,
-        ...(target.entityType === "minecraft:creeper"
-          ? { allowMining: needsRecovery }
-          : {}),
+        allowMining: rangedThreat
+          ? false
+          : target.entityType === "minecraft:creeper"
+          ? needsRecovery
+          : escapePath.allowMining,
         allowPlacing: false,
         avoidFluids: true,
         maxFallDistance: Math.min(
@@ -2308,7 +2319,9 @@ function escapeFromTarget(
         ),
       },
     });
-    const navigation = target.entityType === "minecraft:creeper"
+    const navigation = (
+      target.entityType === "minecraft:creeper" || rangedThreat
+    )
       ? dynamicEscape
       : dryEscapeTarget !== undefined
       ? state.driver.pathfind(
@@ -2423,6 +2436,11 @@ function monitorEscapeSafety(
   },
   BeatGameDriverError
 > {
+  const monitoringRadius = PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(
+    target.entityType,
+  )
+    ? RANGED_THREAT_ESCAPE_SAFE_DISTANCE
+    : THREAT_ESCAPE_SAFE_DISTANCE;
   return Effect.sleep(
     Math.max(MINIMUM_RECOVERY_POLL_MS, state.strategy.observationPollMs),
   ).pipe(
@@ -2436,7 +2454,7 @@ function monitorEscapeSafety(
       }
       return state.driver.queryEntities({
         origin: observation.player.position,
-        radius: THREAT_ESCAPE_SAFE_DISTANCE,
+        radius: monitoringRadius,
         selector: {
           networkId: target.networkId,
           alive: true,
@@ -2532,6 +2550,7 @@ function knockBackAndSprintAway(
       directionX / directionLength,
       directionZ / directionLength,
       directSprintDistance,
+      PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(threat.entityType) ? 2 : 0,
     );
     yield* state.driver.withControl(Effect.gen(function* () {
       if (distance <= EMERGENCY_KNOCKBACK_RANGE) {
@@ -2566,11 +2585,23 @@ function knockBackAndSprintAway(
         jump: true,
         sprint: true,
       });
-      yield* Effect.sleep(
-        threat.entityType === "minecraft:creeper"
-          ? CREEPER_ESCAPE_SPRINT_MS
-          : EMERGENCY_ESCAPE_SPRINT_MS,
-      );
+      const sprintDuration = threat.entityType === "minecraft:creeper"
+        ? CREEPER_ESCAPE_SPRINT_MS
+        : EMERGENCY_ESCAPE_SPRINT_MS;
+      if (PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(threat.entityType)) {
+        const strafeDuration = Math.floor(sprintDuration / 5);
+        for (let step = 0; step < 5; step += 1) {
+          const left = step % 2 === 0;
+          yield* state.driver.act({
+            type: "set-movement",
+            left,
+            right: !left,
+          });
+          yield* Effect.sleep(strafeDuration);
+        }
+      } else {
+        yield* Effect.sleep(sprintDuration);
+      }
     }).pipe(
       Effect.ensuring(
         state.driver.act({ type: "reset-movement" }).pipe(Effect.ignore),
@@ -2617,6 +2648,7 @@ function hasSafeDirectEscapeCorridor(
   directionX: number,
   directionZ: number,
   distance: number,
+  lateralHalfWidth: number,
 ): boolean {
   const safeColumns = new Map(
     columns.flatMap((column) =>
@@ -2641,6 +2673,26 @@ function hasSafeDirectEscapeCorridor(
         > SURFACE_NEIGHBOR_MAX_HEIGHT_DELTA
     ) {
       return false;
+    }
+    for (
+      let lateralOffset = -lateralHalfWidth;
+      lateralOffset <= lateralHalfWidth;
+      lateralOffset += 1
+    ) {
+      const lateralX = Math.floor(
+        player.x + directionX * offset - directionZ * lateralOffset,
+      );
+      const lateralZ = Math.floor(
+        player.z + directionZ * offset + directionX * lateralOffset,
+      );
+      const lateralSurfaceY = safeColumns.get(`${lateralX}:${lateralZ}`);
+      if (
+        lateralSurfaceY === undefined
+        || Math.abs(lateralSurfaceY + 1 - standingY)
+          > SURFACE_NEIGHBOR_MAX_HEIGHT_DELTA
+      ) {
+        return false;
+      }
     }
     previousStandingY = standingY;
   }
