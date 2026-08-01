@@ -447,6 +447,34 @@ const program = Effect.scoped(Effect.gen(function* () {
     500,
   );
   yield* record("bot-online", { instanceId: instance.id, profileId });
+  yield* bot.tasks.watch({ includeSnapshot: false }).pipe(
+    Stream.runForEach((event) => {
+      const task = event.task;
+      return record("task-progress-observed", {
+        sequence: event.sequence,
+        ...(task === undefined
+          ? {}
+          : {
+            task: {
+              taskId: task.taskId,
+              taskType: task.taskType,
+              status: task.status,
+              summary: task.summary,
+              progress: task.progress,
+              failure: task.failure,
+              revision: task.revision,
+              updatedAt: task.updatedAt,
+            },
+          }),
+      });
+    }),
+    Effect.catchAll((cause) =>
+      record("task-progress-watch-failed", {
+        cause: String(cause),
+      }).pipe(Effect.ignore)
+    ),
+    Effect.forkScoped,
+  );
 
   const joinedPlayer = yield* bot.world.player();
   const initialInventory = yield* bot.inventory.snapshot();
