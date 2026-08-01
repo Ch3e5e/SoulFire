@@ -3549,7 +3549,6 @@ function defendAgainstTarget(
         attack.pipe(Effect.as("defended" as const)),
         monitorDefenseHealth(
           state,
-          target,
           observation.player.health,
           observation.player.position,
         ),
@@ -3575,7 +3574,6 @@ function defendAgainstTarget(
 
 function monitorDefenseHealth(
   state: RunState,
-  target: BeatGameEntityObservation,
   engagementHealth: number,
   engagementPosition: BeatGamePosition,
 ): Effect.Effect<"disengage" | "unsafe-air", BeatGameDriverError> {
@@ -3604,13 +3602,10 @@ function monitorDefenseHealth(
         && (
           observation.player.health >= state.strategy.minimumHealth
           || observation.player.health >= engagementHealth
-          || shouldCommitToMeleeFight(observation, target)
-          || shouldCommitToRangedFight(observation, target)
         )
       ) {
         return monitorDefenseHealth(
           state,
-          target,
           engagementHealth,
           engagementPosition,
         );

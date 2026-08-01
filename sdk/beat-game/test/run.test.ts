@@ -4362,7 +4362,7 @@ describe("beat-game run lifecycle", () => {
     )).toBe(false);
   });
 
-  it("finishes an armed ranged fight after taking heavy damage", async () => {
+  it("disengages from a shielded ranged fight after taking heavy damage", async () => {
     const driver = new FakeBeatGameDriver();
     const bogged = {
       connectionEpoch: "epoch-1",
@@ -4382,6 +4382,7 @@ describe("beat-game run lifecycle", () => {
     driver.currentObservation = observation({
       health: 20,
       counts: {
+        "minecraft:shield": 1,
         "minecraft:stone_sword": 1,
       },
     });
@@ -4393,8 +4394,9 @@ describe("beat-game run lifecycle", () => {
         driver.tasks.push(task);
         if (task.type === "attack-entity") {
           driver.currentObservation = observation({
-            health: 7,
+            health: 10,
             counts: {
+              "minecraft:shield": 1,
               "minecraft:stone_sword": 1,
             },
           });
@@ -4402,6 +4404,24 @@ describe("beat-game run lifecycle", () => {
       }).pipe(
         Effect.zipRight(
           task.type === "attack-entity" ? Effect.never : Effect.void,
+      ),
+    );
+    const resolvePath = driver.pathResolver;
+    driver.pathResolver = (position, radius, policy) =>
+      resolvePath(position, radius, policy).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            driver.entityResults = [];
+          })
+        ),
+      );
+    const resolveXZPath = driver.xzPathResolver;
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      resolveXZPath(x, z, dimension, radius, policy).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            driver.entityResults = [];
+          })
         ),
       );
 
@@ -4412,11 +4432,11 @@ describe("beat-game run lifecycle", () => {
         Effect.flatMap((run) =>
           Effect.gen(function* () {
             while (
-              !driver.tasks.some((task) => task.type === "attack-entity")
+              driver.paths.length === 0
+              && driver.xzPaths.length === 0
             ) {
               yield* Effect.sleep(1);
             }
-            yield* Effect.sleep(20);
             yield* run.stop;
             yield* run.awaitCompletion.pipe(Effect.either);
           })
@@ -4426,10 +4446,14 @@ describe("beat-game run lifecycle", () => {
 
     expect(driver.tasks).toContainEqual(expect.objectContaining({
       type: "attack-entity",
+      useOffhandShield: true,
     }));
-    expect(driver.actions.some((action) =>
-      action.type === "set-movement" && action.sprint === true
-    )).toBe(false);
+    expect(driver.actions).toContainEqual({
+      type: "set-movement",
+      forward: true,
+      jump: true,
+      sprint: true,
+    });
   });
 
   it("eats and regenerates after surviving a defensive fight", async () => {
