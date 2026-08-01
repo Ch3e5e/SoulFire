@@ -282,6 +282,8 @@ const DIRECTED_HUNT_MAXIMUM_DETOUR = 32;
 const AQUATIC_HUNT_MAXIMUM_HORIZONTAL_DISTANCE = 10;
 const AQUATIC_HUNT_MAXIMUM_VERTICAL_DISTANCE = 6;
 const AQUATIC_HUNT_CHASE_TIMEOUT_MS = 8_000;
+const AQUATIC_WATER_ENTRY_SEARCH_RADIUS = 3;
+const AQUATIC_WATER_ENTRY_ATTEMPTS = 12;
 const MAXIMUM_DAMAGE_FREE_FALL_DISTANCE = 3;
 const HUNT_DROP_ITEM_IDS_BY_ENTITY_TYPE: Readonly<
   Record<string, readonly string[]>
@@ -6337,6 +6339,7 @@ function huntOrExplore(
         current.player.position.dimension === "minecraft:overworld";
       if (
         overworldHunt
+        && !allowEmergencyAquaticFallback
         && (yield* isPlayerInFluid(state.driver, current.player.position))
       ) {
         yield* emergencyAirAscent(state, current.player.position);
@@ -6609,6 +6612,12 @@ function huntOrExplore(
           ),
         );
         if (!approached) {
+          const enteredWater = aquaticTarget && allowEmergencyAquaticFallback
+            ? yield* enterWaterTowardAquaticTarget(state, current, target)
+            : false;
+          if (enteredWater) {
+            continue;
+          }
           locallyUnreachable.add(targetKey);
           yield* persist(state, (currentCheckpoint) => ({
             ...currentCheckpoint,
@@ -6746,6 +6755,113 @@ function huntOrExplore(
       attacked += 1;
     }
   });
+}
+
+function enterWaterTowardAquaticTarget(
+  state: RunState,
+  observation: BeatGameObservation,
+  target: BeatGameEntityObservation,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  const player = observation.player.position;
+  return state.driver.queryBlocks({
+    center: player,
+    radius: AQUATIC_WATER_ENTRY_SEARCH_RADIUS,
+    selector: { blockIds: ["minecraft:water"] },
+    maximumResults: 64,
+  }).pipe(
+    Effect.map((blocks) => {
+      const targetDeltaX = target.position.x - player.x;
+      const targetDeltaZ = target.position.z - player.z;
+      const targetDistance = Math.hypot(targetDeltaX, targetDeltaZ);
+      const targetDirectionX = targetDistance === 0
+        ? 0
+        : targetDeltaX / targetDistance;
+      const targetDirectionZ = targetDistance === 0
+        ? 0
+        : targetDeltaZ / targetDistance;
+      return blocks
+        .filter((block) => {
+          const center = blockCenter(block.position);
+          const horizontalDistance = Math.hypot(
+            center.x - player.x,
+            center.z - player.z,
+          );
+          return block.position.dimension === player.dimension
+            && horizontalDistance >= 0.35
+            && horizontalDistance <= AQUATIC_WATER_ENTRY_SEARCH_RADIUS
+            && center.y >= player.y - 2
+            && center.y <= player.y + 1;
+        })
+        .map((block) => {
+          const center = blockCenter(block.position);
+          const deltaX = center.x - player.x;
+          const deltaZ = center.z - player.z;
+          const horizontalDistance = Math.hypot(deltaX, deltaZ);
+          const alignment = horizontalDistance === 0
+            ? -1
+            : (deltaX / horizontalDistance) * targetDirectionX
+              + (deltaZ / horizontalDistance) * targetDirectionZ;
+          return {
+            center,
+            score: (1 - alignment) * AQUATIC_WATER_ENTRY_SEARCH_RADIUS
+              + horizontalDistance,
+          };
+        })
+        .sort((left, right) => left.score - right.score)[0]?.center;
+    }),
+    Effect.flatMap((water) => {
+      if (water === undefined) {
+        return Effect.succeed(false);
+      }
+      const rotation = rotationToward(player, {
+        ...water,
+        y: player.y,
+      });
+      return state.driver.withControl(
+        state.driver.act({
+          type: "look",
+          yaw: rotation.yaw,
+          pitch: 0,
+        }).pipe(
+          Effect.zipRight(state.driver.act({
+            type: "set-movement",
+            forward: true,
+            jump: true,
+            sprint: false,
+          })),
+          Effect.zipRight(waitForWaterEntry(
+            state,
+            AQUATIC_WATER_ENTRY_ATTEMPTS,
+          )),
+          Effect.ensuring(
+            state.driver.act({ type: "reset-movement" }).pipe(Effect.ignore),
+          ),
+        ),
+      );
+    }),
+  );
+}
+
+function waitForWaterEntry(
+  state: RunState,
+  attemptsRemaining: number,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  return Effect.sleep(100).pipe(
+    Effect.zipRight(state.driver.observe),
+    Effect.flatMap((observation) =>
+      observation.player.dead
+        ? Effect.succeed(false)
+        : isPlayerInFluid(state.driver, observation.player.position).pipe(
+          Effect.flatMap((inFluid) =>
+            inFluid
+              ? Effect.succeed(true)
+              : attemptsRemaining <= 1
+              ? Effect.succeed(false)
+              : waitForWaterEntry(state, attemptsRemaining - 1)
+          ),
+        )
+    ),
+  );
 }
 
 function waitForVisibleHuntingTarget(

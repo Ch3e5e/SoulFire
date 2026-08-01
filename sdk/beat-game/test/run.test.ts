@@ -8723,6 +8723,24 @@ describe("beat-game run lifecycle", () => {
       },
     });
     driver.entityResults = [salmon];
+    driver.blockQueryResolver = (query) => {
+      if (query.selector.blockIds?.includes("minecraft:water") !== true) {
+        return [];
+      }
+      const water = blockObservation({
+        x: 1,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      }, {
+        blockId: "minecraft:water",
+        diggable: false,
+        replaceable: true,
+      });
+      return query.radius > 1 || Math.floor(query.center.x) === 1
+        ? [water]
+        : [];
+    };
     driver.xzPathResolver = (x, z, dimension, radius, policy) =>
       Effect.sync(() => {
         driver.xzPaths.push({ x, z, dimension, radius, policy });
@@ -8732,22 +8750,57 @@ describe("beat-game run lifecycle", () => {
         retryable: true,
         message: "No dry route leaves the island",
       }))));
+    let directPathAttempts = 0;
     driver.pathResolver = (position, radius, policy) =>
       Effect.sync(() => {
         driver.paths.push({ position, radius, policy });
-        driver.currentObservation = observation({
-          position,
-          food: 12,
-          health: 8,
-          counts: {
-            "minecraft:iron_ingot": 7,
-            "minecraft:oak_log": 8,
-            "minecraft:shield": 1,
-            "minecraft:stone_pickaxe": 1,
-            "minecraft:stone_sword": 1,
-          },
-        });
+        directPathAttempts += 1;
+      }).pipe(
+        Effect.flatMap(() =>
+          directPathAttempts === 1
+            ? Effect.fail(new BeatGameDriverError({
+              operation: "pathfind",
+              code: "unreachable",
+              retryable: true,
+              message:
+                "The pathfinder cannot step from the bridge into water",
+            }))
+            : Effect.sync(() => {
+              driver.currentObservation = observation({
+                position,
+                food: 12,
+                health: 8,
+                counts: {
+                  "minecraft:iron_ingot": 7,
+                  "minecraft:oak_log": 8,
+                  "minecraft:shield": 1,
+                  "minecraft:stone_pickaxe": 1,
+                  "minecraft:stone_sword": 1,
+                },
+              });
+            })
+        ),
+      );
+    driver.actionObserver = (action) => {
+      if (
+        action.type !== "set-movement"
+        || action.forward !== true
+        || action.jump !== true
+      ) {
+        return;
+      }
+      driver.currentObservation = observation({
+        position: {
+          x: 1.5,
+          y: 64,
+          z: 0.5,
+          dimension: "minecraft:overworld",
+        },
+        food: 12,
+        health: 8,
+        counts: driver.currentObservation.inventory.counts,
       });
+    };
     driver.taskResolver = (task) =>
       Effect.sync(() => {
         driver.tasks.push(task);
@@ -8787,6 +8840,14 @@ describe("beat-game run lifecycle", () => {
         avoidFluids: false,
       },
     });
+    expect(driver.actions).toContainEqual({
+      type: "set-movement",
+      forward: true,
+      jump: true,
+      sprint: false,
+    });
+    expect(driver.actions).toContainEqual({ type: "reset-movement" });
+    expect(driver.paths.length).toBeGreaterThan(1);
     const attackIndex = driver.tasks.findIndex(
       (task) => task.type === "attack-entity",
     );
