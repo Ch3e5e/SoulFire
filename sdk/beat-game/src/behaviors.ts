@@ -37,7 +37,10 @@ import type {
 const NETHER_PORTAL_REENTRY_COOLDOWN_MS = 10_500;
 const MAXIMUM_ATTACK_NEAREST_RADIUS = 128;
 const MAXIMUM_OPEN_SPACE_HANDOFF_DEPTH = 8;
-const DROP_PICKUP_PATH_RADIUS = 0.75;
+// Item positions are continuous while path nodes are block-aligned. This
+// radius covers the worst horizontal half-block offset plus one block of
+// terrain height without turning a nearby pickup into an unreachable goal.
+const DROP_PICKUP_PATH_RADIUS = 1.25;
 const DROP_PICKUP_MAXIMUM_ATTEMPTS = 3;
 const DIRECT_DROP_PICKUP_MAXIMUM_HORIZONTAL_DISTANCE = 1.9;
 const DIRECT_DROP_PICKUP_MAXIMUM_VERTICAL_DISTANCE = 0.75;

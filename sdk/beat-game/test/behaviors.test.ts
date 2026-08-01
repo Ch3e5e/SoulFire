@@ -402,7 +402,7 @@ describe("beat-game behavior programs", () => {
     expect(driver.paths).toEqual([
       expect.objectContaining({
         position: drops[0]?.position,
-        radius: 0.75,
+        radius: 1.25,
         policy: expect.objectContaining({
           allowPlacing: false,
           maxSearchTimeMs: 5_000,
@@ -505,13 +505,13 @@ describe("beat-game behavior programs", () => {
         x: nearDrop.position.x,
         z: nearDrop.position.z,
         dimension: nearDrop.position.dimension,
-        radius: 0.75,
+        radius: 1.25,
       }),
       expect.objectContaining({
         x: farDrop.position.x,
         z: farDrop.position.z,
         dimension: farDrop.position.dimension,
-        radius: 0.75,
+        radius: 1.25,
       }),
     ]);
   });
@@ -569,7 +569,7 @@ describe("beat-game behavior programs", () => {
     expect(driver.paths).toEqual([
       expect.objectContaining({
         position: cobblestonePosition,
-        radius: 0.75,
+        radius: 1.25,
         policy: expect.objectContaining({
           allowPlacing: false,
         }),
@@ -624,7 +624,7 @@ describe("beat-game behavior programs", () => {
           ...surfaceDrop.position,
           y: position.y,
         },
-        radius: 0.75,
+        radius: 1.25,
       }),
     ]);
   });
@@ -688,7 +688,7 @@ describe("beat-game behavior programs", () => {
           ...dryDrop.position,
           y: position.y,
         },
-        radius: 0.75,
+        radius: 1.25,
         policy: expect.objectContaining({
           avoidFluids: true,
         }),
@@ -742,7 +742,7 @@ describe("beat-game behavior programs", () => {
         ...unreachableDrop.position,
         y: position.y,
       },
-      radius: 0.75,
+      radius: 1.25,
       policy: expect.objectContaining({
         maxSearchTimeMs: 5_000,
       }),
