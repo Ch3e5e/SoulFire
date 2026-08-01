@@ -1197,7 +1197,11 @@ async function matchesSoulFireProcess(
       && jarArgument !== undefined
       && await realpath(jarArgument) === expectedJar;
   } catch (cause) {
-    if (isNodeError(cause, "ENOENT") || isNodeError(cause, "EACCES")) {
+    if (
+      isNodeError(cause, "ENOENT")
+      || isNodeError(cause, "EACCES")
+      || isNodeError(cause, "ESRCH")
+    ) {
       return false;
     }
     throw cause;
@@ -1205,16 +1209,32 @@ async function matchesSoulFireProcess(
 }
 
 async function stopProcess(pid: number): Promise<void> {
-  if (!isProcessRunning(pid)) {
+  if (!isProcessRunning(pid) || !signalProcess(pid, "SIGTERM")) {
     return;
   }
-  process.kill(pid, "SIGTERM");
   if (await waitForProcessExit(pid, 5_000)) {
     return;
   }
-  process.kill(pid, "SIGKILL");
+  if (!signalProcess(pid, "SIGKILL")) {
+    return;
+  }
   if (!await waitForProcessExit(pid, 2_000)) {
     throw new Error(`SoulFire process ${pid} did not stop`);
+  }
+}
+
+function signalProcess(
+  pid: number,
+  signal: NodeJS.Signals,
+): boolean {
+  try {
+    process.kill(pid, signal);
+    return true;
+  } catch (cause) {
+    if (isNodeError(cause, "ESRCH")) {
+      return false;
+    }
+    throw cause;
   }
 }
 
