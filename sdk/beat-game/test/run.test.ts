@@ -10938,15 +10938,18 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
-  it("fishes a nearby water source before exploring for livestock", async () => {
+  it("fishes exposed water at low health before exploring", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
+      health: 6.5,
+      food: 14,
       counts: {
-        "minecraft:cooked_mutton": 7,
         "minecraft:fishing_rod": 1,
         "minecraft:oak_log": 3,
         "minecraft:cobblestone": 20,
         "minecraft:stone_sword": 1,
+        "minecraft:iron_ingot": 7,
+        "minecraft:shield": 1,
       },
     });
     const water = blockObservation({
@@ -10967,6 +10970,7 @@ describe("beat-game run lifecycle", () => {
     driver.blockQueryResolver = ({ center, radius, selector }) =>
       radius > 1
         && selector.blockIds?.includes("minecraft:water") === true
+        && selector.requireLineOfSight !== true
         ? [water]
         : selector.replaceable === true
             && Math.floor(center.x) === airAboveWater.position.x
@@ -11036,6 +11040,8 @@ describe("beat-game run lifecycle", () => {
         "minecraft:oak_log": 3,
         "minecraft:cobblestone": 20,
         "minecraft:stone_sword": 1,
+        "minecraft:iron_ingot": 7,
+        "minecraft:shield": 1,
       },
     });
     const water = blockObservation({

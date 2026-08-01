@@ -4119,7 +4119,10 @@ function satisfyFoodRequirement(
   );
   if (
     rawFoodStillNeeded > 0
-    && observation.player.health >= state.strategy.minimumHealth
+    && (
+      observation.player.health >= state.strategy.minimumHealth
+      || rawFoodCount === 0
+    )
   ) {
     return recoverNearbyFurnaceContents(state, observation).pipe(
       Effect.flatMap(({ observation: current, recovered }) => {
@@ -4152,7 +4155,9 @@ function satisfyFoodRequirement(
               : huntForFoodRequirement(
                 state,
                 current,
-                bufferedCollectionCount("food", remainingRawFood),
+                current.player.health >= state.strategy.minimumHealth
+                  ? bufferedCollectionCount("food", remainingRawFood)
+                  : 1,
               )
           ),
         );
@@ -4286,7 +4291,6 @@ function tryFishForFood(
       selector: {
         blockIds: ["minecraft:water"],
         properties: { level: "0" },
-        requireLineOfSight: true,
       },
       maximumResults: 256,
     });
