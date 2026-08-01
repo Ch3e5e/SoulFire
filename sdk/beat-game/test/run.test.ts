@@ -14603,6 +14603,75 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("continues gathering raw food through the normal meal threshold", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      food: 15,
+      counts: {
+        "minecraft:oak_log": 4,
+        "minecraft:cobblestone": 20,
+        "minecraft:stone_sword": 1,
+        "minecraft:cooked_mutton": 1,
+      },
+    });
+    driver.entityResults = [{
+      connectionEpoch: "epoch-1",
+      networkId: 42,
+      entityType: "minecraft:cow",
+      position: {
+        x: 8,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 10,
+      observedAt: "2026-01-01T00:00:01.000Z",
+    }];
+    let interruptedHunts = 0;
+    let resolveHuntStarted!: () => void;
+    const huntStarted = new Promise<void>((resolve) => {
+      resolveHuntStarted = resolve;
+    });
+    driver.taskResolver = (task) => {
+      driver.tasks.push(task);
+      if (task.type !== "attack-entity") {
+        return Effect.void;
+      }
+      driver.currentObservation = observation({
+        food: 14,
+        counts: {
+          "minecraft:oak_log": 4,
+          "minecraft:cobblestone": 20,
+          "minecraft:stone_sword": 1,
+          "minecraft:beef": 1,
+        },
+      });
+      resolveHuntStarted();
+      return Effect.never.pipe(
+        Effect.onInterrupt(() =>
+          Effect.sync(() => {
+            interruptedHunts += 1;
+          })
+        ),
+      );
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      yield* Effect.promise(() => huntStarted).pipe(
+        Effect.timeout("5 seconds"),
+      );
+      yield* Effect.sleep(100);
+      expect(interruptedHunts).toBe(0);
+      expect(driver.tasks.some((task) => task.type === "auto-eat")).toBe(false);
+      yield* run.stop;
+    })));
+  });
+
   it("makes only the required charcoal before cooking a food batch", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
@@ -14839,6 +14908,81 @@ describe("beat-game run lifecycle", () => {
         count: 1,
         fuel: {
           itemIds: ["minecraft:coal", "minecraft:charcoal"],
+        },
+      }),
+    ]);
+  });
+
+  it("uses wood directly for a tiny food batch", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      food: 14,
+      counts: {
+        "minecraft:oak_log": 4,
+        "minecraft:oak_planks": 1,
+        "minecraft:cobblestone": 20,
+        "minecraft:stone_sword": 1,
+        "minecraft:cod": 1,
+        "minecraft:iron_ingot": 7,
+        "minecraft:iron_pickaxe": 1,
+        "minecraft:water_bucket": 1,
+        "minecraft:flint_and_steel": 1,
+        "minecraft:shield": 1,
+      },
+    });
+    driver.blockQueryResolver = ({ selector }) =>
+      selector.blockIds?.includes("minecraft:furnace") === true
+        ? [blockObservation({
+          x: 1,
+          y: 64,
+          z: 0,
+          dimension: "minecraft:overworld",
+        }, { blockId: "minecraft:furnace" })]
+        : [];
+    let resolveFoodSmelt!: () => void;
+    const foodSmeltStarted = new Promise<void>((resolve) => {
+      resolveFoodSmelt = resolve;
+    });
+    driver.taskResolver = (task) => {
+      driver.tasks.push(task);
+      if (
+        task.type === "smelt"
+        && task.input.itemIds?.includes("minecraft:cod")
+      ) {
+        resolveFoodSmelt();
+        return Effect.never;
+      }
+      return Effect.void;
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      yield* Effect.promise(() => foodSmeltStarted).pipe(
+        Effect.timeout("5 seconds"),
+      );
+      yield* run.stop;
+    })));
+
+    expect(driver.tasks.filter((task) => task.type === "smelt")).toEqual([
+      expect.objectContaining({
+        input: { itemIds: ["minecraft:cod"] },
+        count: 1,
+        fuel: {
+          itemIds: [
+            "minecraft:oak_planks",
+            "minecraft:spruce_planks",
+            "minecraft:birch_planks",
+            "minecraft:jungle_planks",
+            "minecraft:acacia_planks",
+            "minecraft:dark_oak_planks",
+            "minecraft:mangrove_planks",
+            "minecraft:cherry_planks",
+            "minecraft:pale_oak_planks",
+            "minecraft:crimson_planks",
+            "minecraft:warped_planks",
+          ],
         },
       }),
     ]);

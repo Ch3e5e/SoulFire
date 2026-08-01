@@ -2864,7 +2864,10 @@ function shouldInterruptForMeal(
     return true;
   }
   return decision.type !== "satisfy-requirement"
-    || decision.requirement.key !== "food";
+    || (
+      decision.requirement.key !== "food"
+      && decision.requirement.key !== "food-supply"
+    );
 }
 
 function hasRecoveryFood(observation: BeatGameObservation): boolean {
@@ -5200,6 +5203,19 @@ function cookRawFoodBatch(
           if (currentBatchCount === 0) {
             return Effect.void;
           }
+          const directWoodFuel = directWoodFurnaceFuelItemIds(
+            current,
+            currentBatchCount,
+          );
+          if (directWoodFuel !== undefined) {
+            return smelt(state.driver, {
+              input: { itemIds: [batch.rawItemId] },
+              count: currentBatchCount,
+              fuel: { itemIds: directWoodFuel },
+              station: workstation.position,
+              path: state.strategy.path,
+            });
+          }
           return ensureEfficientFurnaceFuel(
             state,
             current,
@@ -5221,6 +5237,31 @@ function cookRawFoodBatch(
       )
     ),
   );
+}
+
+function directWoodFurnaceFuelItemIds(
+  observation: BeatGameObservation,
+  outputCount: number,
+): readonly string[] | undefined {
+  if (furnaceFuelCount(observation) > 0) {
+    return undefined;
+  }
+  const requiredWoodFuel = Math.ceil(outputCount / 1.5);
+  if (requiredWoodFuel > 2) {
+    return undefined;
+  }
+  const countItems = (itemIds: readonly string[]): number =>
+    itemIds.reduce(
+      (count, itemId) =>
+        count + (observation.inventory.counts[itemId] ?? 0),
+      0,
+    );
+  if (countItems(PLANK_ITEM_IDS) >= requiredWoodFuel) {
+    return PLANK_ITEM_IDS;
+  }
+  return countItems(LOG_ITEM_IDS) >= requiredWoodFuel
+    ? LOG_ITEM_IDS
+    : undefined;
 }
 
 function ensureFurnaceForCooking(
