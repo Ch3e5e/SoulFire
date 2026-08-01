@@ -1518,6 +1518,91 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("arms itself after partially recovering an active corpse", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const deathPosition = {
+      x: 144,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    const observedAt = new Date().toISOString();
+    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
+      runId: "partial-active-corpse-run",
+      teamId: "partial-active-corpse-team",
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        deathPositions: [{
+          key: `death:${observedAt}`,
+          value: {
+            ...deathPosition,
+            inventoryCounts: {
+              "minecraft:iron_ingot": 9,
+              "minecraft:shield": 1,
+              "minecraft:stone_sword": 1,
+            },
+          },
+          observedAt,
+          confidence: 1,
+        }],
+      },
+    }, undefined));
+    driver.currentObservation = observation({
+      counts: { "minecraft:oak_log": 10 },
+    });
+    driver.recipeResolver = (resultItemId) => [{
+      recipeId: resultItemId,
+      recipeType: "minecraft:crafting",
+      resultItemId,
+      resultCount: 1,
+      ingredients: [],
+    }];
+    driver.craftabilityResolver = () => ({
+      canCraft: true,
+      maximumCraftCount: 1,
+      missing: [],
+    });
+    driver.blockQueryResolver = ({ selector }) =>
+      selector.blockIds?.includes("minecraft:crafting_table") === true
+        ? [blockObservation({
+          x: 2,
+          y: 64,
+          z: 0,
+          dimension: "minecraft:overworld",
+        }, { blockId: "minecraft:crafting_table" })]
+        : [];
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        runId: "partial-active-corpse-run",
+        team: { teamId: "partial-active-corpse-team" },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (!driver.tasks.some((task) => task.type === "craft")) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "craft",
+    }));
+    expect(driver.paths).not.toContainEqual(expect.objectContaining({
+      position: deathPosition,
+    }));
+  });
+
   it("does not craft a recovery weapon until enough wood was collected", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
@@ -3094,7 +3179,7 @@ describe("beat-game run lifecycle", () => {
 
     expect(recoveries).toBe(3);
     expect(
-      driver.tasks.filter((task) => task.type === "attack-nearest"),
+      driver.tasks.filter((task) => task.type === "attack-entity"),
     ).toHaveLength(2);
   });
 
@@ -9091,7 +9176,7 @@ describe("beat-game run lifecycle", () => {
     ]);
   });
 
-  it("keeps searching dry land for food before hunger becomes critical", async () => {
+  it("crosses water when a healthy food search has no dry route", async () => {
     const driver = new FakeBeatGameDriver();
     const salmon = {
       connectionEpoch: "epoch-1",
@@ -9123,7 +9208,18 @@ describe("beat-game run lifecycle", () => {
     driver.xzPathResolver = (x, z, dimension, radius, policy) =>
       Effect.sync(() => {
         driver.xzPaths.push({ x, z, dimension, radius, policy });
-      }).pipe(Effect.zipRight(Effect.never));
+      }).pipe(
+        Effect.zipRight(
+          policy.avoidFluids === true
+            ? Effect.fail(new BeatGameDriverError({
+              operation: "pathfindXZ",
+              code: "unreachable",
+              retryable: true,
+              message: "The bot is stranded by water",
+            }))
+            : Effect.never,
+        ),
+      );
 
     await Effect.runPromise(Effect.scoped(
       beatGameWithDriver(driver, {
@@ -9131,7 +9227,7 @@ describe("beat-game run lifecycle", () => {
       }).pipe(
         Effect.flatMap((run) =>
           Effect.gen(function* () {
-            while (driver.xzPaths.length === 0) {
+            while (driver.xzPaths.length < 2) {
               yield* Effect.sleep(1);
             }
             yield* run.stop;
@@ -9144,6 +9240,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks.some((task) => task.type === "attack-entity"))
       .toBe(false);
     expect(driver.xzPaths[0]?.policy.avoidFluids).toBe(true);
+    expect(driver.xzPaths[1]?.policy.avoidFluids).toBe(false);
   }, 10_000);
 
   it("approaches deeper fish after repeated safe searches", async () => {
@@ -12671,6 +12768,45 @@ describe("beat-game run lifecycle", () => {
       input: { itemIds: ["minecraft:beef"] },
       count: 6,
     }));
+  });
+
+  it("gathers a stone buffer before cooking without a furnace", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      food: defaultBeatGameStrategy.eatBelowFood,
+      counts: {
+        "minecraft:beef": 2,
+        "minecraft:oak_log": 8,
+        "minecraft:wooden_pickaxe": 1,
+        "minecraft:wooden_sword": 1,
+      },
+    });
+    driver.blockQueryResolver = ({ selector }) =>
+      selector.blockIds?.includes("minecraft:stone") === true
+        ? [blockObservation({
+          x: 2,
+          y: 63,
+          z: 0,
+          dimension: "minecraft:overworld",
+        }, { blockId: "minecraft:stone" })]
+        : [];
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some((task) => task.type === "collect-blocks")) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    })));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "collect-blocks",
+      blockIds: ["minecraft:stone"],
+      count: 20,
+    }));
+    expect(driver.tasks.some((task) => task.type === "smelt")).toBe(false);
   });
 
   it("cooks a partial raw-food batch at the normal hunger threshold", async () => {

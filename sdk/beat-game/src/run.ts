@@ -4768,7 +4768,8 @@ function huntForFoodRequirement(
               && observation.player.health
                 >= WOUNDED_AQUATIC_HUNT_MINIMUM_HEALTH
             ),
-          allowFluidFallback: false,
+          allowFluidFallback:
+            observation.player.health >= state.strategy.minimumHealth,
           path: {
             ...state.strategy.path,
             avoidFluids: true,
@@ -5113,10 +5114,9 @@ function cookRawFoodBatch(
     readonly count: number;
   },
 ): Effect.Effect<void, BeatGameError | BeatGameDriverError> {
-  return ensureWorkstation(
+  return ensureFurnaceForCooking(
     state,
     observation,
-    "minecraft:furnace",
   ).pipe(
     Effect.flatMap((workstation) =>
       drainFurnaceContents(state, workstation.position).pipe(
@@ -5150,6 +5150,57 @@ function cookRawFoodBatch(
         Effect.zipRight(reclaimPlacedFurnace(state, workstation)),
       )
     ),
+  );
+}
+
+function ensureFurnaceForCooking(
+  state: RunState,
+  observation: BeatGameObservation,
+): Effect.Effect<
+  PreparedWorkstation,
+  BeatGameError | BeatGameDriverError
+> {
+  return state.driver.queryBlocks({
+    center: observation.player.position,
+    radius: WORKSTATION_REUSE_RADIUS,
+    selector: { blockIds: ["minecraft:furnace"] },
+    maximumResults: 1,
+  }).pipe(
+    Effect.flatMap((furnaces) => {
+      const cobblestoneCount =
+        observation.inventory.counts["minecraft:cobblestone"] ?? 0;
+      if (
+        furnaces.length > 0
+        || (observation.inventory.counts["minecraft:furnace"] ?? 0) > 0
+        || cobblestoneCount >= 8
+      ) {
+        return ensureWorkstation(state, observation, "minecraft:furnace");
+      }
+      const missingCobblestone = 8 - cobblestoneCount;
+      return collectBlocksOrExplore(state, observation, {
+        blockIds: ["minecraft:stone"],
+        count: bufferedCollectionCount(
+          "cobblestone",
+          missingCobblestone,
+        ),
+        progressItemIds: ["minecraft:cobblestone"],
+        purpose: "prepare-food-furnace",
+        avoidSubmergedTargets: true,
+        avoidFluids: true,
+        prepareAttempt: (current) =>
+          ensureMiningPickaxe(
+            state,
+            current,
+            "minecraft:wooden_pickaxe",
+            MINING_PICKAXE_ITEM_IDS,
+          ),
+      }).pipe(
+        Effect.zipRight(state.driver.observe),
+        Effect.flatMap((current) =>
+          ensureWorkstation(state, current, "minecraft:furnace")
+        ),
+      );
+    }),
   );
 }
 
@@ -7193,7 +7244,6 @@ function isEligibleHuntingTarget(
       !AQUATIC_FOOD_ENTITY_TYPES.has(target.entityType)
       || targetPreference?.allowAquaticTargets === true
       || targetPreference?.allowUrgentAquaticTargets === true
-      || targetPreference?.allowFluidFallback !== false
       || observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
     )
     && isWithinDirectedHuntDetour(
@@ -9586,6 +9636,10 @@ function prepareForDistantDeathRecovery(
     if (
       recoveryDistanceSquared <= ACTIVE_CORPSE_RECOVERY_DISTANCE ** 2
       && current.player.health >= state.strategy.minimumHealth
+      && (
+        hasMeleeWeapon(current)
+        || !hasMeaningfulRecoveryInventory(current)
+      )
     ) {
       return undefined;
     }
