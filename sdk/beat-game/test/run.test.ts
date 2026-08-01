@@ -4025,6 +4025,94 @@ describe("beat-game run lifecycle", () => {
     )).toBe(false);
   });
 
+  it("routes across dry ground instead of sprinting into water to evade a threat", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      health: 8,
+      counts: {
+        "minecraft:cooked_beef": 1,
+      },
+    });
+    const skeleton: BeatGameEntityObservation = {
+      connectionEpoch: "epoch-1",
+      networkId: 19,
+      entityType: "minecraft:skeleton",
+      position: {
+        x: 6,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    };
+    driver.entityResults = [skeleton];
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2) ? driver.entityResults : [];
+    driver.blockQueryResolver = ({ center, selector }) =>
+      selector.blockIds?.includes("minecraft:water") && center.x < -1
+        ? [blockObservation(
+          {
+            x: Math.floor(center.x),
+            y: Math.floor(center.y),
+            z: Math.floor(center.z),
+            dimension: center.dimension,
+          },
+          { blockId: "minecraft:water", replaceable: true },
+        )]
+        : [];
+    driver.surfaceColumns = [-9, -8, -7].flatMap((x) =>
+      [-1, 0, 1].map((z) => ({
+        x,
+        z,
+        loaded: true,
+        surfaceY: 63,
+        blockId: "minecraft:grass_block",
+        skyLight: 15,
+        blockLight: 0,
+      }))
+    );
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (driver.paths.length === 0) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.actions.some((action) =>
+      action.type === "set-movement" && action.forward === true
+    )).toBe(false);
+    expect(driver.paths[0]).toMatchObject({
+      position: {
+        y: 64,
+        dimension: "minecraft:overworld",
+      },
+      radius: 1.5,
+      policy: {
+        allowMining: false,
+        allowPlacing: false,
+        avoidFluids: true,
+      },
+    });
+    expect(driver.paths[0]?.position.x).toBeLessThan(-3);
+    expect(driver.surfaceQueries).toContainEqual(expect.objectContaining({
+      radius: 16,
+      sampleStep: 1,
+    }));
+  });
+
   it("evades ranged hostiles while wounded without a shield", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({

@@ -43,6 +43,7 @@ import {
 import {
   makeSoulFireBeatGameDriver,
   type BeatGameDriver,
+  type BeatGameSurfaceColumn,
 } from "./driver.js";
 import {
   BeatGameActionError,
@@ -508,6 +509,7 @@ const PROACTIVE_RANGED_ENGAGEMENT_RADIUS = 16;
 const DEFENSIVE_PURSUIT_MAX_DISTANCE = 12;
 const EMERGENCY_KNOCKBACK_RANGE = 3.5;
 const EMERGENCY_ESCAPE_SPRINT_MS = 1_250;
+const EMERGENCY_ESCAPE_FLUID_PROJECTION_DISTANCE = 2;
 const CREEPER_ESCAPE_SPRINT_MS = 2_500;
 const EMERGENCY_ESCAPE_LAVA_CHECK_RADIUS = 4;
 const DEATH_OBSERVATION_DEDUPLICATION_WINDOW_MS = 5_000;
@@ -2258,9 +2260,20 @@ function escapeFromTarget(
       state,
       latest.player.position,
     );
-    const escapeTarget = surfaceEscapeTarget(
+    const dryEscapeTarget = target.entityType === "minecraft:creeper"
+      ? undefined
+      : yield* findDryThreatEscapeTarget(
+        state,
+        latest.player.position,
+        target.position,
+      );
+    const escapeTarget = dryEscapeTarget ?? surfaceEscapeTarget(
       latest.player.position,
       target.position,
+    );
+    const currentlyInFluid = yield* isPlayerInFluid(
+      state.driver,
+      latest.player.position,
     );
     const dynamicEscape = flee(state.driver, {
       selector: {
@@ -2286,6 +2299,21 @@ function escapeFromTarget(
     });
     const navigation = target.entityType === "minecraft:creeper"
       ? dynamicEscape
+      : dryEscapeTarget !== undefined
+      ? state.driver.pathfind(
+        dryEscapeTarget,
+        1.5,
+        {
+          ...escapePath,
+          allowMining: false,
+          allowPlacing: false,
+          avoidFluids: !currentlyInFluid,
+          maxFallDistance: Math.min(
+            escapePath.maxFallDistance,
+            MAXIMUM_DAMAGE_FREE_FALL_DISTANCE,
+          ),
+        },
+      )
       : needsRecovery
       ? state.driver.pathfind(
         escapeTarget,
@@ -2464,6 +2492,21 @@ function knockBackAndSprintAway(
       selector: { blockIds: ["minecraft:lava"] },
       maximumResults: 1,
     });
+    const directionX = away.x - playerPosition.x;
+    const directionZ = away.z - playerPosition.z;
+    const directionLength = Math.hypot(directionX, directionZ);
+    const projectedPosition = {
+      x: playerPosition.x
+        + directionX / directionLength
+          * EMERGENCY_ESCAPE_FLUID_PROJECTION_DISTANCE,
+      y: playerPosition.y,
+      z: playerPosition.z
+        + directionZ / directionLength
+          * EMERGENCY_ESCAPE_FLUID_PROJECTION_DISTANCE,
+      dimension: playerPosition.dimension,
+    };
+    const projectedIntoFluid = threat.entityType !== "minecraft:creeper"
+      && (yield* isPlayerInFluid(state.driver, projectedPosition));
     yield* state.driver.withControl(Effect.gen(function* () {
       if (distance <= EMERGENCY_KNOCKBACK_RANGE) {
         const toward = rotationToward(playerPosition, threat.position);
@@ -2479,7 +2522,7 @@ function knockBackAndSprintAway(
           sprinting: true,
         });
       }
-      if (nearbyLava.length > 0) {
+      if (nearbyLava.length > 0 || projectedIntoFluid) {
         return;
       }
       yield* state.driver.act({
@@ -2504,6 +2547,38 @@ function knockBackAndSprintAway(
       ),
     ));
   });
+}
+
+function findDryThreatEscapeTarget(
+  state: RunState,
+  player: BeatGamePosition,
+  threat: BeatGamePosition,
+): Effect.Effect<BeatGamePosition | undefined, BeatGameDriverError> {
+  if (
+    player.dimension !== "minecraft:overworld"
+    || threat.dimension !== player.dimension
+  ) {
+    return Effect.succeed(undefined);
+  }
+  return state.driver.sampleSurface(
+    player,
+    AIR_ESCAPE_SURFACE_SEARCH_RADIUS,
+    1,
+  ).pipe(
+    Effect.map((columns) =>
+      selectStableThreatEscapeColumn(columns, player, threat)
+    ),
+    Effect.map((surface) =>
+      surface === undefined
+        ? undefined
+        : {
+          x: surface.x + 0.5,
+          y: surface.surfaceY + 1,
+          z: surface.z + 0.5,
+          dimension: player.dimension,
+        }
+    ),
+  );
 }
 
 function surfaceEscapeTarget(
@@ -6812,19 +6887,74 @@ function selectSurfaceEscapeColumns(
 }
 
 function selectStableSurfaceEscapeColumns(
-  columns: readonly {
-    readonly x: number;
-    readonly z: number;
-    readonly loaded: boolean;
-    readonly surfaceY?: number;
-    readonly blockId?: string;
-  }[],
+  columns: readonly BeatGameSurfaceColumn[],
   position: BeatGamePosition,
 ): readonly {
   readonly x: number;
   readonly z: number;
   readonly surfaceY: number;
 }[] {
+  return selectSurfaceEscapeColumns(
+    stableSurfaceColumns(columns),
+    position,
+  );
+}
+
+function selectStableThreatEscapeColumn(
+  columns: readonly BeatGameSurfaceColumn[],
+  player: BeatGamePosition,
+  threat: BeatGamePosition,
+): {
+  readonly x: number;
+  readonly z: number;
+  readonly surfaceY: number;
+} | undefined {
+  const awayX = player.x - threat.x;
+  const awayZ = player.z - threat.z;
+  const awayLength = Math.hypot(awayX, awayZ);
+  const directionX = awayLength > 0.001 ? awayX / awayLength : 1;
+  const directionZ = awayLength > 0.001 ? awayZ / awayLength : 0;
+  const currentThreatDistanceSquared = distanceSquared(player, threat);
+  return stableSurfaceColumns(columns).flatMap((candidate) => {
+    const candidateX = candidate.x + 0.5;
+    const candidateY = candidate.surfaceY + 1;
+    const candidateZ = candidate.z + 0.5;
+    const movementX = candidateX - player.x;
+    const movementZ = candidateZ - player.z;
+    const movementDistance = Math.hypot(movementX, movementZ);
+    const alignment = movementDistance > 0.001
+      ? (movementX * directionX + movementZ * directionZ) / movementDistance
+      : -1;
+    const threatDistanceSquared = distanceSquared(
+      {
+        x: candidateX,
+        y: candidateY,
+        z: candidateZ,
+      },
+      threat,
+    );
+    return movementDistance >= 3
+        && alignment >= 0.25
+        && Math.abs(candidateY - player.y)
+          <= MAXIMUM_DAMAGE_FREE_FALL_DISTANCE
+        && threatDistanceSquared > currentThreatDistanceSquared + 4
+      ? [{
+        ...candidate,
+        alignment,
+        threatDistanceSquared,
+        movementDistance,
+      }]
+      : [];
+  }).sort((left, right) =>
+    right.threatDistanceSquared - left.threatDistanceSquared
+      || right.alignment - left.alignment
+      || left.movementDistance - right.movementDistance
+  )[0];
+}
+
+function stableSurfaceColumns(
+  columns: readonly BeatGameSurfaceColumn[],
+): readonly (BeatGameSurfaceColumn & { readonly surfaceY: number })[] {
   const safeColumns = columns.flatMap((column) =>
     column.loaded
       && column.surfaceY !== undefined
@@ -6832,16 +6962,30 @@ function selectStableSurfaceEscapeColumns(
       ? [{ ...column, surfaceY: column.surfaceY }]
       : []
   );
-  const stableColumns = safeColumns.filter((candidate) =>
-    safeColumns.filter((neighbor) =>
-      neighbor !== candidate
-      && Math.abs(neighbor.x - candidate.x) <= 1
-      && Math.abs(neighbor.z - candidate.z) <= 1
-      && Math.abs(neighbor.surfaceY - candidate.surfaceY)
-        <= SURFACE_NEIGHBOR_MAX_HEIGHT_DELTA
-    ).length >= MINIMUM_STABLE_SURFACE_NEIGHBORS
+  const columnsByPosition = new Map(
+    safeColumns.map((column) => [`${column.x}:${column.z}`, column]),
   );
-  return selectSurfaceEscapeColumns(stableColumns, position);
+  return safeColumns.filter((candidate) => {
+    let stableNeighbors = 0;
+    for (let deltaX = -1; deltaX <= 1; deltaX += 1) {
+      for (let deltaZ = -1; deltaZ <= 1; deltaZ += 1) {
+        if (deltaX === 0 && deltaZ === 0) {
+          continue;
+        }
+        const neighbor = columnsByPosition.get(
+          `${candidate.x + deltaX}:${candidate.z + deltaZ}`,
+        );
+        if (
+          neighbor !== undefined
+          && Math.abs(neighbor.surfaceY - candidate.surfaceY)
+            <= SURFACE_NEIGHBOR_MAX_HEIGHT_DELTA
+        ) {
+          stableNeighbors += 1;
+        }
+      }
+    }
+    return stableNeighbors >= MINIMUM_STABLE_SURFACE_NEIGHBORS;
+  });
 }
 
 function selectElevatedSurfaceColumns(
