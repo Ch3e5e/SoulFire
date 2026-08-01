@@ -20,7 +20,6 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import { execFile as execFileCallback } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
-  appendFile,
   lstat,
   mkdir,
   readFile,
@@ -41,6 +40,7 @@ import {
   Scope,
   Stream,
 } from "effect";
+import { BoundedLog } from "./bounded-log.ts";
 
 const execFile = promisify(execFileCallback);
 const repositoryRoot = path.resolve(import.meta.dirname, "../../..");
@@ -106,6 +106,28 @@ const timeoutMs = positiveIntegerEnvironment(
   "SOULFIRE_E2E_TIMEOUT_MS",
   smokeMode === "controlled" ? 45 * 60 * 1_000 : 8 * 60 * 60 * 1_000,
 );
+const artifactLogMaximumBytes = positiveIntegerEnvironment(
+  "SOULFIRE_E2E_ARTIFACT_LOG_MAX_BYTES",
+  32 * 1024 * 1024,
+);
+const artifactLogFiles = positiveIntegerEnvironment(
+  "SOULFIRE_E2E_ARTIFACT_LOG_FILES",
+  3,
+);
+const eventLog = new BoundedLog(
+  path.join(artifactDirectory, "events.ndjson"),
+  {
+    maximumBytes: artifactLogMaximumBytes,
+    files: artifactLogFiles,
+  },
+);
+const soulfireLog = new BoundedLog(
+  path.join(artifactDirectory, "soulfire.log"),
+  {
+    maximumBytes: artifactLogMaximumBytes,
+    files: artifactLogFiles,
+  },
+);
 const fixtureConfiguration = {
   mode: smokeMode,
   image: environment(
@@ -162,11 +184,18 @@ const program = Effect.scoped(Effect.gen(function* () {
   yield* fromPromise("create artifact directory", () =>
     mkdir(artifactDirectory, { recursive: true })
   );
+  yield* Effect.addFinalizer(() =>
+    fromPromise("flush artifact logs", () =>
+      Promise.all([eventLog.flush(), soulfireLog.flush()]).then(() => undefined)
+    ).pipe(Effect.ignore)
+  );
   yield* writeJson("configuration.json", {
     runId,
     soulfireRuntimeDirectory,
     botName,
     timeoutMs,
+    artifactLogMaximumBytes,
+    artifactLogFiles,
     fixtureConfiguration,
   });
 
@@ -207,10 +236,9 @@ const program = Effect.scoped(Effect.gen(function* () {
       defaultTimeoutMs: 10 * 60_000,
       onLog: (line) => {
         process.stdout.write(`[soulfire] ${line}\n`);
-        void appendFile(
-          path.join(artifactDirectory, "soulfire.log"),
-          `${line}\n`,
-        );
+        void soulfireLog.append(`${line}\n`).catch((cause: unknown) => {
+          process.stderr.write(`Could not write SoulFire log: ${String(cause)}\n`);
+        });
       },
     });
     const localServer = soulfire.localServer;
@@ -1517,7 +1545,7 @@ function record(
     const line = json({ observedAt: new Date().toISOString(), kind, ...value });
     process.stdout.write(`${line}\n`);
     return fromPromise(`record ${kind}`, () =>
-      appendFile(path.join(artifactDirectory, "events.ndjson"), `${line}\n`)
+      eventLog.append(`${line}\n`)
     );
   });
 }
