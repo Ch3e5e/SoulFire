@@ -2169,6 +2169,9 @@ function shouldDisengageFromThreat(
   if (shouldCommitToRangedFight(observation, target)) {
     return false;
   }
+  if (shouldCommitToFastMeleePursuerFight(observation, target)) {
+    return false;
+  }
   if (observation.player.health <= LETHAL_MELEE_DISENGAGE_HEALTH) {
     return true;
   }
@@ -2246,7 +2249,10 @@ function shouldCommitToFastMeleePursuerFight(
   target: BeatGameEntityObservation,
 ): boolean {
   return FAST_MELEE_PURSUER_ENTITY_TYPES.has(target.entityType)
-    && hasMeleeWeapon(observation);
+    && (
+      hasMeleeWeapon(observation)
+      || observation.player.health >= MELEE_DISENGAGE_HEALTH
+    );
 }
 
 function shouldCommitToMeleeFight(
