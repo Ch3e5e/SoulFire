@@ -2247,11 +2247,6 @@ function escapeFromTarget(
     if (latest.player.dead) {
       return;
     }
-    const [startsInFluid, startsInLava] = yield* Effect.all([
-      isPlayerInFluid(state.driver, latest.player.position),
-      isPlayerInLava(state.driver, latest.player.position),
-    ]);
-    const avoidFluids = !startsInFluid || startsInLava;
     const needsRecovery = yield* needsOverworldSurfaceRecovery(
       state,
       latest.player.position,
@@ -2268,7 +2263,7 @@ function escapeFromTarget(
           ...escapePath,
           allowMining: true,
           allowPlacing: false,
-          avoidFluids,
+          avoidFluids: true,
           maxFallDistance: Math.min(
             escapePath.maxFallDistance,
             MAXIMUM_DAMAGE_FREE_FALL_DISTANCE,
@@ -2286,7 +2281,7 @@ function escapeFromTarget(
           ...escapePath,
           allowMining: false,
           allowPlacing: false,
-          avoidFluids,
+          avoidFluids: true,
           maxFallDistance: Math.min(
             escapePath.maxFallDistance,
             MAXIMUM_DAMAGE_FREE_FALL_DISTANCE,
@@ -2305,7 +2300,7 @@ function escapeFromTarget(
         path: {
           ...escapePath,
           allowPlacing: false,
-          avoidFluids,
+          avoidFluids: true,
           maxFallDistance: Math.min(
             escapePath.maxFallDistance,
             MAXIMUM_DAMAGE_FREE_FALL_DISTANCE,

@@ -2830,7 +2830,7 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
-  it("allows an escape route to leave water when a creeper approaches", async () => {
+  it("avoids deeper water while escaping from a submerged start", async () => {
     const driver = new FakeBeatGameDriver();
     driver.entityResults = [{
       connectionEpoch: "epoch-1",
@@ -2894,7 +2894,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.xzPaths[0]?.policy).toMatchObject({
       allowMining: false,
       allowPlacing: false,
-      avoidFluids: false,
+      avoidFluids: true,
       maxFallDistance: 3,
     });
   });
