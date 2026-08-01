@@ -11467,6 +11467,53 @@ describe("beat-game run lifecycle", () => {
     ]);
   });
 
+  it("does not interrupt raw-food cooking at the normal hunger threshold", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      health: 10.5,
+      food: 11,
+      counts: {
+        "minecraft:salmon": 1,
+        "minecraft:coal": 1,
+      },
+    });
+    driver.blockQueryResolver = ({ selector }) =>
+      selector.blockIds?.includes("minecraft:furnace") === true
+        ? [blockObservation({
+          x: 1,
+          y: 64,
+          z: 0,
+          dimension: "minecraft:overworld",
+        }, { blockId: "minecraft:furnace" })]
+        : [];
+    let resolveFoodSmelt!: () => void;
+    const foodSmeltStarted = new Promise<void>((resolve) => {
+      resolveFoodSmelt = resolve;
+    });
+    driver.taskResolver = (task) => {
+      driver.tasks.push(task);
+      if (task.type === "smelt") {
+        resolveFoodSmelt();
+        return Effect.never;
+      }
+      return Effect.void;
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      yield* Effect.promise(() => foodSmeltStarted).pipe(
+        Effect.timeout("5 seconds"),
+      );
+      yield* Effect.sleep(25);
+      yield* run.stop;
+    })));
+
+    expect(driver.tasks.filter((task) => task.type === "smelt")).toHaveLength(1);
+    expect(driver.tasks.some((task) => task.type === "auto-eat")).toBe(false);
+  });
+
   it("recovers an interrupted food batch from a nearby furnace", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({

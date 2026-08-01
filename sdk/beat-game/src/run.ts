@@ -2021,7 +2021,7 @@ function monitorObservedSafety(
     decision.type !== "recover-death"
     && decision.type !== "eat"
     && observation.player.food <= state.strategy.eatBelowFood
-    && hasUsableFood(observation)
+    && shouldInterruptForMeal(decision, observation)
   ) {
     return Effect.succeed({
       replanReason: "hunger fell below the eating threshold",
@@ -2605,6 +2605,31 @@ function surfaceEscapeTarget(
 
 function hasUsableFood(observation: BeatGameObservation): boolean {
   return preferredUsableFoodItemIds(observation).length > 0;
+}
+
+function shouldInterruptForMeal(
+  decision: Exclude<
+    BeatGamePlannerDecision,
+    { readonly type: "advance-phase" }
+  >,
+  observation: BeatGameObservation,
+): boolean {
+  if (!hasUsableFood(observation)) {
+    return false;
+  }
+  const hasReadyFood = [...EDIBLE_FOOD_ITEM_IDS, ...EMERGENCY_FOOD_ITEM_IDS]
+    .some((itemId) =>
+      !COOKABLE_RAW_FOOD_ITEM_IDS.has(itemId)
+      && (observation.inventory.counts[itemId] ?? 0) > 0
+    );
+  if (
+    hasReadyFood
+    || observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
+  ) {
+    return true;
+  }
+  return decision.type !== "satisfy-requirement"
+    || decision.requirement.key !== "food";
 }
 
 function hasRecoveryFood(observation: BeatGameObservation): boolean {
