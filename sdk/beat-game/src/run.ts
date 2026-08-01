@@ -2146,9 +2146,16 @@ function findImmediateThreat(
             * PROACTIVE_RANGED_ENGAGEMENT_RADIUS
       );
       if (ranged !== undefined) {
+        const nearbyThreats = candidates.filter(({ distanceSquared }) =>
+          distanceSquared
+            <= PROACTIVE_RANGED_ENGAGEMENT_RADIUS
+              * PROACTIVE_RANGED_ENGAGEMENT_RADIUS
+        );
+        const unshieldedAmbush = nearbyThreats.length > 1
+          && (observation.inventory.counts["minecraft:shield"] ?? 0) === 0;
         return {
           target: ranged.target,
-          response: shouldDisengageFromThreat(
+          response: unshieldedAmbush || shouldDisengageFromThreat(
               state,
               observation,
               ranged.target,
@@ -4305,7 +4312,11 @@ function recoverNearbyRequirementDrops(
 ): Effect.Effect<boolean, BeatGameDriverError> {
   const itemIds = [...new Set(
     requirement.key === "food"
-      ? [...requirement.itemIds, ...Object.keys(RAW_FOOD_TO_COOKED)]
+      ? [
+        ...requirement.itemIds,
+        ...Object.keys(RAW_FOOD_TO_COOKED),
+        ...EMERGENCY_FOOD_ITEM_IDS,
+      ]
       : requirement.itemIds,
   )];
   if (itemIds.length === 0) {
