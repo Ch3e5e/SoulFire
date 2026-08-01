@@ -4535,7 +4535,7 @@ describe("beat-game run lifecycle", () => {
     )).toBe(false);
   });
 
-  it("disengages from a shielded ranged fight after taking heavy damage", async () => {
+  it("keeps its shield raised instead of fleeing a ranged fight wounded", async () => {
     const driver = new FakeBeatGameDriver();
     const bogged = {
       connectionEpoch: "epoch-1",
@@ -4586,10 +4586,11 @@ describe("beat-game run lifecycle", () => {
         Effect.flatMap((run) =>
           Effect.gen(function* () {
             while (
-              !driver.tasks.some((task) => task.type === "flee")
+              !driver.tasks.some((task) => task.type === "attack-entity")
             ) {
               yield* Effect.sleep(1);
             }
+            yield* Effect.sleep(5);
             yield* run.stop;
             yield* run.awaitCompletion.pipe(Effect.either);
           })
@@ -4604,12 +4605,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.actions.some((action) =>
       action.type === "set-movement" && action.forward === true
     )).toBe(false);
-    expect(driver.tasks).toContainEqual(expect.objectContaining({
-      type: "flee",
-      selector: { networkId: bogged.networkId, alive: true },
-      triggerRadius: 24,
-      safeDistance: 32,
-    }));
+    expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
   });
 
   it("eats and regenerates after surviving a defensive fight", async () => {

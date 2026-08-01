@@ -121,19 +121,19 @@ const REQUIREMENTS: Readonly<
       "food",
       COOKED_FOOD_ITEM_IDS,
       ({ targetFoodCount }) => Math.min(targetFoodCount, 8),
-      100,
+      104,
     ),
     itemRequirement(
       "iron",
       ["minecraft:iron_ingot"],
       ({ targetIronCount }) => targetIronCount,
-      104,
+      103,
     ),
     itemRequirement(
       "shield",
       ["minecraft:shield"],
       () => 1,
-      103,
+      102,
     ),
     itemRequirement(
       "pickaxe",

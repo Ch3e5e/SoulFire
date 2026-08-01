@@ -3676,6 +3676,8 @@ function defendAgainstTarget(
           state,
           observation.player.health,
           observation.player.position,
+          !(canBlockWithShield
+            && PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)),
         ),
       ).pipe(
         Effect.flatMap((outcome) =>
@@ -3701,6 +3703,7 @@ function monitorDefenseHealth(
   state: RunState,
   engagementHealth: number,
   engagementPosition: BeatGamePosition,
+  disengageWhenWounded = true,
 ): Effect.Effect<"disengage" | "unsafe-air", BeatGameDriverError> {
   return Effect.sleep(
     Math.max(MINIMUM_RECOVERY_POLL_MS, state.strategy.observationPollMs),
@@ -3723,16 +3726,20 @@ function monitorDefenseHealth(
         return Effect.succeed("disengage" as const);
       }
       if (
-        observation.player.health > LETHAL_MELEE_DISENGAGE_HEALTH
-        && (
-          observation.player.health >= state.strategy.minimumHealth
-          || observation.player.health >= engagementHealth
+        !disengageWhenWounded
+        || (
+          observation.player.health > LETHAL_MELEE_DISENGAGE_HEALTH
+          && (
+            observation.player.health >= state.strategy.minimumHealth
+            || observation.player.health >= engagementHealth
+          )
         )
       ) {
         return monitorDefenseHealth(
           state,
           engagementHealth,
           engagementPosition,
+          disengageWhenWounded,
         );
       }
       return Effect.succeed("disengage" as const);
