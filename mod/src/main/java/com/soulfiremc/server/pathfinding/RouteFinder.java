@@ -222,8 +222,8 @@ public record RouteFinder(MinecraftGraph baseGraph, GoalScorer scorer, Executor 
     var visitedNodes = 0;
     var nodesAtFirstBoundary = -1;
 
+    var startScore = scorer.computeScore(graph, from.blockPosition(), List.of());
     {
-      var startScore = scorer.computeScore(graph, from.blockPosition(), List.of());
       log.debug("Start score (Usually distance): {}", startScore);
 
       var start =
@@ -312,6 +312,7 @@ public record RouteFinder(MinecraftGraph baseGraph, GoalScorer scorer, Executor 
         if (nodeReachedLevelBoundary) {
           if (
             current.parent() != null
+              && isProgressingPartialRoute(startScore, current)
               && (
                 bestBoundaryNode.value == null
                   || comparePartialRouteCandidates(
@@ -386,6 +387,13 @@ public record RouteFinder(MinecraftGraph baseGraph, GoalScorer scorer, Executor 
     return totalCostComparison != 0
       ? totalCostComparison
       : Double.compare(left.targetCost(), right.targetCost());
+  }
+
+  static boolean isProgressingPartialRoute(
+    double startScore,
+    MinecraftRouteNode candidate
+  ) {
+    return candidate.targetCost() < startScore;
   }
 
   private static boolean hasProjectedFloor(MinecraftRouteNode node) {

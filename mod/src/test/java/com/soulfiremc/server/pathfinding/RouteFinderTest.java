@@ -79,4 +79,31 @@ final class RouteFinderTest {
       efficientBoundary
     ) > 0);
   }
+
+  @Test
+  void partialRoutesRejectChunkBoundariesThatMoveAwayFromTheGoal() {
+    var progressingBoundary = new MinecraftRouteNode(
+      new NodeState(new SFVec3i(1, 64, 0), 0),
+      List.of(),
+      8,
+      31,
+      39
+    );
+    var regressingBoundary = new MinecraftRouteNode(
+      new NodeState(new SFVec3i(-64, 64, 0), 0),
+      List.of(),
+      68,
+      94,
+      162
+    );
+
+    assertTrue(RouteFinder.isProgressingPartialRoute(
+      32,
+      progressingBoundary
+    ));
+    assertFalse(RouteFinder.isProgressingPartialRoute(
+      32,
+      regressingBoundary
+    ));
+  }
 }
