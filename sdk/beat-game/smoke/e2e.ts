@@ -20,7 +20,6 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import { execFile as execFileCallback } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
-  lstat,
   mkdir,
   readFile,
   readlink,
@@ -40,6 +39,7 @@ import {
   Scope,
   Stream,
 } from "effect";
+import { pruneArtifactRuns } from "./artifact-retention.ts";
 import { BoundedLog } from "./bounded-log.ts";
 
 const execFile = promisify(execFileCallback);
@@ -48,11 +48,17 @@ const runId = environment(
   "SOULFIRE_E2E_RUN_ID",
   `beat-game-e2e-${randomUUID()}`,
 );
+const artifactRootDirectory = path.join(
+  repositoryRoot,
+  "temp",
+  "beat-game-e2e",
+);
+const configuredArtifactDirectory = optionalEnvironment(
+  "SOULFIRE_E2E_ARTIFACT_DIR",
+);
 const artifactDirectory = path.resolve(
-  environment(
-    "SOULFIRE_E2E_ARTIFACT_DIR",
-    path.join(repositoryRoot, "temp", "beat-game-e2e", runId),
-  ),
+  configuredArtifactDirectory
+    ?? path.join(artifactRootDirectory, runId),
 );
 const minecraftDataRootDirectory = path.resolve(
   environment(
@@ -113,6 +119,10 @@ const artifactLogMaximumBytes = positiveIntegerEnvironment(
 const artifactLogFiles = positiveIntegerEnvironment(
   "SOULFIRE_E2E_ARTIFACT_LOG_FILES",
   3,
+);
+const artifactRuns = positiveIntegerEnvironment(
+  "SOULFIRE_E2E_ARTIFACT_RUNS",
+  4,
 );
 const eventLog = new BoundedLog(
   path.join(artifactDirectory, "events.ndjson"),
@@ -181,6 +191,21 @@ type MinecraftFixture =
   | ControlledMinecraftFixture;
 
 const program = Effect.scoped(Effect.gen(function* () {
+  if (configuredArtifactDirectory === undefined) {
+    const removedArtifactDirectories = yield* fromPromise(
+      "prune old smoke artifacts",
+      () => pruneArtifactRuns({
+        rootDirectory: artifactRootDirectory,
+        currentDirectory: artifactDirectory,
+        maximumRuns: artifactRuns,
+      }),
+    );
+    if (removedArtifactDirectories.length > 0) {
+      process.stdout.write(
+        `Pruned ${removedArtifactDirectories.length} old smoke artifact directories\n`,
+      );
+    }
+  }
   yield* fromPromise("create artifact directory", () =>
     mkdir(artifactDirectory, { recursive: true })
   );
@@ -196,6 +221,7 @@ const program = Effect.scoped(Effect.gen(function* () {
     timeoutMs,
     artifactLogMaximumBytes,
     artifactLogFiles,
+    artifactRuns,
     fixtureConfiguration,
   });
 
