@@ -507,6 +507,7 @@ const program = Effect.scoped(Effect.gen(function* () {
     | Readonly<{
       health: number;
       food: number;
+      air: number;
       dead: boolean;
     }>
     | undefined;
@@ -527,12 +528,14 @@ const program = Effect.scoped(Effect.gen(function* () {
         const vitals = {
           health: observation.player.health,
           food: observation.player.food,
+          air: observation.player.air,
           dead: observation.player.dead,
         };
         if (
           lastObservedVitals === undefined
           || vitals.health !== lastObservedVitals.health
           || vitals.food !== lastObservedVitals.food
+          || vitals.air !== lastObservedVitals.air
           || vitals.dead !== lastObservedVitals.dead
         ) {
           lastObservedVitals = vitals;

@@ -518,7 +518,9 @@ const RECOVERY_DURATION_MS = 20_000;
 const POST_DEFENSE_RECOVERY_DURATION_MS = 90_000;
 const MAXIMUM_RECOVERY_POLL_MS = 500;
 const MINIMUM_RECOVERY_POLL_MS = 100;
-const MINIMUM_SAFE_AIR_TICKS = 200;
+const MINIMUM_SAFE_AIR_TICKS = 260;
+const AIR_ESCAPE_ASCENT_STAGNATION_OBSERVATIONS = 10;
+const AIR_ESCAPE_ASCENT_PROGRESS_EPSILON = 0.05;
 
 export interface BeatGameRun {
   readonly id: string;
@@ -2684,7 +2686,11 @@ function recoverFromFluid(
         jump: true,
         sprint: observation.player.food > CRITICAL_HUNGER_FOOD_LEVEL,
       })),
-      Effect.zipRight(waitForAirRecovery(state, 60)),
+      Effect.zipRight(waitForAirRecovery(
+        state,
+        60,
+        observation.player.position.y,
+      )),
       Effect.ensuring(
         state.driver.act({ type: "reset-movement" }).pipe(Effect.ignore),
       ),
@@ -2735,19 +2741,39 @@ function recoverFromFluid(
 function waitForAirRecovery(
   state: RunState,
   attemptsRemaining: number,
+  highestY: number,
+  stagnantObservations = 0,
 ): Effect.Effect<boolean, BeatGameDriverError> {
   return Effect.sleep(100).pipe(
     Effect.zipRight(state.driver.observe),
-    Effect.flatMap((observation) =>
-      observation.player.dead
-        ? Effect.succeed(true)
-        : observation.player.maxAir <= 0
-          || observation.player.air >= observation.player.maxAir
-        ? Effect.succeed(true)
-        : attemptsRemaining <= 1
-        ? Effect.succeed(false)
-        : waitForAirRecovery(state, attemptsRemaining - 1)
-    ),
+    Effect.flatMap((observation) => {
+      if (
+        observation.player.dead
+        || observation.player.maxAir <= 0
+        || observation.player.air >= observation.player.maxAir
+      ) {
+        return Effect.succeed(true);
+      }
+      const nextY = observation.player.position.y;
+      const madeProgress = nextY
+        > highestY + AIR_ESCAPE_ASCENT_PROGRESS_EPSILON;
+      const nextStagnantObservations = madeProgress
+        ? 0
+        : stagnantObservations + 1;
+      if (
+        attemptsRemaining <= 1
+        || nextStagnantObservations
+          >= AIR_ESCAPE_ASCENT_STAGNATION_OBSERVATIONS
+      ) {
+        return Effect.succeed(false);
+      }
+      return waitForAirRecovery(
+        state,
+        attemptsRemaining - 1,
+        Math.max(highestY, nextY),
+        nextStagnantObservations,
+      );
+    }),
   );
 }
 
@@ -2898,16 +2924,7 @@ function excavateAirEscapeShaft(
             } at ${positionKey(overhead)}`,
           }));
         }
-        if (hasMiningPickaxe(observation)) {
-          yield* state.driver.act({
-            type: "select-item",
-            selector: { itemIds: MINING_PICKAXE_ITEM_IDS },
-          });
-        }
-        yield* state.driver.act({
-          type: "dig-block",
-          position: overhead,
-        });
+        yield* digAirEscapeObstruction(state, observation, overhead);
       }
       const rose = yield* swimUpOneLevel(
         state,
@@ -2939,6 +2956,44 @@ function excavateAirEscapeShaft(
         `The bot did not reach the surface after clearing ${AIR_ESCAPE_MAXIMUM_SHAFT_BLOCKS} overhead blocks`,
     }));
   });
+}
+
+function digAirEscapeObstruction(
+  state: RunState,
+  observation: BeatGameObservation,
+  obstruction: BeatGameBlockPosition,
+): Effect.Effect<void, BeatGameDriverError> {
+  const dig = Effect.gen(function* () {
+    if (hasMiningPickaxe(observation)) {
+      yield* state.driver.act({
+        type: "select-item",
+        selector: { itemIds: MINING_PICKAXE_ITEM_IDS },
+      });
+    }
+    yield* state.driver.act({
+      type: "dig-block",
+      position: obstruction,
+    });
+  });
+  return isPlayerInFluid(state.driver, observation.player.position).pipe(
+    Effect.flatMap((inFluid) =>
+      !inFluid
+        ? dig
+        : state.driver.withControl(
+          state.driver.act({
+            type: "set-movement",
+            jump: true,
+          }).pipe(
+            Effect.zipRight(dig),
+            Effect.ensuring(
+              state.driver.act({ type: "reset-movement" }).pipe(
+                Effect.ignore,
+              ),
+            ),
+          ),
+        )
+    ),
+  );
 }
 
 function nearestAirEscapeSurface(

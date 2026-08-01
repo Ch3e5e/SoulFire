@@ -6564,13 +6564,13 @@ describe("beat-game run lifecycle", () => {
       if (
         blockIds === undefined
         && blockX === 0
-        && blockY === 65
+        && blockY === 63
         && blockZ === 0
       ) {
         return overheadCleared
           ? [blockObservation({
             x: 0,
-            y: 65,
+            y: 63,
             z: 0,
             dimension: "minecraft:overworld",
           }, {
@@ -6580,7 +6580,7 @@ describe("beat-game run lifecycle", () => {
           })]
           : [blockObservation({
             x: 0,
-            y: 65,
+            y: 63,
             z: 0,
             dimension: "minecraft:overworld",
           })];
@@ -6625,6 +6625,9 @@ describe("beat-game run lifecycle", () => {
         return;
       }
       const verticalEscape = action.forward === undefined && overheadCleared;
+      if (!verticalEscape) {
+        return;
+      }
       driver.currentObservation = {
         ...current,
         player: {
@@ -6632,13 +6635,11 @@ describe("beat-game run lifecycle", () => {
           air: 300,
           position: {
             ...current.player.position,
-            y: verticalEscape ? 65 : 63,
+            y: 63,
           },
         },
       };
-      if (verticalEscape) {
-        resolveEscaped();
-      }
+      resolveEscaped();
     };
 
     await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
@@ -6679,7 +6680,7 @@ describe("beat-game run lifecycle", () => {
       type: "dig-block",
       position: {
         x: 0,
-        y: 65,
+        y: 63,
         z: 0,
         dimension: "minecraft:overworld",
       },
@@ -6688,8 +6689,22 @@ describe("beat-game run lifecycle", () => {
       type: "set-movement",
       jump: true,
     });
+    const digIndex = driver.actions.findIndex((action) =>
+      action.type === "dig-block"
+    );
+    const heldAscentIndex = driver.actions.findIndex((action, index) =>
+      index < digIndex
+      && action.type === "set-movement"
+      && action.forward === undefined
+      && action.jump === true
+    );
+    const releaseIndex = driver.actions.findIndex((action, index) =>
+      index > digIndex && action.type === "reset-movement"
+    );
+    expect(heldAscentIndex).toBeGreaterThanOrEqual(0);
+    expect(releaseIndex).toBeGreaterThan(digIndex);
     expect(driver.paths).toHaveLength(0);
-    expect(driver.currentObservation.player.position.y).toBe(65);
+    expect(driver.currentObservation.player.position.y).toBe(63);
   });
 
   it("mines iron before crafting a missing portal bucket", async () => {
