@@ -8855,6 +8855,47 @@ describe("beat-game run lifecycle", () => {
     expect(driver.xzPaths[0]?.policy.avoidFluids).toBe(true);
   }, 10_000);
 
+  it("arms an injured bot before sending it on a food hunt", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      health: 10,
+      food: 12,
+    });
+    driver.blockResults = [blockObservation({
+      x: 2,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    }, { blockId: "minecraft:oak_log" })];
+    driver.taskResolver = (task) => {
+      driver.tasks.push(task);
+      return task.type === "collect-blocks" ? Effect.never : Effect.void;
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some((task) => task.type === "collect-blocks")) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    })));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "collect-blocks",
+      blockIds: expect.arrayContaining(["minecraft:oak_log"]),
+      count: 2,
+    }));
+    expect(driver.taskPolicies.at(-1)).toMatchObject({
+      allowPlacing: false,
+      avoidFluids: true,
+    });
+    expect(driver.entityQueries.some(({ selector }) =>
+      selector.entityTypes?.includes("minecraft:cow") === true
+    )).toBe(false);
+  });
+
   it("hunts nearby fish after repeated dry food searches find nothing", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
@@ -12600,7 +12641,9 @@ describe("beat-game run lifecycle", () => {
       yield* run.stop;
     })));
 
-    expect(driver.entityQueries).toEqual([]);
+    expect(driver.entityQueries.some(({ selector }) =>
+      selector.entityTypes?.includes("minecraft:cow") === true
+    )).toBe(false);
     expect(driver.tasks.filter((task) => task.type === "smelt")).toEqual([
       expect.objectContaining({
         input: { itemIds: ["minecraft:porkchop"] },

@@ -148,7 +148,7 @@ const MAX_SAFE_DEATH_RECOVERY_FAILURES = 3;
 const FOOD_SEARCH_AQUATIC_ESCALATION_ATTEMPTS = 4;
 const DISTANT_DEATH_RECOVERY_BOOTSTRAP_DISTANCE = 128;
 const ACTIVE_CORPSE_RECOVERY_DISTANCE = 160;
-const DEATH_RECOVERY_ARMAMENT_LOG_COUNT = 2;
+const EMERGENCY_ARMAMENT_LOG_COUNT = 2;
 const DEATH_RECOVERY_BOOTSTRAP_LOG_COUNT = 12;
 const DEATH_RECOVERY_BOOTSTRAP_BLOCK_COUNT = 16;
 const DEATH_RECOVERY_BOOTSTRAP_FOOD_COUNT = 8;
@@ -4489,6 +4489,10 @@ function satisfyFoodRequirement(
   requirement: BeatGameItemRequirement,
   observation: BeatGameObservation,
 ): Effect.Effect<void, BeatGameError | BeatGameDriverError> {
+  const armamentPreparation = prepareForFoodHunt(state, observation);
+  if (armamentPreparation !== undefined) {
+    return armamentPreparation;
+  }
   const rawFood = Object.entries(RAW_FOOD_TO_COOKED)
     .map(([rawItemId, cookedItemId]) => ({
       rawItemId,
@@ -4586,6 +4590,42 @@ function satisfyFoodRequirement(
     );
   }
   return cookRawFoodBatch(state, observation, batch);
+}
+
+function prepareForFoodHunt(
+  state: RunState,
+  observation: BeatGameObservation,
+): Effect.Effect<void, BeatGameDriverError> | undefined {
+  if (
+    hasMeleeWeapon(observation)
+    || hasUsableFood(observation)
+    || observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
+  ) {
+    return undefined;
+  }
+  const logCount = LOG_ITEM_IDS.reduce(
+    (total, itemId) => total + (observation.inventory.counts[itemId] ?? 0),
+    0,
+  );
+  if (logCount < EMERGENCY_ARMAMENT_LOG_COUNT) {
+    return collectBlocksOrExplore(state, observation, {
+      blockIds: LOG_ITEM_IDS,
+      count: EMERGENCY_ARMAMENT_LOG_COUNT - logCount,
+      progressItemIds: LOG_ITEM_IDS,
+      purpose: "prepare-food-hunt",
+      path: {
+        ...state.strategy.path,
+        allowPlacing: false,
+        avoidFluids: true,
+      },
+    });
+  }
+  return craftWithTable(
+    state,
+    observation,
+    "minecraft:wooden_sword",
+    1,
+  );
 }
 
 function huntForFoodRequirement(
@@ -9388,17 +9428,17 @@ function prepareForDistantDeathRecovery(
 
     if (!hasMeleeWeapon(current)) {
       const logs = logCount(current);
-      if (logs < DEATH_RECOVERY_ARMAMENT_LOG_COUNT) {
+      if (logs < EMERGENCY_ARMAMENT_LOG_COUNT) {
         yield* collectBlocksOrExplore(state, current, {
           blockIds: LOG_ITEM_IDS,
-          count: DEATH_RECOVERY_ARMAMENT_LOG_COUNT - logs,
+          count: EMERGENCY_ARMAMENT_LOG_COUNT - logs,
           progressItemIds: LOG_ITEM_IDS,
           purpose: "prepare-corpse-recovery",
           path: protectedRecoveryPath,
         });
         current = yield* state.driver.observe;
       }
-      if (logCount(current) < DEATH_RECOVERY_ARMAMENT_LOG_COUNT) {
+      if (logCount(current) < EMERGENCY_ARMAMENT_LOG_COUNT) {
         return "still gathering enough wood to craft a corpse recovery weapon";
       }
       yield* craftWithTable(
