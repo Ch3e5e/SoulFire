@@ -316,6 +316,9 @@ const LIQUID_INTERACTION_STAND_RADIUS = 0.75;
 const LIQUID_INTERACTION_REACH = 4.5;
 const FISHING_SHORE_SEARCH_RADIUS = Math.ceil(LIQUID_INTERACTION_REACH);
 const FISHING_COLLECTION_BATCH_SIZE = 3;
+const FISHING_MINIMUM_CAST_HORIZONTAL_DISTANCE = 2;
+const FISHING_PREFERRED_CAST_HORIZONTAL_DISTANCE = 3;
+const FISHING_MAXIMUM_DOWNWARD_CAST_PITCH = 30;
 const MAXIMUM_LIQUID_SIGHT_CLEARING_BLOCKS = 4;
 const LAVA_RETREAT_DISTANCE = 8;
 const LAVA_EMERGENCY_SPRINT_MS = 1_500;
@@ -4971,21 +4974,39 @@ function tryFishForFood(
         FISHING_SHORE_SEARCH_RADIUS,
         1,
       );
-      const castingPositions = selectStableSurfaceEscapeColumns(
-        surfaceColumns,
-        waterTarget,
-      ).map((surface) => ({
-        x: surface.x + 0.5,
-        y: surface.surfaceY + 1,
-        z: surface.z + 0.5,
-        dimension: candidate.position.dimension,
-      })).filter((position) =>
-        distanceSquared(position, waterTarget)
-          <= LIQUID_INTERACTION_REACH ** 2
-      ).sort((left, right) =>
-        distanceSquared(left, current.player.position)
-          - distanceSquared(right, current.player.position)
-      );
+      const castingPositions = stableSurfaceColumns(surfaceColumns)
+        .flatMap((surface) => {
+          const position = {
+            x: surface.x + 0.5,
+            y: surface.surfaceY + 1,
+            z: surface.z + 0.5,
+            dimension: candidate.position.dimension,
+          };
+          const horizontalDistance = Math.hypot(
+            position.x - waterTarget.x,
+            position.z - waterTarget.z,
+          );
+          const withinCastingRange = horizontalDistance
+              >= FISHING_MINIMUM_CAST_HORIZONTAL_DISTANCE
+            && distanceSquared(position, waterTarget)
+              <= LIQUID_INTERACTION_REACH ** 2;
+          return withinCastingRange
+            ? [{ position, horizontalDistance }]
+            : [];
+        })
+        .sort((left, right) =>
+          Math.abs(
+            left.horizontalDistance
+              - FISHING_PREFERRED_CAST_HORIZONTAL_DISTANCE,
+          )
+            - Math.abs(
+              right.horizontalDistance
+                - FISHING_PREFERRED_CAST_HORIZONTAL_DISTANCE,
+            )
+            || distanceSquared(left.position, current.player.position)
+              - distanceSquared(right.position, current.player.position)
+        )
+        .map(({ position }) => position);
       for (const castingPosition of castingPositions) {
         const approached = yield* state.driver.pathfind(
           castingPosition,
@@ -5022,7 +5043,14 @@ function tryFishForFood(
           y: candidate.position.y + 0.75,
           z: candidate.position.z + 0.5,
         };
-        const rotation = rotationToward(eyePosition, target);
+        const targetRotation = rotationToward(eyePosition, target);
+        const rotation = {
+          ...targetRotation,
+          pitch: Math.min(
+            targetRotation.pitch,
+            FISHING_MAXIMUM_DOWNWARD_CAST_PITCH,
+          ),
+        };
         yield* state.driver.act({
           type: "look",
           yaw: rotation.yaw,

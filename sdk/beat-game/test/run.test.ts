@@ -13525,6 +13525,102 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("casts from a stable lane instead of the nearest water edge", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      health: 20,
+      food: 14,
+      position: { x: 0.5, y: 64, z: 0.5 },
+      counts: {
+        "minecraft:fishing_rod": 1,
+        "minecraft:oak_log": 3,
+        "minecraft:cobblestone": 20,
+        "minecraft:stone_sword": 1,
+        "minecraft:iron_ingot": 7,
+        "minecraft:shield": 1,
+      },
+    });
+    const water = blockObservation({
+      x: 3,
+      y: 62,
+      z: 0,
+      dimension: "minecraft:overworld",
+    }, {
+      blockId: "minecraft:water",
+      properties: { level: "0" },
+    });
+    driver.surfaceColumns = [-1, 0, 1].flatMap((z) =>
+      [0, 1, 2].map((x) => ({
+        x,
+        z,
+        loaded: true,
+        surfaceY: 63,
+        blockId: "minecraft:grass_block",
+        skyLight: 15,
+        blockLight: 0,
+      }))
+    );
+    driver.blockQueryResolver = ({ center, radius, selector }) =>
+      radius > 1
+        && selector.blockIds?.includes("minecraft:water") === true
+        && selector.requireLineOfSight !== true
+        ? [water]
+        : selector.replaceable === true
+            && Math.floor(center.x) === water.position.x
+            && Math.floor(center.y) === water.position.y + 1
+            && Math.floor(center.z) === water.position.z
+        ? [blockObservation({
+          ...water.position,
+          y: water.position.y + 1,
+        }, { blockId: "minecraft:air", replaceable: true })]
+        : [];
+    driver.actionResolver = (action) =>
+      Effect.sync(() => {
+        if (action.type === "look") {
+          driver.currentObservation = {
+            ...driver.currentObservation,
+            player: {
+              ...driver.currentObservation.player,
+              rotation: { yaw: action.yaw, pitch: action.pitch },
+            },
+          };
+        }
+        return {};
+      });
+    let resolveFishingStarted!: () => void;
+    const fishingStarted = new Promise<void>((resolve) => {
+      resolveFishingStarted = resolve;
+    });
+    driver.taskObserver = (task) => {
+      if (task.type === "fish") {
+        resolveFishingStarted();
+      }
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      yield* Effect.promise(() => fishingStarted).pipe(
+        Effect.timeout("5 seconds"),
+      );
+      yield* run.stop;
+    })));
+
+    expect(driver.paths).toContainEqual(expect.objectContaining({
+      position: {
+        x: 0.5,
+        y: 64,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+    }));
+    expect(driver.actions).toContainEqual(expect.objectContaining({
+      type: "look",
+      pitch: 30,
+    }));
+  });
+
   it("refreshes water after crafting a fishing rod and casts from shore", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({

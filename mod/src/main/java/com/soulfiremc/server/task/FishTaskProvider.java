@@ -46,6 +46,7 @@ public final class FishTaskProvider implements BotTaskProvider<FishTask> {
   private static final int MAX_CAST_TIMEOUT_TICKS = 1_200;
   private static final int DEFAULT_BITE_TIMEOUT_TICKS = 12_000;
   private static final int MAX_BITE_TIMEOUT_TICKS = 72_000;
+  private static final int OUT_OF_WATER_RECAST_TICKS = 40;
   private static final int RECAST_DELAY_TICKS = 10;
   private static final Set<ControlResource> RESOURCES = Set.of(
     ControlResource.ROTATION,
@@ -113,6 +114,7 @@ public final class FishTaskProvider implements BotTaskProvider<FishTask> {
     private int stageTicks;
     private int catches;
     private int failedCasts;
+    private int outOfWaterTicks;
     private boolean pendingCatch;
 
     private FishControl(
@@ -215,6 +217,17 @@ public final class FishTaskProvider implements BotTaskProvider<FishTask> {
         transition(Stage.RECAST_DELAY, "Fishing line was lost");
         return;
       }
+      outOfWaterTicks = hook.isInWater() ? 0 : outOfWaterTicks + 1;
+      if (outOfWaterTicks >= OUT_OF_WATER_RECAST_TICKS) {
+        requireGameMode().useItem(player, InteractionHand.MAIN_HAND);
+        failedCasts++;
+        pendingCatch = false;
+        transition(
+          Stage.WAIT_FOR_RETRIEVAL,
+          "Reeling in a cast that missed the water"
+        );
+        return;
+      }
       if (
         ((FishingHookAccessor) hook).soulfire$isBiting()
           || hook.getHookedIn() != null
@@ -295,6 +308,7 @@ public final class FishTaskProvider implements BotTaskProvider<FishTask> {
     private void transition(Stage next, String message) {
       stage = next;
       stageTicks = 0;
+      outOfWaterTicks = 0;
       report(message);
     }
 
