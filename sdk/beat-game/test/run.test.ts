@@ -9,6 +9,7 @@ import {
   InMemoryBeatGameCheckpointStore,
   beatGameTeamWithDrivers,
   beatGameWithDriver,
+  defaultBeatGameStrategy,
   type BeatGameBlockPosition,
   type BeatGameDriverEvent,
   type BeatGameEntityObservation,
@@ -12380,6 +12381,63 @@ describe("beat-game run lifecycle", () => {
       type: "smelt",
       input: { itemIds: ["minecraft:beef"] },
       count: 6,
+    }));
+  });
+
+  it("cooks a partial raw-food batch at the normal hunger threshold", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      food: defaultBeatGameStrategy.eatBelowFood,
+      counts: {
+        "minecraft:chicken": 2,
+        "minecraft:coal": 1,
+        "minecraft:furnace": 1,
+        "minecraft:oak_log": 9,
+        "minecraft:cobblestone": 23,
+        "minecraft:stone_sword": 1,
+        "minecraft:wooden_pickaxe": 1,
+      },
+    });
+    const furnace = blockObservation({
+      x: 1,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    }, { blockId: "minecraft:furnace" });
+    driver.blockQueryResolver = ({ selector }) =>
+      selector.blockIds?.includes("minecraft:furnace") === true
+        ? [furnace]
+        : [];
+    let resolveFoodSmeltStarted!: () => void;
+    const foodSmeltStarted = new Promise<void>((resolve) => {
+      resolveFoodSmeltStarted = resolve;
+    });
+    driver.taskObserver = (task) => {
+      if (
+        task.type === "smelt"
+        && task.input.itemIds?.includes("minecraft:chicken")
+      ) {
+        resolveFoodSmeltStarted();
+      }
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      yield* Effect.promise(() => foodSmeltStarted).pipe(
+        Effect.timeout("5 seconds"),
+      );
+      yield* run.stop;
+    })));
+
+    expect(driver.entityQueries.some(({ selector }) =>
+      selector.entityTypes?.includes("minecraft:cow") === true
+    )).toBe(false);
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "smelt",
+      input: { itemIds: ["minecraft:chicken"] },
+      count: 2,
     }));
   });
 

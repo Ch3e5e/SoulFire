@@ -4576,6 +4576,7 @@ function satisfyFoodRequirement(
   );
   if (
     rawFoodStillNeeded > 0
+    && observation.player.food > state.strategy.eatBelowFood
     && (
       observation.player.health >= state.strategy.minimumHealth
       || rawFoodCount === 0
