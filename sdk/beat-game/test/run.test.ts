@@ -4397,6 +4397,61 @@ describe("beat-game run lifecycle", () => {
     )).toBe(false);
   });
 
+  it("fights a ranged hostile already inside melee range at critical health", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({ health: 6, food: 9 });
+    driver.entityResults = [{
+      connectionEpoch: "epoch-1",
+      networkId: 21,
+      entityType: "minecraft:skeleton",
+      position: {
+        x: 1.5,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    }];
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2) ? driver.entityResults : [];
+    driver.taskObserver = (task) => {
+      if (task.type === "attack-entity") {
+        driver.entityResults = [];
+      }
+    };
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (
+              !driver.tasks.some((task) => task.type === "attack-entity")
+            ) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+      target: expect.objectContaining({
+        networkId: 21,
+        entityType: "minecraft:skeleton",
+      }),
+      selectBestWeapon: true,
+    }));
+    expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
+  });
+
   it("uses fluid-avoiding dynamic escape instead of sprinting into water", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({

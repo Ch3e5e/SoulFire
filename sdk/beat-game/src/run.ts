@@ -2170,6 +2170,9 @@ function shouldDisengageFromThreat(
   if (ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(target.entityType)) {
     return true;
   }
+  if (shouldCommitToCloseRangedFight(observation, target)) {
+    return false;
+  }
   if (shouldCommitToRangedFight(observation, target)) {
     return false;
   }
@@ -2230,6 +2233,15 @@ function shouldCommitToRangedFight(
 ): boolean {
   return PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
     && (observation.inventory.counts["minecraft:shield"] ?? 0) > 0;
+}
+
+function shouldCommitToCloseRangedFight(
+  observation: BeatGameObservation,
+  target: BeatGameEntityObservation,
+): boolean {
+  return PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
+    && distanceSquared(observation.player.position, target.position)
+      <= EMERGENCY_KNOCKBACK_RANGE ** 2;
 }
 
 function shouldCommitToCloseMeleeFight(
@@ -3729,6 +3741,7 @@ function defendAgainstTarget(
               canBlockWithShield
               && PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
             )
+            || shouldCommitToCloseRangedFight(observation, target)
             || shouldCommitToFastMeleePursuerFight(observation, target)
           ),
         ),
