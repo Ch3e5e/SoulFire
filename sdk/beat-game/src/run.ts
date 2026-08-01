@@ -6861,7 +6861,7 @@ function huntOrExplore(
         if (aquaticTarget) {
           const approached = yield* state.driver.pathfind(
             target.position,
-            HUNT_APPROACH_GOAL_RADIUS,
+            AQUATIC_HUNT_ATTACK_APPROACH_RADIUS,
             targetExplorationPath,
           ).pipe(
             Effect.as(true),

@@ -1955,7 +1955,7 @@ describe("beat-game run lifecycle", () => {
       entityType: "minecraft:salmon",
       position: {
         x: 3,
-        y: 61,
+        y: 62,
         z: 0,
         dimension: "minecraft:overworld",
       },
@@ -9671,7 +9671,7 @@ describe("beat-game run lifecycle", () => {
     });
     expect(driver.paths).toContainEqual(expect.objectContaining({
       position: salmon.position,
-      radius: 2,
+      radius: 4,
       policy: expect.objectContaining({
         allowMining: false,
         allowPlacing: false,
