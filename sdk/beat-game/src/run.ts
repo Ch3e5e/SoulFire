@@ -512,7 +512,9 @@ const DEFENSIVE_PURSUIT_MAX_DISTANCE = 12;
 const EMERGENCY_KNOCKBACK_RANGE = 3.5;
 const EMERGENCY_ESCAPE_SPRINT_MS = 1_250;
 const EMERGENCY_ESCAPE_FLUID_PROJECTION_DISTANCE = 2;
+const EMERGENCY_ESCAPE_SURFACE_PROJECTION_DISTANCE = 10;
 const CREEPER_ESCAPE_SPRINT_MS = 2_500;
+const CREEPER_ESCAPE_SURFACE_PROJECTION_DISTANCE = 18;
 const EMERGENCY_ESCAPE_LAVA_CHECK_RADIUS = 4;
 const DEATH_OBSERVATION_DEDUPLICATION_WINDOW_MS = 5_000;
 const MELEE_DISENGAGE_HEALTH = 16;
@@ -2516,6 +2518,21 @@ function knockBackAndSprintAway(
     };
     const projectedIntoFluid = threat.entityType !== "minecraft:creeper"
       && (yield* isPlayerInFluid(state.driver, projectedPosition));
+    const directSprintDistance = threat.entityType === "minecraft:creeper"
+      ? CREEPER_ESCAPE_SURFACE_PROJECTION_DISTANCE
+      : EMERGENCY_ESCAPE_SURFACE_PROJECTION_DISTANCE;
+    const escapeSurface = yield* state.driver.sampleSurface(
+      playerPosition,
+      directSprintDistance,
+      1,
+    );
+    const safeDirectSprint = hasSafeDirectEscapeCorridor(
+      escapeSurface,
+      playerPosition,
+      directionX / directionLength,
+      directionZ / directionLength,
+      directSprintDistance,
+    );
     yield* state.driver.withControl(Effect.gen(function* () {
       if (distance <= EMERGENCY_KNOCKBACK_RANGE) {
         const toward = rotationToward(playerPosition, threat.position);
@@ -2531,7 +2548,11 @@ function knockBackAndSprintAway(
           sprinting: true,
         });
       }
-      if (nearbyLava.length > 0 || projectedIntoFluid) {
+      if (
+        nearbyLava.length > 0
+        || projectedIntoFluid
+        || !safeDirectSprint
+      ) {
         return;
       }
       yield* state.driver.act({
@@ -2588,6 +2609,42 @@ function findDryThreatEscapeTarget(
         }
     ),
   );
+}
+
+function hasSafeDirectEscapeCorridor(
+  columns: readonly BeatGameSurfaceColumn[],
+  player: BeatGamePosition,
+  directionX: number,
+  directionZ: number,
+  distance: number,
+): boolean {
+  const safeColumns = new Map(
+    columns.flatMap((column) =>
+      column.loaded
+        && column.surfaceY !== undefined
+        && !isUnsafeSurfaceBlock(column.blockId)
+        ? [[`${column.x}:${column.z}`, column.surfaceY] as const]
+        : []
+    ),
+  );
+  let previousStandingY = player.y;
+  for (let offset = 1; offset <= Math.ceil(distance); offset += 1) {
+    const x = Math.floor(player.x + directionX * offset);
+    const z = Math.floor(player.z + directionZ * offset);
+    const surfaceY = safeColumns.get(`${x}:${z}`);
+    if (surfaceY === undefined) {
+      return false;
+    }
+    const standingY = surfaceY + 1;
+    if (
+      Math.abs(standingY - previousStandingY)
+        > SURFACE_NEIGHBOR_MAX_HEIGHT_DELTA
+    ) {
+      return false;
+    }
+    previousStandingY = standingY;
+  }
+  return true;
 }
 
 function surfaceEscapeTarget(

@@ -4234,6 +4234,94 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("pathfinds away instead of sprinting off a cliff", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      health: 8,
+      position: {
+        x: 0,
+        y: 92,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      counts: { "minecraft:cooked_beef": 1 },
+    });
+    const skeleton: BeatGameEntityObservation = {
+      connectionEpoch: "epoch-1",
+      networkId: 20,
+      entityType: "minecraft:skeleton",
+      position: {
+        x: 6,
+        y: 92,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    };
+    driver.entityResults = [skeleton];
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2) ? driver.entityResults : [];
+    driver.surfaceColumns = [
+      {
+        x: -1,
+        z: 0,
+        loaded: true,
+        surfaceY: 77,
+        blockId: "minecraft:grass_block",
+        skyLight: 15,
+        blockLight: 0,
+      },
+      ...[-9, -8, -7].flatMap((x) =>
+        [-1, 0, 1].map((z) => ({
+          x,
+          z,
+          loaded: true,
+          surfaceY: 91,
+          blockId: "minecraft:grass_block",
+          skyLight: 15,
+          blockLight: 0,
+        }))
+      ),
+    ];
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (driver.paths.length === 0) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.actions.some((action) =>
+      action.type === "set-movement" && action.forward === true
+    )).toBe(false);
+    expect(driver.paths[0]).toMatchObject({
+      position: {
+        y: 92,
+        dimension: "minecraft:overworld",
+      },
+      radius: 1.5,
+      policy: {
+        allowMining: false,
+        allowPlacing: false,
+        avoidFluids: true,
+        maxFallDistance: 3,
+      },
+    });
+    expect(driver.paths[0]?.position.x).toBeLessThan(-3);
+  });
+
   it("evades ranged hostiles while wounded without a shield", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
@@ -4448,12 +4536,10 @@ describe("beat-game run lifecycle", () => {
       type: "attack-entity",
       useOffhandShield: true,
     }));
-    expect(driver.actions).toContainEqual({
-      type: "set-movement",
-      forward: true,
-      jump: true,
-      sprint: true,
-    });
+    expect(driver.actions.some((action) =>
+      action.type === "set-movement" && action.forward === true
+    )).toBe(false);
+    expect(driver.paths.length + driver.xzPaths.length).toBeGreaterThan(0);
   });
 
   it("eats and regenerates after surviving a defensive fight", async () => {
