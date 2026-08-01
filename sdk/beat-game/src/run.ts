@@ -134,6 +134,9 @@ const DRY_SURFACE_APPROACH_RADIUS = 0.75;
 const FURNACE_RECOVERY_RADIUS = 12;
 const RESOURCE_COLLECTION_RESERVED_SLOTS = 3;
 const REQUIREMENT_NO_PROGRESS_REPLAN_DELAY_MS = 1_000;
+const LOCAL_NAVIGATION_RECOVERY_MINIMUM_DISTANCE = 3;
+const LOCAL_NAVIGATION_RECOVERY_MAX_SEARCH_TIME_MS = 5_000;
+const LOCAL_NAVIGATION_RECOVERY_TIMEOUT_MS = 15_000;
 const EXPLORATION_MAXIMUM_LEG_DISTANCE = 32;
 const EXPLORATION_MAXIMUM_SURFACE_ELEVATION_CHANGE = 12;
 const MAX_SAFE_DEATH_RECOVERY_FAILURES = 3;
@@ -6042,6 +6045,11 @@ function huntOrExplore(
                   : Effect.fail(cause)
               ),
             );
+          } else if (explorationOutcome === "route-failed") {
+            yield* recoverLocalNavigationTrap(
+              state,
+              current.player.position,
+            );
           }
         }
         continue;
@@ -6453,11 +6461,72 @@ function climbToHigherOverworldGround(
   );
 }
 
+function recoverLocalNavigationTrap(
+  state: RunState,
+  position: BeatGamePosition,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  if (position.dimension !== "minecraft:overworld") {
+    return Effect.succeed(false);
+  }
+  return state.driver.sampleSurface(
+    position,
+    AIR_ESCAPE_SURFACE_SEARCH_RADIUS,
+    1,
+  ).pipe(
+    Effect.map((columns) =>
+      selectStableSurfaceEscapeColumns(columns, position)
+        .filter((surface) =>
+          surfaceHorizontalDistanceSquared(surface, position)
+            >= LOCAL_NAVIGATION_RECOVERY_MINIMUM_DISTANCE ** 2
+        )
+        .map((surface) => ({
+          x: surface.x + 0.5,
+          y: surface.surfaceY + 1,
+          z: surface.z + 0.5,
+          dimension: position.dimension,
+        }))
+    ),
+    Effect.flatMap((targets) =>
+      targets.length === 0
+        ? Effect.succeed(false)
+        : pathfindToFirstReachableSurface(
+          state,
+          targets,
+          0,
+          LOCAL_NAVIGATION_RECOVERY_TIMEOUT_MS,
+          {
+            ...state.strategy.path,
+            allowMining: true,
+            allowPlacing: true,
+            avoidFluids: true,
+            sprint: false,
+            maxSearchTimeMs: Math.min(
+              state.strategy.path.maxSearchTimeMs,
+              LOCAL_NAVIGATION_RECOVERY_MAX_SEARCH_TIME_MS,
+            ),
+          },
+        ).pipe(
+          Effect.as(true),
+          Effect.catchAll((cause) =>
+            cause.operation === "pathfind"
+              ? Effect.succeed(false)
+              : Effect.fail(cause)
+          ),
+        )
+    ),
+  );
+}
+
 function pathfindToFirstReachableSurface(
   state: RunState,
   targets: readonly BeatGamePosition[],
   index = 0,
   attemptTimeoutMs?: number,
+  path: BeatGameStrategy["path"] = {
+    ...state.strategy.path,
+    allowMining: true,
+    allowPlacing: true,
+  },
 ): Effect.Effect<void, BeatGameDriverError> {
   const target = targets[index];
   if (target === undefined) {
@@ -6466,11 +6535,7 @@ function pathfindToFirstReachableSurface(
   const pathfind = state.driver.pathfind(
     target,
     1.5,
-    {
-      ...state.strategy.path,
-      allowMining: true,
-      allowPlacing: true,
-    },
+    path,
   );
   const boundedPathfind = attemptTimeoutMs === undefined
     ? pathfind
@@ -6510,6 +6575,7 @@ function pathfindToFirstReachableSurface(
           targets,
           index + 1,
           attemptTimeoutMs,
+          path,
         )
         : Effect.fail(cause)
     ),

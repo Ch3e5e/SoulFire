@@ -7995,6 +7995,78 @@ describe("beat-game run lifecycle", () => {
     expect(driver.xzPaths).toHaveLength(1);
   }, 10_000);
 
+  it("mines a bounded local escape after a dry food route fails", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      food: 12,
+      counts: {
+        "minecraft:cobblestone": 20,
+        "minecraft:iron_ingot": 7,
+        "minecraft:oak_log": 8,
+        "minecraft:shield": 1,
+        "minecraft:stone_pickaxe": 1,
+        "minecraft:stone_sword": 1,
+      },
+    });
+    driver.surfaceColumns = [
+      { x: 3, z: 0 },
+      { x: 3, z: 1 },
+      { x: 4, z: 0 },
+    ].map(({ x, z }) => ({
+      x,
+      z,
+      loaded: true,
+      surfaceY: 64,
+      blockId: "minecraft:grass_block",
+      biomeId: "minecraft:plains",
+      skyLight: 15,
+      blockLight: 0,
+    }));
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+      }).pipe(Effect.zipRight(Effect.fail(new BeatGameDriverError({
+        operation: "pathfindXZ",
+        code: "unreachable",
+        retryable: true,
+        message: "The bot is boxed in",
+      }))));
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (driver.paths.length === 0) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    })));
+
+    expect(driver.xzPaths[0]?.policy.allowMining).toBe(false);
+    expect(driver.paths[0]).toMatchObject({
+      radius: 1.5,
+      policy: {
+        allowMining: true,
+        allowPlacing: true,
+        avoidFluids: true,
+        sprint: false,
+        maxSearchTimeMs: 5_000,
+      },
+    });
+    const localTarget = driver.paths[0]?.position;
+    if (localTarget === undefined) {
+      throw new Error("The local recovery route was not attempted");
+    }
+    expect(Math.hypot(
+      localTarget.x - driver.currentObservation.player.position.x,
+      localTarget.z - driver.currentObservation.player.position.z,
+    )).toBeGreaterThanOrEqual(3);
+  }, 10_000);
+
   it("keeps exploring when a hunting target only flickers into view", async () => {
     const driver = new FakeBeatGameDriver();
     const cow = {
