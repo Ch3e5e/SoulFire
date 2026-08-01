@@ -276,6 +276,7 @@ const SUBSTANTIAL_RENEWABLE_DEATH_RECOVERY_ITEM_COUNT = 8;
 const SUBSTANTIAL_RENEWABLE_DEATH_RECOVERY_MAX_DISTANCE = 256;
 const FURNACE_FUEL_SEARCH_RADIUS = 16;
 const HUNT_ATTACK_APPROACH_RADIUS = 24;
+const AQUATIC_HUNT_ATTACK_APPROACH_RADIUS = 4;
 const HUNT_APPROACH_BUFFER = 4;
 const HUNT_APPROACH_GOAL_RADIUS = 2;
 const HUNT_MAXIMUM_APPROACH_DISTANCE = 48;
@@ -2249,7 +2250,13 @@ function shouldCommitToCloseMeleeFight(
   target: BeatGameEntityObservation,
 ): boolean {
   return COMMITTABLE_CLOSE_MELEE_ENTITY_TYPES.has(target.entityType)
-    && hasMeleeWeapon(observation);
+    && distanceSquared(observation.player.position, target.position)
+      <= EMERGENCY_KNOCKBACK_RANGE ** 2
+    && observation.player.health > LETHAL_MELEE_DISENGAGE_HEALTH
+    && (
+      hasMeleeWeapon(observation)
+      || observation.player.health >= MELEE_DISENGAGE_HEALTH
+    );
 }
 
 function shouldCommitToUndergroundMeleeFight(
@@ -2283,7 +2290,8 @@ function shouldCommitToMeleeFight(
   observation: BeatGameObservation,
   target: BeatGameEntityObservation,
 ): boolean {
-  return shouldCommitToUndergroundMeleeFight(observation, target)
+  return shouldCommitToCloseMeleeFight(observation, target)
+    || shouldCommitToUndergroundMeleeFight(observation, target)
     || shouldCommitToFastMeleePursuerFight(observation, target);
 }
 
@@ -2307,7 +2315,10 @@ function escapeFromTarget(
     if (observation.player.dead) {
       return;
     }
-    if (shouldCommitToCloseRangedFight(observation, target)) {
+    if (
+      shouldCommitToCloseRangedFight(observation, target)
+      || shouldCommitToCloseMeleeFight(observation, target)
+    ) {
       yield* defendAgainstTarget(state, target).pipe(
         Effect.catchTag(
           "BeatGameDriverError",
@@ -6770,14 +6781,57 @@ function huntOrExplore(
         allowPlacing: false,
         sprint: false,
       };
-      const targetDistanceSquared = horizontalDistanceSquared(
-        target.position,
-        current.player.position,
-      );
+      const targetDistanceSquared = aquaticTarget
+        ? distanceSquared(target.position, current.player.position)
+        : horizontalDistanceSquared(target.position, current.player.position);
+      const attackApproachRadius = aquaticTarget
+        ? AQUATIC_HUNT_ATTACK_APPROACH_RADIUS
+        : HUNT_ATTACK_APPROACH_RADIUS;
       if (
         targetDistanceSquared
-          > HUNT_ATTACK_APPROACH_RADIUS * HUNT_ATTACK_APPROACH_RADIUS
+          > attackApproachRadius * attackApproachRadius
       ) {
+        if (aquaticTarget) {
+          const approached = yield* state.driver.pathfind(
+            target.position,
+            HUNT_APPROACH_GOAL_RADIUS,
+            targetExplorationPath,
+          ).pipe(
+            Effect.as(true),
+            Effect.catchAll((cause) =>
+              cause.operation === "pathfind"
+                  || cause.operation === "pathfindXZ"
+                ? Effect.succeed(false)
+                : Effect.fail(cause)
+            ),
+          );
+          if (!approached) {
+            const enteredWater = allowEmergencyAquaticFallback
+              ? yield* enterWaterTowardAquaticTarget(state, current, target)
+              : false;
+            if (enteredWater) {
+              continue;
+            }
+            locallyUnreachable.add(targetKey);
+            yield* persist(state, (currentCheckpoint) => ({
+              ...currentCheckpoint,
+              memory: {
+                ...currentCheckpoint.memory,
+                unreachable: [
+                  ...currentCheckpoint.memory.unreachable,
+                  {
+                    key: targetKey,
+                    value: target.position,
+                    observedAt: new Date().toISOString(),
+                    expiresAt: new Date(Date.now() + 600_000).toISOString(),
+                    confidence: 1,
+                  },
+                ].slice(-64),
+              },
+            }));
+          }
+          continue;
+        }
         const targetDistance = Math.sqrt(targetDistanceSquared);
         const maximumApproachDistance =
           current.player.health < state.strategy.minimumHealth
@@ -6797,24 +6851,13 @@ function huntOrExplore(
             + (target.position.z - current.player.position.z)
               * approachRatio,
         };
-        const approach = aquaticTarget
-          ? pathfindExplorationTarget(
-            state,
-            current.player.position,
-            approachTarget,
-            HUNT_APPROACH_GOAL_RADIUS,
-            targetExplorationPath,
-            false,
-            current.player.health >= state.strategy.minimumHealth
-              && current.player.food > CRITICAL_HUNGER_FOOD_LEVEL,
-          )
-          : state.driver.pathfindXZ(
-            approachTarget.x,
-            approachTarget.z,
-            current.player.position.dimension,
-            HUNT_APPROACH_GOAL_RADIUS,
-            targetExplorationPath,
-          );
+        const approach = state.driver.pathfindXZ(
+          approachTarget.x,
+          approachTarget.z,
+          current.player.position.dimension,
+          HUNT_APPROACH_GOAL_RADIUS,
+          targetExplorationPath,
+        );
         const approached = yield* approach.pipe(
           Effect.as(true),
           Effect.catchAll((cause) =>
@@ -6825,12 +6868,6 @@ function huntOrExplore(
           ),
         );
         if (!approached) {
-          const enteredWater = aquaticTarget && allowEmergencyAquaticFallback
-            ? yield* enterWaterTowardAquaticTarget(state, current, target)
-            : false;
-          if (enteredWater) {
-            continue;
-          }
           locallyUnreachable.add(targetKey);
           yield* persist(state, (currentCheckpoint) => ({
             ...currentCheckpoint,
