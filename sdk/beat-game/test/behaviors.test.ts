@@ -3231,18 +3231,10 @@ describe("beat-game behavior programs", () => {
     expect(water.z).toBeGreaterThan(castingStand.z);
     expect(water.z).toBeLessThan(target.z);
     expect(blocks.get(key(target))?.blockId).toBe("minecraft:obsidian");
-    expect(driver.actions).toContainEqual({
-      type: "interact-block",
-      position: { ...target, y: target.y - 1 },
-      face: "up",
-      hand: "main",
-    });
-    expect(driver.actions).toContainEqual({
-      type: "interact-block",
-      position: { ...water, y: water.y - 1 },
-      face: "up",
-      hand: "main",
-    });
+    expect(driver.actions.filter(({ type }) => type === "use-item"))
+      .toHaveLength(3);
+    expect(driver.actions.some(({ type }) => type === "interact-block"))
+      .toBe(false);
     expect(driver.tasks).toHaveLength(0);
     expect(driver.activeControlScopes).toBe(0);
   });

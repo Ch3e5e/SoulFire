@@ -4665,12 +4665,7 @@ function placeBucketOnTopOf(
       40,
       50,
     );
-    yield* driver.act({
-      type: "interact-block",
-      position: support,
-      face: "up",
-      hand: "main",
-    });
+    yield* driver.act({ type: "use-item", hand: "main" });
   });
 }
 
