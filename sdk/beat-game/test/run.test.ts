@@ -7882,6 +7882,61 @@ describe("beat-game run lifecycle", () => {
     ]);
   });
 
+  it("keeps searching dry land for food before hunger becomes critical", async () => {
+    const driver = new FakeBeatGameDriver();
+    const salmon = {
+      connectionEpoch: "epoch-1",
+      networkId: 43,
+      entityType: "minecraft:salmon",
+      position: {
+        x: 3,
+        y: 61,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 3,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.currentObservation = observation({
+      food: 12,
+      counts: {
+        "minecraft:cobblestone": 20,
+        "minecraft:iron_ingot": 7,
+        "minecraft:oak_log": 8,
+        "minecraft:shield": 1,
+        "minecraft:stone_pickaxe": 1,
+        "minecraft:stone_sword": 1,
+      },
+    });
+    driver.entityResults = [salmon];
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (driver.xzPaths.length === 0) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.tasks.some((task) => task.type === "attack-entity"))
+      .toBe(false);
+    expect(driver.xzPaths[0]?.policy.avoidFluids).toBe(true);
+  }, 10_000);
+
   it("keeps exploring when a hunting target only flickers into view", async () => {
     const driver = new FakeBeatGameDriver();
     const cow = {
@@ -7939,6 +7994,76 @@ describe("beat-game run lifecycle", () => {
 
     expect(driver.xzPaths).toHaveLength(1);
   });
+
+  it("interrupts exploration when a distant hunting target stays visible", async () => {
+    const driver = new FakeBeatGameDriver();
+    const cow = {
+      connectionEpoch: "epoch-1",
+      networkId: 44,
+      entityType: "minecraft:cow",
+      position: {
+        x: 0,
+        y: 64,
+        z: 40,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 10,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    let foodQueries = 0;
+    let interruptedPaths = 0;
+    driver.currentObservation = observation({
+      health: 17,
+      food: 15,
+      counts: {
+        "minecraft:cobblestone": 20,
+        "minecraft:oak_log": 8,
+        "minecraft:stone_sword": 1,
+      },
+    });
+    driver.entityQueryResolver = (query) => {
+      if (query.selector.entityTypes?.includes("minecraft:cow") !== true) {
+        return [];
+      }
+      foodQueries += 1;
+      return foodQueries === 1 ? [] : [cow];
+    };
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+      }).pipe(
+        Effect.zipRight(Effect.never),
+        Effect.onInterrupt(() =>
+          Effect.sync(() => {
+            interruptedPaths += 1;
+          })
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (driver.xzPaths.length < 2) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(interruptedPaths).toBeGreaterThanOrEqual(1);
+    expect(driver.xzPaths.slice(0, 2).map(({ x, z }) => ({ x, z }))).toEqual([
+      { x: 16, z: 0 },
+      { x: 0, z: 12 },
+    ]);
+  }, 10_000);
 
   it("rotates resource exploration after a threat interrupts a frontier", async () => {
     const driver = new FakeBeatGameDriver();

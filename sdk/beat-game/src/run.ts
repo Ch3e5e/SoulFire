@@ -4038,6 +4038,11 @@ function satisfyFoodRequirement(
                 {
                   preferredEntityTypes: HIGH_YIELD_FOOD_ANIMAL_TYPES,
                   preferredRadius: HIGH_YIELD_FOOD_PREFERENCE_RADIUS,
+                  allowFluidFallback: false,
+                  path: {
+                    ...state.strategy.path,
+                    avoidFluids: true,
+                  },
                 },
               )
           ),
@@ -4062,6 +4067,11 @@ function satisfyFoodRequirement(
             {
               preferredEntityTypes: HIGH_YIELD_FOOD_ANIMAL_TYPES,
               preferredRadius: HIGH_YIELD_FOOD_PREFERENCE_RADIUS,
+              allowFluidFallback: false,
+              path: {
+                ...state.strategy.path,
+                avoidFluids: true,
+              },
             },
           )
       ),
@@ -6212,10 +6222,6 @@ function waitForVisibleHuntingTarget(
                 state.strategy.minimumHealth,
                 targetPreference,
               )
-              && horizontalDistanceSquared(
-                  target.position,
-                  observation.player.position,
-                ) <= HUNT_ATTACK_APPROACH_RADIUS ** 2
             ).map((target) =>
               `${target.connectionEpoch}:${target.networkId}`
             ));
