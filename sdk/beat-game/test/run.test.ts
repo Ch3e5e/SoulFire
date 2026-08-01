@@ -4588,12 +4588,12 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
-  it("evades ranged hostiles bare-handed even at full health", async () => {
+  it("evades a witch bare-handed even at full health", async () => {
     const driver = new FakeBeatGameDriver();
     driver.entityResults = [{
       connectionEpoch: "epoch-1",
       networkId: 14,
-      entityType: "minecraft:skeleton",
+      entityType: "minecraft:witch",
       position: {
         x: 6,
         y: 64,

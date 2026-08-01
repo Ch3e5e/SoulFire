@@ -460,7 +460,6 @@ const PROACTIVE_MELEE_HOSTILE_ENTITY_TYPES = new Set([
   "minecraft:stray",
   "minecraft:vex",
   "minecraft:vindicator",
-  "minecraft:witch",
   "minecraft:wither_skeleton",
   "minecraft:zoglin",
   "minecraft:zombie",
@@ -497,6 +496,7 @@ const FAST_MELEE_PURSUER_ENTITY_TYPES = new Set([
 ]);
 const ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES = new Set([
   "minecraft:creeper",
+  "minecraft:witch",
 ]);
 const PROACTIVE_ESCAPE_ONLY_EVASION_RADIUS = 12;
 const PROACTIVE_RANGED_ENGAGEMENT_RADIUS = 16;
@@ -2135,6 +2135,9 @@ function shouldDisengageFromThreat(
   observation: BeatGameObservation,
   target: BeatGameEntityObservation,
 ): boolean {
+  if (ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(target.entityType)) {
+    return true;
+  }
   if (shouldCommitToMeleeFight(observation, target)) {
     return false;
   }
@@ -2314,7 +2317,7 @@ function escapeFromTarget(
       | { readonly type: "escape-route-failed" }
       | { readonly type: "defended" };
     const mustContinueEscaping =
-      target.entityType === "minecraft:creeper"
+      ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(target.entityType)
       || PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
       || (
         PROACTIVE_MELEE_HOSTILE_ENTITY_TYPES.has(target.entityType)
