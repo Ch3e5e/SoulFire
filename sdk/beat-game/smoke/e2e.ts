@@ -140,6 +140,13 @@ const soulfireLog = new BoundedLog(
     files: artifactLogFiles,
   },
 );
+const minecraftLog = new BoundedLog(
+  path.join(artifactDirectory, "minecraft.log"),
+  {
+    maximumBytes: artifactLogMaximumBytes,
+    files: artifactLogFiles,
+  },
+);
 const fixtureConfiguration = {
   mode: smokeMode,
   image: environment(
@@ -213,7 +220,11 @@ const program = Effect.scoped(Effect.gen(function* () {
   );
   yield* Effect.addFinalizer(() =>
     fromPromise("flush artifact logs", () =>
-      Promise.all([eventLog.flush(), soulfireLog.flush()]).then(() => undefined)
+      Promise.all([
+        eventLog.flush(),
+        soulfireLog.flush(),
+        minecraftLog.flush(),
+      ]).then(() => undefined)
     ).pipe(Effect.ignore)
   );
   yield* writeJson("configuration.json", {
@@ -862,6 +873,12 @@ const startMinecraftFixture = Effect.suspend(() => {
       "--rm",
       "--name",
       containerName,
+      "--log-driver",
+      "local",
+      "--log-opt",
+      "max-size=16m",
+      "--log-opt",
+      "max-file=2",
       "--publish",
       `127.0.0.1:${minecraftPort}:25565`,
       "--volume",
@@ -1109,14 +1126,13 @@ function stopMinecraftFixture(
   return Effect.gen(function* () {
     const logs = yield* docker([
       "logs",
+      "--tail",
+      "20000",
       fixture.containerName,
     ]).pipe(Effect.either);
     if (logs._tag === "Right") {
       yield* fromPromise("write Minecraft logs", () =>
-        writeFile(
-          path.join(artifactDirectory, "minecraft.log"),
-          `${logs.right.stdout}${logs.right.stderr}`,
-        )
+        minecraftLog.append(`${logs.right.stdout}${logs.right.stderr}`)
       ).pipe(Effect.ignore);
     }
     if (fixture.managed && !fixtureConfiguration.keepContainer) {

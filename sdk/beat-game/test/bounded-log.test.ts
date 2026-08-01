@@ -2,6 +2,7 @@ import {
   mkdtemp,
   readFile,
   rm,
+  stat,
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -41,6 +42,23 @@ describe("BoundedLog", () => {
       readEntries(filename),
     ]);
     expect(retained.flat().map(({ id }) => id)).toEqual([3, 4, 5, 6, 7, 8]);
+  });
+
+  it("bounds a single append larger than one generation", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "soulfire-log-"));
+    temporaryDirectories.push(directory);
+    const filename = path.join(directory, "minecraft.log");
+    const log = new BoundedLog(filename, {
+      maximumBytes: 4,
+      files: 2,
+    });
+
+    await log.append("abcdefghijkl");
+    await log.flush();
+
+    await expect(readFile(`${filename}.1`, "utf8")).resolves.toBe("efgh");
+    await expect(readFile(filename, "utf8")).resolves.toBe("ijkl");
+    await expect(stat(`${filename}.2`)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
 
