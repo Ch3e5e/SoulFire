@@ -41,11 +41,15 @@ const MAXIMUM_OPEN_SPACE_HANDOFF_DEPTH = 8;
 // radius covers the worst horizontal half-block offset plus one block of
 // terrain height without turning a nearby pickup into an unreachable goal.
 const DROP_PICKUP_PATH_RADIUS = 1.25;
+const SUBMERGED_DROP_PICKUP_PATH_RADIUS = 0.75;
 const DROP_PICKUP_MAXIMUM_ATTEMPTS = 3;
 const DIRECT_DROP_PICKUP_MAXIMUM_HORIZONTAL_DISTANCE = 1.9;
 const DIRECT_DROP_PICKUP_MAXIMUM_VERTICAL_DISTANCE = 0.75;
+const SUBMERGED_DROP_PICKUP_MAXIMUM_HORIZONTAL_DISTANCE = 2.25;
+const SUBMERGED_DROP_PICKUP_MAXIMUM_VERTICAL_DISTANCE = 3.5;
 const DIRECT_DROP_PICKUP_POLL_INTERVAL_MS = 100;
 const DIRECT_DROP_PICKUP_MAXIMUM_POLLS = 8;
+const SUBMERGED_DROP_PICKUP_MAXIMUM_POLLS = 16;
 const DROP_AVOIDED_FLUID_BLOCK_IDS = [
   "minecraft:water",
   "minecraft:bubble_column",
@@ -240,10 +244,29 @@ export function collectNearbyDrops(
         if (pickedUpDirectly) {
           continue;
         }
+        const dropInFluid = requestedPath.avoidFluids !== true
+          && (yield* isDropInFluid(driver, drop));
         const verticalDistance = Math.abs(
           drop.position.y - observation.player.position.y,
         );
-        const pickupRoute = requestedPath.avoidFluids === false
+        const submergedPickupPosition = {
+          x: Math.floor(drop.position.x) + 0.5,
+          y: drop.position.y,
+          z: Math.floor(drop.position.z) + 0.5,
+          dimension: drop.position.dimension,
+        };
+        const pickupRoute = dropInFluid
+          ? driver.pathfindXZ(
+            submergedPickupPosition.x,
+            submergedPickupPosition.z,
+            submergedPickupPosition.dimension,
+            SUBMERGED_DROP_PICKUP_PATH_RADIUS,
+            {
+              ...pickupPath,
+              avoidFluids: false,
+            },
+          )
+          : requestedPath.avoidFluids === false
             && verticalDistance <= 1.75
           ? driver.pathfind(
             drop.position,
@@ -282,6 +305,32 @@ export function collectNearbyDrops(
           attemptedDrops.add(dropKey);
           continue;
         }
+        const latestObservation = yield* driver.observe;
+        const refreshedDrops = yield* driver.queryEntities({
+          origin: latestObservation.player.position,
+          radius,
+          selector: {
+            networkId: drop.networkId,
+            alive: true,
+          },
+          maximumResults: 1,
+        });
+        const refreshedDrop = refreshedDrops.find((candidate) =>
+          entityObservationKey(candidate) === dropKey
+        );
+        if (refreshedDrop === undefined) {
+          continue;
+        }
+        if (
+          yield* tryDirectDropPickup(
+            driver,
+            latestObservation,
+            refreshedDrop,
+            dropInFluid,
+          )
+        ) {
+          continue;
+        }
         const pickupAttempt = (pickupAttempts.get(dropKey) ?? 0) + 1;
         pickupAttempts.set(dropKey, pickupAttempt);
         if (pickupAttempt >= DROP_PICKUP_MAXIMUM_ATTEMPTS) {
@@ -297,47 +346,68 @@ function tryDirectDropPickup(
   driver: BeatGameDriver,
   observation: BeatGameObservation,
   drop: BeatGameEntityObservation,
+  allowVerticalMovement = false,
 ): Effect.Effect<boolean, BeatGameDriverError> {
   const playerPosition = observation.player.position;
   const horizontalDistance = Math.hypot(
     drop.position.x - playerPosition.x,
     drop.position.z - playerPosition.z,
   );
+  const maximumHorizontalDistance = allowVerticalMovement
+    ? SUBMERGED_DROP_PICKUP_MAXIMUM_HORIZONTAL_DISTANCE
+    : DIRECT_DROP_PICKUP_MAXIMUM_HORIZONTAL_DISTANCE;
+  const maximumVerticalDistance = allowVerticalMovement
+    ? SUBMERGED_DROP_PICKUP_MAXIMUM_VERTICAL_DISTANCE
+    : DIRECT_DROP_PICKUP_MAXIMUM_VERTICAL_DISTANCE;
   if (
     drop.position.dimension !== playerPosition.dimension
-    || horizontalDistance > DIRECT_DROP_PICKUP_MAXIMUM_HORIZONTAL_DISTANCE
+    || horizontalDistance > maximumHorizontalDistance
     || Math.abs(drop.position.y - playerPosition.y)
-      > DIRECT_DROP_PICKUP_MAXIMUM_VERTICAL_DISTANCE
+      > maximumVerticalDistance
   ) {
     return Effect.succeed(false);
   }
 
   return Effect.gen(function* () {
-    const rotation = rotationToward(playerPosition, {
-      ...drop.position,
-      y: playerPosition.y,
-    });
+    const rotation = rotationToward(
+      playerPosition,
+      allowVerticalMovement
+        ? drop.position
+        : { ...drop.position, y: playerPosition.y },
+    );
     yield* driver.act({
       type: "look",
       yaw: rotation.yaw,
-      pitch: 0,
+      pitch: allowVerticalMovement ? rotation.pitch : 0,
     });
     yield* driver.act({
       type: "set-movement",
       forward: true,
       sprint: false,
+      ...(
+        allowVerticalMovement
+          && drop.position.y > playerPosition.y + 0.25
+          ? { jump: true }
+          : {}
+      ),
     });
 
+    const maximumPolls = allowVerticalMovement
+      ? SUBMERGED_DROP_PICKUP_MAXIMUM_POLLS
+      : DIRECT_DROP_PICKUP_MAXIMUM_POLLS;
     for (
       let poll = 0;
-      poll < DIRECT_DROP_PICKUP_MAXIMUM_POLLS;
+      poll < maximumPolls;
       poll += 1
     ) {
       yield* Effect.sleep(DIRECT_DROP_PICKUP_POLL_INTERVAL_MS);
       const current = yield* driver.observe;
       const nearbyItems = yield* driver.queryEntities({
         origin: current.player.position,
-        radius: DIRECT_DROP_PICKUP_MAXIMUM_HORIZONTAL_DISTANCE + 1,
+        radius: Math.max(
+          maximumHorizontalDistance,
+          maximumVerticalDistance,
+        ) + 1,
         selector: {
           entityTypes: ["minecraft:item"],
           alive: true,

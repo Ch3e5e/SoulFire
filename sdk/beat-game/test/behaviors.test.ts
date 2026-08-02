@@ -387,7 +387,6 @@ describe("beat-game behavior programs", () => {
       settleDelayMs: 0,
     }));
 
-    expect(driver.entityQueries).toHaveLength(3);
     expect(driver.entityQueries).toEqual(expect.arrayContaining([
       {
         origin: position,
@@ -562,6 +561,82 @@ describe("beat-game behavior programs", () => {
         }),
       }),
     ]);
+  });
+
+  it("dives from shore to collect a submerged drop", async () => {
+    const driver = new FakeBeatGameDriver();
+    const position = {
+      x: 4.5,
+      y: 64,
+      z: -2.5,
+      dimension: "minecraft:overworld",
+    };
+    const drop = {
+      connectionEpoch: "epoch-1",
+      networkId: 13,
+      entityType: "minecraft:item",
+      itemId: "minecraft:cod",
+      position: {
+        x: 7.2,
+        y: 62.4,
+        z: -2.2,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.currentObservation = observation({ position });
+    driver.entityQueryResolver = () =>
+      driver.actions.some((action) =>
+          action.type === "set-movement" && action.forward === true
+        )
+        ? []
+        : [drop];
+    driver.blockQueryResolver = ({ center }) =>
+      Math.floor(center.x) === 7
+        && Math.floor(center.y) === 62
+        && Math.floor(center.z) === -3
+        ? [blockObservation({
+          x: 7,
+          y: 62,
+          z: -3,
+          dimension: "minecraft:overworld",
+        }, { blockId: "minecraft:water" })]
+        : [];
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+        driver.currentObservation = observation({
+          position: { x, y: 64, z, dimension },
+        });
+      });
+
+    await Effect.runPromise(collectNearbyDrops(driver, {
+      itemIds: ["minecraft:cod"],
+      settleDelayMs: 0,
+      path: { avoidFluids: false },
+    }));
+
+    expect(driver.xzPaths).toEqual([expect.objectContaining({
+      x: 7.5,
+      z: -2.5,
+      dimension: "minecraft:overworld",
+      radius: 0.75,
+      policy: expect.objectContaining({
+        allowPlacing: false,
+        avoidFluids: false,
+      }),
+    })]);
+    const dive = driver.actions.find((action) => action.type === "look");
+    expect(dive).toEqual(expect.objectContaining({ type: "look" }));
+    expect(dive?.type === "look" ? dive.pitch : 0).toBeGreaterThan(0);
+    expect(driver.actions).toContainEqual({
+      type: "set-movement",
+      forward: true,
+      sprint: false,
+    });
+    expect(driver.actions.at(-1)).toEqual({ type: "reset-movement" });
   });
 
   it("limits a drop sweep to requested resource items", async () => {
