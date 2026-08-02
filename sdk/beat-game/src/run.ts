@@ -2486,7 +2486,7 @@ function escapeFromTarget(
     });
     const requiresDynamicEscape = target.entityType === "minecraft:creeper"
       || rangedThreat
-      || FAST_MELEE_PURSUER_ENTITY_TYPES.has(target.entityType);
+      || PROACTIVE_MELEE_HOSTILE_ENTITY_TYPES.has(target.entityType);
     const navigation = requiresDynamicEscape
       ? dynamicEscape
       : dryEscapeTarget !== undefined

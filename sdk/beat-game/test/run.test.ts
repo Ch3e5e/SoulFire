@@ -7387,6 +7387,60 @@ describe("beat-game run lifecycle", () => {
     )).toBe(false);
   });
 
+  it("dynamically replans an escape from a pursuing zombie", async () => {
+    const driver = new FakeBeatGameDriver();
+    const zombie = {
+      connectionEpoch: "epoch-1",
+      networkId: 53,
+      entityType: "minecraft:zombie",
+      position: {
+        x: 4,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:01.000Z",
+    } as const;
+    driver.currentObservation = observation({ health: 4 });
+    driver.entityResults = [zombie];
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2)
+          || query.selector.networkId === zombie.networkId
+        ? driver.entityResults
+        : [];
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (!driver.tasks.some((task) => task.type === "flee")) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "flee",
+      selector: {
+        networkId: zombie.networkId,
+        alive: true,
+      },
+      triggerRadius: 12,
+      safeDistance: 24,
+      completeWhenSafe: true,
+    }));
+    expect(driver.xzPaths).toHaveLength(0);
+  });
+
   it("keeps fighting an armed close zombie at lethal health", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
