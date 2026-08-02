@@ -15018,6 +15018,10 @@ describe("beat-game run lifecycle", () => {
       && action.selector.itemIds?.includes("minecraft:raw_copper") === true
       && action.count === 26
     )).toHaveLength(1);
+    expect(driver.actions.filter((action) =>
+      action.type === "look"
+      && action.pitch === -30
+    )).toHaveLength(2);
   });
 
   it("stops an in-flight collection once external inventory gains meet its buffered target", async () => {

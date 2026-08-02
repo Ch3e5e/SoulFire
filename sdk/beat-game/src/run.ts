@@ -286,6 +286,7 @@ const INVENTORY_DISCARD_PRIORITY = [
   "minecraft:tuff",
 ] as const;
 const INVENTORY_BUILDING_BLOCK_RESERVE = 64;
+const INVENTORY_EMPTY_SLOT_STABILITY_OBSERVATIONS = 6;
 const LOW_VALUE_DEATH_RECOVERY_ITEM_IDS = new Set([
   ...DISPOSABLE_DEATH_RECOVERY_ITEM_IDS,
   "minecraft:acacia_sapling",
@@ -9099,15 +9100,30 @@ function ensureInventorySpace(
         : current.inventory.counts[itemId] ?? 0;
       const emptySlotsBefore = current.inventory.emptyPlayerSlots;
       yield* state.driver.act({
+        type: "look",
+        yaw: wrappedDegrees(current.player.rotation.yaw + 180),
+        pitch: -30,
+      });
+      yield* state.driver.act({
         type: "toss-items",
         selector: { itemIds: [itemId] },
         count,
       });
+      let stableObservations = 0;
       for (let attempt = 0; attempt < 20; attempt += 1) {
         current = yield* state.driver.observe;
+        if (current.inventory.emptyPlayerSlots === undefined) {
+          stableObservations = INVENTORY_EMPTY_SLOT_STABILITY_OBSERVATIONS;
+          break;
+        }
+        if (current.inventory.emptyPlayerSlots > emptySlotsBefore) {
+          stableObservations += 1;
+        } else {
+          stableObservations = 0;
+        }
         if (
-          current.inventory.emptyPlayerSlots === undefined
-          || current.inventory.emptyPlayerSlots > emptySlotsBefore
+          stableObservations
+            >= INVENTORY_EMPTY_SLOT_STABILITY_OBSERVATIONS
         ) {
           break;
         }
@@ -9117,7 +9133,8 @@ function ensureInventorySpace(
       }
       if (
         current.inventory.emptyPlayerSlots !== undefined
-        && current.inventory.emptyPlayerSlots <= emptySlotsBefore
+        && stableObservations
+          < INVENTORY_EMPTY_SLOT_STABILITY_OBSERVATIONS
       ) {
         return yield* Effect.fail(new BeatGameDriverError({
           operation: "ensure-inventory-space",
