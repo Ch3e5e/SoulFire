@@ -12239,11 +12239,11 @@ describe("beat-game run lifecycle", () => {
     });
   });
 
-  it("keeps an injured bot on dry land when fish are nearby", async () => {
+  it("keeps a critically wounded bot on dry land when fish are nearby", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
-      food: 12,
-      health: 8,
+      food: 6,
+      health: 1,
       counts: {
         "minecraft:cobblestone": 20,
         "minecraft:iron_ingot": 7,

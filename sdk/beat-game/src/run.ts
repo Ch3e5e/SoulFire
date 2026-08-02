@@ -8088,7 +8088,7 @@ function shouldAllowAquaticHunt(
     return false;
   }
   if (observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL) {
-    return true;
+    return observation.player.health > LETHAL_MELEE_DISENGAGE_HEALTH;
   }
   const minimumSafeHealth = Math.max(
     LETHAL_MELEE_DISENGAGE_HEALTH + 1,
