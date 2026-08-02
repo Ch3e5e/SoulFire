@@ -15900,6 +15900,61 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("interrupts resource gathering to hunt when hunger becomes urgent", async () => {
+    const driver = new FakeBeatGameDriver();
+    const salmon = {
+      connectionEpoch: "epoch-1",
+      networkId: 52,
+      entityType: "minecraft:salmon",
+      position: {
+        x: 3,
+        y: 61,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 3,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.currentObservation = observation({ food: 11 });
+    driver.entityQueryResolver = ({ selector }) =>
+      selector.entityTypes?.includes("minecraft:salmon") === true
+        ? [salmon]
+        : [];
+    let interruptedCollections = 0;
+    driver.taskResolver = (task) => {
+      driver.tasks.push(task);
+      if (task.type !== "collect-blocks") {
+        return task.type === "attack-entity" ? Effect.never : Effect.void;
+      }
+      driver.currentObservation = observation({ food: 10 });
+      return Effect.never.pipe(
+        Effect.onInterrupt(() =>
+          Effect.sync(() => {
+            interruptedCollections += 1;
+          })
+        ),
+      );
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some((task) => task.type === "attack-entity")) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    })));
+
+    expect(interruptedCollections).toBe(1);
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+      target: expect.objectContaining({ networkId: salmon.networkId }),
+    }));
+  });
+
   it("continues gathering raw food through the normal meal threshold", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({

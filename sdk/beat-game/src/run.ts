@@ -107,6 +107,7 @@ import {
   LOG_ITEM_IDS,
   PLANK_ITEM_IDS,
   RAW_FOOD_TO_COOKED,
+  URGENT_HUNGER_FOOD_LEVEL,
   requirementCount,
 } from "./requirements.js";
 import {
@@ -286,7 +287,6 @@ const DIRECTED_HUNT_MAXIMUM_DETOUR = 32;
 const DIRECTED_HUNT_DESTINATION_REACHED_RADIUS = 3;
 const URGENT_AQUATIC_HUNT_MAXIMUM_HORIZONTAL_DISTANCE = 64;
 const URGENT_AQUATIC_HUNT_MAXIMUM_VERTICAL_DISTANCE = 16;
-const URGENT_AQUATIC_HUNT_FOOD_LEVEL = 10;
 const AQUATIC_HUNT_CHASE_TIMEOUT_MS = 8_000;
 const AQUATIC_WATER_ENTRY_SEARCH_RADIUS = 3;
 const AQUATIC_WATER_ENTRY_ATTEMPTS = 12;
@@ -2122,6 +2122,23 @@ function monitorObservedSafety(
   if (
     decision.type !== "recover-death"
     && decision.type !== "eat"
+    && observation.player.food <= URGENT_HUNGER_FOOD_LEVEL
+    && !hasUsableFood(observation)
+    && !(
+      decision.type === "satisfy-requirement"
+      && (
+        decision.requirement.key === "food"
+        || decision.requirement.key === "food-supply"
+      )
+    )
+  ) {
+    return Effect.succeed({
+      replanReason: "hunger became urgent without available food",
+    } satisfies ActionResult);
+  }
+  if (
+    decision.type !== "recover-death"
+    && decision.type !== "eat"
     && observation.player.food <= state.strategy.eatBelowFood
     && shouldInterruptForMeal(decision, observation)
   ) {
@@ -2984,7 +3001,7 @@ function shouldResumeUrgentAquaticFoodHunt(
       decision.requirement.key === "food"
       || decision.requirement.key === "food-supply"
     )
-    && observation.player.food <= URGENT_AQUATIC_HUNT_FOOD_LEVEL;
+    && observation.player.food <= URGENT_HUNGER_FOOD_LEVEL;
 }
 
 function waitForUnsafeAir(
@@ -4876,7 +4893,7 @@ function prepareForFoodHunt(
   if (
     hasMeleeWeapon(observation)
     || hasUsableFood(observation)
-    || observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
+    || observation.player.food <= URGENT_HUNGER_FOOD_LEVEL
   ) {
     return undefined;
   }
@@ -4927,7 +4944,7 @@ function huntForFoodRequirement(
       preferredEntityTypes: HIGH_YIELD_FOOD_ANIMAL_TYPES,
       preferredRadius: HIGH_YIELD_FOOD_PREFERENCE_RADIUS,
       allowUrgentAquaticTargets:
-        observation.player.food <= URGENT_AQUATIC_HUNT_FOOD_LEVEL,
+        observation.player.food <= URGENT_HUNGER_FOOD_LEVEL,
       allowFluidFallback:
         observation.player.health >= state.strategy.minimumHealth,
       path: {
@@ -6930,7 +6947,7 @@ function huntOrExplore(
     let confirmedVisibleTarget: BeatGameEntityObservation | undefined;
     const allowEmergencyAquaticFallback =
       targetPreference?.allowUrgentAquaticTargets === true
-      && observation.player.food <= URGENT_AQUATIC_HUNT_FOOD_LEVEL;
+      && observation.player.food <= URGENT_HUNGER_FOOD_LEVEL;
     let aquaticPursuitActive = false;
     let attacked = 0;
     let explorationHops = 0;
@@ -6968,7 +6985,7 @@ function huntOrExplore(
       );
       const urgentAquaticExploration =
         targetPreference?.allowUrgentAquaticTargets === true
-        && current.player.food <= URGENT_AQUATIC_HUNT_FOOD_LEVEL;
+        && current.player.food <= URGENT_HUNGER_FOOD_LEVEL;
       const huntingPath = urgentAquaticExploration
         ? { ...survivalPath, avoidFluids: false }
         : survivalPath;
@@ -7661,7 +7678,7 @@ function shouldAllowUrgentAquaticHunt(
   return observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
     || (
       targetPreference?.allowUrgentAquaticTargets === true
-      && observation.player.food <= URGENT_AQUATIC_HUNT_FOOD_LEVEL
+      && observation.player.food <= URGENT_HUNGER_FOOD_LEVEL
     );
 }
 
@@ -10057,7 +10074,7 @@ function prepareForDistantDeathRecovery(
         return Effect.succeed(value);
       }
       const needsUrgentAquaticFood =
-        value.player.food <= URGENT_AQUATIC_HUNT_FOOD_LEVEL;
+        value.player.food <= URGENT_HUNGER_FOOD_LEVEL;
       const foodSearchPath = needsUrgentAquaticFood
         ? { ...protectedRecoveryPath, avoidFluids: false }
         : protectedRecoveryPath;

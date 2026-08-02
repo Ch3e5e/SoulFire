@@ -49,6 +49,7 @@ export const EMERGENCY_FOOD_ITEM_IDS = [
 ] as const;
 
 export const CRITICAL_HUNGER_FOOD_LEVEL = 6;
+export const URGENT_HUNGER_FOOD_LEVEL = 10;
 
 export const LOG_ITEM_IDS = [
   "minecraft:oak_log",

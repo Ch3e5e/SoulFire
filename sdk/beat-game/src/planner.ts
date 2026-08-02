@@ -11,6 +11,7 @@ import {
   EDIBLE_FOOD_ITEM_IDS,
   EMERGENCY_FOOD_ITEM_IDS,
   RAW_FOOD_TO_COOKED,
+  URGENT_HUNGER_FOOD_LEVEL,
   requirementsForPhase,
 } from "./requirements.js";
 
@@ -109,7 +110,7 @@ export function decideBeatGameAction(
     observation.inventory,
     strategy,
   );
-  if (observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL) {
+  if (observation.player.food <= URGENT_HUNGER_FOOD_LEVEL) {
     const foodSupply = requirementsForPhase(
       BeatGamePhase.PREPARE_OVERWORLD,
       observation.inventory,

@@ -89,10 +89,10 @@ describe("beat-game planner", () => {
     });
   });
 
-  it("secures emergency food before phase work when hunger is critical", () => {
+  it("secures emergency food before phase work when hunger is urgent", () => {
     const decision = decideBeatGameAction({
       checkpoint: checkpoint(BeatGamePhase.ENTER_NETHER),
-      observation: observation({ food: 6 }),
+      observation: observation({ food: 10 }),
       strategy: defaultBeatGameStrategy,
     });
 
