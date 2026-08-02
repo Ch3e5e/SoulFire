@@ -77,6 +77,7 @@ import {
   type BeatGameEntityObservation,
   type BeatGameEvent,
   type BeatGameItemRequirement,
+  type BeatGameMemoryEntry,
   type BeatGameObservation,
   type BeatGameOptions,
   type BeatGamePlannerState,
@@ -279,6 +280,8 @@ const SUBSTANTIAL_RENEWABLE_DEATH_RECOVERY_MAX_DISTANCE = 256;
 const FURNACE_FUEL_SEARCH_RADIUS = 16;
 const HUNT_ATTACK_APPROACH_RADIUS = 24;
 const AQUATIC_HUNT_ATTACK_APPROACH_RADIUS = 12;
+const HUNT_UNREACHABLE_TARGET_RETRY_DISTANCE = 4;
+const HUNT_NEARBY_UNREACHABLE_RETRY_DELAY_MS = 5_000;
 const AQUATIC_HUNT_VERTICAL_ROUTE_COST = 4;
 const HUNT_APPROACH_BUFFER = 4;
 const HUNT_APPROACH_GOAL_RADIUS = 2;
@@ -3856,23 +3859,16 @@ function findNearbyAttackThreat(
             candidate.position,
           ) <= 4 ** 2
       );
+      const nearbyPursuer = candidates.find((candidate) =>
+        distanceSquared(
+          observation.player.position,
+          candidate.position,
+        ) <= PROACTIVE_ESCAPE_ONLY_EVASION_RADIUS ** 2
+      );
       const nearest = escapeOnlyThreat
         ?? closeMeleeAttacker
         ?? rangedAttacker
-        ?? candidates.reduce(
-        (closest, candidate) =>
-            closest === undefined
-            || distanceSquared(
-                observation.player.position,
-                candidate.position,
-              ) < distanceSquared(
-                observation.player.position,
-                closest.position,
-              )
-          ? candidate
-          : closest,
-        undefined as BeatGameEntityObservation | undefined,
-      );
+        ?? nearbyPursuer;
       if (nearest === undefined) {
         return undefined;
       }
@@ -7002,14 +6998,13 @@ function huntOrExplore(
       }
       const checkpoint = yield* Ref.get(state.checkpoint);
       const now = Date.now();
-      const unreachableTargets = new Set([
-        ...locallyUnreachable,
-        ...checkpoint.memory.unreachable
+      const rememberedUnreachableTargets = new Map(
+        checkpoint.memory.unreachable
           .filter(({ expiresAt }) =>
             expiresAt === undefined || Date.parse(expiresAt) > now
           )
-          .map(({ key }) => key),
-      ]);
+          .map((entry) => [entry.key, entry] as const),
+      );
       const observedTargets = yield* state.driver.queryEntities({
         origin: current.player.position,
         radius: state.strategy.entitySearchRadius,
@@ -7030,8 +7025,12 @@ function huntOrExplore(
         ];
       confirmedVisibleTarget = undefined;
       const candidates = targets.filter((target) =>
-        !unreachableTargets.has(
-          `target:${target.connectionEpoch}:${target.networkId}`,
+        !isHuntingTargetUnreachable(
+          target,
+          current.player.position,
+          locallyUnreachable,
+          rememberedUnreachableTargets,
+          now,
         )
         && !attemptedTargets.has(
           `${target.connectionEpoch}:${target.networkId}`,
@@ -7152,7 +7151,8 @@ function huntOrExplore(
               state,
               selector,
               attemptedTargets,
-              unreachableTargets,
+              locallyUnreachable,
+              rememberedUnreachableTargets,
               targetPreference,
             ).pipe(
               Effect.map((target) => ({
@@ -7559,7 +7559,11 @@ function waitForVisibleHuntingTarget(
   state: RunState,
   selector: Parameters<BeatGameDriver["queryEntities"]>[0]["selector"],
   attemptedTargets: ReadonlySet<string>,
-  unreachableTargets: ReadonlySet<string>,
+  locallyUnreachable: ReadonlySet<string>,
+  rememberedUnreachableTargets: ReadonlyMap<
+    string,
+    BeatGameMemoryEntry<BeatGamePosition>
+  >,
   targetPreference?: HuntTargetPreference,
 ): Effect.Effect<BeatGameEntityObservation, BeatGameDriverError> {
   const poll = (
@@ -7576,8 +7580,12 @@ function waitForVisibleHuntingTarget(
         }).pipe(
           Effect.flatMap((targets) => {
             const visibleTargets = targets.filter((target) =>
-              !unreachableTargets.has(
-                `target:${target.connectionEpoch}:${target.networkId}`,
+              !isHuntingTargetUnreachable(
+                target,
+                observation.player.position,
+                locallyUnreachable,
+                rememberedUnreachableTargets,
+                Date.now(),
               )
               && !attemptedTargets.has(
                 `${target.connectionEpoch}:${target.networkId}`,
@@ -7606,6 +7614,40 @@ function waitForVisibleHuntingTarget(
       ),
     );
   return Effect.suspend(() => poll(new Set()));
+}
+
+function isHuntingTargetUnreachable(
+  target: BeatGameEntityObservation,
+  playerPosition: BeatGamePosition,
+  locallyUnreachable: ReadonlySet<string>,
+  rememberedUnreachableTargets: ReadonlyMap<
+    string,
+    BeatGameMemoryEntry<BeatGamePosition>
+  >,
+  now: number,
+): boolean {
+  const key = `target:${target.connectionEpoch}:${target.networkId}`;
+  if (locallyUnreachable.has(key)) {
+    return true;
+  }
+  const remembered = rememberedUnreachableTargets.get(key);
+  if (remembered === undefined) {
+    return false;
+  }
+  if (
+    remembered.value.dimension !== target.position.dimension
+    || distanceSquared(remembered.value, target.position)
+      > HUNT_UNREACHABLE_TARGET_RETRY_DISTANCE ** 2
+  ) {
+    return false;
+  }
+  const approachRadius = AQUATIC_FOOD_ENTITY_TYPES.has(target.entityType)
+    ? AQUATIC_HUNT_ATTACK_APPROACH_RADIUS
+    : HUNT_ATTACK_APPROACH_RADIUS;
+  const observedAt = Date.parse(remembered.observedAt);
+  return distanceSquared(playerPosition, target.position) > approachRadius ** 2
+    || !Number.isFinite(observedAt)
+    || now - observedAt < HUNT_NEARBY_UNREACHABLE_RETRY_DELAY_MS;
 }
 
 function isEligibleHuntingTarget(

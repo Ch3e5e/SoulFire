@@ -4599,7 +4599,7 @@ describe("beat-game run lifecycle", () => {
             ) {
               yield* Effect.sleep(1);
             }
-            yield* Effect.sleep(50);
+            yield* Effect.sleep(250);
             yield* run.stop;
             yield* run.awaitCompletion.pipe(Effect.either);
           })
@@ -12533,6 +12533,91 @@ describe("beat-game run lifecycle", () => {
       z: 0,
     });
     expect(rememberedTargets).toContain("target:epoch-1:42");
+  });
+
+  it("retries an unreachable animal after it moves", async () => {
+    const driver = new FakeBeatGameDriver();
+    const preparedItems = {
+      "minecraft:oak_log": 8,
+      "minecraft:cobblestone": 20,
+      "minecraft:stone_sword": 1,
+    };
+    const cow = {
+      connectionEpoch: "epoch-1",
+      networkId: 43,
+      entityType: "minecraft:cow",
+      position: {
+        x: 8,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    const movedCow = {
+      ...cow,
+      position: { ...cow.position, x: 2 },
+      observedAt: "2026-01-01T00:00:01.000Z",
+    } as const;
+    driver.currentObservation = observation({ counts: preparedItems });
+    driver.entityResults = [cow];
+    let attackAttempts = 0;
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (task.type === "attack-entity") {
+          attackAttempts += 1;
+          driver.entityResults = [movedCow];
+        }
+        return attackAttempts;
+      }).pipe(
+        Effect.flatMap((attempt) =>
+          task.type !== "attack-entity"
+            ? Effect.void
+            : attempt === 1
+            ? Effect.fail(new BeatGameDriverError({
+              operation: "task.attack-entity",
+              code: "unreachable",
+              retryable: true,
+              message: "The animal moved away from its original route",
+            }))
+            : Effect.never
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: {
+          observationPollMs: 1,
+          entitySearchRadius: 320,
+        },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (
+              driver.tasks.filter((task) => task.type === "attack-entity")
+                .length < 2
+            ) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.tasks.filter((task) => task.type === "attack-entity"))
+      .toEqual([
+        expect.objectContaining({
+          target: expect.objectContaining({ position: cow.position }),
+        }),
+        expect.objectContaining({
+          target: expect.objectContaining({ position: movedCow.position }),
+        }),
+      ]);
   });
 
   it("picks up a nearby required resource before gathering more", async () => {
