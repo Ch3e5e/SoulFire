@@ -3269,7 +3269,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks).toHaveLength(0);
   });
 
-  it("keeps preparing instead of abandoning a valuable distant corpse", async () => {
+  it("bounds preparation for a valuable distant corpse after extended failures", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const deathPosition = {
@@ -3325,24 +3325,39 @@ describe("beat-game run lifecycle", () => {
           Stream.runHead,
           Effect.timeout("5 seconds"),
         );
-        const searches = driver.tasks.filter((task) =>
+        const earlySearches = driver.tasks.filter((task) =>
+          task.type === "collect-blocks"
+        ).length;
+        yield* run.events.pipe(
+          Stream.filter((event) =>
+            event.type === "items-recovered"
+            && event.detail
+              === "Abandoned a valuable distant corpse after eight bounded preparation attempts"
+          ),
+          Stream.runHead,
+          Effect.timeout("5 seconds"),
+        );
+        const boundedSearches = driver.tasks.filter((task) =>
           task.type === "collect-blocks"
         ).length;
         yield* run.stop;
         yield* run.awaitCompletion.pipe(Effect.either);
-        return searches;
+        return { boundedSearches, earlySearches };
       }),
     ));
 
-    expect(equipmentSearches).toBe(4);
+    expect(equipmentSearches).toEqual({
+      earlySearches: 4,
+      boundedSearches: 8,
+    });
     expect(driver.paths).not.toContainEqual(expect.objectContaining({
       position: deathPosition,
     }));
     const saved = await Effect.runPromise(
       store.load("bounded-corpse-equipment-run"),
     );
-    expect(saved?.memory.deathPositions).toHaveLength(1);
-  });
+    expect(saved?.memory.deathPositions).toHaveLength(0);
+  }, 15_000);
 
   it("does not count preparation misses as corpse pickup failures", async () => {
     const driver = new FakeBeatGameDriver();

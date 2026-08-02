@@ -147,6 +147,7 @@ const LOCAL_NAVIGATION_RECOVERY_TIMEOUT_MS = 15_000;
 const EXPLORATION_MAXIMUM_LEG_DISTANCE = 32;
 const EXPLORATION_MAXIMUM_SURFACE_ELEVATION_CHANGE = 12;
 const MAX_SAFE_DEATH_RECOVERY_FAILURES = 3;
+const MAX_VALUABLE_DEATH_RECOVERY_PREPARATION_FAILURES = 8;
 const DISTANT_DEATH_RECOVERY_BOOTSTRAP_DISTANCE = 128;
 const ACTIVE_CORPSE_RECOVERY_DISTANCE = 256;
 const IMMEDIATE_CORPSE_RECOVERY_DISTANCE = 12;
@@ -1438,6 +1439,18 @@ function executeDecision(
                   preparationFailures >= MAX_SAFE_DEATH_RECOVERY_FAILURES
                   && recoveryClass === "valuable"
                 ) {
+                  if (
+                    preparationFailures
+                      >= MAX_VALUABLE_DEATH_RECOVERY_PREPARATION_FAILURES
+                  ) {
+                    const current = yield* state.driver.observe;
+                    return yield* abandonPendingDeath(
+                      state,
+                      pendingDeath,
+                      current,
+                      "Abandoned a valuable distant corpse after eight bounded preparation attempts",
+                    );
+                  }
                   yield* emit(state, {
                     type: "diagnostic",
                     message:
