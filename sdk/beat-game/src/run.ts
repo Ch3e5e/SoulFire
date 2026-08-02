@@ -314,7 +314,7 @@ const SUBSTANTIAL_RENEWABLE_DEATH_RECOVERY_ITEM_COUNT = 8;
 const SUBSTANTIAL_RENEWABLE_DEATH_RECOVERY_MAX_DISTANCE = 256;
 const FURNACE_FUEL_SEARCH_RADIUS = 16;
 const HUNT_ATTACK_APPROACH_RADIUS = 24;
-const AQUATIC_HUNT_ATTACK_APPROACH_RADIUS = 16;
+const AQUATIC_HUNT_ATTACK_APPROACH_RADIUS = 4;
 const HUNT_UNREACHABLE_TARGET_RETRY_DISTANCE = 4;
 const HUNT_NEARBY_UNREACHABLE_RETRY_DELAY_MS = 5_000;
 const HUNT_DISTANT_UNREACHABLE_RETRY_DELAY_MS = 15_000;
@@ -7576,54 +7576,56 @@ function huntOrExplore(
       const targetDistanceSquared = aquaticTarget
         ? distanceSquared(target.position, current.player.position)
         : horizontalDistanceSquared(target.position, current.player.position);
-      const attackApproachRadius = aquaticTarget
-        ? AQUATIC_HUNT_ATTACK_APPROACH_RADIUS
-        : HUNT_ATTACK_APPROACH_RADIUS;
       if (
-        targetDistanceSquared
-          > attackApproachRadius * attackApproachRadius
+        aquaticTarget
+        && targetDistanceSquared
+          > AQUATIC_HUNT_ATTACK_APPROACH_RADIUS ** 2
       ) {
-        if (aquaticTarget) {
-          const approached = yield* state.driver.pathfind(
-            target.position,
-            AQUATIC_HUNT_ATTACK_APPROACH_RADIUS,
-            targetExplorationPath,
-          ).pipe(
-            Effect.as(true),
-            Effect.catchAll((cause) =>
-              cause.operation === "pathfind"
-                  || cause.operation === "pathfindXZ"
-                ? Effect.succeed(false)
-                : Effect.fail(cause)
-            ),
-          );
-          if (!approached) {
-            const enteredWater = aquaticHuntAllowed
-              ? yield* enterWaterTowardAquaticTarget(state, current, target)
-              : false;
-            if (enteredWater) {
-              continue;
-            }
-            locallyUnreachable.add(targetKey);
-            yield* persist(state, (currentCheckpoint) => ({
-              ...currentCheckpoint,
-              memory: {
-                ...currentCheckpoint.memory,
-                unreachable: [
-                  ...currentCheckpoint.memory.unreachable,
-                  {
-                    key: targetKey,
-                    value: target.position,
-                    observedAt: new Date().toISOString(),
-                    expiresAt: new Date(Date.now() + 600_000).toISOString(),
-                    confidence: 1,
-                  },
-                ].slice(-64),
-              },
-            }));
+        const approached = yield* state.driver.pathfind(
+          target.position,
+          AQUATIC_HUNT_ATTACK_APPROACH_RADIUS,
+          targetExplorationPath,
+        ).pipe(
+          Effect.as(true),
+          Effect.catchAll((cause) =>
+            cause.operation === "pathfind"
+                || cause.operation === "pathfindXZ"
+              ? Effect.succeed(false)
+              : Effect.fail(cause)
+          ),
+        );
+        if (!approached) {
+          const enteredWater = aquaticHuntAllowed
+            ? yield* enterWaterTowardAquaticTarget(state, current, target)
+            : false;
+          if (enteredWater) {
+            continue;
           }
+          locallyUnreachable.add(targetKey);
+          yield* persist(state, (currentCheckpoint) => ({
+            ...currentCheckpoint,
+            memory: {
+              ...currentCheckpoint.memory,
+              unreachable: [
+                ...currentCheckpoint.memory.unreachable,
+                {
+                  key: targetKey,
+                  value: target.position,
+                  observedAt: new Date().toISOString(),
+                  expiresAt: new Date(Date.now() + 600_000).toISOString(),
+                  confidence: 1,
+                },
+              ].slice(-64),
+            },
+          }));
           continue;
         }
+      }
+      if (
+        !aquaticTarget
+        && targetDistanceSquared
+          > HUNT_ATTACK_APPROACH_RADIUS ** 2
+      ) {
         const targetDistance = Math.sqrt(targetDistanceSquared);
         const maximumApproachDistance =
           current.player.health < state.strategy.minimumHealth
@@ -8086,6 +8088,12 @@ function shouldAllowAquaticHunt(
     return false;
   }
   if (observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL) {
+    return true;
+  }
+  if (
+    observation.player.health < minimumHealth
+    && observation.player.food <= URGENT_HUNGER_FOOD_LEVEL
+  ) {
     return true;
   }
   const minimumSafeHealth = Math.max(
