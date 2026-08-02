@@ -10096,6 +10096,20 @@ describe("beat-game run lifecycle", () => {
       radius: 4.9,
       maximumResults: 500,
     }));
+    expect(driver.blockQueries).toContainEqual({
+      center: {
+        x: 0.5,
+        y: -51.5,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+      radius: 0.25,
+      selector: {
+        blockIds: ["minecraft:lava"],
+        properties: { level: "0" },
+      },
+      maximumResults: 1,
+    });
     expect(useItemInterrupted).toBe(true);
   });
 
@@ -14735,6 +14749,61 @@ describe("beat-game run lifecycle", () => {
       task.type === "collect-blocks"
       && task.blockIds.includes("minecraft:iron_ore")
     )).toHaveLength(1);
+  });
+
+  it("explores laterally at mining depth when iron candidates are unreachable", async () => {
+    const driver = new FakeBeatGameDriver();
+    const miningPosition = {
+      x: 24.5,
+      y: 54,
+      z: -12.5,
+      dimension: "minecraft:overworld",
+    } as const;
+    driver.currentObservation = observation({
+      position: { ...miningPosition, y: 63 },
+      counts: {
+        "minecraft:cooked_beef": 12,
+        "minecraft:oak_log": 8,
+        "minecraft:cobblestone": 30,
+        "minecraft:stone_sword": 1,
+        "minecraft:stone_pickaxe": 1,
+        "minecraft:water_bucket": 1,
+      },
+    });
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (
+          task.type === "collect-blocks"
+          && task.blockIds.includes("minecraft:iron_ore")
+        ) {
+          driver.currentObservation = observation({
+            position: miningPosition,
+            counts: driver.currentObservation.inventory.counts,
+          });
+        }
+      });
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (driver.paths.length === 0) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    expect(driver.paths[0]).toEqual({
+      position: expect.objectContaining({ y: miningPosition.y }),
+      radius: 2,
+      policy: expect.objectContaining({
+        allowMining: true,
+        avoidFluids: true,
+      }),
+    });
+    expect(driver.xzPaths).toHaveLength(0);
   });
 
   it("keeps collecting cobblestone until the requested buffer is full", async () => {

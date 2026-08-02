@@ -5732,6 +5732,7 @@ function collectBlocksOrExplore(
     readonly avoidSubmergedTargets?: boolean;
     readonly requireLineOfSight?: boolean;
     readonly requireSurfaceTargets?: boolean;
+    readonly preferSurfaceExploration?: boolean;
     readonly avoidFluids?: boolean;
     readonly path?: BeatGameStrategy["path"];
     readonly prepareAttempt?: (
@@ -5756,6 +5757,8 @@ function collectBlocksOrExplore(
       ...(options.avoidFluids === true ? baseCollectionPath : requestedPath),
       allowMining: false,
     };
+    const preferSurfaceExploration =
+      options.preferSurfaceExploration ?? true;
     if (
       options.avoidFluids === true
       && (yield* isPlayerInFluid(state.driver, current.player.position))
@@ -5858,10 +5861,11 @@ function collectBlocksOrExplore(
       }
       if (countItems(current) <= beforeAttempt) {
         if (
-          yield* needsOverworldSurfaceRecovery(
+          preferSurfaceExploration
+          && (yield* needsOverworldSurfaceRecovery(
             state,
             current.player.position,
-          )
+          ))
         ) {
           yield* escapeToOverworldSurface(
             state,
@@ -5870,10 +5874,11 @@ function collectBlocksOrExplore(
           return;
         }
         if (
-          yield* climbToHigherOverworldGround(
+          preferSurfaceExploration
+          && (yield* climbToHigherOverworldGround(
             state,
             current.player.position,
-          )
+          ))
         ) {
           return;
         }
@@ -5882,7 +5887,10 @@ function collectBlocksOrExplore(
           current.player.position,
           options.purpose,
           state.strategy.blockSearchRadius,
-          explorationPath,
+          preferSurfaceExploration
+            ? explorationPath
+            : baseCollectionPath,
+          preferSurfaceExploration,
         );
         return;
       }
@@ -6100,6 +6108,31 @@ function fillLiquidBucket(
           obstruction === undefined
           || sameBlockPosition(obstruction.position, source.position)
         ) {
+          const liveSources = yield* state.driver.queryBlocks({
+            center: {
+              x: source.position.x + 0.5,
+              y: source.position.y + 0.5,
+              z: source.position.z + 0.5,
+              dimension: source.position.dimension,
+            },
+            radius: 0.25,
+            selector: {
+              blockIds: [`minecraft:${liquid}`],
+              properties: { level: "0" },
+            },
+            maximumResults: 1,
+          });
+          if (!liveSources.some(({ position }) =>
+            sameBlockPosition(position, source.position)
+          )) {
+            return yield* Effect.fail(new BeatGameDriverError({
+              operation: `fill-${liquid}-bucket`,
+              retryable: true,
+              message: `The selected ${liquid} source at ${
+                positionKey(source.position)
+              } changed while the bot approached it`,
+            }));
+          }
           yield* state.driver.act({
             type: "select-item",
             selector: { itemIds: ["minecraft:bucket"] },
@@ -6107,7 +6140,19 @@ function fillLiquidBucket(
           yield* state.driver.act({
             type: "use-item",
             hand: "main",
-          });
+          }).pipe(
+            Effect.mapError((cause) =>
+              new BeatGameDriverError({
+                operation: `fill-${liquid}-bucket`,
+                ...(cause.code === undefined ? {} : { code: cause.code }),
+                retryable: true,
+                message: `Could not collect the ${liquid} source at ${
+                  positionKey(source.position)
+                }: ${cause.message}`,
+                cause,
+              })
+            ),
+          );
           return;
         }
         if (
@@ -6207,6 +6252,7 @@ function satisfyIronRequirement(
     purpose: "find-iron",
     avoidSubmergedTargets: true,
     avoidFluids: true,
+    preferSurfaceExploration: false,
     prepareAttempt: (current) =>
       ensureMiningPickaxe(
         state,
