@@ -1696,7 +1696,7 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
-  it("explores locally for food after reaching a corpse route", async () => {
+  it("recovers a nearby corpse before preparing at low health", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const deathPosition = {
@@ -1730,10 +1730,18 @@ describe("beat-game run lifecycle", () => {
       food: 9,
       counts: { "minecraft:wooden_sword": 1 },
     });
-    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+    driver.pathResolver = (position, radius, policy) =>
       Effect.sync(() => {
-        driver.xzPaths.push({ x, z, dimension, radius, policy });
-      }).pipe(Effect.zipRight(Effect.never));
+        driver.paths.push({ position, radius, policy });
+      }).pipe(
+        Effect.zipRight(
+          position.x === deathPosition.x
+              && position.y === deathPosition.y
+              && position.z === deathPosition.z
+            ? Effect.never
+            : Effect.void,
+        ),
+      );
 
     await Effect.runPromise(Effect.scoped(
       beatGameWithDriver(driver, {
@@ -1744,7 +1752,13 @@ describe("beat-game run lifecycle", () => {
       }).pipe(
         Effect.flatMap((run) =>
           Effect.gen(function* () {
-            yield* Effect.sleep(100);
+            while (!driver.paths.some(({ position }) =>
+              position.x === deathPosition.x
+              && position.y === deathPosition.y
+              && position.z === deathPosition.z
+            )) {
+              yield* Effect.sleep(1);
+            }
             yield* run.stop;
             yield* run.awaitCompletion.pipe(Effect.either);
           })
@@ -1752,17 +1766,11 @@ describe("beat-game run lifecycle", () => {
       ),
     ));
 
-    expect(driver.xzPaths[0]).toEqual(expect.objectContaining({
-      dimension: "minecraft:overworld",
+    expect(driver.paths).toContainEqual(expect.objectContaining({
+      position: deathPosition,
       radius: 2,
     }));
-    expect(Math.hypot(
-      driver.xzPaths[0]!.x - deathPosition.x,
-      driver.xzPaths[0]!.z - deathPosition.z,
-    )).toBeGreaterThan(3);
-    expect(driver.paths).not.toContainEqual(expect.objectContaining({
-      position: deathPosition,
-    }));
+    expect(driver.xzPaths).toHaveLength(0);
   });
 
   it("does not replenish a healthy food reserve after every recovery meal", async () => {
