@@ -2604,7 +2604,9 @@ function escapeFromTarget(
         ),
       },
     });
-    const requiresDynamicEscape = target.entityType === "minecraft:creeper"
+    const requiresDynamicEscape = ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(
+      target.entityType,
+    )
       || rangedThreat
       || PROACTIVE_MELEE_HOSTILE_ENTITY_TYPES.has(target.entityType);
     const navigation = requiresDynamicEscape
@@ -2794,7 +2796,7 @@ function monitorEscapeSafety(
                 );
               }
               if (
-                target.entityType === "minecraft:creeper"
+                ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(target.entityType)
                 && threat.target.networkId !== target.networkId
               ) {
                 return monitorEscapeSafety(

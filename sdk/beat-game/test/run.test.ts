@@ -4758,6 +4758,70 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("keeps witch evasion active when a zombie catches up", async () => {
+    const driver = new FakeBeatGameDriver();
+    const witch = {
+      connectionEpoch: "epoch-1",
+      networkId: 43,
+      entityType: "minecraft:witch",
+      position: {
+        x: 6,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 26,
+      observedAt: "2026-01-01T00:00:01.000Z",
+    } as const;
+    const zombie = {
+      ...witch,
+      networkId: 44,
+      entityType: "minecraft:zombie",
+      position: { ...witch.position, x: 2 },
+      health: 20,
+    } as const;
+    driver.entityResults = [witch];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (task.type === "flee") {
+          driver.entityResults = [
+            { ...witch, position: { ...witch.position, x: 14 } },
+            zombie,
+          ];
+          driver.currentObservation = observation({ health: 17 });
+        }
+      }).pipe(
+        Effect.zipRight(
+          task.type === "collect-blocks" || task.type === "flee"
+            ? Effect.never
+            : Effect.void,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some((task) => task.type === "flee")) {
+        yield* Effect.sleep(1);
+      }
+      yield* Effect.sleep(250);
+      yield* run.stop;
+    })));
+
+    expect(driver.tasks.filter((task) => task.type === "flee")).toHaveLength(1);
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "flee",
+      selector: { networkId: witch.networkId, alive: true },
+    }));
+    expect(driver.tasks).not.toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+    }));
+  });
+
   it("preempts a ranged retreat when a creeper approaches", async () => {
     const driver = new FakeBeatGameDriver();
     const skeleton = {
@@ -7288,7 +7352,7 @@ describe("beat-game run lifecycle", () => {
         Effect.flatMap((run) =>
           Effect.gen(function* () {
             while (
-              driver.xzPaths.length === 0
+              !driver.tasks.some((task) => task.type === "flee")
             ) {
               yield* Effect.sleep(1);
             }
@@ -7302,11 +7366,19 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks.some((task) =>
       task.type === "attack-nearest" || task.type === "attack-entity"
     )).toBe(false);
-    expect(driver.xzPaths[0]?.policy).toMatchObject({
-      allowMining: false,
+    const fleeIndex = driver.tasks.findIndex((task) => task.type === "flee");
+    expect(driver.tasks[fleeIndex]).toEqual(expect.objectContaining({
+      type: "flee",
+      selector: { networkId: 14, alive: true },
+      triggerRadius: 12,
+      safeDistance: 24,
+    }));
+    expect(driver.taskPolicies[fleeIndex]).toMatchObject({
+      allowMining: true,
       allowPlacing: false,
       avoidFluids: true,
       maxFallDistance: 3,
+      sprint: true,
     });
   });
 
