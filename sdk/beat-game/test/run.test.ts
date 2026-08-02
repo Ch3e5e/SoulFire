@@ -1566,7 +1566,7 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
-  it("hunts nearby fish behind the corpse route at lethal health", async () => {
+  it("hunts nearby fish behind the corpse route at critical hunger", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const deathPosition = {
@@ -1619,7 +1619,7 @@ describe("beat-game run lifecycle", () => {
     } as const;
     driver.currentObservation = observation({
       health: 6,
-      food: 10,
+      food: 6,
       counts: {
         "minecraft:dirt": 16,
         "minecraft:oak_log": 12,
@@ -1642,7 +1642,7 @@ describe("beat-game run lifecycle", () => {
             ) {
               driver.currentObservation = observation({
                 health: 6,
-                food: 10,
+                food: 6,
                 position: { x: -20 },
                 counts: {
                   "minecraft:dirt": 16,
@@ -2640,7 +2640,7 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
-  it("hunts nearby fish when urgent recovery hunger makes dry detours unsafe", async () => {
+  it("hunts nearby fish when critical recovery hunger makes dry detours unsafe", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const deathPosition = {
@@ -2685,7 +2685,7 @@ describe("beat-game run lifecycle", () => {
       observedAt: "2026-01-01T00:00:00.000Z",
     } as const;
     driver.currentObservation = observation({
-      food: 7,
+      food: 6,
       health: 12,
       counts: {
         "minecraft:dirt": 16,
@@ -2743,7 +2743,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.paths).toHaveLength(0);
   });
 
-  it("crosses water directly while urgently searching for corpse recovery food", async () => {
+  it("crosses water directly while critically searching for corpse recovery food", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const deathPosition = {
@@ -2773,7 +2773,7 @@ describe("beat-game run lifecycle", () => {
       },
     }, undefined));
     driver.currentObservation = observation({
-      food: 7,
+      food: 6,
       health: 12,
       counts: {
         "minecraft:dirt": 16,
@@ -5766,6 +5766,69 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks.some((task) =>
       task.type === "attack-nearest" || task.type === "attack-entity"
     )).toBe(false);
+  });
+
+  it("keeps closing on a ranged attacker after a nonlethal wound", async () => {
+    const driver = new FakeBeatGameDriver();
+    const skeleton = {
+      connectionEpoch: "epoch-1",
+      networkId: 181,
+      entityType: "minecraft:skeleton",
+      position: {
+        x: 6,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.currentObservation = observation({
+      health: 20,
+      food: 19,
+      counts: { "minecraft:stone_sword": 1 },
+    });
+    driver.entityResults = [skeleton];
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2) === true
+          || query.selector.networkId === skeleton.networkId
+        ? driver.entityResults
+        : [];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (task.type === "attack-entity") {
+          driver.currentObservation = observation({
+            health: 17,
+            food: 19,
+            counts: { "minecraft:stone_sword": 1 },
+          });
+        }
+      }).pipe(
+        Effect.zipRight(
+          task.type === "attack-entity" ? Effect.never : Effect.void,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some((task) => task.type === "attack-entity")) {
+        yield* Effect.sleep(1);
+      }
+      yield* Effect.sleep(20);
+      yield* run.stop;
+    })));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+      target: expect.objectContaining({ networkId: skeleton.networkId }),
+      selectBestWeapon: true,
+    }));
+    expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
   });
 
   it("fights a ranged route blocker bare-handed while healthy and fed", async () => {
@@ -10661,7 +10724,7 @@ describe("beat-game run lifecycle", () => {
     ]);
   });
 
-  it("resumes an urgent aquatic food hunt after replenishing air", async () => {
+  it("resumes a critical aquatic food hunt after replenishing air", async () => {
     const driver = new FakeBeatGameDriver();
     const salmon = {
       connectionEpoch: "epoch-1",
@@ -10840,11 +10903,11 @@ describe("beat-game run lifecycle", () => {
     expect(driver.xzPaths[1]?.policy.avoidFluids).toBe(false);
   }, 10_000);
 
-  it("prefers a shallow fish during an urgent aquatic hunt", async () => {
+  it("prefers a shallow fish during a critical aquatic hunt", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
       health: 20,
-      food: 10,
+      food: 6,
       counts: {
         "minecraft:cobblestone": 20,
         "minecraft:iron_ingot": 7,
@@ -10902,6 +10965,60 @@ describe("beat-game run lifecycle", () => {
     }));
     expect(driver.paths).toHaveLength(0);
   }, 10_000);
+
+  it("searches on land instead of chasing fish above critical hunger", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      health: 20,
+      food: 8,
+      counts: {
+        "minecraft:cobblestone": 20,
+        "minecraft:iron_ingot": 7,
+        "minecraft:oak_log": 8,
+        "minecraft:shield": 1,
+        "minecraft:stone_pickaxe": 1,
+        "minecraft:stone_sword": 1,
+      },
+    });
+    driver.entityResults = [{
+      connectionEpoch: "epoch-1",
+      networkId: 49,
+      entityType: "minecraft:salmon",
+      position: {
+        x: 3,
+        y: 62,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 3,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    }];
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (driver.xzPaths.length === 0) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    })));
+
+    expect(driver.tasks.some((task) => task.type === "attack-entity"))
+      .toBe(false);
+    expect(driver.xzPaths[0]?.policy).toMatchObject({
+      allowMining: false,
+      allowPlacing: false,
+      avoidFluids: true,
+      sprint: false,
+    });
+  });
 
   it("arms an injured bot before sending it on a food hunt", async () => {
     const driver = new FakeBeatGameDriver();
@@ -11071,7 +11188,7 @@ describe("beat-game run lifecycle", () => {
     });
   });
 
-  it("enters water to pursue nearby food when hunger is urgent", async () => {
+  it("enters water to pursue nearby food when hunger is critical", async () => {
     const driver = new FakeBeatGameDriver();
     const salmon = {
       connectionEpoch: "epoch-1",
@@ -11089,7 +11206,7 @@ describe("beat-game run lifecycle", () => {
       observedAt: "2026-01-01T00:00:00.000Z",
     } as const;
     driver.currentObservation = observation({
-      food: 10,
+      food: 6,
       health: 8,
       counts: {
         "minecraft:iron_ingot": 7,
@@ -11145,7 +11262,7 @@ describe("beat-game run lifecycle", () => {
             : Effect.sync(() => {
               driver.currentObservation = observation({
                 position,
-                food: 10,
+                food: 6,
                 health: 8,
                 counts: {
                   "minecraft:iron_ingot": 7,
@@ -11173,7 +11290,7 @@ describe("beat-game run lifecycle", () => {
           z: 0.5,
           dimension: "minecraft:overworld",
         },
-        food: 10,
+        food: 6,
         health: 8,
         counts: driver.currentObservation.inventory.counts,
       });

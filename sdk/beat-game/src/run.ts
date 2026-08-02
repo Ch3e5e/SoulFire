@@ -2343,7 +2343,20 @@ function shouldCommitToRangedFight(
   target: BeatGameEntityObservation,
 ): boolean {
   return PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
-    && (observation.inventory.counts["minecraft:shield"] ?? 0) > 0;
+    && (
+      (observation.inventory.counts["minecraft:shield"] ?? 0) > 0
+      || shouldCommitToUnshieldedRangedFight(observation, target)
+    );
+}
+
+function shouldCommitToUnshieldedRangedFight(
+  observation: BeatGameObservation,
+  target: BeatGameEntityObservation,
+): boolean {
+  return PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
+    && hasMeleeWeapon(observation)
+    && observation.player.health >= MELEE_DISENGAGE_HEALTH
+    && observation.player.food > URGENT_HUNGER_FOOD_LEVEL;
 }
 
 function shouldCommitToCloseRangedFight(
@@ -3923,6 +3936,10 @@ function defendAgainstTarget(
           }
         }))
         : Effect.void;
+      const commitThroughWound = shouldCommitToUnshieldedRangedFight(
+        observation,
+        target,
+      );
       const commitThroughLethalWound =
         shouldCommitToCloseRangedFight(observation, target)
         || shouldCommitToFastMeleePursuerFight(observation, target);
@@ -3940,7 +3957,10 @@ function defendAgainstTarget(
             || shouldCommitToCloseRangedFight(observation, target)
             || shouldCommitToFastMeleePursuerFight(observation, target)
           ),
-          commitThroughLethalWound,
+          {
+            commitThroughWound,
+            commitThroughLethalWound,
+          },
         ),
       ).pipe(
         Effect.flatMap((outcome) =>
@@ -3967,7 +3987,10 @@ function monitorDefenseHealth(
   engagementHealth: number,
   engagementPosition: BeatGamePosition,
   disengageWhenWounded = true,
-  commitThroughLethalWound = false,
+  options: {
+    readonly commitThroughWound?: boolean;
+    readonly commitThroughLethalWound?: boolean;
+  } = {},
 ): Effect.Effect<"disengage" | "unsafe-air", BeatGameDriverError> {
   return Effect.sleep(
     Math.max(MINIMUM_RECOVERY_POLL_MS, state.strategy.observationPollMs),
@@ -3993,13 +4016,14 @@ function monitorDefenseHealth(
         return Effect.succeed("disengage" as const);
       }
       if (
-        !commitThroughLethalWound
+        options.commitThroughLethalWound !== true
         && observation.player.health <= LETHAL_MELEE_DISENGAGE_HEALTH
       ) {
         return Effect.succeed("disengage" as const);
       }
       if (
         !disengageWhenWounded
+        || options.commitThroughWound === true
         || (
           observation.player.health >= state.strategy.minimumHealth
           || observation.player.health >= engagementHealth
@@ -4010,7 +4034,7 @@ function monitorDefenseHealth(
           engagementHealth,
           engagementPosition,
           disengageWhenWounded,
-          commitThroughLethalWound,
+          options,
         );
       }
       return Effect.succeed("disengage" as const);
@@ -4940,8 +4964,7 @@ function huntForFoodRequirement(
     {
       preferredEntityTypes: HIGH_YIELD_FOOD_ANIMAL_TYPES,
       preferredRadius: HIGH_YIELD_FOOD_PREFERENCE_RADIUS,
-      allowUrgentAquaticTargets:
-        observation.player.food <= URGENT_HUNGER_FOOD_LEVEL,
+      allowCriticalAquaticTargets: true,
       allowFluidFallback:
         observation.player.health >= state.strategy.minimumHealth,
       path: {
@@ -6905,7 +6928,7 @@ function ensureArrowIngredients(
 interface HuntTargetPreference {
   readonly preferredEntityTypes: ReadonlySet<string>;
   readonly preferredRadius: number;
-  readonly allowUrgentAquaticTargets?: boolean;
+  readonly allowCriticalAquaticTargets?: boolean;
   readonly maximumExplorationHops?: number;
   readonly path?: BeatGameStrategy["path"];
   readonly explorationTarget?: BeatGamePosition;
@@ -6943,8 +6966,8 @@ function huntOrExplore(
     const locallyUnreachable = new Set<string>();
     let confirmedVisibleTarget: BeatGameEntityObservation | undefined;
     const allowEmergencyAquaticFallback =
-      targetPreference?.allowUrgentAquaticTargets === true
-      && observation.player.food <= URGENT_HUNGER_FOOD_LEVEL;
+      targetPreference?.allowCriticalAquaticTargets === true
+      && observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL;
     let aquaticPursuitActive = false;
     let attacked = 0;
     let explorationHops = 0;
@@ -6980,10 +7003,10 @@ function huntOrExplore(
         current.player.health,
         state.strategy.minimumHealth,
       );
-      const urgentAquaticExploration =
-        targetPreference?.allowUrgentAquaticTargets === true
-        && current.player.food <= URGENT_HUNGER_FOOD_LEVEL;
-      const huntingPath = urgentAquaticExploration
+      const criticalAquaticExploration =
+        targetPreference?.allowCriticalAquaticTargets === true
+        && current.player.food <= CRITICAL_HUNGER_FOOD_LEVEL;
+      const huntingPath = criticalAquaticExploration
         ? { ...survivalPath, avoidFluids: false }
         : survivalPath;
       const explorationPath = {
@@ -7657,7 +7680,7 @@ function isEligibleHuntingTarget(
   targetPreference?: HuntTargetPreference,
 ): boolean {
   const aquaticTarget = AQUATIC_FOOD_ENTITY_TYPES.has(target.entityType);
-  const urgentAquaticHunt = shouldAllowUrgentAquaticHunt(
+  const criticalAquaticHunt = shouldAllowCriticalAquaticHunt(
     observation,
     targetPreference,
   );
@@ -7669,7 +7692,7 @@ function isEligibleHuntingTarget(
     )
     && (
       !aquaticTarget
-      || urgentAquaticHunt
+      || criticalAquaticHunt
     )
     && (
       observation.player.health <= LETHAL_MELEE_DISENGAGE_HEALTH
@@ -7696,11 +7719,11 @@ function isHuntingTargetWithinReach(
         ) <= EMERGENCY_FOOD_MAXIMUM_HORIZONTAL_DISTANCE ** 2;
   }
   if (AQUATIC_FOOD_ENTITY_TYPES.has(target.entityType)) {
-    const urgentAquaticHunt = shouldAllowUrgentAquaticHunt(
+    const criticalAquaticHunt = shouldAllowCriticalAquaticHunt(
       observation,
       targetPreference,
     );
-    return urgentAquaticHunt
+    return criticalAquaticHunt
       && Math.abs(target.position.y - observation.player.position.y)
         <= URGENT_AQUATIC_HUNT_MAXIMUM_VERTICAL_DISTANCE
       && horizontalDistanceSquared(
@@ -7714,15 +7737,12 @@ function isHuntingTargetWithinReach(
     <= maximumVerticalDistance;
 }
 
-function shouldAllowUrgentAquaticHunt(
+function shouldAllowCriticalAquaticHunt(
   observation: BeatGameObservation,
   targetPreference?: HuntTargetPreference,
 ): boolean {
-  return observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
-    || (
-      targetPreference?.allowUrgentAquaticTargets === true
-      && observation.player.food <= URGENT_HUNGER_FOOD_LEVEL
-    );
+  return targetPreference?.allowCriticalAquaticTargets === true
+    && observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL;
 }
 
 function survivalPathPolicy(
@@ -10139,7 +10159,7 @@ function prepareForDistantDeathRecovery(
           maximumExplorationHops: 2,
           path: foodSearchPath,
           explorationTarget: pendingDeath.position,
-          allowUrgentAquaticTargets: true,
+          allowCriticalAquaticTargets: true,
           allowFluidFallback: true,
           fallbackToLocalExploration: true,
         },
