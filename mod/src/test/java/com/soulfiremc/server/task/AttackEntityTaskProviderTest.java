@@ -19,6 +19,7 @@ package com.soulfiremc.server.task;
 
 import com.soulfiremc.grpc.generated.AttackEntityTask;
 import com.soulfiremc.server.bot.ControlResource;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
@@ -62,23 +63,34 @@ final class AttackEntityTaskProviderTest {
       12,
       2.5,
       true,
-      false
+      false,
+      true
     ));
     assertFalse(AttackEntityTaskProvider.shouldPursueDirectly(
       12.01,
       2,
       true,
-      false
+      false,
+      true
     ));
     assertFalse(AttackEntityTaskProvider.shouldPursueDirectly(
       8,
       2.51,
       true,
-      false
+      false,
+      true
     ));
     assertFalse(AttackEntityTaskProvider.shouldPursueDirectly(
       8,
       1,
+      false,
+      false,
+      true
+    ));
+    assertFalse(AttackEntityTaskProvider.shouldPursueDirectly(
+      8,
+      1,
+      true,
       false,
       false
     ));
@@ -90,19 +102,40 @@ final class AttackEntityTaskProviderTest {
       8,
       6,
       true,
-      true
+      true,
+      false
     ));
     assertFalse(AttackEntityTaskProvider.shouldPursueDirectly(
       12.01,
       6,
       true,
-      true
+      true,
+      false
     ));
 
     assertEquals(1, AttackEntityTaskProvider.fluidVerticalInput(0.36));
     assertEquals(0, AttackEntityTaskProvider.fluidVerticalInput(0.35));
     assertEquals(0, AttackEntityTaskProvider.fluidVerticalInput(-0.35));
     assertEquals(-1, AttackEntityTaskProvider.fluidVerticalInput(-0.36));
+  }
+
+  @Test
+  void directlyPursuesOnlyAcrossPassableSupportedTerrain() {
+    assertTrue(AttackEntityTaskProvider.hasDirectPursuitSupport(
+      Blocks.AIR.defaultBlockState(),
+      Blocks.AIR.defaultBlockState(),
+      Blocks.STONE.defaultBlockState()
+    ));
+    assertFalse(AttackEntityTaskProvider.hasDirectPursuitSupport(
+      Blocks.AIR.defaultBlockState(),
+      Blocks.AIR.defaultBlockState(),
+      Blocks.AIR.defaultBlockState()
+    ));
+    assertFalse(AttackEntityTaskProvider.hasDirectPursuitSupport(
+      Blocks.STONE.defaultBlockState(),
+      Blocks.AIR.defaultBlockState(),
+      Blocks.STONE.defaultBlockState()
+    ));
   }
 
   @Test

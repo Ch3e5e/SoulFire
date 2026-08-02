@@ -32,14 +32,17 @@ import com.soulfiremc.server.bot.ControlTask;
 import com.soulfiremc.server.grpc.InventoryServiceImpl;
 import com.soulfiremc.server.pathfinding.PathfindingSupport;
 import com.soulfiremc.server.pathfinding.execution.PathExecutor;
+import com.soulfiremc.server.util.SFBlockHelpers;
 import com.soulfiremc.server.util.SFInventoryHelpers;
 import com.soulfiremc.server.util.SFItemHelpers;
 import io.grpc.Status;
 import net.minecraft.client.multiplayer.MultiPlayerGameMode;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.BlockPos;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.checkerframework.checker.nullness.qual.Nullable;
@@ -60,6 +63,7 @@ public final class AttackEntityTaskProvider
   private static final float MAX_ATTACK_RANGE = 6.0F;
   private static final double DIRECT_PURSUIT_RANGE = 12.0;
   private static final double DIRECT_PURSUIT_VERTICAL_RANGE = 2.5;
+  private static final double DIRECT_PURSUIT_TERRAIN_LOOKAHEAD = 1.25;
   private static final Set<ControlResource> RESOURCES = Set.of(
     ControlResource.MOVEMENT,
     ControlResource.ROTATION,
@@ -170,12 +174,47 @@ public final class AttackEntityTaskProvider
     double distance,
     double verticalDistance,
     boolean hasLineOfSight,
-    boolean movingInFluid
+    boolean movingInFluid,
+    boolean safeTerrainAhead
   ) {
     return hasLineOfSight
       && distance <= DIRECT_PURSUIT_RANGE
       && (movingInFluid
-        || verticalDistance <= DIRECT_PURSUIT_VERTICAL_RANGE);
+        || verticalDistance <= DIRECT_PURSUIT_VERTICAL_RANGE)
+      && (movingInFluid || safeTerrainAhead);
+  }
+
+  static boolean hasDirectPursuitSupport(
+    BlockState feet,
+    BlockState head,
+    BlockState floor
+  ) {
+    return SFBlockHelpers.isBodyPassableBlock(feet)
+      && SFBlockHelpers.isBodyPassableBlock(head)
+      && SFBlockHelpers.isWalkableFloorBlock(floor);
+  }
+
+  private static boolean hasSafeTerrainAhead(
+    LocalPlayer player,
+    Vec3 target
+  ) {
+    var level = player.level();
+    var offset = target.subtract(player.position());
+    var horizontalLength = Math.hypot(offset.x, offset.z);
+    if (horizontalLength < 0.001) {
+      return true;
+    }
+    var scale = DIRECT_PURSUIT_TERRAIN_LOOKAHEAD / horizontalLength;
+    var feetPosition = BlockPos.containing(
+      player.getX() + offset.x * scale,
+      player.getY(),
+      player.getZ() + offset.z * scale
+    );
+    return hasDirectPursuitSupport(
+      level.getBlockState(feetPosition),
+      level.getBlockState(feetPosition.above()),
+      level.getBlockState(feetPosition.below())
+    );
   }
 
   static int fluidVerticalInput(double verticalOffset) {
@@ -308,7 +347,8 @@ public final class AttackEntityTaskProvider
           distance,
           Math.abs(player.getY() - entity.getY()),
           player.hasLineOfSight(entity),
-          movingInFluid
+          movingInFluid,
+          movingInFluid || hasSafeTerrainAhead(player, visiblePoint)
         )) {
           stopPath(ControlStopReason.CANCELLED, null);
           bot.controlState().resetAll();
