@@ -14903,6 +14903,18 @@ describe("beat-game run lifecycle", () => {
           dimension: "minecraft:overworld",
         }, { blockId: "minecraft:crafting_table" })]
         : [];
+    const resolvePath = driver.pathResolver;
+    driver.pathResolver = (position, radius, policy) =>
+      resolvePath(position, radius, policy).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            driver.currentObservation = observation({
+              counts: driver.currentObservation.inventory.counts,
+              emptyPlayerSlots: 0,
+            });
+          })
+        ),
+      );
     let collectionAttempts = 0;
     let resolveReplacementCollection!: () => void;
     const replacementCollectionStarted = new Promise<void>((resolve) => {
@@ -14918,7 +14930,10 @@ describe("beat-game run lifecycle", () => {
             "minecraft:cobblestone": 18,
           };
           delete counts["minecraft:wooden_pickaxe"];
-          driver.currentObservation = observation({ counts });
+          driver.currentObservation = observation({
+            counts,
+            emptyPlayerSlots: 0,
+          });
           return Effect.void;
         }
         resolveReplacementCollection();
@@ -14937,6 +14952,16 @@ describe("beat-game run lifecycle", () => {
       }
       return Effect.void;
     };
+    driver.actionResolver = (action) =>
+      Effect.sync(() => {
+        if (action.type === "toss-items") {
+          driver.currentObservation = observation({
+            counts: driver.currentObservation.inventory.counts,
+            emptyPlayerSlots: 3,
+          });
+        }
+        return {};
+      });
 
     await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const run = yield* beatGameWithDriver(driver, {
@@ -14957,6 +14982,11 @@ describe("beat-game run lifecycle", () => {
       "craft:minecraft:wooden_pickaxe",
       "collect-blocks",
     ]);
+    expect(driver.actions.filter((action) =>
+      action.type === "toss-items"
+      && action.selector.itemIds?.includes("minecraft:cobblestone") === true
+      && action.count === 18
+    )).toHaveLength(2);
   });
 
   it("stops an in-flight collection once external inventory gains meet its buffered target", async () => {

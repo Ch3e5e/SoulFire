@@ -8849,20 +8849,21 @@ function craftWithTable(
   resultItemId: string,
   count: number,
 ): Effect.Effect<void, BeatGameDriverError> {
-  return ensureWorkstation(
-    state,
-    observation,
-    "minecraft:crafting_table",
-  ).pipe(
-    Effect.flatMap((workstation) =>
-      craftItem(state.driver, {
-        resultItemId,
-        count,
-        station: workstation.position,
-        path: state.strategy.path,
-      })
-    ),
-  );
+  return Effect.gen(function* () {
+    const workstation = yield* ensureWorkstation(
+      state,
+      observation,
+      "minecraft:crafting_table",
+    );
+    const current = yield* state.driver.observe;
+    yield* ensureInventorySpace(state, current);
+    yield* craftItem(state.driver, {
+      resultItemId,
+      count,
+      station: workstation.position,
+      path: state.strategy.path,
+    });
+  });
 }
 
 function ensureWorkstation(
