@@ -103,6 +103,56 @@ describe("beat-game planner", () => {
     });
   });
 
+  it("defers a small healthy food top-up while required work remains", () => {
+    const decision = decideBeatGameAction({
+      checkpoint: checkpoint(BeatGamePhase.ENTER_NETHER),
+      observation: observation({
+        counts: {
+          "minecraft:cooked_cod": 7,
+          "minecraft:oak_log": 8,
+          "minecraft:cobblestone": 20,
+          "minecraft:stone_sword": 1,
+        },
+        food: 20,
+      }),
+      strategy: defaultBeatGameStrategy,
+    });
+
+    expect(decision).toMatchObject({
+      type: "satisfy-requirement",
+      action: "satisfy:iron",
+      requirement: { key: "iron" },
+    });
+  });
+
+  it("tops up a deferred food reserve before entering the Nether", () => {
+    const decision = decideBeatGameAction({
+      checkpoint: checkpoint(BeatGamePhase.ENTER_NETHER),
+      observation: observation({
+        counts: {
+          "minecraft:cooked_cod": 7,
+          "minecraft:oak_log": 8,
+          "minecraft:cobblestone": 20,
+          "minecraft:stone_sword": 1,
+          "minecraft:iron_ingot": 7,
+          "minecraft:shield": 1,
+          "minecraft:iron_pickaxe": 1,
+          "minecraft:lava_bucket": 1,
+          "minecraft:water_bucket": 1,
+          "minecraft:flint_and_steel": 1,
+        },
+        food: 20,
+      }),
+      strategy: defaultBeatGameStrategy,
+    });
+
+    expect(decision).toMatchObject({
+      type: "satisfy-requirement",
+      action: "satisfy:food-supply",
+      requirement: { key: "food-supply" },
+    });
+  });
+
   it("recovers in place when current hunger or emergency food can heal", () => {
     const base = checkpoint(BeatGamePhase.PREPARE_OVERWORLD);
 
@@ -195,6 +245,13 @@ describe("beat-game planner", () => {
   it("uses dimension evidence before advancing through a portal phase", () => {
     const base = checkpoint(BeatGamePhase.ENTER_NETHER);
     const counts = {
+      "minecraft:cooked_cod": 8,
+      "minecraft:oak_log": 8,
+      "minecraft:cobblestone": 20,
+      "minecraft:stone_sword": 1,
+      "minecraft:iron_ingot": 7,
+      "minecraft:shield": 1,
+      "minecraft:iron_pickaxe": 1,
       "minecraft:obsidian": 10,
       "minecraft:water_bucket": 1,
       "minecraft:flint_and_steel": 1,

@@ -15,6 +15,8 @@ import {
   requirementsForPhase,
 } from "./requirements.js";
 
+const FOOD_RESERVE_REFILL_TOLERANCE = 2;
+
 const COOKABLE_RAW_FOOD_ITEM_IDS = new Set(
   Object.keys(RAW_FOOD_TO_COOKED),
 );
@@ -141,7 +143,14 @@ export function decideBeatGameAction(
     }
     return { type: "retreat", action: "retreat" };
   }
-  const missing = requirements.find(({ satisfied }) => !satisfied);
+  const firstMissing = requirements.find(({ satisfied }) => !satisfied);
+  const missing = firstMissing !== undefined
+      && shouldDeferFoodReserveRefill(firstMissing, observation)
+    ? requirements.find((requirement) =>
+      !requirement.satisfied
+      && !shouldDeferFoodReserveRefill(requirement, observation)
+    ) ?? firstMissing
+    : firstMissing;
   switch (phase) {
     case BeatGamePhase.PREPARE_OVERWORLD:
       if (missing !== undefined) {
@@ -222,6 +231,21 @@ export function decideBeatGameAction(
     case BeatGamePhase.COMPLETE:
       return phaseTransition(phase, phase);
   }
+}
+
+function shouldDeferFoodReserveRefill(
+  requirement: BeatGameItemRequirement,
+  observation: BeatGameObservation,
+): boolean {
+  return observation.player.food >= 18
+    && (
+      requirement.key === "food-supply"
+      || requirement.key === "food"
+    )
+    && requirement.currentCount >= Math.max(
+      1,
+      requirement.targetCount - FOOD_RESERVE_REFILL_TOLERANCE,
+    );
 }
 
 function hasFood(
