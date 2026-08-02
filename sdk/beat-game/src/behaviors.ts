@@ -46,10 +46,12 @@ const DROP_PICKUP_MAXIMUM_ATTEMPTS = 3;
 const DIRECT_DROP_PICKUP_MAXIMUM_HORIZONTAL_DISTANCE = 1.9;
 const DIRECT_DROP_PICKUP_MAXIMUM_VERTICAL_DISTANCE = 0.75;
 const SUBMERGED_DROP_PICKUP_MAXIMUM_HORIZONTAL_DISTANCE = 2.25;
-const SUBMERGED_DROP_PICKUP_MAXIMUM_VERTICAL_DISTANCE = 3.5;
+const SUBMERGED_DROP_PICKUP_MAXIMUM_VERTICAL_DISTANCE = 8;
 const DIRECT_DROP_PICKUP_POLL_INTERVAL_MS = 100;
 const DIRECT_DROP_PICKUP_MAXIMUM_POLLS = 8;
-const SUBMERGED_DROP_PICKUP_MAXIMUM_POLLS = 16;
+const SUBMERGED_DROP_PICKUP_MAXIMUM_POLLS = 60;
+const SUBMERGED_DROP_PICKUP_STEERING_INTERVAL_POLLS = 2;
+const SUBMERGED_DROP_PICKUP_MINIMUM_AIR_RATIO = 0.35;
 const PORTAL_CASTING_LAVA_SIGHT_CLEARING_BLOCKS = 4;
 const PORTAL_CASTING_LAVA_COLLECTION_POLLS = 10;
 const DROP_AVOIDED_FLUID_BLOCK_IDS = [
@@ -371,28 +373,7 @@ function tryDirectDropPickup(
   }
 
   return Effect.gen(function* () {
-    const rotation = rotationToward(
-      playerPosition,
-      allowVerticalMovement
-        ? drop.position
-        : { ...drop.position, y: playerPosition.y },
-    );
-    yield* driver.act({
-      type: "look",
-      yaw: rotation.yaw,
-      pitch: allowVerticalMovement ? rotation.pitch : 0,
-    });
-    yield* driver.act({
-      type: "set-movement",
-      forward: true,
-      sprint: false,
-      ...(
-        allowVerticalMovement
-          && drop.position.y > playerPosition.y + 0.25
-          ? { jump: true }
-          : {}
-      ),
-    });
+    yield* steerTowardDrop(driver, observation, drop, allowVerticalMovement);
 
     const maximumPolls = allowVerticalMovement
       ? SUBMERGED_DROP_PICKUP_MAXIMUM_POLLS
@@ -411,23 +392,67 @@ function tryDirectDropPickup(
           maximumVerticalDistance,
         ) + 1,
         selector: {
-          entityTypes: ["minecraft:item"],
+          networkId: drop.networkId,
           alive: true,
         },
-        maximumResults: 16,
+        maximumResults: 1,
       });
-      if (
-        !nearbyItems.some((candidate) =>
-          entityObservationKey(candidate) === entityObservationKey(drop)
-        )
-      ) {
+      const refreshedDrop = nearbyItems.find((candidate) =>
+        entityObservationKey(candidate) === entityObservationKey(drop)
+      );
+      if (refreshedDrop === undefined) {
         return true;
+      }
+      if (!allowVerticalMovement) {
+        continue;
+      }
+      const minimumSafeAir = Math.floor(
+        current.player.maxAir * SUBMERGED_DROP_PICKUP_MINIMUM_AIR_RATIO,
+      );
+      if (current.player.air <= minimumSafeAir) {
+        return false;
+      }
+      if (poll % SUBMERGED_DROP_PICKUP_STEERING_INTERVAL_POLLS === 0) {
+        yield* steerTowardDrop(driver, current, refreshedDrop, true);
       }
     }
     return false;
   }).pipe(
     Effect.ensuring(driver.act({ type: "reset-movement" }).pipe(Effect.ignore)),
   );
+}
+
+function steerTowardDrop(
+  driver: BeatGameDriver,
+  observation: BeatGameObservation,
+  drop: BeatGameEntityObservation,
+  allowVerticalMovement: boolean,
+): Effect.Effect<void, BeatGameDriverError> {
+  const playerPosition = observation.player.position;
+  const rotation = rotationToward(
+    playerPosition,
+    allowVerticalMovement
+      ? drop.position
+      : { ...drop.position, y: playerPosition.y },
+  );
+  return Effect.gen(function* () {
+    yield* driver.act({
+      type: "look",
+      yaw: rotation.yaw,
+      pitch: allowVerticalMovement ? rotation.pitch : 0,
+    });
+    yield* driver.act({
+      type: "set-movement",
+      forward: true,
+      sprint: false,
+      ...(allowVerticalMovement
+        ? {
+          jump: drop.position.y > playerPosition.y + 0.25,
+          sneak: false,
+        }
+        : {}),
+    });
+  });
 }
 
 function firstSafePickupDrop(

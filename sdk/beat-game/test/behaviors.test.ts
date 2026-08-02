@@ -22,6 +22,7 @@ import {
   rotationToward,
   throwEyeOfEnder,
   type BeatGameBlockPosition,
+  type BeatGameEntityObservation,
 } from "../src/index.js";
 import {
   blockObservation,
@@ -455,6 +456,92 @@ describe("beat-game behavior programs", () => {
     expect(driver.actions.at(-1)).toEqual({ type: "reset-movement" });
   });
 
+  it("keeps steering toward a sinking submerged drop", async () => {
+    const driver = new FakeBeatGameDriver();
+    const position = {
+      x: 4.5,
+      y: 64,
+      z: -2.5,
+      dimension: "minecraft:overworld",
+    };
+    const drop = {
+      connectionEpoch: "epoch-1",
+      networkId: 14,
+      entityType: "minecraft:item",
+      itemId: "minecraft:salmon",
+      position: {
+        x: 7.5,
+        y: 58,
+        z: -2.5,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: -0.1, z: 0 },
+      alive: true,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    let trackedDrop: BeatGameEntityObservation = drop;
+    let submergedPickupPolls = 0;
+    driver.currentObservation = observation({ position });
+    driver.entityQueryResolver = (query) => {
+      const movementStarted = driver.actions.some((action) =>
+        action.type === "set-movement" && action.forward === true
+      );
+      if (!movementStarted || query.selector.networkId === undefined) {
+        return [trackedDrop];
+      }
+      submergedPickupPolls += 1;
+      if (submergedPickupPolls >= 4) {
+        return [];
+      }
+      trackedDrop = {
+        ...trackedDrop,
+        position: {
+          ...trackedDrop.position,
+          x: trackedDrop.position.x + 0.2,
+          y: trackedDrop.position.y - 0.5,
+        },
+      };
+      return [trackedDrop];
+    };
+    driver.blockQueryResolver = () => [blockObservation({
+      x: 7,
+      y: 58,
+      z: -3,
+      dimension: "minecraft:overworld",
+    }, { blockId: "minecraft:water" })];
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+        driver.currentObservation = observation({
+          position: { x, y: 64, z, dimension },
+        });
+      });
+
+    await Effect.runPromise(collectNearbyDrops(driver, {
+      itemIds: ["minecraft:salmon"],
+      settleDelayMs: 0,
+      path: { avoidFluids: false },
+    }));
+
+    const steering = driver.actions.filter((action) =>
+      action.type === "look"
+    );
+    expect(steering).toHaveLength(3);
+    expect(steering.every((action) =>
+      action.type === "look" && action.pitch > 0
+    )).toBe(true);
+    expect(steering[2]?.type === "look" ? steering[2].yaw : 0)
+      .not.toBe(steering[0]?.type === "look" ? steering[0].yaw : 0);
+    expect(driver.actions).toContainEqual({
+      type: "set-movement",
+      forward: true,
+      sprint: false,
+      jump: false,
+      sneak: false,
+    });
+    expect(driver.actions.at(-1)).toEqual({ type: "reset-movement" });
+  });
+
   it("refreshes and prioritizes nearby item entities after each attempt", async () => {
     const driver = new FakeBeatGameDriver();
     const position = {
@@ -635,6 +722,8 @@ describe("beat-game behavior programs", () => {
       type: "set-movement",
       forward: true,
       sprint: false,
+      jump: false,
+      sneak: false,
     });
     expect(driver.actions.at(-1)).toEqual({ type: "reset-movement" });
   });
