@@ -2372,7 +2372,7 @@ function shouldCommitToFastMeleePursuerFight(
   return FAST_MELEE_PURSUER_ENTITY_TYPES.has(target.entityType)
     && (
       hasMeleeWeapon(observation)
-      || observation.player.health > LETHAL_MELEE_DISENGAGE_HEALTH
+      || isReadyForBarehandedDefense(observation)
     );
 }
 
