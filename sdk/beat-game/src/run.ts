@@ -283,6 +283,7 @@ const HUNT_APPROACH_BUFFER = 4;
 const HUNT_APPROACH_GOAL_RADIUS = 2;
 const HUNT_MAXIMUM_APPROACH_DISTANCE = 48;
 const DIRECTED_HUNT_MAXIMUM_DETOUR = 32;
+const DIRECTED_HUNT_DESTINATION_REACHED_RADIUS = 3;
 const AQUATIC_HUNT_MAXIMUM_HORIZONTAL_DISTANCE = 10;
 const AQUATIC_HUNT_MAXIMUM_VERTICAL_DISTANCE = 6;
 const ESCALATED_AQUATIC_HUNT_MAXIMUM_HORIZONTAL_DISTANCE = 64;
@@ -7104,6 +7105,10 @@ function huntOrExplore(
           const directedExplorationTarget =
             targetPreference?.explorationTarget?.dimension
                 === current.player.position.dimension
+              && horizontalDistanceSquared(
+                  targetPreference.explorationTarget,
+                  current.player.position,
+                ) > DIRECTED_HUNT_DESTINATION_REACHED_RADIUS ** 2
               ? targetPreference.explorationTarget
               : undefined;
           const allowFluidFallback =
