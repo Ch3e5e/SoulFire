@@ -152,6 +152,7 @@ const DISTANT_DEATH_RECOVERY_BOOTSTRAP_DISTANCE = 128;
 const ACTIVE_CORPSE_RECOVERY_DISTANCE = 256;
 const IMMEDIATE_CORPSE_RECOVERY_DISTANCE = 12;
 const CORPSE_DROP_INSPECTION_DISTANCE = 32;
+const CORPSE_DROP_MATCH_RADIUS = 16;
 const EMERGENCY_ARMAMENT_LOG_COUNT = 2;
 const DEATH_RECOVERY_BOOTSTRAP_LOG_COUNT = 12;
 const DEATH_RECOVERY_BOOTSTRAP_BLOCK_COUNT = 16;
@@ -2352,7 +2353,7 @@ function shouldDisengageFromThreat(
   if (shouldCommitToRangedFight(observation, target)) {
     return false;
   }
-  if (shouldCommitToFastMeleePursuerFight(target)) {
+  if (shouldCommitToFastMeleePursuerFight(observation, target)) {
     return false;
   }
   if (observation.player.health <= LETHAL_MELEE_DISENGAGE_HEALTH) {
@@ -2471,16 +2472,24 @@ function shouldCommitToUndergroundMeleeFight(
 }
 
 function shouldCommitToFastMeleePursuerFight(
+  observation: BeatGameObservation,
   target: BeatGameEntityObservation,
 ): boolean {
-  return FAST_MELEE_PURSUER_ENTITY_TYPES.has(target.entityType);
+  return FAST_MELEE_PURSUER_ENTITY_TYPES.has(target.entityType)
+    && (
+      hasMeleeWeapon(observation)
+      || (
+        observation.player.health >= MELEE_DISENGAGE_HEALTH
+        && observation.player.food >= 18
+      )
+    );
 }
 
 function isReadyForBarehandedDefense(
   observation: BeatGameObservation,
 ): boolean {
   return observation.player.health >= MELEE_DISENGAGE_HEALTH
-    && observation.player.food >= 18;
+    && observation.player.food > URGENT_HUNGER_FOOD_LEVEL;
 }
 
 function shouldCommitToMeleeFight(
@@ -2489,7 +2498,7 @@ function shouldCommitToMeleeFight(
 ): boolean {
   return shouldCommitToCloseMeleeFight(observation, target)
     || shouldCommitToUndergroundMeleeFight(observation, target)
-    || shouldCommitToFastMeleePursuerFight(target);
+    || shouldCommitToFastMeleePursuerFight(observation, target);
 }
 
 function escapeFromTarget(
@@ -4023,13 +4032,12 @@ function defendAgainstTarget(
           }
         }))
         : Effect.void;
-      const commitThroughWound = shouldCommitToUnshieldedRangedFight(
-        observation,
-        target,
-      );
+      const commitThroughWound =
+        shouldCommitToUnshieldedRangedFight(observation, target)
+        || isReadyForBarehandedDefense(observation);
       const commitThroughLethalWound =
         shouldCommitToCloseRangedFight(observation, target)
-        || shouldCommitToFastMeleePursuerFight(target);
+        || shouldCommitToFastMeleePursuerFight(observation, target);
       const guardedAttack = Effect.raceFirst(
         attack.pipe(Effect.as("defended" as const)),
         monitorDefenseHealth(
@@ -4042,7 +4050,7 @@ function defendAgainstTarget(
               && PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
             )
             || shouldCommitToCloseRangedFight(observation, target)
-            || shouldCommitToFastMeleePursuerFight(target)
+            || shouldCommitToFastMeleePursuerFight(observation, target)
           ),
           {
             commitThroughWound,
@@ -5045,7 +5053,10 @@ function tryFishForFood(
     current = yield* state.driver.observe;
     if (
       (current.inventory.counts["minecraft:fishing_rod"] ?? 0) === 0
-      && (current.inventory.counts["minecraft:string"] ?? 0) < 2
+      && (
+        (current.inventory.counts["minecraft:string"] ?? 0) < 2
+        || (current.inventory.counts["minecraft:stick"] ?? 0) < 3
+      )
     ) {
       return false;
     }
@@ -5069,17 +5080,25 @@ function tryFishForFood(
       return false;
     }
     if ((current.inventory.counts["minecraft:fishing_rod"] ?? 0) === 0) {
-      const workstation = yield* ensureWorkstation(
-        state,
-        current,
-        "minecraft:crafting_table",
-      );
-      yield* craftItem(state.driver, {
-        resultItemId: "minecraft:fishing_rod",
-        count: 1,
-        station: workstation.position,
-        path: state.strategy.path,
-      });
+      const preparation = yield* Effect.gen(function* () {
+        const workstation = yield* ensureWorkstation(
+          state,
+          current,
+          "minecraft:crafting_table",
+        );
+        yield* craftItem(state.driver, {
+          resultItemId: "minecraft:fishing_rod",
+          count: 1,
+          station: workstation.position,
+          path: state.strategy.path,
+        });
+      }).pipe(Effect.either);
+      if (preparation._tag === "Left") {
+        if (preparation.left.code === "resource-exhausted") {
+          return false;
+        }
+        return yield* Effect.fail(preparation.left);
+      }
       current = yield* state.driver.observe;
       if ((current.inventory.counts["minecraft:fishing_rod"] ?? 0) === 0) {
         return false;
@@ -10320,7 +10339,7 @@ function inspectNearbyCorpseDrops(
   );
   return state.driver.queryEntities({
     origin: pendingDeath.position,
-    radius: CORPSE_DROP_INSPECTION_DISTANCE,
+    radius: CORPSE_DROP_MATCH_RADIUS,
     selector: {
       alive: true,
       categories: [6],

@@ -5338,9 +5338,11 @@ function nonNegativeInteger(value: number, name: string): number {
 function behaviorError(
   driver: BeatGameDriver,
   message: string,
+  code?: string,
 ): BeatGameDriverError {
   return new BeatGameDriverError({
     operation: "behavior",
+    ...(code === undefined ? {} : { code }),
     retryable: true,
     message: `${driver.instanceId}/${driver.botId}: ${message}`,
   });
@@ -5420,6 +5422,7 @@ function craftItemDependencies(
               `Missing ${missing.missing} of ${
                 missing.itemIds.join(" or ")
               } while producing ${resultItemId}`,
+              "resource-exhausted",
             );
             continue recipeLoop;
           }
@@ -5451,6 +5454,7 @@ function craftItemDependencies(
     return yield* Effect.fail(lastFailure ?? behaviorError(
       driver,
       `No known recipe can currently produce ${resultItemId}`,
+      "resource-exhausted",
     ));
   });
 }

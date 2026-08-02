@@ -2133,6 +2133,40 @@ describe("beat-game behavior programs", () => {
     ]);
   });
 
+  it("classifies unavailable recipe ingredients as resource exhaustion", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.recipeResolver = (resultItemId) =>
+      resultItemId === "minecraft:fishing_rod"
+        ? [{
+          recipeId: "minecraft:fishing_rod",
+          recipeType: "crafting",
+          resultItemId,
+          resultCount: 1,
+          ingredients: [],
+        }]
+        : [];
+    driver.craftabilityResolver = () => ({
+      canCraft: false,
+      maximumCraftCount: 0,
+      missing: [{
+        itemIds: ["minecraft:stick"],
+        tags: [],
+        available: 0,
+        missing: 3,
+      }],
+    });
+
+    const result = await Effect.runPromise(craftItem(driver, {
+      resultItemId: "minecraft:fishing_rod",
+      count: 1,
+    }).pipe(Effect.either));
+
+    expect(result._tag).toBe("Left");
+    if (result._tag === "Left") {
+      expect(result.left.code).toBe("resource-exhausted");
+    }
+  });
+
   it("unlocks the crafting table recipe by producing planks first", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
