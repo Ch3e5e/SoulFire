@@ -10155,6 +10155,10 @@ function prepareForDistantDeathRecovery(
       current.player.position,
       pendingDeath.position,
     );
+    const horizontalRecoveryDistanceSquared = horizontalDistanceSquared(
+      current.player.position,
+      pendingDeath.position,
+    );
     const canRaceActiveCorpse =
       current.player.health >= state.strategy.minimumHealth
       && (
@@ -10162,7 +10166,8 @@ function prepareForDistantDeathRecovery(
         || !hasMeaningfulRecoveryInventory(current)
       );
     if (
-      recoveryDistanceSquared <= IMMEDIATE_CORPSE_RECOVERY_DISTANCE ** 2
+      horizontalRecoveryDistanceSquared
+        <= IMMEDIATE_CORPSE_RECOVERY_DISTANCE ** 2
       || (
         recoveryDistanceSquared <= ACTIVE_CORPSE_RECOVERY_DISTANCE ** 2
         && canRaceActiveCorpse
