@@ -4491,23 +4491,11 @@ function castNetherPortalFromLavaPool(
     yield* driver.withControl(Effect.gen(function* () {
       for (const [index, target] of targets.entries()) {
         if (index > 0) {
-          const source = lavaSources[index - 1];
-          if (source === undefined) {
-            return yield* Effect.fail(behaviorError(
-              driver,
-              "A reserved lava source disappeared during portal casting",
-            ));
-          }
-          yield* driver.pathfind(
-            source.position,
-            3,
-            mergePathPolicy(options.path),
+          yield* collectPortalCastingLava(
+            driver,
+            targets.length - index,
+            options.path,
           );
-          yield* driver.act({
-            type: "select-item",
-            selector: { itemIds: ["minecraft:bucket"] },
-          });
-          yield* useBucketToward(driver, blockCenter(source.position));
         }
         const targetSupport = below(target);
         const water = castingWaterPosition(frame, target);
@@ -4586,6 +4574,76 @@ function castNetherPortalFromLavaPool(
       driver.act({ type: "reset-movement" }).pipe(Effect.ignore),
     )));
     return frame;
+  });
+}
+
+function collectPortalCastingLava(
+  driver: BeatGameDriver,
+  remainingTargets: number,
+  path?: Partial<BeatGamePathPolicy>,
+): Effect.Effect<void, BeatGameDriverError> {
+  return Effect.gen(function* () {
+    const observation = yield* driver.observe;
+    const sources = yield* driver.queryBlocks({
+      center: observation.player.position,
+      radius: defaultBeatGameStrategy.blockSearchRadius,
+      selector: {
+        blockIds: ["minecraft:lava"],
+        properties: { level: "0" },
+      },
+      maximumResults: Math.max(8, remainingTargets),
+    });
+    const source = [...sources].sort((left, right) =>
+      distanceSquared(left.position, observation.player.position)
+      - distanceSquared(right.position, observation.player.position)
+    )[0];
+    if (source === undefined) {
+      return yield* Effect.fail(behaviorError(
+        driver,
+        "No live lava source remained for the next portal casting step",
+      ));
+    }
+    yield* driver.pathfind(
+      source.position,
+      3,
+      mergePathPolicy(path),
+    );
+    const liveSource = yield* driver.queryBlocks({
+      center: blockCenter(source.position),
+      radius: 0.25,
+      selector: {
+        blockIds: ["minecraft:lava"],
+        properties: { level: "0" },
+      },
+      maximumResults: 1,
+    });
+    if (!liveSource.some(({ position }) =>
+      samePosition(position, source.position)
+    )) {
+      return yield* Effect.fail(behaviorError(
+        driver,
+        `The portal casting lava source at ${
+          positionKey(source.position)
+        } changed while the bot approached it`,
+      ));
+    }
+    yield* driver.act({
+      type: "select-item",
+      selector: { itemIds: ["minecraft:bucket"] },
+    });
+    yield* useBucketToward(driver, blockCenter(source.position)).pipe(
+      Effect.mapError((cause) =>
+        new BeatGameDriverError({
+          operation: "collect-portal-casting-lava",
+          ...(cause.code === undefined ? {} : { code: cause.code }),
+          retryable: true,
+          message: `Could not collect the portal casting lava source at ${
+            positionKey(source.position)
+          }: ${cause.message}`,
+          cause,
+        })
+      ),
+    );
   });
 }
 
