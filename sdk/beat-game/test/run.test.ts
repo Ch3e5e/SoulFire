@@ -6198,6 +6198,81 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("swim-strafes away from a ranged hostile when already in water", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({ health: 8 });
+    const bogged: BeatGameEntityObservation = {
+      connectionEpoch: "epoch-1",
+      networkId: 23,
+      entityType: "minecraft:bogged",
+      position: {
+        x: 6,
+        y: 62,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 16,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    };
+    driver.entityResults = [bogged];
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2) === true
+        ? driver.entityResults
+        : [];
+    driver.blockQueryResolver = (query) =>
+      query.selector.blockIds?.includes("minecraft:water") === true
+        ? [blockObservation({
+          x: Math.floor(query.center.x),
+          y: Math.floor(query.center.y),
+          z: Math.floor(query.center.z),
+          dimension: query.center.dimension,
+        }, {
+          blockId: "minecraft:water",
+          replaceable: true,
+        })]
+        : [];
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (!driver.tasks.some((task) => task.type === "flee")) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.actions).toContainEqual({
+      type: "set-movement",
+      forward: true,
+      jump: true,
+      sprint: true,
+    });
+    expect(driver.actions).toContainEqual({
+      type: "set-movement",
+      left: true,
+      right: false,
+    });
+    expect(driver.actions).toContainEqual({
+      type: "set-movement",
+      left: false,
+      right: true,
+    });
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "flee",
+      triggerRadius: 24,
+      safeDistance: 32,
+    }));
+  });
+
   it("uses bounded dynamic pathfinding instead of sprinting off a cliff", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({

@@ -2971,6 +2971,12 @@ function knockBackAndSprintAway(
     };
     const projectedIntoFluid = threat.entityType !== "minecraft:creeper"
       && (yield* isPlayerInFluid(state.driver, projectedPosition));
+    const currentlyInFluid = yield* isPlayerInFluid(
+      state.driver,
+      playerPosition,
+    );
+    const directAquaticEvasion = currentlyInFluid
+      && PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(threat.entityType);
     const directSprintDistance = threat.entityType === "minecraft:creeper"
       ? CREEPER_ESCAPE_SURFACE_PROJECTION_DISTANCE
       : EMERGENCY_ESCAPE_SURFACE_PROJECTION_DISTANCE;
@@ -3010,8 +3016,8 @@ function knockBackAndSprintAway(
       }
       if (
         nearbyLava.length > 0
-        || projectedIntoFluid
-        || !safeDirectSprint
+        || (projectedIntoFluid && !directAquaticEvasion)
+        || (!safeDirectSprint && !directAquaticEvasion)
       ) {
         return;
       }
