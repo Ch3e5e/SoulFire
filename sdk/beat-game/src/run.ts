@@ -9074,7 +9074,18 @@ function ensureInventorySpace(
         selector: { itemIds: [itemId] },
         count,
       });
-      current = yield* state.driver.observe;
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        current = yield* state.driver.observe;
+        if (
+          current.inventory.emptyPlayerSlots === undefined
+          || current.inventory.emptyPlayerSlots > emptySlotsBefore
+        ) {
+          break;
+        }
+        yield* Effect.sleep(
+          Math.max(50, state.strategy.observationPollMs),
+        );
+      }
       if (
         current.inventory.emptyPlayerSlots !== undefined
         && current.inventory.emptyPlayerSlots <= emptySlotsBefore

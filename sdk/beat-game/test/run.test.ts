@@ -14952,13 +14952,24 @@ describe("beat-game run lifecycle", () => {
       }
       return Effect.void;
     };
+    let pendingInventoryObservations = 0;
+    driver.observationResolver = () =>
+      Effect.sync(() => {
+        if (pendingInventoryObservations > 0) {
+          pendingInventoryObservations -= 1;
+          if (pendingInventoryObservations === 0) {
+            driver.currentObservation = observation({
+              counts: driver.currentObservation.inventory.counts,
+              emptyPlayerSlots: 3,
+            });
+          }
+        }
+        return driver.currentObservation;
+      });
     driver.actionResolver = (action) =>
       Effect.sync(() => {
         if (action.type === "toss-items") {
-          driver.currentObservation = observation({
-            counts: driver.currentObservation.inventory.counts,
-            emptyPlayerSlots: 3,
-          });
+          pendingInventoryObservations = 2;
         }
         return {};
       });
