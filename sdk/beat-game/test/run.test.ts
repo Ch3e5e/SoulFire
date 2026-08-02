@@ -12099,7 +12099,7 @@ describe("beat-game run lifecycle", () => {
       networkId: 50,
       position: {
         ...healthyCod.position,
-        x: 4,
+        x: 8,
         y: 60.5,
       },
       health: 1,
@@ -12172,9 +12172,46 @@ describe("beat-game run lifecycle", () => {
       observedAt: "2026-01-01T00:00:00.000Z",
     } as const;
     driver.entityResults = [salmon];
+    driver.surfaceColumns = [{
+      x: 2,
+      z: 0,
+      loaded: true,
+      surfaceY: 63,
+      blockId: "minecraft:grass_block",
+      biomeId: "minecraft:plains",
+      skyLight: 15,
+      blockLight: 0,
+    }];
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+        driver.currentObservation = observation({
+          position,
+          health: 20,
+          food: 6,
+          counts: driver.currentObservation.inventory.counts,
+        });
+      });
+    let attacks = 0;
     driver.taskResolver = (task) =>
       Effect.sync(() => {
         driver.tasks.push(task);
+        if (task.type === "attack-entity") {
+          attacks += 1;
+          if (attacks === 1) {
+            driver.currentObservation = observation({
+              position: {
+                x: salmon.position.x,
+                y: 60,
+                z: salmon.position.z,
+                dimension: salmon.position.dimension,
+              },
+              health: 20,
+              food: 6,
+              counts: driver.currentObservation.inventory.counts,
+            });
+          }
+        }
       }).pipe(
         Effect.zipRight(
           task.type === "attack-entity"
@@ -12208,6 +12245,14 @@ describe("beat-game run lifecycle", () => {
           ? task.target.networkId
           : undefined),
     ).toEqual([salmon.networkId, salmon.networkId]);
+    expect(driver.paths).toContainEqual(expect.objectContaining({
+      position: {
+        x: 2.5,
+        y: 64,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+    }));
   }, 10_000);
 
   it("searches on land instead of chasing fish above critical hunger", async () => {

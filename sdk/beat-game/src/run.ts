@@ -320,7 +320,7 @@ const HUNT_UNREACHABLE_TARGET_RETRY_DISTANCE = 4;
 const HUNT_NEARBY_UNREACHABLE_RETRY_DELAY_MS = 5_000;
 const HUNT_DISTANT_UNREACHABLE_RETRY_DELAY_MS = 15_000;
 const AQUATIC_HUNT_VERTICAL_ROUTE_COST = 4;
-const AQUATIC_HUNT_HEALTH_ROUTE_COST = 4;
+const AQUATIC_HUNT_HEALTH_ROUTE_COST = 16;
 const AQUATIC_HUNT_DEFAULT_HEALTH = 3;
 const HUNT_APPROACH_BUFFER = 4;
 const HUNT_APPROACH_GOAL_RADIUS = 2;
@@ -7415,6 +7415,9 @@ function huntOrExplore(
       };
       if (yield* needsOverworldSurfaceRecovery(state, current.player.position)) {
         yield* escapeToOverworldSurface(state, current.player.position);
+        if (aquaticRetryTargetId !== undefined) {
+          continue;
+        }
         return;
       }
       const now = Date.now();
