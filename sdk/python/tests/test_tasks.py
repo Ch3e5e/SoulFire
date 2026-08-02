@@ -53,7 +53,7 @@ from soulfire.tasks import (
     LoadoutRequirementSpec,
     SchematicBlock,
 )
-from soulfire.world_pb2 import EntitySelector
+from soulfire.world_pb2 import EntitySelector, IntRange
 
 
 class AsyncTaskService:
@@ -820,6 +820,7 @@ def test_sync_collect_blocks_task_preserves_selectors_and_path_policy() -> None:
         search_radius=48,
         avoid_submerged_targets=True,
         require_line_of_sight=True,
+        target_y_range=IntRange(minimum=60, maximum=96),
         options=PathfindOptions(
             allow_mining=True,
             allow_placing=False,
@@ -836,6 +837,7 @@ def test_sync_collect_blocks_task_preserves_selectors_and_path_policy() -> None:
     assert task.search_radius == 48
     assert task.avoid_submerged_targets
     assert task.require_line_of_sight
+    assert task.target_y_range == IntRange(minimum=60, maximum=96)
     assert task.options.allow_mining
     assert not task.options.allow_placing
     assert task.options.avoid_fluids

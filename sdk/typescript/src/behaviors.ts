@@ -336,6 +336,10 @@ export interface CollectBlocksOptions {
   searchRadius?: number;
   allowPlacing?: boolean;
   requireLineOfSight?: boolean;
+  targetYRange?: Readonly<{
+    minimum?: number;
+    maximum?: number;
+  }>;
 }
 
 export function collectBlocks(
@@ -348,6 +352,9 @@ export function collectBlocks(
       count: options.count ?? 1,
       searchRadius: options.searchRadius ?? 32,
       requireLineOfSight: options.requireLineOfSight ?? false,
+      ...(options.targetYRange === undefined
+        ? {}
+        : { targetYRange: options.targetYRange }),
       path: {
         allowMining: true,
         allowPlacing: options.allowPlacing ?? false,

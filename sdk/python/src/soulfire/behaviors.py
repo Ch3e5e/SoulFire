@@ -12,6 +12,7 @@ from .bot_live_pb2 import (
     PathfindOptions,
 )
 from .common_pb2 import BlockPosition
+from .world_pb2 import IntRange
 
 ResultT = TypeVar("ResultT", covariant=True)
 
@@ -338,6 +339,7 @@ class CollectBlocks:
     search_radius: int = 32
     allow_placing: bool = False
     require_line_of_sight: bool = False
+    target_y_range: IntRange | None = None
 
     async def run(self, bot: AsyncSoulFireBot) -> int:
         task = await bot.tasks.collect_blocks(
@@ -346,6 +348,7 @@ class CollectBlocks:
             count=self.count,
             search_radius=self.search_radius,
             require_line_of_sight=self.require_line_of_sight,
+            target_y_range=self.target_y_range,
             options=PathfindOptions(
                 allow_mining=True,
                 allow_placing=self.allow_placing,

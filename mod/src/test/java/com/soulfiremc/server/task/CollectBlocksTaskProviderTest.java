@@ -17,6 +17,7 @@
  */
 package com.soulfiremc.server.task;
 
+import com.soulfiremc.grpc.generated.IntRange;
 import com.soulfiremc.server.pathfinding.SFVec3i;
 import com.soulfiremc.server.pathfinding.graph.BlockFace;
 import com.soulfiremc.test.utils.TestBlockAccessorBuilder;
@@ -137,6 +138,20 @@ final class CollectBlocksTaskProviderTest {
       new Vec3(0.5D, 64.5D, 0.5D),
       target
     ));
+  }
+
+  @Test
+  void restrictsCollectionToTheRequestedElevationRange() {
+    var range = IntRange.newBuilder()
+      .setMinimum(60)
+      .setMaximum(80)
+      .build();
+
+    assertFalse(CollectBlocksTaskProvider.isWithinTargetY(59, range));
+    assertTrue(CollectBlocksTaskProvider.isWithinTargetY(60, range));
+    assertTrue(CollectBlocksTaskProvider.isWithinTargetY(80, range));
+    assertFalse(CollectBlocksTaskProvider.isWithinTargetY(81, range));
+    assertTrue(CollectBlocksTaskProvider.isWithinTargetY(0, null));
   }
 
   @Test

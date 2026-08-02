@@ -723,6 +723,8 @@ message CollectBlocksTask {
   // reevaluated after every collected block, allowing newly exposed targets
   // to become eligible without routing toward hidden blocks.
   bool require_line_of_sight = 7;
+  // Restricts candidate block elevations. An omitted bound is unbounded.
+  IntRange target_y_range = 8;
 }
 
 enum CollectBlocksCompletionReason {

@@ -21,6 +21,7 @@ import com.soulfiremc.grpc.generated.BotTaskProgress;
 import com.soulfiremc.grpc.generated.CollectBlocksCompletionReason;
 import com.soulfiremc.grpc.generated.CollectBlocksTask;
 import com.soulfiremc.grpc.generated.CollectBlocksTaskResult;
+import com.soulfiremc.grpc.generated.IntRange;
 import com.soulfiremc.grpc.generated.WorldPosition;
 import com.soulfiremc.server.api.BotTaskExecution;
 import com.soulfiremc.server.api.BotTaskProvider;
@@ -127,6 +128,7 @@ public final class CollectBlocksTaskProvider
       input.getOptions().getAllowPlacing(),
       input.getAvoidSubmergedTargets(),
       input.getRequireLineOfSight(),
+      input.hasTargetYRange() ? input.getTargetYRange() : null,
       input.getOptions().getAvoidFluids(),
       result
     );
@@ -230,6 +232,15 @@ public final class CollectBlocksTaskProvider
       .anyMatch(hit -> hitsTargetBlock(target, hit));
   }
 
+  static boolean isWithinTargetY(
+    int y,
+    @Nullable IntRange targetYRange
+  ) {
+    return targetYRange == null
+      || (!targetYRange.hasMinimum() || y >= targetYRange.getMinimum())
+      && (!targetYRange.hasMaximum() || y <= targetYRange.getMaximum());
+  }
+
   static Set<SFVec3i> stalledTargets(
     Set<SFVec3i> attemptedTargets,
     SFVec3i playerPosition
@@ -279,6 +290,7 @@ public final class CollectBlocksTaskProvider
     private final boolean allowPlacing;
     private final boolean avoidSubmergedTargets;
     private final boolean requireLineOfSight;
+    private final @Nullable IntRange targetYRange;
     private final boolean avoidFluids;
     private final CompletableFuture<CollectBlocksTaskResult> result;
     private final Set<SFVec3i> rejectedTargets = new HashSet<>();
@@ -301,6 +313,7 @@ public final class CollectBlocksTaskProvider
       boolean allowPlacing,
       boolean avoidSubmergedTargets,
       boolean requireLineOfSight,
+      @Nullable IntRange targetYRange,
       boolean avoidFluids,
       CompletableFuture<CollectBlocksTaskResult> result
     ) {
@@ -312,6 +325,7 @@ public final class CollectBlocksTaskProvider
       this.allowPlacing = allowPlacing;
       this.avoidSubmergedTargets = avoidSubmergedTargets;
       this.requireLineOfSight = requireLineOfSight;
+      this.targetYRange = targetYRange;
       this.avoidFluids = avoidFluids;
       this.result = result;
     }
@@ -738,6 +752,9 @@ public final class CollectBlocksTaskProvider
     }
 
     private boolean matches(BlockPos position, BlockState state) {
+      if (!isWithinTargetY(position.getY(), targetYRange)) {
+        return false;
+      }
       if (rejectedTargets.contains(SFVec3i.fromInt(position))) {
         return false;
       }

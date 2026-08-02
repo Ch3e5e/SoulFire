@@ -102,7 +102,7 @@ from .task_pb2 import (
     WatchBotTaskRequest,
     WatchBotTasksRequest,
 )
-from .world_pb2 import EntitySelector
+from .world_pb2 import EntitySelector, IntRange
 
 type HeaderFactory = Callable[[dict[str, str] | None], dict[str, str] | None]
 
@@ -1846,6 +1846,7 @@ class AsyncSoulFireTasks:
         search_radius: int = 32,
         avoid_submerged_targets: bool = False,
         require_line_of_sight: bool = False,
+        target_y_range: IntRange | None = None,
         options: PathfindOptions | None = None,
         reconnect_policy: BotTaskReconnectPolicy = BOT_TASK_RECONNECT_POLICY_UNSPECIFIED,
         deadline: datetime | None = None,
@@ -1861,6 +1862,7 @@ class AsyncSoulFireTasks:
                 search_radius,
                 avoid_submerged_targets,
                 require_line_of_sight,
+                target_y_range,
                 options,
             ),
             reconnect_policy=reconnect_policy,
@@ -1879,6 +1881,7 @@ class AsyncSoulFireTasks:
         search_radius: int = 32,
         avoid_submerged_targets: bool = False,
         require_line_of_sight: bool = False,
+        target_y_range: IntRange | None = None,
         options: PathfindOptions | None = None,
         conflict_policy: BotTaskConflictPolicy = BOT_TASK_CONFLICT_POLICY_UNSPECIFIED,
         reconnect_policy: BotTaskReconnectPolicy = BOT_TASK_RECONNECT_POLICY_UNSPECIFIED,
@@ -1896,6 +1899,7 @@ class AsyncSoulFireTasks:
                 search_radius,
                 avoid_submerged_targets,
                 require_line_of_sight,
+                target_y_range,
                 options,
             ),
             CollectBlocksTaskResult,
@@ -4009,6 +4013,7 @@ class SoulFireTasks:
         search_radius: int = 32,
         avoid_submerged_targets: bool = False,
         require_line_of_sight: bool = False,
+        target_y_range: IntRange | None = None,
         options: PathfindOptions | None = None,
         reconnect_policy: BotTaskReconnectPolicy = BOT_TASK_RECONNECT_POLICY_UNSPECIFIED,
         deadline: datetime | None = None,
@@ -4024,6 +4029,7 @@ class SoulFireTasks:
                 search_radius,
                 avoid_submerged_targets,
                 require_line_of_sight,
+                target_y_range,
                 options,
             ),
             reconnect_policy=reconnect_policy,
@@ -4042,6 +4048,7 @@ class SoulFireTasks:
         search_radius: int = 32,
         avoid_submerged_targets: bool = False,
         require_line_of_sight: bool = False,
+        target_y_range: IntRange | None = None,
         options: PathfindOptions | None = None,
         conflict_policy: BotTaskConflictPolicy = BOT_TASK_CONFLICT_POLICY_UNSPECIFIED,
         reconnect_policy: BotTaskReconnectPolicy = BOT_TASK_RECONNECT_POLICY_UNSPECIFIED,
@@ -4059,6 +4066,7 @@ class SoulFireTasks:
                 search_radius,
                 avoid_submerged_targets,
                 require_line_of_sight,
+                target_y_range,
                 options,
             ),
             CollectBlocksTaskResult,
@@ -5086,6 +5094,7 @@ def _collect_blocks_task(
     search_radius: int,
     avoid_submerged_targets: bool,
     require_line_of_sight: bool,
+    target_y_range: IntRange | None,
     options: PathfindOptions | None,
 ) -> CollectBlocksTask:
     ids = tuple(block_ids)
@@ -5106,6 +5115,8 @@ def _collect_blocks_task(
     )
     if options is not None:
         task.options.CopyFrom(options)
+    if target_y_range is not None:
+        task.target_y_range.CopyFrom(target_y_range)
     return task
 
 

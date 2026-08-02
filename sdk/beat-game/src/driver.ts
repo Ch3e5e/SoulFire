@@ -147,6 +147,10 @@ export type BeatGameTask =
     readonly searchRadius: number;
     readonly avoidSubmergedTargets?: boolean;
     readonly requireLineOfSight?: boolean;
+    readonly targetYRange?: Readonly<{
+      minimum?: number;
+      maximum?: number;
+    }>;
   }
   | {
     readonly type: "excavate";
@@ -641,6 +645,9 @@ export function makeSoulFireBeatGameDriver(
             searchRadius: task.searchRadius,
             avoidSubmergedTargets: task.avoidSubmergedTargets ?? false,
             requireLineOfSight: task.requireLineOfSight ?? false,
+            ...(task.targetYRange === undefined
+              ? {}
+              : { targetYRange: task.targetYRange }),
             path,
           });
         case "excavate":

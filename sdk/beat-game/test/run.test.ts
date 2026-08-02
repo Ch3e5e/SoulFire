@@ -2003,6 +2003,7 @@ describe("beat-game run lifecycle", () => {
       blockIds: expect.arrayContaining(["minecraft:oak_log"]),
       count: 2,
       requireLineOfSight: true,
+      targetYRange: { minimum: 60 },
     }));
     expect(driver.paths).not.toContainEqual(expect.objectContaining({
       position: deathPosition,

@@ -803,6 +803,7 @@ describe("beat-game behavior programs", () => {
       count: 4,
       searchRadius: 32,
       requireLineOfSight: true,
+      targetYRange: { minimum: 60, maximum: 96 },
       path: { allowMining: false },
     }));
 
@@ -814,6 +815,7 @@ describe("beat-game behavior programs", () => {
       searchRadius: 32,
       avoidSubmergedTargets: false,
       requireLineOfSight: true,
+      targetYRange: { minimum: 60, maximum: 96 },
     }]);
     expect(driver.activeControlScopes).toBe(0);
     expect(driver.actions.at(-1)).toEqual({ type: "reset-movement" });

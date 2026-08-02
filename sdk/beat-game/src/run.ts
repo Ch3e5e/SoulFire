@@ -344,6 +344,7 @@ const AIR_ESCAPE_VERTICAL_PROGRESS_ATTEMPTS = 20;
 const AIR_ESCAPE_VERTICAL_PROGRESS = 0.75;
 const OVERWORLD_LOW_GROUND_MAX_Y = 62;
 const OVERWORLD_FORCED_SURFACE_RECOVERY_MAX_Y = 64;
+const SURFACE_RESOURCE_MINIMUM_Y_MARGIN = 4;
 const SURFACE_NEIGHBOR_MAX_HEIGHT_DELTA = 1;
 const MINIMUM_STABLE_SURFACE_NEIGHBORS = 2;
 const ELEVATED_SURFACE_PATH_TIMEOUT_MS = 15_000;
@@ -4940,6 +4941,7 @@ function prepareForFoodHunt(
       purpose: "prepare-food-hunt",
       avoidSubmergedTargets: true,
       requireLineOfSight: true,
+      requireSurfaceTargets: true,
       path: {
         ...state.strategy.path,
         allowPlacing: false,
@@ -5609,6 +5611,7 @@ function ensureEfficientFurnaceFuel(
         purpose: "find-furnace-fuel",
         avoidSubmergedTargets: true,
         requireLineOfSight: true,
+        requireSurfaceTargets: true,
       });
       currentObservation = yield* state.driver.observe;
       activeWorkstation = yield* ensureAccessibleFurnaceForBatch(
@@ -5702,6 +5705,7 @@ function collectBlocksOrExplore(
     readonly purpose: string;
     readonly avoidSubmergedTargets?: boolean;
     readonly requireLineOfSight?: boolean;
+    readonly requireSurfaceTargets?: boolean;
     readonly avoidFluids?: boolean;
     readonly path?: BeatGameStrategy["path"];
     readonly prepareAttempt?: (
@@ -5740,6 +5744,20 @@ function collectBlocksOrExplore(
         RESOURCE_COLLECTION_RESERVED_SLOTS,
       );
       current = yield* state.driver.observe;
+      if (
+        options.requireSurfaceTargets === true
+        && current.player.position.dimension === "minecraft:overworld"
+        && (yield* needsOverworldSurfaceRecovery(
+          state,
+          current.player.position,
+        ))
+      ) {
+        yield* escapeToOverworldSurface(
+          state,
+          current.player.position,
+        );
+        current = yield* state.driver.observe;
+      }
       yield* collectNearbyDrops(state.driver, {
         itemIds: options.progressItemIds,
         radius: 12,
@@ -5764,6 +5782,15 @@ function collectBlocksOrExplore(
         searchRadius: state.strategy.blockSearchRadius,
         avoidSubmergedTargets: options.avoidSubmergedTargets ?? false,
         requireLineOfSight: options.requireLineOfSight ?? false,
+        ...(options.requireSurfaceTargets === true
+            && current.player.position.dimension === "minecraft:overworld"
+          ? {
+            targetYRange: {
+              minimum: Math.floor(current.player.position.y)
+                - SURFACE_RESOURCE_MINIMUM_Y_MARGIN,
+            },
+          }
+          : {}),
         path: collectionPath,
       });
       const waitForInventoryTarget = Effect.gen(function* () {
@@ -10252,6 +10279,7 @@ function prepareForDistantDeathRecovery(
           purpose: "prepare-corpse-recovery",
           avoidSubmergedTargets: true,
           requireLineOfSight: true,
+          requireSurfaceTargets: true,
           path: protectedRecoveryPath,
         });
         current = yield* state.driver.observe;
@@ -10301,6 +10329,7 @@ function prepareForDistantDeathRecovery(
           purpose: "prepare-corpse-recovery-pickaxe",
           avoidSubmergedTargets: true,
           requireLineOfSight: true,
+          requireSurfaceTargets: true,
           path: protectedRecoveryPath,
         });
         current = yield* state.driver.observe;
@@ -10331,6 +10360,7 @@ function prepareForDistantDeathRecovery(
         purpose: "prepare-corpse-recovery-log-buffer",
         avoidSubmergedTargets: true,
         requireLineOfSight: true,
+        requireSurfaceTargets: true,
         path: protectedRecoveryPath,
       });
       current = yield* state.driver.observe;
