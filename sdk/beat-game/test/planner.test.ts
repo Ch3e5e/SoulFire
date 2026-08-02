@@ -103,6 +103,22 @@ describe("beat-game planner", () => {
     });
   });
 
+  it("crafts a wooden sword as soon as enough wood is available", () => {
+    const decision = decideBeatGameAction({
+      checkpoint: checkpoint(BeatGamePhase.PREPARE_OVERWORLD),
+      observation: observation({
+        counts: { "minecraft:oak_log": 2 },
+      }),
+      strategy: defaultBeatGameStrategy,
+    });
+
+    expect(decision).toMatchObject({
+      type: "satisfy-requirement",
+      action: "satisfy:basic-melee-weapon",
+      requirement: { key: "basic-melee-weapon" },
+    });
+  });
+
   it("defers a small healthy food top-up while required work remains", () => {
     const decision = decideBeatGameAction({
       checkpoint: checkpoint(BeatGamePhase.ENTER_NETHER),

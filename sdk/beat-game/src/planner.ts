@@ -10,6 +10,8 @@ import {
   CRITICAL_HUNGER_FOOD_LEVEL,
   EDIBLE_FOOD_ITEM_IDS,
   EMERGENCY_FOOD_ITEM_IDS,
+  LOG_ITEM_IDS,
+  PLANK_ITEM_IDS,
   RAW_FOOD_TO_COOKED,
   URGENT_HUNGER_FOOD_LEVEL,
   requirementsForPhase,
@@ -143,6 +145,18 @@ export function decideBeatGameAction(
     }
     return { type: "retreat", action: "retreat" };
   }
+  if (phase === BeatGamePhase.PREPARE_OVERWORLD) {
+    const basicWeapon = requirements.find(({ key }) =>
+      key === "basic-melee-weapon"
+    );
+    if (
+      basicWeapon !== undefined
+      && !basicWeapon.satisfied
+      && canCraftWoodenSword(observation)
+    ) {
+      return requirementDecision(basicWeapon);
+    }
+  }
   const firstMissing = requirements.find(({ satisfied }) => !satisfied);
   const missing = firstMissing !== undefined
       && shouldDeferFoodReserveRefill(firstMissing, observation, strategy)
@@ -231,6 +245,24 @@ export function decideBeatGameAction(
     case BeatGamePhase.COMPLETE:
       return phaseTransition(phase, phase);
   }
+}
+
+function canCraftWoodenSword(
+  observation: BeatGameObservation,
+): boolean {
+  const counts = observation.inventory.counts;
+  const availablePlanks = PLANK_ITEM_IDS.reduce(
+    (total, itemId) => total + (counts[itemId] ?? 0),
+    LOG_ITEM_IDS.reduce(
+      (total, itemId) => total + (counts[itemId] ?? 0) * 4,
+      0,
+    ),
+  );
+  const craftingTableCost = (counts["minecraft:crafting_table"] ?? 0) > 0
+    ? 0
+    : 4;
+  const stickCost = (counts["minecraft:stick"] ?? 0) > 0 ? 0 : 2;
+  return availablePlanks >= craftingTableCost + stickCost + 2;
 }
 
 function shouldDeferFoodReserveRefill(
