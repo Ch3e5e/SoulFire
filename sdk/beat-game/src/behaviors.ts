@@ -4824,26 +4824,11 @@ function placeBucketOnTopOf(
   driver: BeatGameDriver,
   support: BeatGameBlockPosition,
 ): Effect.Effect<void, BeatGameDriverError> {
-  return Effect.gen(function* () {
-    const observation = yield* driver.observe;
-    const eyePosition = {
-      ...observation.player.position,
-      y: observation.player.position.y + 1.62,
-    };
-    const rotation = rotationToward(eyePosition, topFaceCenter(support));
-    yield* driver.act({
-      type: "look",
-      yaw: rotation.yaw,
-      pitch: rotation.pitch,
-    });
-    yield* waitForRotation(
-      driver,
-      rotation.yaw,
-      rotation.pitch,
-      40,
-      50,
-    );
-    yield* driver.act({ type: "use-item", hand: "main" });
+  return driver.act({
+    type: "interact-block",
+    position: support,
+    face: "up",
+    hand: "main",
   });
 }
 
@@ -4862,15 +4847,6 @@ function staircaseFeetCenter(
   return {
     ...position,
     x: position.x + 0.5,
-    z: position.z + 0.5,
-  };
-}
-
-function topFaceCenter(position: BeatGameBlockPosition): BeatGamePosition {
-  return {
-    ...position,
-    x: position.x + 0.5,
-    y: position.y + 1,
     z: position.z + 0.5,
   };
 }

@@ -3317,7 +3317,7 @@ describe("beat-game behavior programs", () => {
     }));
 
     const liquidPlacementIndex = driver.actions.findIndex((action) =>
-      action.type === "use-item"
+      action.type === "interact-block"
     );
     expect(driver.actions).toContainEqual({
       type: "dig-block",
@@ -3352,37 +3352,25 @@ describe("beat-game behavior programs", () => {
       position: castingStand,
       radius: 0,
     }));
-    const lavaSelectionIndex = driver.actions.findIndex((action) =>
-      action.type === "select-item"
-      && action.selector.itemIds?.includes("minecraft:lava_bucket") === true
-    );
-    const lavaLook = driver.actions.slice(lavaSelectionIndex + 1).find(
-      (action) => action.type === "look",
-    );
-    const expectedLavaRotation = rotationToward(
-      {
-        ...origin,
-        y: origin.y + 1.62,
-      },
-      {
-        ...target,
-        x: target.x + 0.5,
-        y: target.y,
-        z: target.z + 0.5,
-      },
-    );
-    expect(lavaLook).toEqual({
-      type: "look",
-      yaw: expectedLavaRotation.yaw,
-      pitch: expectedLavaRotation.pitch,
+    expect(driver.actions).toContainEqual({
+      type: "interact-block",
+      position: { ...target, y: target.y - 1 },
+      face: "up",
+      hand: "main",
+    });
+    expect(driver.actions).toContainEqual({
+      type: "interact-block",
+      position: { ...water, y: water.y - 1 },
+      face: "up",
+      hand: "main",
     });
     expect(water.z).toBeGreaterThan(castingStand.z);
     expect(water.z).toBeLessThan(target.z);
     expect(blocks.get(key(target))?.blockId).toBe("minecraft:obsidian");
     expect(driver.actions.filter(({ type }) => type === "use-item"))
-      .toHaveLength(3);
-    expect(driver.actions.some(({ type }) => type === "interact-block"))
-      .toBe(false);
+      .toHaveLength(1);
+    expect(driver.actions.filter(({ type }) => type === "interact-block"))
+      .toHaveLength(2);
     expect(driver.tasks).toHaveLength(0);
     expect(driver.activeControlScopes).toBe(0);
   });
@@ -3484,7 +3472,10 @@ describe("beat-game behavior programs", () => {
         });
         return;
       }
-      if (action.type !== "use-item") {
+      if (
+        action.type !== "use-item"
+        && action.type !== "interact-block"
+      ) {
         return;
       }
       if (selectedItemId === "minecraft:lava_bucket") {
