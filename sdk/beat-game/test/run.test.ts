@@ -12911,6 +12911,72 @@ describe("beat-game run lifecycle", () => {
     });
   });
 
+  it("recovers a submerged food drop after surfacing for air", async () => {
+    const driver = new FakeBeatGameDriver();
+    const salmon = {
+      connectionEpoch: "epoch-1",
+      networkId: 47,
+      entityType: "minecraft:item",
+      itemId: "minecraft:salmon",
+      position: {
+        x: 3,
+        y: 58,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.currentObservation = observation({
+      food: 6,
+      health: 8,
+    });
+    driver.entityQueryResolver = (query) =>
+      query.selector.entityTypes?.includes("minecraft:item") === true
+        ? [salmon]
+        : [];
+    driver.blockQueryResolver = (query) =>
+      query.selector.blockIds?.includes("minecraft:water") === true
+        ? [blockObservation({
+          x: 3,
+          y: 58,
+          z: 0,
+          dimension: "minecraft:overworld",
+        }, {
+          blockId: "minecraft:water",
+          diggable: false,
+          replaceable: true,
+        })]
+        : [];
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (driver.xzPaths.length === 0) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    })));
+
+    expect(driver.xzPaths[0]).toMatchObject({
+      x: Math.floor(salmon.position.x) + 0.5,
+      z: Math.floor(salmon.position.z) + 0.5,
+      dimension: salmon.position.dimension,
+      policy: {
+        allowPlacing: false,
+        avoidFluids: false,
+      },
+    });
+    expect(driver.tasks.some((task) => task.type === "attack-entity"))
+      .toBe(false);
+  });
+
   it("backs off food searches that make no observable progress", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({

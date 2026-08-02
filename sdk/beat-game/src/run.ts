@@ -4749,6 +4749,15 @@ function recoverNearbyRequirementDrops(
   requirement: BeatGameItemRequirement,
   observation: BeatGameObservation,
 ): Effect.Effect<boolean, BeatGameDriverError> {
+  const shouldCrossFluids = (
+    requirement.key === "food" || requirement.key === "food-supply"
+  ) && (
+    observation.player.health >= state.strategy.minimumHealth
+    || (
+      observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
+      && observation.player.health > LETHAL_MELEE_DISENGAGE_HEALTH
+    )
+  );
   const itemIds = [...new Set(
     requirement.key === "food"
       ? [
@@ -4795,7 +4804,7 @@ function recoverNearbyRequirementDrops(
           path: {
             ...state.strategy.path,
             allowPlacing: false,
-            avoidFluids: true,
+            avoidFluids: !shouldCrossFluids,
           },
         }).pipe(
           Effect.zipRight(state.driver.observe),
