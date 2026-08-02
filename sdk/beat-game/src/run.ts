@@ -5911,6 +5911,18 @@ function collectBlocksOrExplore(
         || options.avoidSubmergedTargets === true
       ? { ...requestedPath, avoidFluids: true }
       : requestedPath;
+    const collectionPathFor = (
+      position: BeatGamePosition,
+    ): Effect.Effect<BeatGameStrategy["path"], BeatGameDriverError> =>
+      baseCollectionPath.avoidFluids !== true
+        ? Effect.succeed(baseCollectionPath)
+        : isPlayerInFluid(state.driver, position).pipe(
+          Effect.map((inFluid) =>
+            inFluid
+              ? { ...baseCollectionPath, avoidFluids: false }
+              : baseCollectionPath
+          ),
+        );
     const explorationPath = {
       ...(options.avoidFluids === true ? baseCollectionPath : requestedPath),
       allowMining: false,
@@ -5945,14 +5957,17 @@ function collectBlocksOrExplore(
         );
         current = yield* state.driver.observe;
       }
+      const fluidAwareCollectionPath = yield* collectionPathFor(
+        current.player.position,
+      );
       const collectionPath = options.requireSurfaceTargets === true
           && current.player.position.dimension === "minecraft:overworld"
         ? {
-          ...baseCollectionPath,
+          ...fluidAwareCollectionPath,
           minimumY: Math.floor(current.player.position.y)
             - SURFACE_RESOURCE_PATH_MINIMUM_Y_MARGIN,
         }
-        : baseCollectionPath;
+        : fluidAwareCollectionPath;
       yield* collectNearbyDrops(state.driver, {
         itemIds: options.progressItemIds,
         radius: 12,

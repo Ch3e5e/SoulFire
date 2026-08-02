@@ -272,4 +272,18 @@ final class CollectBlocksTaskProviderTest {
     assertEquals(Set.of(target), rejectedTargets);
     assertFalse(failedApproaches.containsKey(target));
   }
+
+  @Test
+  void retriesAPreviouslyVisibleTargetFromAnOccludedApproach() {
+    assertTrue(CollectBlocksTaskProvider.hasRequiredLineOfSight(
+      true,
+      true,
+      () -> false
+    ));
+    assertFalse(CollectBlocksTaskProvider.hasRequiredLineOfSight(
+      true,
+      false,
+      () -> false
+    ));
+  }
 }

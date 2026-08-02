@@ -70,6 +70,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.function.BooleanSupplier;
 import java.util.stream.Collectors;
 
 /// Durable block collection provider backed by repeated live path searches.
@@ -277,6 +278,16 @@ public final class CollectBlocksTaskProvider
       rejectedTargets.add(target);
     }
     return true;
+  }
+
+  static boolean hasRequiredLineOfSight(
+    boolean requireLineOfSight,
+    boolean previouslyAttempted,
+    BooleanSupplier lineOfSight
+  ) {
+    return !requireLineOfSight
+      || previouslyAttempted
+      || lineOfSight.getAsBoolean();
   }
 
   private static final class CollectBlocksControl implements ControlTask {
@@ -630,10 +641,14 @@ public final class CollectBlocksTaskProvider
         .filter(position -> canHarvest(
           level.getBlockState(position.toBlockPos())
         ))
-        .filter(position -> !requireLineOfSight || hasLineOfSight(
-          level,
-          player.getEyePosition(),
-          position.toBlockPos()
+        .filter(position -> hasRequiredLineOfSight(
+          requireLineOfSight,
+          rejectedAdjacentPositions.containsKey(position),
+          () -> hasLineOfSight(
+            level,
+            player.getEyePosition(),
+            position.toBlockPos()
+          )
         ))
         .limit(MAX_CANDIDATES)
         .toList();

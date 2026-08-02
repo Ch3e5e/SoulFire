@@ -15805,6 +15805,65 @@ describe("beat-game run lifecycle", () => {
     expect(driver.xzPaths[0]?.policy.avoidFluids).not.toBe(true);
   });
 
+  it("allows a collection route to leave fluid for a dry log target", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      position: {
+        x: 0.5,
+        y: 63,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+    });
+    driver.blockQueryResolver = ({ center, selector }) =>
+      selector.blockIds?.includes("minecraft:water") === true
+          && Math.floor(center.x) === 0
+          && Math.floor(center.y) === 63
+          && Math.floor(center.z) === 0
+        ? [blockObservation({
+          x: 0,
+          y: 63,
+          z: 0,
+          dimension: "minecraft:overworld",
+        }, {
+          blockId: "minecraft:water",
+          replaceable: true,
+        })]
+        : [];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(
+        Effect.zipRight(
+          task.type === "collect-blocks" ? Effect.never : Effect.void,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some((task) =>
+        task.type === "collect-blocks"
+        && task.blockIds.includes("minecraft:oak_log")
+      )) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    })));
+
+    const logCollectionIndex = driver.tasks.findIndex((task) =>
+      task.type === "collect-blocks"
+      && task.blockIds.includes("minecraft:oak_log")
+    );
+    expect(logCollectionIndex).toBeGreaterThanOrEqual(0);
+    expect(driver.tasks[logCollectionIndex]).toEqual(expect.objectContaining({
+      type: "collect-blocks",
+      avoidSubmergedTargets: true,
+    }));
+    expect(driver.taskPolicies[logCollectionIndex]?.avoidFluids).toBe(false);
+  });
+
   it("crafts a basic sword and pickaxe before mining cobblestone", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
