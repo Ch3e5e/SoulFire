@@ -37,10 +37,10 @@ import com.soulfiremc.server.pathfinding.execution.BlockBreakRejectedException;
 import com.soulfiremc.server.pathfinding.execution.BlockPlaceRejectedException;
 import com.soulfiremc.server.pathfinding.execution.PathExecutor;
 import com.soulfiremc.server.pathfinding.execution.UnreachableGoalException;
-import com.soulfiremc.server.pathfinding.goals.AdjacentToBlockGoal;
 import com.soulfiremc.server.pathfinding.goals.BreakBlockPosGoal;
 import com.soulfiremc.server.pathfinding.goals.CompositeGoal;
 import com.soulfiremc.server.pathfinding.goals.GoalScorer;
+import com.soulfiremc.server.pathfinding.goals.WithinBlockReachGoal;
 import com.soulfiremc.server.pathfinding.graph.BlockFace;
 import com.soulfiremc.server.pathfinding.graph.constraint.BlockBreakBlacklistConstraint;
 import com.soulfiremc.server.pathfinding.graph.constraint.PathConstraint;
@@ -77,7 +77,7 @@ public final class CollectBlocksTaskProvider
   implements BotTaskProvider<CollectBlocksTask> {
   private static final int DEFAULT_SEARCH_RADIUS = 32;
   private static final int MAX_SEARCH_RADIUS = 64;
-  private static final int MAX_CANDIDATES = 256;
+  private static final int MAX_CANDIDATES = 64;
   private static final int MAX_FAILED_APPROACHES_PER_TARGET = 4;
   private static final int MAX_CONSECUTIVE_STALLED_PATHS = 4;
   private static final double DIRECT_BREAK_REACH_SQUARED = 4.5D * 4.5D;
@@ -244,7 +244,7 @@ public final class CollectBlocksTaskProvider
     SFVec3i playerPosition
   ) {
     var adjacentTargets = attemptedTargets.stream()
-      .filter(target -> AdjacentToBlockGoal.isAdjacentPosition(
+      .filter(target -> WithinBlockReachGoal.isWithinReach(
         target,
         playerPosition
       ))
@@ -277,39 +277,6 @@ public final class CollectBlocksTaskProvider
       rejectedTargets.add(target);
     }
     return true;
-  }
-
-  static Set<SFVec3i> directBreakApproachPositions(
-    BlockGetter level,
-    SFVec3i target
-  ) {
-    return AdjacentToBlockGoal.interactionPositions(target).stream()
-      .filter(position -> canDirectlyBreakFrom(level, position, target))
-      .collect(Collectors.toUnmodifiableSet());
-  }
-
-  private static boolean canDirectlyBreakFrom(
-    BlockGetter level,
-    SFVec3i playerFeet,
-    SFVec3i target
-  ) {
-    var eyePosition = new Vec3(
-      playerFeet.x + 0.5D,
-      playerFeet.y + 1.62D,
-      playerFeet.z + 0.5D
-    );
-    var targetPosition = target.toBlockPos();
-    return directBreakFaces(eyePosition, target).stream()
-      .anyMatch(face -> hitsTargetBlock(
-        targetPosition,
-        level.clip(new ClipContext(
-          eyePosition,
-          face.getMiddleOfFace(target),
-          ClipContext.Block.OUTLINE,
-          ClipContext.Fluid.NONE,
-          CollisionContext.empty()
-        ))
-      ));
   }
 
   private static final class CollectBlocksControl implements ControlTask {
@@ -411,29 +378,19 @@ public final class CollectBlocksTaskProvider
         );
       }
       activeTargets = Set.copyOf(candidates);
-      var level = context.bot().minecraft().level;
       activePath = PathExecutor.createPathfinding(
         context.bot(),
         new CompositeGoal(candidates.stream()
           .<GoalScorer>mapMulti(
             (candidate, goals) -> {
               goals.accept(new BreakBlockPosGoal(candidate));
-              if (level != null) {
-                var interactionPositions = directBreakApproachPositions(
-                  level,
-                  candidate
-                );
-                if (!interactionPositions.isEmpty()) {
-                  goals.accept(new AdjacentToBlockGoal(
-                    candidate,
-                    rejectedAdjacentPositions.getOrDefault(
-                      candidate,
-                      Set.of()
-                    ),
-                    interactionPositions
-                  ));
-                }
-              }
+              goals.accept(new WithinBlockReachGoal(
+                candidate,
+                rejectedAdjacentPositions.getOrDefault(
+                  candidate,
+                  Set.of()
+                )
+              ));
             }
           )
           .collect(Collectors.toUnmodifiableSet())),
@@ -512,7 +469,7 @@ public final class CollectBlocksTaskProvider
         var pathProgress = path.progress();
         context.reportProgress(progress(pathProgress.planning()
           ? "Planning collection route"
-          : "Mining matching block"));
+          : "Following collection route"));
         return;
       }
       activePath = null;

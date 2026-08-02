@@ -172,22 +172,6 @@ final class CollectBlocksTaskProviderTest {
   }
 
   @Test
-  void routesAroundLogsThatOccludeAnOverheadTarget() {
-    var blocks = new TestBlockAccessorBuilder();
-    var target = new SFVec3i(0, 70, 0);
-    blocks.setBlockAt(0, 69, 0, Blocks.OAK_LOG);
-    blocks.setBlockAt(0, 70, 0, Blocks.OAK_LOG);
-
-    var positions = CollectBlocksTaskProvider.directBreakApproachPositions(
-      blocks.build(),
-      target
-    );
-
-    assertFalse(positions.contains(new SFVec3i(0, 64, 0)));
-    assertTrue(positions.contains(new SFVec3i(1, 68, 0)));
-  }
-
-  @Test
   void rejectsDropSensitiveBlocksWhenNoSuitableToolExists() {
     assertFalse(CollectBlocksTaskProvider.hasDropPreservingTool(
       Blocks.STONE.defaultBlockState(),
@@ -204,7 +188,7 @@ final class CollectBlocksTaskProviderTest {
     var playerPosition = new SFVec3i(10, 64, -5);
     var adjacentTarget = playerPosition.add(1, 0, 0);
     var overheadTarget = playerPosition.add(0, 3, 0);
-    var distantTarget = playerPosition.add(4, 0, 0);
+    var distantTarget = playerPosition.add(6, 0, 0);
 
     assertEquals(
       Set.of(adjacentTarget, overheadTarget),
