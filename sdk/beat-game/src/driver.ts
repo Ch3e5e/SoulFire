@@ -26,6 +26,25 @@ import type {
 
 const CONTROL_LEASE_TTL_SECONDS = 90;
 const CONTROL_LEASE_RENEWAL_INTERVAL_MS = 30_000;
+const RPC_STATUS_CODE_NAMES = [
+  "ok",
+  "canceled",
+  "unknown",
+  "invalid_argument",
+  "deadline_exceeded",
+  "not_found",
+  "already_exists",
+  "permission_denied",
+  "resource_exhausted",
+  "failed_precondition",
+  "aborted",
+  "out_of_range",
+  "unimplemented",
+  "internal",
+  "unavailable",
+  "data_loss",
+  "unauthenticated",
+] as const;
 
 export interface BeatGameItemSelector {
   readonly itemIds?: readonly string[];
@@ -1525,9 +1544,25 @@ function taskFailureCode(cause: unknown): string | undefined {
   ) {
     return cause.task.failure.code;
   }
+  if ("code" in cause) {
+    const code = failureCode(cause.code);
+    if (code !== undefined) {
+      return code;
+    }
+  }
   return "cause" in cause && cause.cause !== cause
     ? taskFailureCode(cause.cause)
     : undefined;
+}
+
+function failureCode(value: unknown): string | undefined {
+  if (typeof value === "string" && value.length > 0) {
+    return value;
+  }
+  if (!Number.isSafeInteger(value) || Number(value) <= 0) {
+    return undefined;
+  }
+  return RPC_STATUS_CODE_NAMES[Number(value)];
 }
 
 function isRetryable(cause: unknown): boolean {

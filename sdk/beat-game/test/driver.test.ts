@@ -2,6 +2,7 @@ import {
   BotTaskConflictPolicy,
   BotTaskReconnectPolicy,
   InventoryArea,
+  SoulFireRpcError,
   SoulFireTaskError,
   SoulFireTaskFailed,
   type SoulFireBot,
@@ -21,6 +22,7 @@ import {
 
 function effectBot(
   taskResult: Effect.Effect<unknown, unknown> = Effect.succeed({}),
+  selectHotbarResult: Effect.Effect<unknown, unknown> = Effect.succeed({}),
 ) {
   const calls: {
     attack?: Readonly<Record<string, unknown>>;
@@ -109,7 +111,7 @@ function effectBot(
             },
           ],
         }),
-      selectHotbar: () => Effect.succeed({}),
+      selectHotbar: () => selectHotbarResult,
       equip: (request: Readonly<Record<string, unknown>>) => {
         calls.equip = request;
         return Effect.succeed({});
@@ -374,6 +376,32 @@ describe("production SoulFire beat-game driver", () => {
     }, defaultBeatGameStrategy.path)));
 
     expect(error.code).toBe("not_found");
+  });
+
+  it("normalizes Connect RPC status codes for primitive failures", async () => {
+    const cause = new SoulFireRpcError({
+      operation: "inventory.selectHotbar",
+      cause: new Error("No matching item is available"),
+      code: 5,
+      retryable: false,
+      message: "No matching item is available",
+    });
+    const { bot } = effectBot(
+      Effect.succeed({}),
+      Effect.fail(cause),
+    );
+    const driver = makeSoulFireBeatGameDriver(bot);
+
+    const error = await Effect.runPromise(Effect.flip(driver.act({
+      type: "select-item",
+      selector: { itemIds: ["minecraft:iron_pickaxe"] },
+    })));
+
+    expect(error).toMatchObject({
+      operation: "act.select-item",
+      code: "not_found",
+      retryable: false,
+    });
   });
 
   it("forwards the observation epoch with direct entity actions", async () => {
