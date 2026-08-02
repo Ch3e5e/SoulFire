@@ -12142,6 +12142,74 @@ describe("beat-game run lifecycle", () => {
     }));
   }, 10_000);
 
+  it("retries the same fish after a bounded aquatic chase expires", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      health: 20,
+      food: 6,
+      counts: {
+        "minecraft:cobblestone": 20,
+        "minecraft:iron_ingot": 7,
+        "minecraft:oak_log": 8,
+        "minecraft:shield": 1,
+        "minecraft:stone_pickaxe": 1,
+        "minecraft:stone_sword": 1,
+      },
+    });
+    const salmon = {
+      connectionEpoch: "epoch-1",
+      networkId: 51,
+      entityType: "minecraft:salmon",
+      position: {
+        x: 2,
+        y: 63,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 2,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.entityResults = [salmon];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(
+        Effect.zipRight(
+          task.type === "attack-entity"
+            ? Effect.fail(new BeatGameDriverError({
+              operation: "task.attack-entity",
+              code: "aquatic_chase_timeout",
+              retryable: true,
+              message: "The fish moved out of reach",
+            }))
+            : Effect.void,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (
+        driver.tasks.filter((task) => task.type === "attack-entity").length < 2
+      ) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    })));
+
+    expect(
+      driver.tasks
+        .filter((task) => task.type === "attack-entity")
+        .slice(0, 2)
+        .map((task) => task.type === "attack-entity"
+          ? task.target.networkId
+          : undefined),
+    ).toEqual([salmon.networkId, salmon.networkId]);
+  }, 10_000);
+
   it("searches on land instead of chasing fish above critical hunger", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({

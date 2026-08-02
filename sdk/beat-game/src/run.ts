@@ -331,6 +331,7 @@ const DIRECTED_HUNT_DESTINATION_REACHED_RADIUS = 3;
 const URGENT_AQUATIC_HUNT_MAXIMUM_HORIZONTAL_DISTANCE = 64;
 const URGENT_AQUATIC_HUNT_MAXIMUM_VERTICAL_DISTANCE = 16;
 const AQUATIC_HUNT_CHASE_TIMEOUT_MS = 8_000;
+const AQUATIC_HUNT_MAXIMUM_CHASE_ATTEMPTS = 3;
 const AQUATIC_WATER_ENTRY_SEARCH_RADIUS = 3;
 const AQUATIC_WATER_ENTRY_ATTEMPTS = 12;
 const MAXIMUM_DAMAGE_FREE_FALL_DISTANCE = 3;
@@ -7350,8 +7351,10 @@ function huntOrExplore(
       Math.floor(targetPreference?.maximumExplorationHops ?? 1),
     );
     const attemptedTargets = new Set<string>();
+    const aquaticChaseAttempts = new Map<string, number>();
     const locallyUnreachable = new Set<string>();
     let confirmedVisibleTarget: BeatGameEntityObservation | undefined;
+    let aquaticRetryTargetId: string | undefined;
     let strandedAquaticFallback = false;
     let aquaticPursuitActive = false;
     let attacked = 0;
@@ -7475,29 +7478,36 @@ function huntOrExplore(
         : preferredCandidates.length > 0
         ? preferredCandidates
         : candidates;
-      const target = rankedCandidates.reduce<
-        BeatGameEntityObservation | undefined
-      >(
-        (nearest, candidate) =>
-          nearest === undefined
-            || huntingTargetRouteCost(
-                candidate,
-                current.player.position,
-                recoveringHealth
-                  ? undefined
-                  : targetPreference?.explorationTarget,
-              )
-                < huntingTargetRouteCost(
-                  nearest,
+      const retryTarget = aquaticRetryTargetId === undefined
+        ? undefined
+        : rankedCandidates.find((candidate) =>
+          `${candidate.connectionEpoch}:${candidate.networkId}`
+            === aquaticRetryTargetId
+        );
+      aquaticRetryTargetId = undefined;
+      const target = retryTarget ?? rankedCandidates.reduce<
+          BeatGameEntityObservation | undefined
+        >(
+          (nearest, candidate) =>
+            nearest === undefined
+              || huntingTargetRouteCost(
+                  candidate,
                   current.player.position,
                   recoveringHealth
                     ? undefined
                     : targetPreference?.explorationTarget,
                 )
-            ? candidate
-            : nearest,
-        undefined,
-      );
+                  < huntingTargetRouteCost(
+                    nearest,
+                    current.player.position,
+                    recoveringHealth
+                      ? undefined
+                      : targetPreference?.explorationTarget,
+                  )
+              ? candidate
+              : nearest,
+          undefined,
+        );
       aquaticPursuitActive = target !== undefined
         && AQUATIC_FOOD_ENTITY_TYPES.has(target.entityType);
       if (target === undefined) {
@@ -7828,9 +7838,19 @@ function huntOrExplore(
             })).pipe(Effect.ignore)
         ),
         Effect.as(true),
-        Effect.catchTag("BeatGameDriverError", (cause) =>
-          cause.code === "not_found"
-            || cause.operation === "task.attack-entity"
+        Effect.catchTag("BeatGameDriverError", (cause) => {
+          if (cause.code === "aquatic_chase_timeout") {
+            const attempts = (aquaticChaseAttempts.get(targetId) ?? 0) + 1;
+            aquaticChaseAttempts.set(targetId, attempts);
+            if (attempts < AQUATIC_HUNT_MAXIMUM_CHASE_ATTEMPTS) {
+              return Effect.sync(() => {
+                attemptedTargets.delete(targetId);
+                aquaticRetryTargetId = targetId;
+              }).pipe(Effect.as(false));
+            }
+          }
+          return cause.code === "not_found"
+              || cause.operation === "task.attack-entity"
             ? Effect.sync(() => {
               locallyUnreachable.add(targetKey);
             }).pipe(
@@ -7845,8 +7865,8 @@ function huntOrExplore(
               ),
               Effect.as(false),
             )
-            : Effect.fail(cause)
-        ),
+            : Effect.fail(cause);
+        }),
         Effect.ensuring(releaseActionClaim(state, claim)),
       );
       if (!defeated) {
