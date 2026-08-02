@@ -14643,6 +14643,56 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("returns to the surface before collecting logs", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      position: {
+        x: 0.5,
+        y: 21,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+      counts: { "minecraft:oak_log": 3 },
+    });
+    driver.surfaceColumns = [{
+      x: 0,
+      z: 0,
+      loaded: true,
+      surfaceY: 63,
+      blockId: "minecraft:grass_block",
+      biomeId: "minecraft:plains",
+      skyLight: 15,
+      blockLight: 0,
+    }];
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (driver.paths.length === 0) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    })));
+
+    expect(driver.paths[0]).toEqual(expect.objectContaining({
+      position: {
+        x: 0.5,
+        y: 64,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+    }));
+    expect(driver.tasks.some((task) =>
+      task.type === "collect-blocks"
+      && task.blockIds.includes("minecraft:oak_log")
+    )).toBe(false);
+  });
+
   it("keeps log collection dry while allowing frontier water crossings", async () => {
     const driver = new FakeBeatGameDriver();
     driver.xzPathResolver = (x, z, dimension, radius, policy) =>
@@ -14668,6 +14718,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks[logCollectionIndex]).toEqual(expect.objectContaining({
       type: "collect-blocks",
       avoidSubmergedTargets: true,
+      requireLineOfSight: true,
     }));
     expect(driver.taskPolicies[logCollectionIndex]?.avoidFluids).toBe(true);
     expect(driver.xzPaths[0]?.policy.allowMining).toBe(false);

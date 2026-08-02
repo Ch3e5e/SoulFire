@@ -4665,6 +4665,8 @@ function satisfyRequirementFromWorld(
         progressItemIds: requirement.itemIds,
         purpose: "find-logs",
         avoidSubmergedTargets: true,
+        requireLineOfSight: true,
+        requireSurfaceTargets: true,
       });
     case "cobblestone":
       return collectBlocksOrExplore(state, observation, {
