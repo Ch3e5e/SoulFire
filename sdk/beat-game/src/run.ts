@@ -2096,7 +2096,7 @@ function monitorObservedSafety(
       observation,
       state.strategy,
       state.hooks.satisfyRequirement === undefined,
-    )
+  )
   ) {
     return Effect.succeed({});
   }
@@ -7631,17 +7631,24 @@ function isEligibleHuntingTarget(
   minimumHealth: number,
   targetPreference?: HuntTargetPreference,
 ): boolean {
+  const aquaticTarget = AQUATIC_FOOD_ENTITY_TYPES.has(target.entityType);
+  const urgentAquaticHunt = shouldAllowUrgentAquaticHunt(
+    observation,
+    targetPreference,
+  );
   return isHuntingTargetWithinReach(
     target,
     observation,
     minimumHealth,
     targetPreference,
-  )
+    )
     && (
-      !AQUATIC_FOOD_ENTITY_TYPES.has(target.entityType)
-      || targetPreference?.allowAquaticTargets === true
-      || targetPreference?.allowUrgentAquaticTargets === true
-      || observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
+      !aquaticTarget
+      || urgentAquaticHunt
+      || (
+        observation.player.health >= minimumHealth
+        && targetPreference?.allowAquaticTargets === true
+      )
     )
     && (
       observation.player.health <= LETHAL_MELEE_DISENGAGE_HEALTH
@@ -7671,8 +7678,10 @@ function isHuntingTargetWithinReach(
     const emergencyAquaticFallback =
       targetPreference?.allowAquaticTargets === true
       && targetPreference.allowFluidFallback === true;
-    const urgentAquaticHunt =
-      targetPreference?.allowUrgentAquaticTargets === true;
+    const urgentAquaticHunt = shouldAllowUrgentAquaticHunt(
+      observation,
+      targetPreference,
+    );
     return (
       observation.player.health >= minimumHealth
       || observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
@@ -7700,6 +7709,17 @@ function isHuntingTargetWithinReach(
     observation.player.health < minimumHealth ? 12 : 32;
   return Math.abs(target.position.y - observation.player.position.y)
     <= maximumVerticalDistance;
+}
+
+function shouldAllowUrgentAquaticHunt(
+  observation: BeatGameObservation,
+  targetPreference?: HuntTargetPreference,
+): boolean {
+  return observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
+    || (
+      targetPreference?.allowUrgentAquaticTargets === true
+      && observation.player.food <= URGENT_AQUATIC_HUNT_FOOD_LEVEL
+    );
 }
 
 function survivalPathPolicy(

@@ -1619,7 +1619,7 @@ describe("beat-game run lifecycle", () => {
     } as const;
     driver.currentObservation = observation({
       health: 6,
-      food: 11,
+      food: 10,
       counts: {
         "minecraft:dirt": 16,
         "minecraft:oak_log": 12,
@@ -1642,7 +1642,7 @@ describe("beat-game run lifecycle", () => {
             ) {
               driver.currentObservation = observation({
                 health: 6,
-                food: 11,
+                food: 10,
                 position: { x: -20 },
                 counts: {
                   "minecraft:dirt": 16,
@@ -11053,7 +11053,7 @@ describe("beat-game run lifecycle", () => {
     });
   });
 
-  it("swims for nearby food when an injured bot has no dry route", async () => {
+  it("enters water to pursue nearby food when hunger is urgent", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
@@ -11086,7 +11086,7 @@ describe("beat-game run lifecycle", () => {
       observedAt: "2026-01-01T00:00:00.000Z",
     } as const;
     driver.currentObservation = observation({
-      food: 12,
+      food: 10,
       health: 8,
       counts: {
         "minecraft:iron_ingot": 7,
@@ -11142,7 +11142,7 @@ describe("beat-game run lifecycle", () => {
             : Effect.sync(() => {
               driver.currentObservation = observation({
                 position,
-                food: 12,
+                food: 10,
                 health: 8,
                 counts: {
                   "minecraft:iron_ingot": 7,
@@ -11170,7 +11170,7 @@ describe("beat-game run lifecycle", () => {
           z: 0.5,
           dimension: "minecraft:overworld",
         },
-        food: 12,
+        food: 10,
         health: 8,
         counts: driver.currentObservation.inventory.counts,
       });
@@ -11196,11 +11196,7 @@ describe("beat-game run lifecycle", () => {
       yield* run.stop;
     })));
 
-    expect(driver.xzPaths[0]?.policy).toMatchObject({
-      allowMining: false,
-      allowPlacing: false,
-      avoidFluids: true,
-    });
+    expect(driver.xzPaths).toHaveLength(0);
     expect(driver.paths[0]).toMatchObject({
       position: salmon.position,
       policy: {
