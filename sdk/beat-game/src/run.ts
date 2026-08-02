@@ -2649,7 +2649,7 @@ function escapeFromTarget(
           ? needsRecovery
           : escapePath.allowMining,
         allowPlacing: false,
-        avoidFluids: true,
+        avoidFluids: !currentlyInFluid,
         maxFallDistance: Math.min(
           escapePath.maxFallDistance,
           MAXIMUM_DAMAGE_FREE_FALL_DISTANCE,
@@ -8088,12 +8088,6 @@ function shouldAllowAquaticHunt(
     return false;
   }
   if (observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL) {
-    return true;
-  }
-  if (
-    observation.player.health < minimumHealth
-    && observation.player.food <= URGENT_HUNGER_FOOD_LEVEL
-  ) {
     return true;
   }
   const minimumSafeHealth = Math.max(

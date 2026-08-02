@@ -4343,7 +4343,7 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
-  it("avoids deeper water while escaping from a submerged start", async () => {
+  it("allows a submerged escape route to reach dry land", async () => {
     const driver = new FakeBeatGameDriver();
     driver.entityResults = [{
       connectionEpoch: "epoch-1",
@@ -4405,7 +4405,7 @@ describe("beat-game run lifecycle", () => {
     const fleeIndex = driver.tasks.findIndex((task) => task.type === "flee");
     expect(driver.taskPolicies[fleeIndex]).toMatchObject({
       allowPlacing: false,
-      avoidFluids: true,
+      avoidFluids: false,
       maxFallDistance: 3,
     });
   });
@@ -12292,7 +12292,7 @@ describe("beat-game run lifecycle", () => {
     });
   });
 
-  it("hunts shallow fish when injury and urgent hunger prevent regeneration", async () => {
+  it("keeps an urgently hungry injured bot on land above critical hunger", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
       food: 8,
@@ -12322,31 +12322,28 @@ describe("beat-game run lifecycle", () => {
       observedAt: "2026-01-01T00:00:00.000Z",
     } as const;
     driver.entityResults = [salmon];
-    driver.taskResolver = (task) => {
-      driver.tasks.push(task);
-      return task.type === "attack-entity" ? Effect.never : Effect.void;
-    };
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
 
     await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const run = yield* beatGameWithDriver(driver, {
         strategy: { observationPollMs: 1 },
       });
-      while (!driver.tasks.some((task) => task.type === "attack-entity")) {
+      while (driver.xzPaths.length === 0) {
         yield* Effect.sleep(1);
       }
       yield* run.stop;
     })));
 
-    expect(driver.xzPaths).toHaveLength(0);
-    const attackIndex = driver.tasks.findIndex(
-      (task) => task.type === "attack-entity",
-    );
-    expect(driver.tasks[attackIndex]).toEqual(expect.objectContaining({
-      target: expect.objectContaining({ networkId: salmon.networkId }),
-    }));
-    expect(driver.taskPolicies[attackIndex]).toMatchObject({
-      avoidFluids: false,
-      sprint: true,
+    expect(driver.tasks.some((task) => task.type === "attack-entity"))
+      .toBe(false);
+    expect(driver.xzPaths[0]?.policy).toMatchObject({
+      allowMining: false,
+      allowPlacing: false,
+      avoidFluids: true,
+      sprint: false,
     });
   });
 
