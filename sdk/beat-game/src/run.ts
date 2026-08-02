@@ -2109,7 +2109,10 @@ function monitorObservedSafety(
       decision.type === "satisfy-requirement"
       && (
         (
-          decision.requirement.key === "food"
+          (
+            decision.requirement.key === "food"
+            || decision.requirement.key === "food-supply"
+          )
           && !hasRecoveryFood(observation)
         )
         || decision.requirement.key === "lava-bucket"

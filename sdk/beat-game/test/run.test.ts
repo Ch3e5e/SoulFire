@@ -15936,6 +15936,59 @@ describe("beat-game run lifecycle", () => {
     })));
   });
 
+  it("continues a food-supply hunt while wounded", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      health: 14,
+      food: 12,
+      counts: {
+        "minecraft:oak_log": 8,
+        "minecraft:cobblestone": 20,
+        "minecraft:stone_sword": 1,
+      },
+    });
+    driver.entityResults = [{
+      connectionEpoch: "epoch-1",
+      networkId: 43,
+      entityType: "minecraft:cow",
+      position: {
+        x: 8,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 10,
+      observedAt: "2026-01-01T00:00:01.000Z",
+    }];
+    let interruptedHunts = 0;
+    driver.taskResolver = (task) => {
+      driver.tasks.push(task);
+      return task.type === "attack-entity"
+        ? Effect.never.pipe(
+          Effect.onInterrupt(() =>
+            Effect.sync(() => {
+              interruptedHunts += 1;
+            })
+          ),
+        )
+        : Effect.void;
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some((task) => task.type === "attack-entity")) {
+        yield* Effect.sleep(1);
+      }
+      yield* Effect.sleep(250);
+      expect(interruptedHunts).toBe(0);
+      yield* run.stop;
+    })));
+  });
+
   it("buffers charcoal before cooking a food batch", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
