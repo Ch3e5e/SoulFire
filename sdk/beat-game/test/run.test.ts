@@ -11650,45 +11650,49 @@ describe("beat-game run lifecycle", () => {
     });
   });
 
-  it("arms an injured bot before sending it on a food hunt", async () => {
+  it("hunts passive food barehanded when injured", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
       health: 10,
       food: 12,
     });
-    driver.blockResults = [blockObservation({
-      x: 2,
-      y: 64,
-      z: 0,
-      dimension: "minecraft:overworld",
-    }, { blockId: "minecraft:oak_log" })];
+    const cow = {
+      connectionEpoch: "epoch-1",
+      networkId: 50,
+      entityType: "minecraft:cow",
+      position: {
+        x: 3,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 10,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.entityResults = [cow];
     driver.taskResolver = (task) => {
       driver.tasks.push(task);
-      return task.type === "collect-blocks" ? Effect.never : Effect.void;
+      return task.type === "attack-entity" ? Effect.never : Effect.void;
     };
 
     await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const run = yield* beatGameWithDriver(driver, {
         strategy: { observationPollMs: 1 },
       });
-      while (!driver.tasks.some((task) => task.type === "collect-blocks")) {
+      while (!driver.tasks.some((task) => task.type === "attack-entity")) {
         yield* Effect.sleep(1);
       }
       yield* run.stop;
     })));
 
     expect(driver.tasks).toContainEqual(expect.objectContaining({
-      type: "collect-blocks",
-      blockIds: expect.arrayContaining(["minecraft:oak_log"]),
-      count: 2,
+      type: "attack-entity",
+      target: expect.objectContaining({ networkId: cow.networkId }),
     }));
-    expect(driver.taskPolicies.at(-1)).toMatchObject({
-      allowPlacing: false,
-      avoidFluids: true,
-    });
-    expect(driver.entityQueries.some(({ selector }) =>
-      selector.entityTypes?.includes("minecraft:cow") === true
-    )).toBe(false);
+    expect(driver.tasks.some((task) => task.type === "collect-blocks"))
+      .toBe(false);
   });
 
   it("keeps searching on land after repeated dry food searches", async () => {
@@ -11815,6 +11819,77 @@ describe("beat-game run lifecycle", () => {
       allowMining: false,
       allowPlacing: false,
       avoidFluids: true,
+    });
+  });
+
+  it("hunts shallow fish after every dry recovery route fails", async () => {
+    const driver = new FakeBeatGameDriver();
+    const salmon = {
+      connectionEpoch: "epoch-1",
+      networkId: 46,
+      entityType: "minecraft:salmon",
+      position: {
+        x: 3,
+        y: 62,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 3,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.currentObservation = observation({
+      food: 11,
+      health: 6,
+    });
+    driver.entityResults = [salmon];
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+      }).pipe(Effect.zipRight(Effect.fail(new BeatGameDriverError({
+        operation: "pathfindXZ",
+        code: "unreachable",
+        retryable: true,
+        message: "No dry route leaves the isolated bridge",
+      }))));
+    driver.taskResolver = (task) => {
+      driver.tasks.push(task);
+      return task.type === "attack-entity" ? Effect.never : Effect.void;
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some((task) => task.type === "attack-entity")) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    })));
+
+    expect(driver.xzPaths).toHaveLength(1);
+    expect(driver.xzPaths[0]?.policy).toMatchObject({
+      allowMining: false,
+      allowPlacing: false,
+      avoidFluids: true,
+      sprint: false,
+    });
+    expect(driver.surfaceQueries.length).toBeGreaterThan(0);
+    const attackIndex = driver.tasks.findIndex(
+      (task) => task.type === "attack-entity",
+    );
+    expect(driver.tasks[attackIndex]).toEqual(expect.objectContaining({
+      target: expect.objectContaining({
+        connectionEpoch: salmon.connectionEpoch,
+        networkId: salmon.networkId,
+      }),
+    }));
+    expect(driver.taskPolicies[attackIndex]).toMatchObject({
+      allowMining: false,
+      allowPlacing: false,
+      avoidFluids: false,
+      sprint: true,
     });
   });
 

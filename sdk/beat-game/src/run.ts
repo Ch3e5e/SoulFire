@@ -4870,10 +4870,6 @@ function satisfyFoodSupplyRequirement(
   requirement: BeatGameItemRequirement,
   observation: BeatGameObservation,
 ): Effect.Effect<void, BeatGameError | BeatGameDriverError> {
-  const armamentPreparation = prepareForFoodHunt(state, observation);
-  if (armamentPreparation !== undefined) {
-    return armamentPreparation;
-  }
   return recoverNearbyFurnaceContents(state, observation).pipe(
     Effect.flatMap(({ observation: current, recovered }) => {
       if (recovered) {
@@ -4907,10 +4903,6 @@ function satisfyFoodRequirement(
   requirement: BeatGameItemRequirement,
   observation: BeatGameObservation,
 ): Effect.Effect<void, BeatGameError | BeatGameDriverError> {
-  const armamentPreparation = prepareForFoodHunt(state, observation);
-  if (armamentPreparation !== undefined) {
-    return armamentPreparation;
-  }
   const rawFood = Object.entries(RAW_FOOD_TO_COOKED)
     .map(([rawItemId, cookedItemId]) => ({
       rawItemId,
@@ -5009,45 +5001,6 @@ function satisfyFoodRequirement(
     );
   }
   return cookRawFoodBatch(state, observation, batch);
-}
-
-function prepareForFoodHunt(
-  state: RunState,
-  observation: BeatGameObservation,
-): Effect.Effect<void, BeatGameDriverError> | undefined {
-  if (
-    hasMeleeWeapon(observation)
-    || hasUsableFood(observation)
-    || observation.player.food <= URGENT_HUNGER_FOOD_LEVEL
-  ) {
-    return undefined;
-  }
-  const logCount = LOG_ITEM_IDS.reduce(
-    (total, itemId) => total + (observation.inventory.counts[itemId] ?? 0),
-    0,
-  );
-  if (logCount < EMERGENCY_ARMAMENT_LOG_COUNT) {
-    return collectBlocksOrExplore(state, observation, {
-      blockIds: LOG_ITEM_IDS,
-      count: EMERGENCY_ARMAMENT_LOG_COUNT - logCount,
-      progressItemIds: LOG_ITEM_IDS,
-      purpose: "prepare-food-hunt",
-      avoidSubmergedTargets: true,
-      requireLineOfSight: true,
-      requireSurfaceTargets: true,
-      path: {
-        ...state.strategy.path,
-        allowPlacing: false,
-        avoidFluids: true,
-      },
-    });
-  }
-  return craftWithTable(
-    state,
-    observation,
-    "minecraft:wooden_sword",
-    1,
-  );
 }
 
 function huntForFoodRequirement(
@@ -7218,11 +7171,7 @@ function huntOrExplore(
     const attemptedTargets = new Set<string>();
     const locallyUnreachable = new Set<string>();
     let confirmedVisibleTarget: BeatGameEntityObservation | undefined;
-    const allowAquaticFallback = shouldAllowAquaticHunt(
-      observation,
-      state.strategy.minimumHealth,
-      targetPreference,
-    );
+    let strandedAquaticFallback = false;
     let aquaticPursuitActive = false;
     let attacked = 0;
     let explorationHops = 0;
@@ -7242,11 +7191,17 @@ function huntOrExplore(
         RESOURCE_COLLECTION_RESERVED_SLOTS,
       );
       current = yield* state.driver.observe;
+      const aquaticHuntAllowed = strandedAquaticFallback
+        || shouldAllowAquaticHunt(
+          current,
+          state.strategy.minimumHealth,
+          targetPreference,
+        );
       const overworldHunt =
         current.player.position.dimension === "minecraft:overworld";
       if (
         overworldHunt
-        && !allowAquaticFallback
+        && !aquaticHuntAllowed
         && !aquaticPursuitActive
         && (yield* isPlayerInFluid(state.driver, current.player.position))
       ) {
@@ -7258,12 +7213,7 @@ function huntOrExplore(
         current.player.health,
         state.strategy.minimumHealth,
       );
-      const aquaticExploration = shouldAllowAquaticHunt(
-        current,
-        state.strategy.minimumHealth,
-        targetPreference,
-      );
-      const huntingPath = aquaticExploration
+      const huntingPath = aquaticHuntAllowed
         ? { ...survivalPath, avoidFluids: false }
         : survivalPath;
       const explorationPath = {
@@ -7320,6 +7270,7 @@ function huntOrExplore(
           current,
           state.strategy.minimumHealth,
           targetPreference,
+          aquaticHuntAllowed,
         )
       );
       const preferredCandidates = targetPreference === undefined
@@ -7434,6 +7385,7 @@ function huntOrExplore(
               locallyUnreachable,
               rememberedUnreachableTargets,
               targetPreference,
+              aquaticHuntAllowed,
             ).pipe(
               Effect.map((target) => ({
                 type: "target-visible" as const,
@@ -7466,10 +7418,18 @@ function huntOrExplore(
             );
           } else if (explorationOutcome.type === "route-failed") {
             const latest = yield* state.driver.observe;
-            yield* recoverLocalNavigationTrap(
+            const recovered = yield* recoverLocalNavigationTrap(
               state,
               latest.player.position,
             );
+            if (
+              !recovered
+              && !strandedAquaticFallback
+              && targetPreference?.allowCriticalAquaticTargets === true
+            ) {
+              strandedAquaticFallback = true;
+              explorationHops = 0;
+            }
           }
         }
         continue;
@@ -7517,7 +7477,7 @@ function huntOrExplore(
             ),
           );
           if (!approached) {
-            const enteredWater = allowAquaticFallback
+            const enteredWater = aquaticHuntAllowed
               ? yield* enterWaterTowardAquaticTarget(state, current, target)
               : false;
             if (enteredWater) {
@@ -7845,6 +7805,7 @@ function waitForVisibleHuntingTarget(
     BeatGameMemoryEntry<BeatGamePosition>
   >,
   targetPreference?: HuntTargetPreference,
+  aquaticHuntAllowed = false,
 ): Effect.Effect<BeatGameEntityObservation, BeatGameDriverError> {
   const poll = (
     previouslyVisibleTargets: ReadonlySet<string>,
@@ -7875,6 +7836,7 @@ function waitForVisibleHuntingTarget(
                 observation,
                 state.strategy.minimumHealth,
                 targetPreference,
+                aquaticHuntAllowed,
               )
             );
             const confirmed = visibleTargets.find((target) =>
@@ -7935,19 +7897,16 @@ function isEligibleHuntingTarget(
   observation: BeatGameObservation,
   minimumHealth: number,
   targetPreference?: HuntTargetPreference,
+  aquaticHuntAllowed = false,
 ): boolean {
   const aquaticTarget = AQUATIC_FOOD_ENTITY_TYPES.has(target.entityType);
-  const aquaticHuntAllowed = shouldAllowAquaticHunt(
-    observation,
-    minimumHealth,
-    targetPreference,
-  );
   return isHuntingTargetWithinReach(
     target,
     observation,
     minimumHealth,
     targetPreference,
-    )
+    aquaticHuntAllowed,
+  )
     && (
       !aquaticTarget
       || aquaticHuntAllowed
@@ -7967,6 +7926,7 @@ function isHuntingTargetWithinReach(
   observation: BeatGameObservation,
   minimumHealth: number,
   targetPreference?: HuntTargetPreference,
+  aquaticHuntAllowed = false,
 ): boolean {
   if (EMERGENCY_FOOD_ENTITY_TYPE_SET.has(target.entityType)) {
     return Math.abs(target.position.y - observation.player.position.y)
@@ -7977,11 +7937,6 @@ function isHuntingTargetWithinReach(
         ) <= EMERGENCY_FOOD_MAXIMUM_HORIZONTAL_DISTANCE ** 2;
   }
   if (AQUATIC_FOOD_ENTITY_TYPES.has(target.entityType)) {
-    const aquaticHuntAllowed = shouldAllowAquaticHunt(
-      observation,
-      minimumHealth,
-      targetPreference,
-    );
     return aquaticHuntAllowed
       && Math.abs(target.position.y - observation.player.position.y)
         <= URGENT_AQUATIC_HUNT_MAXIMUM_VERTICAL_DISTANCE
