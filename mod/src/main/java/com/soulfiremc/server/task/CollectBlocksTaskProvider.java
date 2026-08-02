@@ -58,6 +58,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.CollisionContext;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Comparator;
@@ -125,6 +126,7 @@ public final class CollectBlocksTaskProvider
       radius,
       input.getOptions().getAllowPlacing(),
       input.getAvoidSubmergedTargets(),
+      input.getRequireLineOfSight(),
       input.getOptions().getAvoidFluids(),
       result
     );
@@ -211,6 +213,23 @@ public final class CollectBlocksTaskProvider
       && blockHit.getBlockPos().equals(target);
   }
 
+  static boolean hasLineOfSight(
+    BlockGetter level,
+    Vec3 eyePosition,
+    BlockPos target
+  ) {
+    var blockPosition = SFVec3i.fromInt(target);
+    return List.of(BlockFace.VALUES).stream()
+      .map(face -> level.clip(new ClipContext(
+        eyePosition,
+        face.getMiddleOfFace(blockPosition),
+        ClipContext.Block.OUTLINE,
+        ClipContext.Fluid.NONE,
+        CollisionContext.empty()
+      )))
+      .anyMatch(hit -> hitsTargetBlock(target, hit));
+  }
+
   static Set<SFVec3i> stalledTargets(
     Set<SFVec3i> attemptedTargets,
     SFVec3i playerPosition
@@ -259,6 +278,7 @@ public final class CollectBlocksTaskProvider
     private final int searchRadius;
     private final boolean allowPlacing;
     private final boolean avoidSubmergedTargets;
+    private final boolean requireLineOfSight;
     private final boolean avoidFluids;
     private final CompletableFuture<CollectBlocksTaskResult> result;
     private final Set<SFVec3i> rejectedTargets = new HashSet<>();
@@ -280,6 +300,7 @@ public final class CollectBlocksTaskProvider
       int searchRadius,
       boolean allowPlacing,
       boolean avoidSubmergedTargets,
+      boolean requireLineOfSight,
       boolean avoidFluids,
       CompletableFuture<CollectBlocksTaskResult> result
     ) {
@@ -290,6 +311,7 @@ public final class CollectBlocksTaskProvider
       this.searchRadius = searchRadius;
       this.allowPlacing = allowPlacing;
       this.avoidSubmergedTargets = avoidSubmergedTargets;
+      this.requireLineOfSight = requireLineOfSight;
       this.avoidFluids = avoidFluids;
       this.result = result;
     }
@@ -605,6 +627,11 @@ public final class CollectBlocksTaskProvider
           position.toBlockPos().distSqr(origin)))
         .filter(position -> canHarvest(
           level.getBlockState(position.toBlockPos())
+        ))
+        .filter(position -> !requireLineOfSight || hasLineOfSight(
+          level,
+          player.getEyePosition(),
+          position.toBlockPos()
         ))
         .limit(MAX_CANDIDATES)
         .toList();

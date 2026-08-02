@@ -819,6 +819,7 @@ def test_sync_collect_blocks_task_preserves_selectors_and_path_policy() -> None:
         count=6,
         search_radius=48,
         avoid_submerged_targets=True,
+        require_line_of_sight=True,
         options=PathfindOptions(
             allow_mining=True,
             allow_placing=False,
@@ -834,6 +835,7 @@ def test_sync_collect_blocks_task_preserves_selectors_and_path_policy() -> None:
     assert task.count == 6
     assert task.search_radius == 48
     assert task.avoid_submerged_targets
+    assert task.require_line_of_sight
     assert task.options.allow_mining
     assert not task.options.allow_placing
     assert task.options.avoid_fluids

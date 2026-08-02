@@ -4939,6 +4939,7 @@ function prepareForFoodHunt(
       progressItemIds: LOG_ITEM_IDS,
       purpose: "prepare-food-hunt",
       avoidSubmergedTargets: true,
+      requireLineOfSight: true,
       path: {
         ...state.strategy.path,
         allowPlacing: false,
@@ -5607,6 +5608,7 @@ function ensureEfficientFurnaceFuel(
         progressItemIds: LOG_ITEM_IDS,
         purpose: "find-furnace-fuel",
         avoidSubmergedTargets: true,
+        requireLineOfSight: true,
       });
       currentObservation = yield* state.driver.observe;
       activeWorkstation = yield* ensureAccessibleFurnaceForBatch(
@@ -5699,6 +5701,7 @@ function collectBlocksOrExplore(
     readonly progressItemIds: readonly string[];
     readonly purpose: string;
     readonly avoidSubmergedTargets?: boolean;
+    readonly requireLineOfSight?: boolean;
     readonly avoidFluids?: boolean;
     readonly path?: BeatGameStrategy["path"];
     readonly prepareAttempt?: (
@@ -5760,6 +5763,7 @@ function collectBlocksOrExplore(
         count: targetCount - beforeAttempt,
         searchRadius: state.strategy.blockSearchRadius,
         avoidSubmergedTargets: options.avoidSubmergedTargets ?? false,
+        requireLineOfSight: options.requireLineOfSight ?? false,
         path: collectionPath,
       });
       const waitForInventoryTarget = Effect.gen(function* () {
@@ -10247,6 +10251,7 @@ function prepareForDistantDeathRecovery(
           progressItemIds: LOG_ITEM_IDS,
           purpose: "prepare-corpse-recovery",
           avoidSubmergedTargets: true,
+          requireLineOfSight: true,
           path: protectedRecoveryPath,
         });
         current = yield* state.driver.observe;
@@ -10295,6 +10300,7 @@ function prepareForDistantDeathRecovery(
           progressItemIds: LOG_ITEM_IDS,
           purpose: "prepare-corpse-recovery-pickaxe",
           avoidSubmergedTargets: true,
+          requireLineOfSight: true,
           path: protectedRecoveryPath,
         });
         current = yield* state.driver.observe;
@@ -10324,6 +10330,7 @@ function prepareForDistantDeathRecovery(
         progressItemIds: LOG_ITEM_IDS,
         purpose: "prepare-corpse-recovery-log-buffer",
         avoidSubmergedTargets: true,
+        requireLineOfSight: true,
         path: protectedRecoveryPath,
       });
       current = yield* state.driver.observe;

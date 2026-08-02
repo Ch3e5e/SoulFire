@@ -1066,20 +1066,22 @@ class AutoArmorTaskResult(_message.Message):
     def __init__(self, reason: _Optional[_Union[AutoArmorCompletionReason, str]] = ..., equips: _Optional[int] = ...) -> None: ...
 
 class CollectBlocksTask(_message.Message):
-    __slots__ = ("block_ids", "tags", "count", "search_radius", "options", "avoid_submerged_targets")
+    __slots__ = ("block_ids", "tags", "count", "search_radius", "options", "avoid_submerged_targets", "require_line_of_sight")
     BLOCK_IDS_FIELD_NUMBER: _ClassVar[int]
     TAGS_FIELD_NUMBER: _ClassVar[int]
     COUNT_FIELD_NUMBER: _ClassVar[int]
     SEARCH_RADIUS_FIELD_NUMBER: _ClassVar[int]
     OPTIONS_FIELD_NUMBER: _ClassVar[int]
     AVOID_SUBMERGED_TARGETS_FIELD_NUMBER: _ClassVar[int]
+    REQUIRE_LINE_OF_SIGHT_FIELD_NUMBER: _ClassVar[int]
     block_ids: _containers.RepeatedScalarFieldContainer[str]
     tags: _containers.RepeatedScalarFieldContainer[str]
     count: int
     search_radius: int
     options: _bot_live_pb2.PathfindOptions
     avoid_submerged_targets: bool
-    def __init__(self, block_ids: _Optional[_Iterable[str]] = ..., tags: _Optional[_Iterable[str]] = ..., count: _Optional[int] = ..., search_radius: _Optional[int] = ..., options: _Optional[_Union[_bot_live_pb2.PathfindOptions, _Mapping]] = ..., avoid_submerged_targets: bool = ...) -> None: ...
+    require_line_of_sight: bool
+    def __init__(self, block_ids: _Optional[_Iterable[str]] = ..., tags: _Optional[_Iterable[str]] = ..., count: _Optional[int] = ..., search_radius: _Optional[int] = ..., options: _Optional[_Union[_bot_live_pb2.PathfindOptions, _Mapping]] = ..., avoid_submerged_targets: bool = ..., require_line_of_sight: bool = ...) -> None: ...
 
 class CollectBlocksTaskResult(_message.Message):
     __slots__ = ("reason", "blocks_broken", "final_position")

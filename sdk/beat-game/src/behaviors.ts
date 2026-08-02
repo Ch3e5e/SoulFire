@@ -118,6 +118,7 @@ export interface CollectBlocksOptions extends BeatGameBehaviorOptions {
   readonly count: number;
   readonly searchRadius?: number;
   readonly avoidSubmergedTargets?: boolean;
+  readonly requireLineOfSight?: boolean;
 }
 
 export function collectBlocks(
@@ -132,6 +133,7 @@ export function collectBlocks(
     searchRadius: options.searchRadius
       ?? defaultBeatGameStrategy.blockSearchRadius,
     avoidSubmergedTargets: options.avoidSubmergedTargets ?? false,
+    requireLineOfSight: options.requireLineOfSight ?? false,
   }, options.path);
 }
 

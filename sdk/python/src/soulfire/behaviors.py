@@ -337,6 +337,7 @@ class CollectBlocks:
     count: int = 1
     search_radius: int = 32
     allow_placing: bool = False
+    require_line_of_sight: bool = False
 
     async def run(self, bot: AsyncSoulFireBot) -> int:
         task = await bot.tasks.collect_blocks(
@@ -344,6 +345,7 @@ class CollectBlocks:
             tags=self.tags,
             count=self.count,
             search_radius=self.search_radius,
+            require_line_of_sight=self.require_line_of_sight,
             options=PathfindOptions(
                 allow_mining=True,
                 allow_placing=self.allow_placing,

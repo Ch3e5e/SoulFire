@@ -719,6 +719,10 @@ message CollectBlocksTask {
   // Excludes targets with fluid above them up to the bot's current elevation.
   // Useful when a caller cannot safely manage underwater collection.
   bool avoid_submerged_targets = 6;
+  // Only selects targets that the bot can currently see. Visibility is
+  // reevaluated after every collected block, allowing newly exposed targets
+  // to become eligible without routing toward hidden blocks.
+  bool require_line_of_sight = 7;
 }
 
 enum CollectBlocksCompletionReason {

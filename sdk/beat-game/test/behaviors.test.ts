@@ -802,6 +802,7 @@ describe("beat-game behavior programs", () => {
       blockIds: ["minecraft:oak_log"],
       count: 4,
       searchRadius: 32,
+      requireLineOfSight: true,
       path: { allowMining: false },
     }));
 
@@ -812,6 +813,7 @@ describe("beat-game behavior programs", () => {
       count: 4,
       searchRadius: 32,
       avoidSubmergedTargets: false,
+      requireLineOfSight: true,
     }]);
     expect(driver.activeControlScopes).toBe(0);
     expect(driver.actions.at(-1)).toEqual({ type: "reset-movement" });

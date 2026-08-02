@@ -1028,6 +1028,7 @@ describe("SoulFireTasks", () => {
       count: 6,
       searchRadius: 48,
       avoidSubmergedTargets: true,
+      requireLineOfSight: true,
       path: {
         allowMining: true,
         allowPlacing: false,
@@ -1042,6 +1043,7 @@ describe("SoulFireTasks", () => {
         count: 6,
         searchRadius: 48,
         avoidSubmergedTargets: true,
+        requireLineOfSight: true,
         options: {
           allowMining: true,
           allowPlacing: false,

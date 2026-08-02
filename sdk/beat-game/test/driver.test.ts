@@ -237,6 +237,7 @@ describe("production SoulFire beat-game driver", () => {
       ["minecraft:oak_log"],
       {
         avoidSubmergedTargets: false,
+        requireLineOfSight: false,
         conflictPolicy: BotTaskConflictPolicy.QUEUE,
         tags: ["minecraft:logs"],
         count: 3,

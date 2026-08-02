@@ -353,6 +353,7 @@ export interface CollectBlocksTaskOptions extends TaskStartOptions {
   count?: number;
   searchRadius?: number;
   avoidSubmergedTargets?: boolean;
+  requireLineOfSight?: boolean;
   path?: MessageInitShape<typeof PathfindOptionsSchema>;
 }
 
@@ -1611,6 +1612,7 @@ export class SoulFireTasks {
       count = 1,
       searchRadius = 32,
       avoidSubmergedTargets = false,
+      requireLineOfSight = false,
       path,
       ...taskOptions
     } = options;
@@ -1622,6 +1624,7 @@ export class SoulFireTasks {
         count,
         searchRadius,
         avoidSubmergedTargets,
+        requireLineOfSight,
         ...(path === undefined ? {} : { options: path }),
       },
       CollectBlocksTaskResultSchema,
@@ -1638,6 +1641,7 @@ export class SoulFireTasks {
       count = 1,
       searchRadius = 32,
       avoidSubmergedTargets = false,
+      requireLineOfSight = false,
       path,
       ...taskOptions
     } = options;
@@ -1649,6 +1653,7 @@ export class SoulFireTasks {
         count,
         searchRadius,
         avoidSubmergedTargets,
+        requireLineOfSight,
         ...(path === undefined ? {} : { options: path }),
       },
       taskOptions,

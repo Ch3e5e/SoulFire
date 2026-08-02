@@ -113,6 +113,33 @@ final class CollectBlocksTaskProviderTest {
   }
 
   @Test
+  void onlyCollectsBlocksVisibleFromTheCurrentEyePosition() {
+    var blocks = new TestBlockAccessorBuilder();
+    var target = new BlockPos(0, 64, 4);
+    var blocker = new BlockPos(0, 64, 2);
+    blocks.setBlockAt(target.getX(), target.getY(), target.getZ(), Blocks.OAK_LOG);
+    var unobstructed = blocks.build();
+
+    assertTrue(CollectBlocksTaskProvider.hasLineOfSight(
+      unobstructed,
+      new Vec3(0.5D, 64.5D, 0.5D),
+      target
+    ));
+
+    blocks.setBlockAt(
+      blocker.getX(),
+      blocker.getY(),
+      blocker.getZ(),
+      Blocks.STONE
+    );
+    assertFalse(CollectBlocksTaskProvider.hasLineOfSight(
+      blocks.build(),
+      new Vec3(0.5D, 64.5D, 0.5D),
+      target
+    ));
+  }
+
+  @Test
   void reachesTheNearestFaceOfAnOverheadBlock() {
     var playerFeet = new SFVec3i(0, 64, 0);
     var eyePosition = new Vec3(0.5D, 65.62D, 0.5D);
