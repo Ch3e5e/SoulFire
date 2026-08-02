@@ -11822,6 +11822,61 @@ describe("beat-game run lifecycle", () => {
     });
   });
 
+  it("hunts shallow fish when a wounded bot needs health regeneration", async () => {
+    const driver = new FakeBeatGameDriver();
+    const salmon = {
+      connectionEpoch: "epoch-1",
+      networkId: 46,
+      entityType: "minecraft:salmon",
+      position: {
+        x: 3,
+        y: 62,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 3,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.currentObservation = observation({
+      food: 12,
+      health: 12,
+    });
+    driver.entityResults = [salmon];
+    driver.taskResolver = (task) => {
+      driver.tasks.push(task);
+      return task.type === "attack-entity" ? Effect.never : Effect.void;
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some((task) => task.type === "attack-entity")) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    })));
+
+    expect(driver.xzPaths).toHaveLength(0);
+    const attackIndex = driver.tasks.findIndex(
+      (task) => task.type === "attack-entity",
+    );
+    expect(driver.tasks[attackIndex]).toEqual(expect.objectContaining({
+      target: expect.objectContaining({
+        connectionEpoch: salmon.connectionEpoch,
+        networkId: salmon.networkId,
+      }),
+    }));
+    expect(driver.taskPolicies[attackIndex]).toMatchObject({
+      allowMining: false,
+      allowPlacing: false,
+      avoidFluids: false,
+      sprint: true,
+    });
+  });
+
   it("hunts shallow fish after every dry recovery route fails", async () => {
     const driver = new FakeBeatGameDriver();
     const salmon = {

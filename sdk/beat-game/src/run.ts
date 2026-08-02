@@ -5024,6 +5024,8 @@ function huntForFoodRequirement(
       preferredEntityTypes: HIGH_YIELD_FOOD_ANIMAL_TYPES,
       preferredRadius: HIGH_YIELD_FOOD_PREFERENCE_RADIUS,
       allowCriticalAquaticTargets: true,
+      maximumSafeAquaticFoodLevel: state.strategy.eatBelowFood,
+      requireHealthRecoveryForSafeAquaticTargets: true,
       allowFluidFallback:
         observation.player.health >= state.strategy.minimumHealth,
       path: {
@@ -7135,6 +7137,7 @@ interface HuntTargetPreference {
   readonly preferredRadius: number;
   readonly allowCriticalAquaticTargets?: boolean;
   readonly maximumSafeAquaticFoodLevel?: number;
+  readonly requireHealthRecoveryForSafeAquaticTargets?: boolean;
   readonly maximumExplorationHops?: number;
   readonly path?: BeatGameStrategy["path"];
   readonly explorationTarget?: BeatGamePosition;
@@ -7964,9 +7967,13 @@ function shouldAllowAquaticHunt(
   }
   const minimumSafeHealth = Math.max(
     LETHAL_MELEE_DISENGAGE_HEALTH + 1,
-    minimumHealth - 4,
+    minimumHealth - 6,
   );
   return observation.player.health >= minimumSafeHealth
+    && (
+      targetPreference.requireHealthRecoveryForSafeAquaticTargets !== true
+      || observation.player.health < minimumHealth
+    )
     && targetPreference.maximumSafeAquaticFoodLevel !== undefined
     && observation.player.food
       <= targetPreference.maximumSafeAquaticFoodLevel;
