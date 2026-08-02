@@ -113,7 +113,7 @@ describe("beat-game planner", () => {
           "minecraft:cobblestone": 20,
           "minecraft:stone_sword": 1,
         },
-        food: 20,
+        food: 17,
       }),
       strategy: defaultBeatGameStrategy,
     });

@@ -145,10 +145,10 @@ export function decideBeatGameAction(
   }
   const firstMissing = requirements.find(({ satisfied }) => !satisfied);
   const missing = firstMissing !== undefined
-      && shouldDeferFoodReserveRefill(firstMissing, observation)
+      && shouldDeferFoodReserveRefill(firstMissing, observation, strategy)
     ? requirements.find((requirement) =>
       !requirement.satisfied
-      && !shouldDeferFoodReserveRefill(requirement, observation)
+      && !shouldDeferFoodReserveRefill(requirement, observation, strategy)
     ) ?? firstMissing
     : firstMissing;
   switch (phase) {
@@ -236,8 +236,9 @@ export function decideBeatGameAction(
 function shouldDeferFoodReserveRefill(
   requirement: BeatGameItemRequirement,
   observation: BeatGameObservation,
+  strategy: BeatGameStrategy,
 ): boolean {
-  return observation.player.food >= 18
+  return observation.player.food > strategy.eatBelowFood
     && (
       requirement.key === "food-supply"
       || requirement.key === "food"
