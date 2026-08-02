@@ -7446,9 +7446,7 @@ describe("beat-game run lifecycle", () => {
         Effect.flatMap((run) =>
           Effect.gen(function* () {
             while (
-              !driver.actions.some((action) =>
-                action.type === "set-movement" && action.sprint === true
-              )
+              !driver.tasks.some((task) => task.type === "flee")
             ) {
               yield* Effect.sleep(1);
             }
@@ -7468,6 +7466,13 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks.some((task) =>
       task.type === "attack-nearest" || task.type === "attack-entity"
     )).toBe(false);
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "flee",
+      selector: {
+        networkId: 25,
+        alive: true,
+      },
+    }));
   });
 
   it("dynamically replans an escape from a pursuing zombie", async () => {
@@ -7524,10 +7529,10 @@ describe("beat-game run lifecycle", () => {
     expect(driver.xzPaths).toHaveLength(0);
   });
 
-  it("keeps fighting an armed close zombie at lethal health", async () => {
+  it("fights an armed close zombie while healthy", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
-      health: 4,
+      health: 20,
       counts: {
         "minecraft:cooked_beef": 1,
         "minecraft:wooden_sword": 1,
@@ -7579,7 +7584,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
   });
 
-  it("keeps defending barehanded when a close melee attacker lands a hit", async () => {
+  it("disengages from a barehanded defense after a lethal wound", async () => {
     const driver = new FakeBeatGameDriver();
     const zombie = {
       connectionEpoch: "epoch-1",
@@ -7641,7 +7646,9 @@ describe("beat-game run lifecycle", () => {
             )) {
               yield* Effect.sleep(1);
             }
-            yield* Effect.sleep(10);
+            while (!driver.tasks.some((task) => task.type === "flee")) {
+              yield* Effect.sleep(1);
+            }
             yield* run.stop;
             yield* run.awaitCompletion.pipe(Effect.either);
           })
@@ -7653,12 +7660,12 @@ describe("beat-game run lifecycle", () => {
       type: "attack-entity",
       target: expect.objectContaining({ networkId: zombie.networkId }),
     }));
-    expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
+    expect(driver.tasks.some((task) => task.type === "flee")).toBe(true);
     expect(driver.paths).toHaveLength(0);
     expect(driver.xzPaths).toHaveLength(0);
   });
 
-  it("keeps an armed close melee defense committed after heavy damage", async () => {
+  it("disengages from an armed close melee defense after a lethal wound", async () => {
     const driver = new FakeBeatGameDriver();
     const zombie = {
       connectionEpoch: "epoch-1",
@@ -7726,7 +7733,9 @@ describe("beat-game run lifecycle", () => {
             )) {
               yield* Effect.sleep(1);
             }
-            yield* Effect.sleep(10);
+            while (!driver.tasks.some((task) => task.type === "flee")) {
+              yield* Effect.sleep(1);
+            }
             yield* run.stop;
             yield* run.awaitCompletion.pipe(Effect.either);
           })
@@ -7738,7 +7747,7 @@ describe("beat-game run lifecycle", () => {
       type: "attack-entity",
       target: expect.objectContaining({ networkId: zombie.networkId }),
     }));
-    expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
+    expect(driver.tasks.some((task) => task.type === "flee")).toBe(true);
     expect(driver.paths).toHaveLength(0);
     expect(driver.xzPaths).toHaveLength(0);
   });

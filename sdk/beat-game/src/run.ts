@@ -2363,6 +2363,7 @@ function shouldCommitToCloseMeleeFight(
   return COMMITTABLE_CLOSE_MELEE_ENTITY_TYPES.has(target.entityType)
     && distanceSquared(observation.player.position, target.position)
       <= EMERGENCY_KNOCKBACK_RANGE ** 2
+    && observation.player.health > LETHAL_MELEE_DISENGAGE_HEALTH
     && (
       hasMeleeWeapon(observation)
       || observation.player.health >= MELEE_DISENGAGE_HEALTH
