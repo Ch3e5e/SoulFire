@@ -1894,15 +1894,20 @@ function executeDecision(
   const executeWithSafety = (
     safetyObservation: BeatGameObservation,
   ): Effect.Effect<ActionResult, unknown> =>
-    Effect.raceFirst(
-      execute,
-      monitorActionSafety(
-        state,
-        decision,
-        observation,
-        safetyObservation,
+    findImmediateActionThreat(state, decision, safetyObservation).pipe(
+      Effect.flatMap((initialThreat) =>
+        initialThreat === undefined
+          ? Effect.raceFirst(
+            execute,
+            monitorActionSafety(
+              state,
+              decision,
+              observation,
+              safetyObservation,
+            ),
+          )
+          : Effect.succeed(initialThreat)
       ),
-    ).pipe(
       Effect.flatMap((result) => {
       const response = result.airEscapePosition !== undefined
         ? emergencyAirAscent(
@@ -2001,6 +2006,44 @@ function executeDecision(
           error,
         )
     ),
+  );
+}
+
+function findImmediateActionThreat(
+  state: RunState,
+  decision: Exclude<
+    BeatGamePlannerDecision,
+    { readonly type: "advance-phase" }
+  >,
+  observation: BeatGameObservation,
+): Effect.Effect<ActionResult | undefined, BeatGameDriverError> {
+  if (
+    decision.type === "retreat"
+    || decision.type === "fight-ender-dragon"
+    || observation.player.dead
+  ) {
+    return Effect.succeed(undefined);
+  }
+  return findImmediateThreat(state, observation).pipe(
+    Effect.map((threat) => {
+      if (threat === undefined) {
+        return undefined;
+      }
+      return {
+        replanReason: decision.type === "recover-death"
+          ? threat.response === "flee"
+            ? "paused item recovery to evade an immediate hostile"
+            : "paused item recovery to defend against an immediate hostile"
+          : threat.response === "flee"
+          ? "delayed an action to evade an immediate threat"
+          : "delayed an action to preempt a nearby hostile",
+        ...(
+          threat.response === "flee"
+            ? { escapeTarget: threat.target }
+            : { defenseTarget: threat.target }
+        ),
+      } satisfies ActionResult;
+    }),
   );
 }
 
@@ -2397,9 +2440,18 @@ function proactiveEscapeOnlyEvasionRadius(
 
 function escapeThreatSelector(
   target: BeatGameEntityObservation,
+  includeHostileGroup = false,
 ): BeatGameEntitySelector {
   const escapeFromHostileGroup = target.entityType === "minecraft:creeper"
-    || FAST_MELEE_PURSUER_ENTITY_TYPES.has(target.entityType);
+    || FAST_MELEE_PURSUER_ENTITY_TYPES.has(target.entityType)
+    || (
+      includeHostileGroup
+      && (
+        ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(target.entityType)
+        || PROACTIVE_MELEE_HOSTILE_ENTITY_TYPES.has(target.entityType)
+        || PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
+      )
+    );
   return escapeFromHostileGroup
     ? { categories: [2], alive: true }
     : { networkId: target.networkId, alive: true };
@@ -2581,7 +2633,7 @@ function escapeFromTarget(
       target.entityType,
     );
     const dynamicEscape = flee(state.driver, {
-      selector: escapeThreatSelector(target),
+      selector: escapeThreatSelector(target, true),
       triggerRadius: rangedThreat
         ? RANGED_THREAT_ESCAPE_TRIGGER_RADIUS
         : PROACTIVE_ESCAPE_ONLY_EVASION_RADIUS,

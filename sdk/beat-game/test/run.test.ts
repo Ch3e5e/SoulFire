@@ -4892,7 +4892,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks.filter((task) => task.type === "flee")).toHaveLength(1);
     expect(driver.tasks).toContainEqual(expect.objectContaining({
       type: "flee",
-      selector: { networkId: witch.networkId, alive: true },
+      selector: { categories: [2], alive: true },
     }));
     expect(driver.tasks).not.toContainEqual(expect.objectContaining({
       type: "attack-entity",
@@ -4986,7 +4986,7 @@ describe("beat-game run lifecycle", () => {
     expect(interruptedEscapes).toBe(1);
     expect(driver.tasks.filter((task) => task.type === "flee")).toEqual([
       expect.objectContaining({
-        selector: { networkId: skeleton.networkId, alive: true },
+        selector: { categories: [2], alive: true },
       }),
       expect.objectContaining({
         selector: { categories: [2], alive: true },
@@ -5950,7 +5950,7 @@ describe("beat-game run lifecycle", () => {
     });
     expect(driver.tasks).toContainEqual(expect.objectContaining({
       type: "flee",
-      selector: { networkId: 15, alive: true },
+      selector: { categories: [2], alive: true },
       triggerRadius: 24,
       safeDistance: 32,
     }));
@@ -6006,7 +6006,7 @@ describe("beat-game run lifecycle", () => {
     });
     expect(driver.tasks).toContainEqual(expect.objectContaining({
       type: "flee",
-      selector: { networkId: 21, alive: true },
+      selector: { categories: [2], alive: true },
       triggerRadius: 24,
       safeDistance: 32,
     }));
@@ -6147,7 +6147,7 @@ describe("beat-game run lifecycle", () => {
     const fleeIndex = driver.tasks.findIndex((task) => task.type === "flee");
     expect(driver.tasks[fleeIndex]).toMatchObject({
       type: "flee",
-      selector: { networkId: skeleton.networkId, alive: true },
+      selector: { categories: [2], alive: true },
       triggerRadius: 24,
       safeDistance: 32,
     });
@@ -6237,7 +6237,7 @@ describe("beat-game run lifecycle", () => {
     const fleeIndex = driver.tasks.findIndex((task) => task.type === "flee");
     expect(driver.tasks[fleeIndex]).toMatchObject({
       type: "flee",
-      selector: { networkId: skeleton.networkId, alive: true },
+      selector: { categories: [2], alive: true },
       triggerRadius: 24,
       safeDistance: 32,
     });
@@ -6656,7 +6656,7 @@ describe("beat-game run lifecycle", () => {
     }));
     expect(driver.tasks).toContainEqual(expect.objectContaining({
       type: "flee",
-      selector: { networkId: skeleton.networkId, alive: true },
+      selector: { categories: [2], alive: true },
     }));
   });
 
@@ -6726,7 +6726,7 @@ describe("beat-game run lifecycle", () => {
       .toHaveLength(1);
     expect(driver.tasks).toContainEqual(expect.objectContaining({
       type: "flee",
-      selector: { networkId: skeleton.networkId, alive: true },
+      selector: { categories: [2], alive: true },
     }));
   });
 
@@ -6961,7 +6961,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks).toContainEqual(expect.objectContaining({
       type: "flee",
       selector: {
-        networkId: 162,
+        categories: [2],
         alive: true,
       },
     }));
@@ -7439,7 +7439,7 @@ describe("beat-game run lifecycle", () => {
     const fleeIndex = driver.tasks.findIndex((task) => task.type === "flee");
     expect(driver.tasks[fleeIndex]).toEqual(expect.objectContaining({
       type: "flee",
-      selector: { networkId: 14, alive: true },
+      selector: { categories: [2], alive: true },
       triggerRadius: 12,
       safeDistance: 24,
     }));
@@ -7502,7 +7502,7 @@ describe("beat-game run lifecycle", () => {
     )).toBe(false);
     expect(driver.tasks).toContainEqual(expect.objectContaining({
       type: "flee",
-      selector: { networkId: 16, alive: true },
+      selector: { categories: [2], alive: true },
       triggerRadius: 24,
       safeDistance: 32,
     }));
@@ -7571,7 +7571,7 @@ describe("beat-game run lifecycle", () => {
 
     expect(driver.tasks).toContainEqual(expect.objectContaining({
       type: "flee",
-      selector: { networkId: skeleton.networkId, alive: true },
+      selector: { categories: [2], alive: true },
       triggerRadius: 24,
       safeDistance: 32,
     }));
@@ -8105,7 +8105,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks).toContainEqual(expect.objectContaining({
       type: "flee",
       selector: {
-        networkId: 25,
+        categories: [2],
         alive: true,
       },
     }));
@@ -8155,7 +8155,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks).toContainEqual(expect.objectContaining({
       type: "flee",
       selector: {
-        networkId: zombie.networkId,
+        categories: [2],
         alive: true,
       },
       triggerRadius: 12,
@@ -8411,6 +8411,15 @@ describe("beat-game run lifecycle", () => {
       position,
       counts: { "minecraft:wooden_sword": 1 },
     });
+    driver.surfaceColumns = Array.from({ length: 10 }, (_, index) => ({
+      x: -(index + 1),
+      z: 0,
+      loaded: true,
+      surfaceY: 60,
+      blockId: "minecraft:grass_block",
+      skyLight: 15,
+      blockLight: 0,
+    }));
     driver.entityResults = [drowned];
     driver.entityQueryResolver = (query) =>
       query.selector.categories?.includes(2) ? driver.entityResults : [];
@@ -8472,7 +8481,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks).toContainEqual(expect.objectContaining({
       type: "flee",
       selector: {
-        networkId: drowned.networkId,
+        categories: [2],
         alive: true,
       },
     }));

@@ -20,12 +20,14 @@ package com.soulfiremc.server.task;
 import com.soulfiremc.grpc.generated.BotTaskProgress;
 import com.soulfiremc.grpc.generated.GoToTask;
 import com.soulfiremc.grpc.generated.GoToTaskResult;
+import com.soulfiremc.grpc.generated.PathfindOptions;
 import com.soulfiremc.grpc.generated.WorldPosition;
 import com.soulfiremc.server.api.BotTaskExecution;
 import com.soulfiremc.server.api.BotTaskProvider;
 import com.soulfiremc.server.bot.ControlResource;
 import com.soulfiremc.server.pathfinding.PathfindingSupport;
 import com.soulfiremc.server.pathfinding.execution.PathExecutor;
+import com.soulfiremc.server.pathfinding.goals.GoalScorer;
 
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -57,10 +59,18 @@ public final class GoToTaskProvider implements BotTaskProvider<GoToTask> {
   @Override
   public BotTaskExecution start(BotTaskContext context, GoToTask input) {
     var resolved = PathfindingSupport.resolveGoal(context.bot(), input.getGoal());
-    var constraint = PathfindingSupport.buildConstraint(context.bot(), input.getOptions());
+    return start(context, resolved.scorer(), input.getOptions());
+  }
+
+  static BotTaskExecution start(
+    BotTaskContext context,
+    GoalScorer goal,
+    PathfindOptions options
+  ) {
+    var constraint = PathfindingSupport.buildConstraint(context.bot(), options);
     var executor = PathExecutor.createPathfinding(
       context.bot(),
-      resolved.scorer(),
+      goal,
       constraint
     );
     var result = executor.completion().thenApply(_ -> {

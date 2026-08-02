@@ -21,17 +21,19 @@ import com.soulfiremc.grpc.generated.BotTaskProgress;
 import com.soulfiremc.grpc.generated.FleeCompletionReason;
 import com.soulfiremc.grpc.generated.FleeTask;
 import com.soulfiremc.grpc.generated.FleeTaskResult;
-import com.soulfiremc.grpc.generated.GoToTask;
-import com.soulfiremc.grpc.generated.PathfindGoal;
 import com.soulfiremc.server.api.BotTaskExecution;
 import com.soulfiremc.server.api.BotTaskProvider;
 import com.soulfiremc.server.bot.ControlPriority;
 import com.soulfiremc.server.bot.ControlResource;
 import com.soulfiremc.server.bot.ControlStopReason;
 import com.soulfiremc.server.bot.ControlTask;
+import com.soulfiremc.server.pathfinding.SFVec3i;
+import com.soulfiremc.server.pathfinding.goals.AwayFromPositionsGoal;
+import com.soulfiremc.server.pathfinding.goals.DynamicGoalScorer;
 import io.grpc.Status;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -190,19 +192,10 @@ public final class FleeTaskProvider implements BotTaskProvider<FleeTask> {
           return;
         }
         safeTicks = 0;
-        var escape = new GoToTaskProvider().start(
+        var escape = GoToTaskProvider.start(
           context,
-          GoToTask.newBuilder()
-            .setGoal(PathfindGoal.newBuilder()
-              .setAwayFromEntity(
-                PathfindGoal.AwayFromEntityGoal.newBuilder()
-                  .setEntityId(threat.getId())
-                  .setConnectionEpoch(
-                    context.bot().connectionEpoch().toString()
-                  )
-                  .setRadius(safeDistance)))
-            .setOptions(input.getOptions())
-            .build()
+          groupEscapeGoal(),
+          input.getOptions()
         );
         activeEscape = escape;
         escape.control().onStarted();
@@ -252,6 +245,46 @@ public final class FleeTaskProvider implements BotTaskProvider<FleeTask> {
           );
         }
       }
+    }
+
+    private DynamicGoalScorer groupEscapeGoal() {
+      return new DynamicGoalScorer() {
+        private long observedGameTime = Long.MIN_VALUE;
+        private AwayFromPositionsGoal goal = new AwayFromPositionsGoal(
+          List.of(),
+          1
+        );
+
+        @Override
+        public synchronized AwayFromPositionsGoal create() {
+          var minecraft = context.bot().minecraft();
+          var level = minecraft.level;
+          var gameTime = level == null ? Long.MIN_VALUE : level.getGameTime();
+          if (gameTime == observedGameTime) {
+            return goal;
+          }
+          observedGameTime = gameTime;
+          var currentPlayer = minecraft.player;
+          if (currentPlayer == null) {
+            goal = new AwayFromPositionsGoal(List.of(), 1);
+            return goal;
+          }
+          var origins = BotTaskSupport.matchingEntities(
+              context.bot(),
+              input.getThreats(),
+              currentPlayer.position(),
+              safeDistance,
+              true
+            ).stream()
+            .map(entity -> SFVec3i.fromDouble(entity.position()))
+            .toList();
+          goal = new AwayFromPositionsGoal(
+            origins,
+            Math.max(1, Math.round(safeDistance))
+          );
+          return goal;
+        }
+      };
     }
 
     private void complete(FleeCompletionReason reason) {

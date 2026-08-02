@@ -29,6 +29,7 @@ import net.minecraft.world.phys.Vec3;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Comparator;
+import java.util.List;
 import java.util.Objects;
 import java.util.function.Predicate;
 import java.util.stream.StreamSupport;
@@ -137,6 +138,41 @@ final class BotTaskSupport {
     boolean livingOnly,
     Predicate<Entity> additionalFilter
   ) {
+    return matchingEntities(
+      bot,
+      selector,
+      origin,
+      radius,
+      livingOnly,
+      additionalFilter
+    ).stream().findFirst().orElse(null);
+  }
+
+  static List<Entity> matchingEntities(
+    BotConnection bot,
+    EntitySelector selector,
+    Vec3 origin,
+    double radius,
+    boolean livingOnly
+  ) {
+    return matchingEntities(
+      bot,
+      selector,
+      origin,
+      radius,
+      livingOnly,
+      _ -> true
+    );
+  }
+
+  static List<Entity> matchingEntities(
+    BotConnection bot,
+    EntitySelector selector,
+    Vec3 origin,
+    double radius,
+    boolean livingOnly,
+    Predicate<Entity> additionalFilter
+  ) {
     var level = Objects.requireNonNull(
       bot.minecraft().level,
       "Bot level is not available"
@@ -161,9 +197,9 @@ final class BotTaskSupport {
         selector,
         origin
       ))
-      .min(Comparator.comparingDouble(
+      .sorted(Comparator.comparingDouble(
         entity -> entity.position().distanceToSqr(origin)
       ))
-      .orElse(null);
+      .toList();
   }
 }
