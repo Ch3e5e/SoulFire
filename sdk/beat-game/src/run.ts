@@ -3197,8 +3197,8 @@ function recoverFromFailedDefense(
 ): Effect.Effect<void, BeatGameDriverError> {
   return state.driver.observe.pipe(
     Effect.flatMap((observation) => {
-      if (shouldCommitToRangedFight(observation, target)) {
-        return Effect.void;
+      if (PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)) {
+        return escapeFromTarget(state, target);
       }
       if (shouldCommitToMeleeFight(observation, target)) {
         return knockBackAndSprintAway(state, observation, target);

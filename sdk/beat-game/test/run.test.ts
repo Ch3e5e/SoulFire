@@ -6408,7 +6408,7 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
-  it("does not flee after a shielded ranged attack route fails", async () => {
+  it("flees after a shielded ranged attack route fails", async () => {
     const driver = new FakeBeatGameDriver();
     const skeleton = {
       connectionEpoch: "epoch-1",
@@ -6438,6 +6438,9 @@ describe("beat-game run lifecycle", () => {
     driver.taskResolver = (task) =>
       Effect.sync(() => {
         driver.tasks.push(task);
+        if (task.type === "flee") {
+          driver.entityResults = [];
+        }
       }).pipe(
         Effect.zipRight(
           task.type === "attack-entity"
@@ -6457,10 +6460,7 @@ describe("beat-game run lifecycle", () => {
       }).pipe(
         Effect.flatMap((run) =>
           Effect.gen(function* () {
-            while (
-              driver.tasks.filter((task) => task.type === "attack-entity")
-                .length < 2
-            ) {
+            while (!driver.tasks.some((task) => task.type === "flee")) {
               yield* Effect.sleep(1);
             }
             yield* run.stop;
@@ -6471,8 +6471,11 @@ describe("beat-game run lifecycle", () => {
     ));
 
     expect(driver.tasks.filter((task) => task.type === "attack-entity"))
-      .toHaveLength(2);
-    expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
+      .toHaveLength(1);
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "flee",
+      selector: { networkId: skeleton.networkId, alive: true },
+    }));
   });
 
   it("eats and regenerates after surviving a defensive fight", async () => {
