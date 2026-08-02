@@ -5531,51 +5531,63 @@ function cookRawFoodBatch(
     observation,
   ).pipe(
     Effect.flatMap((workstation) =>
-      drainFurnaceContents(state, workstation.position).pipe(
-        Effect.flatMap((current) => {
-          const currentRawFoodCount =
-            current.inventory.counts[batch.rawItemId] ?? 0;
-          const currentBatchCount = Math.min(
-            currentRawFoodCount,
-            batch.count,
-          );
-          if (currentBatchCount === 0) {
-            return Effect.succeed(workstation);
-          }
-          const directWoodFuel = directWoodFurnaceFuelItemIds(
-            current,
-            currentBatchCount,
-          );
-          if (directWoodFuel !== undefined) {
-            return smelt(state.driver, {
-              input: { itemIds: [batch.rawItemId] },
-              count: currentBatchCount,
-              fuel: { itemIds: directWoodFuel },
-              station: workstation.position,
-              path: state.strategy.path,
-            }).pipe(Effect.as(workstation));
-          }
-          return ensureEfficientFurnaceFuel(
-            state,
-            current,
-            workstation,
-            currentBatchCount,
-          ).pipe(
-            Effect.flatMap((activeWorkstation) =>
-              smelt(state.driver, {
-                input: { itemIds: [batch.rawItemId] },
-                count: currentBatchCount,
-                fuel: {
-                  itemIds: ["minecraft:coal", "minecraft:charcoal"],
-                },
-                station: activeWorkstation.position,
-                path: state.strategy.path,
-              }).pipe(Effect.as(activeWorkstation))
-            ),
-          );
-        }),
+      Ref.make(workstation).pipe(
         Effect.flatMap((activeWorkstation) =>
-          reclaimPlacedFurnace(state, activeWorkstation)
+          drainFurnaceContents(state, workstation.position).pipe(
+            Effect.flatMap((current) => {
+              const currentRawFoodCount =
+                current.inventory.counts[batch.rawItemId] ?? 0;
+              const currentBatchCount = Math.min(
+                currentRawFoodCount,
+                batch.count,
+              );
+              if (currentBatchCount === 0) {
+                return Effect.void;
+              }
+              const directWoodFuel = directWoodFurnaceFuelItemIds(
+                current,
+                currentBatchCount,
+              );
+              if (directWoodFuel !== undefined) {
+                return smelt(state.driver, {
+                  input: { itemIds: [batch.rawItemId] },
+                  count: currentBatchCount,
+                  fuel: { itemIds: directWoodFuel },
+                  station: workstation.position,
+                  path: state.strategy.path,
+                });
+              }
+              return ensureEfficientFurnaceFuel(
+                state,
+                current,
+                workstation,
+                currentBatchCount,
+              ).pipe(
+                Effect.tap((currentWorkstation) =>
+                  Ref.set(activeWorkstation, currentWorkstation)
+                ),
+                Effect.flatMap((currentWorkstation) =>
+                  smelt(state.driver, {
+                    input: { itemIds: [batch.rawItemId] },
+                    count: currentBatchCount,
+                    fuel: {
+                      itemIds: ["minecraft:coal", "minecraft:charcoal"],
+                    },
+                    station: currentWorkstation.position,
+                    path: state.strategy.path,
+                  })
+                ),
+              );
+            }),
+            Effect.ensuring(
+              Ref.get(activeWorkstation).pipe(
+                Effect.flatMap((currentWorkstation) =>
+                  reclaimPlacedFurnace(state, currentWorkstation)
+                ),
+                Effect.ignore,
+              ),
+            ),
+          )
         ),
       )
     ),

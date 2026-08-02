@@ -17701,6 +17701,110 @@ describe("beat-game run lifecycle", () => {
     );
   });
 
+  it("reclaims a placed furnace when cooking is interrupted", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      health: 8,
+      food: 17,
+      counts: {
+        "minecraft:porkchop": 1,
+        "minecraft:coal": 1,
+        "minecraft:furnace": 1,
+        "minecraft:wooden_pickaxe": 1,
+      },
+    });
+    const furnace = blockObservation({
+      x: 2,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    }, { blockId: "minecraft:furnace" });
+    const craftingTable = blockObservation({
+      x: 1,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    }, { blockId: "minecraft:crafting_table" });
+    let furnacePlaced = false;
+    driver.blockQueryResolver = ({ center, selector }) => {
+      if (selector.blockIds?.includes("minecraft:furnace") === true) {
+        return furnacePlaced ? [furnace] : [];
+      }
+      if (
+        selector.blockIds?.includes("minecraft:crafting_table") === true
+      ) {
+        return [craftingTable];
+      }
+      if (selector.replaceable === false) {
+        return [blockObservation({
+          x: furnace.position.x,
+          y: furnace.position.y - 1,
+          z: furnace.position.z,
+          dimension: furnace.position.dimension,
+        })];
+      }
+      if (selector.replaceable === true) {
+        return [blockObservation({
+          x: Math.floor(center.x),
+          y: Math.floor(center.y),
+          z: Math.floor(center.z),
+          dimension: center.dimension,
+        }, { replaceable: true })];
+      }
+      return [];
+    };
+    let resolveSmeltStarted!: () => void;
+    const smeltStarted = new Promise<void>((resolve) => {
+      resolveSmeltStarted = resolve;
+    });
+    driver.taskResolver = (task) => {
+      driver.tasks.push(task);
+      if (task.type === "build") {
+        furnacePlaced = true;
+      }
+      if (task.type === "smelt") {
+        resolveSmeltStarted();
+        return Effect.never;
+      }
+      return Effect.void;
+    };
+    let resolveFurnaceReclaimed!: () => void;
+    const furnaceReclaimed = new Promise<void>((resolve) => {
+      resolveFurnaceReclaimed = resolve;
+    });
+    driver.actionResolver = (action) =>
+      Effect.sync(() => {
+        if (
+          action.type === "dig-block"
+          && action.position.x === furnace.position.x
+          && action.position.y === furnace.position.y
+          && action.position.z === furnace.position.z
+        ) {
+          furnacePlaced = false;
+          resolveFurnaceReclaimed();
+        }
+        return {};
+      });
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      yield* Effect.promise(() => smeltStarted).pipe(
+        Effect.timeout("5 seconds"),
+      );
+      yield* run.stop;
+      yield* Effect.promise(() => furnaceReclaimed).pipe(
+        Effect.timeout("5 seconds"),
+      );
+    })));
+
+    expect(driver.actions).toContainEqual({
+      type: "dig-block",
+      position: furnace.position,
+    });
+  });
+
   it("skips an unreachable recovery furnace and hunts for food", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
