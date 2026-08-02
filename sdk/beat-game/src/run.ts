@@ -5941,7 +5941,7 @@ function fillLiquidBucket(
     let current = observation;
     if (
       liquid === "lava"
-      && (yield* isPlayerInFluid(state.driver, current.player.position))
+      && (yield* isPlayerInLava(state.driver, current.player.position))
     ) {
       yield* emergencyAirAscent(state, current.player.position);
       return;

@@ -9970,7 +9970,7 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
-  it("approaches a lava source from a reachable dry ledge and stops once filled", async () => {
+  it("approaches lava from a dry ledge while standing in shallow water", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const source = {
@@ -10013,6 +10013,24 @@ describe("beat-game run lifecycle", () => {
       },
     });
     driver.blockQueryResolver = ({ center, selector }) => {
+      if (
+        selector.blockIds?.includes("minecraft:water") === true
+        && selector.blockIds.length > 1
+        && Math.floor(center.x) === Math.floor(start.x)
+        && Math.floor(center.y) === Math.floor(start.y)
+        && Math.floor(center.z) === Math.floor(start.z)
+      ) {
+        return [blockObservation({
+          x: Math.floor(start.x),
+          y: Math.floor(start.y),
+          z: Math.floor(start.z),
+          dimension: start.dimension,
+        }, {
+          blockId: "minecraft:water",
+          properties: { level: "0" },
+          replaceable: true,
+        })];
+      }
       if (
         selector.blockIds?.includes("minecraft:lava") === true
         && selector.properties?.level === "0"
