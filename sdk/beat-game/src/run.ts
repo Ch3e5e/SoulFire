@@ -4914,7 +4914,10 @@ function huntForFoodRequirement(
         state,
         observation,
         {
-          entityTypes: foodHuntEntityTypes(observation.player.food),
+          entityTypes: foodHuntEntityTypes(
+            observation.player.food,
+            observation.player.health >= state.strategy.minimumHealth,
+          ),
           alive: true,
         },
         maximumTargets,
@@ -5186,8 +5189,11 @@ function queryFishingWater(
   });
 }
 
-function foodHuntEntityTypes(foodLevel: number): readonly string[] {
-  return foodLevel <= 6
+function foodHuntEntityTypes(
+  foodLevel: number,
+  allowHostileEmergencyFood: boolean,
+): readonly string[] {
+  return foodLevel <= 6 && allowHostileEmergencyFood
     ? [...FOOD_ANIMAL_ENTITY_TYPES, ...EMERGENCY_FOOD_ENTITY_TYPES]
     : FOOD_ANIMAL_ENTITY_TYPES;
 }
@@ -10085,7 +10091,10 @@ function prepareForDistantDeathRecovery(
         state,
         value,
         {
-          entityTypes: foodHuntEntityTypes(value.player.food),
+          entityTypes: foodHuntEntityTypes(
+            value.player.food,
+            value.player.health >= state.strategy.minimumHealth,
+          ),
           alive: true,
         },
         DEATH_RECOVERY_BOOTSTRAP_FOOD_COUNT - food,

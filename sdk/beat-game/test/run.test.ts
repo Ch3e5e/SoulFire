@@ -11216,6 +11216,123 @@ describe("beat-game run lifecycle", () => {
     expect(driver.xzPaths).toHaveLength(1);
   }, 10_000);
 
+  it("does not hunt hostile emergency food while critically hurt", async () => {
+    const driver = new FakeBeatGameDriver();
+    const zombie = {
+      connectionEpoch: "epoch-1",
+      networkId: 51,
+      entityType: "minecraft:zombie",
+      position: {
+        x: 2,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.currentObservation = observation({
+      health: 5,
+      food: 6,
+      counts: {
+        "minecraft:cobblestone": 20,
+        "minecraft:iron_ingot": 7,
+        "minecraft:oak_log": 8,
+        "minecraft:stone_pickaxe": 1,
+      },
+    });
+    driver.entityQueryResolver = (query) =>
+      query.selector.entityTypes?.includes("minecraft:zombie") === true
+        ? [zombie]
+        : [];
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      yield* Effect.sleep(100);
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    const foodQueries = driver.entityQueries.filter((query) =>
+      query.selector.entityTypes?.includes("minecraft:cow") === true
+    );
+    expect(foodQueries.length).toBeGreaterThan(0);
+    expect(foodQueries.every((query) =>
+      query.selector.entityTypes?.includes("minecraft:zombie") === false
+    )).toBe(true);
+    expect(driver.tasks.some((task) => task.type === "attack-entity"))
+      .toBe(false);
+    expect(driver.xzPaths.length).toBeGreaterThan(0);
+  });
+
+  it("allows a healthy starving bot to hunt emergency food", async () => {
+    const driver = new FakeBeatGameDriver();
+    const zombie = {
+      connectionEpoch: "epoch-1",
+      networkId: 52,
+      entityType: "minecraft:zombie",
+      position: {
+        x: 2,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.currentObservation = observation({
+      health: 20,
+      food: 6,
+      counts: {
+        "minecraft:cobblestone": 20,
+        "minecraft:iron_ingot": 7,
+        "minecraft:oak_log": 8,
+        "minecraft:stone_pickaxe": 1,
+      },
+    });
+    driver.entityQueryResolver = (query) =>
+      query.selector.entityTypes?.includes("minecraft:zombie") === true
+        ? [zombie]
+        : [];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(
+        Effect.zipRight(
+          task.type === "attack-entity" ? Effect.never : Effect.void,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some((task) => task.type === "attack-entity")) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+      target: expect.objectContaining({
+        networkId: zombie.networkId,
+        entityType: zombie.entityType,
+      }),
+    }));
+  });
+
   it("mines a bounded local escape after a dry food route fails", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
