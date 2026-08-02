@@ -4480,12 +4480,18 @@ function clearPortalInterior(
           ) {
             return Effect.void;
           }
-          return driver.pathfind(position, 3, mergePathPolicy(path)).pipe(
-            Effect.zipRight(driver.act({
-              type: "dig-block",
-              position,
-            })),
-          );
+          return Effect.gen(function* () {
+            yield* driver.pathfind(position, 3, mergePathPolicy(path));
+            const observation = yield* driver.observe;
+            const tool = preferredPortalDigTool(observation);
+            if (tool !== undefined) {
+              yield* driver.act({
+                type: "select-item",
+                selector: { itemIds: [tool] },
+              });
+            }
+            yield* driver.act({ type: "dig-block", position });
+          });
         }),
       ),
     { discard: true },

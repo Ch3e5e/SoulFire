@@ -3331,6 +3331,16 @@ describe("beat-game behavior programs", () => {
       type: "dig-block",
       position: interior,
     });
+    const interiorDigIndex = driver.actions.findIndex((action) =>
+      action.type === "dig-block"
+      && key(action.position) === key(interior)
+    );
+    const interiorToolSelectionIndex = driver.actions.findIndex((action) =>
+      action.type === "select-item"
+      && action.selector.itemIds?.includes("minecraft:iron_pickaxe") === true
+    );
+    expect(interiorToolSelectionIndex).toBeGreaterThanOrEqual(0);
+    expect(interiorToolSelectionIndex).toBeLessThan(interiorDigIndex);
     expect(driver.actions.findIndex((action) =>
       action.type === "dig-block"
       && (
