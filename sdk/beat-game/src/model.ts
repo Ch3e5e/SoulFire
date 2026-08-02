@@ -88,6 +88,8 @@ export interface BeatGamePathPolicy {
   readonly avoidFluids?: boolean;
   readonly additionalPlaceItemIds?: readonly string[];
   readonly sprint?: boolean;
+  readonly minimumY?: number;
+  readonly maximumY?: number;
 }
 
 export interface BeatGameStrategy {

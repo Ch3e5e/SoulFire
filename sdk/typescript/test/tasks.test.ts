@@ -1034,6 +1034,8 @@ describe("SoulFireTasks", () => {
         allowMining: true,
         allowPlacing: false,
         avoidFluids: true,
+        minimumY: 63,
+        maximumY: 96,
       },
     });
 
@@ -1050,6 +1052,8 @@ describe("SoulFireTasks", () => {
           allowMining: true,
           allowPlacing: false,
           avoidFluids: true,
+          minimumY: 63,
+          maximumY: 96,
         },
       });
   });

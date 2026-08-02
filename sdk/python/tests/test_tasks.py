@@ -825,6 +825,8 @@ def test_sync_collect_blocks_task_preserves_selectors_and_path_policy() -> None:
             allow_mining=True,
             allow_placing=False,
             avoid_fluids=True,
+            minimum_y=63,
+            maximum_y=96,
         ),
     )
 
@@ -841,6 +843,8 @@ def test_sync_collect_blocks_task_preserves_selectors_and_path_policy() -> None:
     assert task.options.allow_mining
     assert not task.options.allow_placing
     assert task.options.avoid_fluids
+    assert task.options.minimum_y == 63
+    assert task.options.maximum_y == 96
 
 
 def test_sync_excavate_task_preserves_corners_limit_and_path_policy() -> None:

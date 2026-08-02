@@ -2005,6 +2005,11 @@ describe("beat-game run lifecycle", () => {
       requireLineOfSight: true,
       targetYRange: { minimum: 60 },
     }));
+    const logCollectionIndex = driver.tasks.findIndex((task) =>
+      task.type === "collect-blocks"
+      && task.blockIds.includes("minecraft:oak_log")
+    );
+    expect(driver.taskPolicies[logCollectionIndex]?.minimumY).toBe(63);
     expect(driver.paths).not.toContainEqual(expect.objectContaining({
       position: deathPosition,
     }));

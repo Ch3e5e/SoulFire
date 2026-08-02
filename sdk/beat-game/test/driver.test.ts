@@ -229,6 +229,8 @@ describe("production SoulFire beat-game driver", () => {
       ...defaultBeatGameStrategy.path,
       additionalPlaceItemIds: ["minecraft:oak_log"],
       sprint: false,
+      minimumY: 63,
+      maximumY: 96,
     }, {
       idempotencyKey: "beat-game:test-action",
     }));
@@ -250,6 +252,8 @@ describe("production SoulFire beat-game driver", () => {
           avoidFluids: false,
           additionalPlaceItemIds: ["minecraft:oak_log"],
           sprint: false,
+          minimumY: 63,
+          maximumY: 96,
           timeoutSeconds: 30,
           searchTimeoutSeconds: 30,
         },

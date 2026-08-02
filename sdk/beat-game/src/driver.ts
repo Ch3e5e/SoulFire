@@ -539,6 +539,12 @@ export function makeSoulFireBeatGameDriver(
         additionalPlaceItemIds: [...policy.additionalPlaceItemIds],
       }),
     ...(policy.sprint === undefined ? {} : { sprint: policy.sprint }),
+    ...(policy.minimumY === undefined
+      ? {}
+      : { minimumY: policy.minimumY }),
+    ...(policy.maximumY === undefined
+      ? {}
+      : { maximumY: policy.maximumY }),
     timeoutSeconds: Math.max(1, Math.ceil(policy.maxSearchTimeMs / 1_000)),
     searchTimeoutSeconds: Math.max(
       1,

@@ -39,6 +39,7 @@ import com.soulfiremc.server.pathfinding.graph.constraint.NoBlockBreakingConstra
 import com.soulfiremc.server.pathfinding.graph.constraint.NoBlockPlacingConstraint;
 import com.soulfiremc.server.pathfinding.graph.constraint.PathConstraint;
 import com.soulfiremc.server.pathfinding.graph.constraint.PathConstraintImpl;
+import com.soulfiremc.server.pathfinding.graph.constraint.PathYRangeConstraint;
 import com.soulfiremc.server.util.BlockItems;
 import com.soulfiremc.server.util.SFItemHelpers;
 import io.grpc.Status;
@@ -332,6 +333,30 @@ public final class PathfindingSupport {
         constraint,
         bot.minecraft().level,
         bot.minecraft().player
+      );
+    }
+    if (options.hasMinimumY() || options.hasMaximumY()) {
+      var minimumY = options.hasMinimumY()
+        ? OptionalInt.of(options.getMinimumY())
+        : OptionalInt.empty();
+      var maximumY = options.hasMaximumY()
+        ? OptionalInt.of(options.getMaximumY())
+        : OptionalInt.empty();
+      if (
+        minimumY.isPresent()
+          && maximumY.isPresent()
+          && minimumY.getAsInt() > maximumY.getAsInt()
+      ) {
+        throw Status.INVALID_ARGUMENT
+          .withDescription(
+            "minimum_y must be less than or equal to maximum_y"
+          )
+          .asRuntimeException();
+      }
+      constraint = new PathYRangeConstraint(
+        constraint,
+        minimumY,
+        maximumY
       );
     }
     if (options.hasBreakBlockPenalty()

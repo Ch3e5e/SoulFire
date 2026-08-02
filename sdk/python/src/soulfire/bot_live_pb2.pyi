@@ -1310,7 +1310,7 @@ class PathfindGoal(_message.Message):
     def __init__(self, block: _Optional[_Union[PathfindGoal.BlockGoal, _Mapping]] = ..., near: _Optional[_Union[PathfindGoal.NearGoal, _Mapping]] = ..., entity: _Optional[_Union[PathfindGoal.EntityGoal, _Mapping]] = ..., xz: _Optional[_Union[PathfindGoal.XZGoal, _Mapping]] = ..., y: _Optional[_Union[PathfindGoal.YGoal, _Mapping]] = ..., break_block: _Optional[_Union[PathfindGoal.BreakBlockGoal, _Mapping]] = ..., place_block: _Optional[_Union[PathfindGoal.PlaceBlockGoal, _Mapping]] = ..., away_from_position: _Optional[_Union[PathfindGoal.AwayFromPositionGoal, _Mapping]] = ..., away_from_entity: _Optional[_Union[PathfindGoal.AwayFromEntityGoal, _Mapping]] = ..., any: _Optional[_Union[PathfindGoal.AnyGoal, _Mapping]] = ...) -> None: ...
 
 class PathfindOptions(_message.Message):
-    __slots__ = ("allow_mining", "allow_placing", "timeout_seconds", "search_timeout_seconds", "break_block_penalty", "place_block_penalty", "avoid_fluids", "additional_place_item_ids", "sprint")
+    __slots__ = ("allow_mining", "allow_placing", "timeout_seconds", "search_timeout_seconds", "break_block_penalty", "place_block_penalty", "avoid_fluids", "additional_place_item_ids", "sprint", "minimum_y", "maximum_y")
     ALLOW_MINING_FIELD_NUMBER: _ClassVar[int]
     ALLOW_PLACING_FIELD_NUMBER: _ClassVar[int]
     TIMEOUT_SECONDS_FIELD_NUMBER: _ClassVar[int]
@@ -1320,6 +1320,8 @@ class PathfindOptions(_message.Message):
     AVOID_FLUIDS_FIELD_NUMBER: _ClassVar[int]
     ADDITIONAL_PLACE_ITEM_IDS_FIELD_NUMBER: _ClassVar[int]
     SPRINT_FIELD_NUMBER: _ClassVar[int]
+    MINIMUM_Y_FIELD_NUMBER: _ClassVar[int]
+    MAXIMUM_Y_FIELD_NUMBER: _ClassVar[int]
     allow_mining: bool
     allow_placing: bool
     timeout_seconds: int
@@ -1329,7 +1331,9 @@ class PathfindOptions(_message.Message):
     avoid_fluids: bool
     additional_place_item_ids: _containers.RepeatedScalarFieldContainer[str]
     sprint: bool
-    def __init__(self, allow_mining: bool = ..., allow_placing: bool = ..., timeout_seconds: _Optional[int] = ..., search_timeout_seconds: _Optional[int] = ..., break_block_penalty: _Optional[float] = ..., place_block_penalty: _Optional[float] = ..., avoid_fluids: bool = ..., additional_place_item_ids: _Optional[_Iterable[str]] = ..., sprint: bool = ...) -> None: ...
+    minimum_y: int
+    maximum_y: int
+    def __init__(self, allow_mining: bool = ..., allow_placing: bool = ..., timeout_seconds: _Optional[int] = ..., search_timeout_seconds: _Optional[int] = ..., break_block_penalty: _Optional[float] = ..., place_block_penalty: _Optional[float] = ..., avoid_fluids: bool = ..., additional_place_item_ids: _Optional[_Iterable[str]] = ..., sprint: bool = ..., minimum_y: _Optional[int] = ..., maximum_y: _Optional[int] = ...) -> None: ...
 
 class GoToRequest(_message.Message):
     __slots__ = ("instance_id", "bot_id", "goal", "options")

@@ -22,6 +22,7 @@ import com.soulfiremc.grpc.generated.CollectBlocksCompletionReason;
 import com.soulfiremc.grpc.generated.CollectBlocksTask;
 import com.soulfiremc.grpc.generated.CollectBlocksTaskResult;
 import com.soulfiremc.grpc.generated.IntRange;
+import com.soulfiremc.grpc.generated.PathfindOptions;
 import com.soulfiremc.grpc.generated.WorldPosition;
 import com.soulfiremc.server.api.BotTaskExecution;
 import com.soulfiremc.server.api.BotTaskProvider;
@@ -29,6 +30,7 @@ import com.soulfiremc.server.bot.ControlPriority;
 import com.soulfiremc.server.bot.ControlResource;
 import com.soulfiremc.server.bot.ControlStopReason;
 import com.soulfiremc.server.bot.ControlTask;
+import com.soulfiremc.server.pathfinding.PathfindingSupport;
 import com.soulfiremc.server.pathfinding.SFVec3i;
 import com.soulfiremc.server.pathfinding.execution.BlockBreakAction;
 import com.soulfiremc.server.pathfinding.execution.BlockBreakRejectedException;
@@ -40,11 +42,8 @@ import com.soulfiremc.server.pathfinding.goals.BreakBlockPosGoal;
 import com.soulfiremc.server.pathfinding.goals.CompositeGoal;
 import com.soulfiremc.server.pathfinding.goals.GoalScorer;
 import com.soulfiremc.server.pathfinding.graph.BlockFace;
-import com.soulfiremc.server.pathfinding.graph.constraint.AvoidFluidConstraint;
 import com.soulfiremc.server.pathfinding.graph.constraint.BlockBreakBlacklistConstraint;
-import com.soulfiremc.server.pathfinding.graph.constraint.NoBlockPlacingConstraint;
 import com.soulfiremc.server.pathfinding.graph.constraint.PathConstraint;
-import com.soulfiremc.server.pathfinding.graph.constraint.PathConstraintImpl;
 import io.grpc.Status;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
@@ -125,11 +124,10 @@ public final class CollectBlocksTaskProvider
       normalize(input.getTagsList()),
       count,
       radius,
-      input.getOptions().getAllowPlacing(),
+      input.getOptions(),
       input.getAvoidSubmergedTargets(),
       input.getRequireLineOfSight(),
       input.hasTargetYRange() ? input.getTargetYRange() : null,
-      input.getOptions().getAvoidFluids(),
       result
     );
     return new BotTaskExecution(control, result);
@@ -287,11 +285,10 @@ public final class CollectBlocksTaskProvider
     private final Set<String> tags;
     private final int targetCount;
     private final int searchRadius;
-    private final boolean allowPlacing;
+    private final PathfindOptions pathOptions;
     private final boolean avoidSubmergedTargets;
     private final boolean requireLineOfSight;
     private final @Nullable IntRange targetYRange;
-    private final boolean avoidFluids;
     private final CompletableFuture<CollectBlocksTaskResult> result;
     private final Set<SFVec3i> rejectedTargets = new HashSet<>();
     private final Map<SFVec3i, Set<SFVec3i>>
@@ -310,11 +307,10 @@ public final class CollectBlocksTaskProvider
       Set<String> tags,
       int targetCount,
       int searchRadius,
-      boolean allowPlacing,
+      PathfindOptions pathOptions,
       boolean avoidSubmergedTargets,
       boolean requireLineOfSight,
       @Nullable IntRange targetYRange,
-      boolean avoidFluids,
       CompletableFuture<CollectBlocksTaskResult> result
     ) {
       this.context = context;
@@ -322,11 +318,10 @@ public final class CollectBlocksTaskProvider
       this.tags = tags;
       this.targetCount = targetCount;
       this.searchRadius = searchRadius;
-      this.allowPlacing = allowPlacing;
+      this.pathOptions = pathOptions;
       this.avoidSubmergedTargets = avoidSubmergedTargets;
       this.requireLineOfSight = requireLineOfSight;
       this.targetYRange = targetYRange;
-      this.avoidFluids = avoidFluids;
       this.result = result;
     }
 
@@ -372,21 +367,14 @@ public final class CollectBlocksTaskProvider
         return;
       }
       context.reportProgress(progress("Planning route to matching block"));
-      PathConstraint constraint = new PathConstraintImpl(context.bot());
+      PathConstraint constraint = PathfindingSupport.buildConstraint(
+        context.bot(),
+        pathOptions
+      );
       if (!rejectedTargets.isEmpty()) {
         constraint = new BlockBreakBlacklistConstraint(
           constraint,
           rejectedTargets
-        );
-      }
-      if (!allowPlacing) {
-        constraint = new NoBlockPlacingConstraint(constraint);
-      }
-      if (avoidFluids) {
-        constraint = AvoidFluidConstraint.forPlayer(
-          constraint,
-          context.bot().minecraft().level,
-          context.bot().minecraft().player
         );
       }
       activeTargets = Set.copyOf(candidates);

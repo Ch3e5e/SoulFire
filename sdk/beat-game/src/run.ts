@@ -345,6 +345,7 @@ const AIR_ESCAPE_VERTICAL_PROGRESS = 0.75;
 const OVERWORLD_LOW_GROUND_MAX_Y = 62;
 const OVERWORLD_FORCED_SURFACE_RECOVERY_MAX_Y = 64;
 const SURFACE_RESOURCE_MINIMUM_Y_MARGIN = 4;
+const SURFACE_RESOURCE_PATH_MINIMUM_Y_MARGIN = 1;
 const SURFACE_NEIGHBOR_MAX_HEIGHT_DELTA = 1;
 const MINIMUM_STABLE_SURFACE_NEIGHBORS = 2;
 const ELEVATED_SURFACE_PATH_TIMEOUT_MS = 15_000;
@@ -5722,12 +5723,12 @@ function collectBlocksOrExplore(
     let current = observation;
     const targetCount = countItems(observation) + options.count;
     const requestedPath = options.path ?? state.strategy.path;
-    const collectionPath = options.avoidFluids === true
+    const baseCollectionPath = options.avoidFluids === true
         || options.avoidSubmergedTargets === true
       ? { ...requestedPath, avoidFluids: true }
       : requestedPath;
     const explorationPath = {
-      ...(options.avoidFluids === true ? collectionPath : requestedPath),
+      ...(options.avoidFluids === true ? baseCollectionPath : requestedPath),
       allowMining: false,
     };
     if (
@@ -5758,6 +5759,14 @@ function collectBlocksOrExplore(
         );
         current = yield* state.driver.observe;
       }
+      const collectionPath = options.requireSurfaceTargets === true
+          && current.player.position.dimension === "minecraft:overworld"
+        ? {
+          ...baseCollectionPath,
+          minimumY: Math.floor(current.player.position.y)
+            - SURFACE_RESOURCE_PATH_MINIMUM_Y_MARGIN,
+        }
+        : baseCollectionPath;
       yield* collectNearbyDrops(state.driver, {
         itemIds: options.progressItemIds,
         radius: 12,

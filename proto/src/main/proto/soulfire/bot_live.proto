@@ -1014,6 +1014,11 @@ message PathfindOptions {
   // Whether ordinary forward path traversal should sprint. Unset preserves the
   // server default of sprinting. Set false for hunger-efficient travel.
   optional bool sprint = 9;
+  // Optional inclusive elevation bounds for the bot's feet along the route.
+  // These keep a route on the surface or within a mining layer without
+  // constraining blocks that actions may reach from the route.
+  optional int32 minimum_y = 10;
+  optional int32 maximum_y = 11;
 }
 
 message GoToRequest {
