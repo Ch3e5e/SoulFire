@@ -5668,11 +5668,12 @@ function collectBlocksOrExplore(
     let current = observation;
     const targetCount = countItems(observation) + options.count;
     const requestedPath = options.path ?? state.strategy.path;
-    const resourcePath = options.avoidFluids === true
+    const collectionPath = options.avoidFluids === true
+        || options.avoidSubmergedTargets === true
       ? { ...requestedPath, avoidFluids: true }
       : requestedPath;
     const explorationPath = {
-      ...resourcePath,
+      ...(options.avoidFluids === true ? collectionPath : requestedPath),
       allowMining: false,
     };
     if (
@@ -5695,7 +5696,7 @@ function collectBlocksOrExplore(
         maximumDrops: 32,
         settleDelayMs: 100,
         maximumVerticalDistance: 3,
-        path: resourcePath,
+        path: collectionPath,
       });
       current = yield* state.driver.observe;
       if (countItems(current) >= targetCount) {
@@ -5712,7 +5713,7 @@ function collectBlocksOrExplore(
         count: targetCount - beforeAttempt,
         searchRadius: state.strategy.blockSearchRadius,
         avoidSubmergedTargets: options.avoidSubmergedTargets ?? false,
-        path: resourcePath,
+        path: collectionPath,
       });
       const waitForInventoryTarget = Effect.gen(function* () {
         while (true) {
@@ -5732,7 +5733,7 @@ function collectBlocksOrExplore(
         maximumDrops: 32,
         settleDelayMs: 500,
         maximumVerticalDistance: 3,
-        path: resourcePath,
+        path: collectionPath,
       });
       current = yield* state.driver.observe;
       for (

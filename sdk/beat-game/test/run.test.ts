@@ -13844,6 +13844,37 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("keeps log collection dry while allowing frontier water crossings", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (driver.xzPaths.length === 0) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    })));
+
+    const logCollectionIndex = driver.tasks.findIndex((task) =>
+      task.type === "collect-blocks"
+      && task.blockIds.includes("minecraft:oak_log")
+    );
+    expect(logCollectionIndex).toBeGreaterThanOrEqual(0);
+    expect(driver.tasks[logCollectionIndex]).toEqual(expect.objectContaining({
+      type: "collect-blocks",
+      avoidSubmergedTargets: true,
+    }));
+    expect(driver.taskPolicies[logCollectionIndex]?.avoidFluids).toBe(true);
+    expect(driver.xzPaths[0]?.policy.allowMining).toBe(false);
+    expect(driver.xzPaths[0]?.policy.avoidFluids).not.toBe(true);
+  });
+
   it("crafts a basic sword and pickaxe before mining cobblestone", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
