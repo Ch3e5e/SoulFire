@@ -98,6 +98,31 @@ describe("beat-game requirements", () => {
       );
   });
 
+  it("counts safe forage toward the edible supply reserve", () => {
+    const requirements = requirementsForPhase(
+      BeatGamePhase.PREPARE_OVERWORLD,
+      observation({
+        counts: {
+          "minecraft:sweet_berries": 4,
+          "minecraft:glow_berries": 4,
+        },
+      }).inventory,
+      defaultBeatGameStrategy,
+    );
+
+    expect(requirements.find(({ key }) => key === "food-supply"))
+      .toMatchObject({
+        currentCount: 8,
+        targetCount: 8,
+        satisfied: true,
+      });
+    expect(requirements.find(({ key }) => key === "food")).toMatchObject({
+      currentCount: 0,
+      targetCount: 8,
+      satisfied: false,
+    });
+  });
+
   it("shrinks the bootstrap log reserve as durable equipment comes online", () => {
     const logRequirement = (
       counts: Readonly<Record<string, number>>,

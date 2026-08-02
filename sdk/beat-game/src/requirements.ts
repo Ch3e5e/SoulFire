@@ -42,6 +42,20 @@ export const EDIBLE_FOOD_ITEM_IDS = [
   ...Object.keys(RAW_FOOD_TO_COOKED),
   "minecraft:carrot",
   "minecraft:apple",
+  "minecraft:beetroot",
+  "minecraft:beetroot_soup",
+  "minecraft:cookie",
+  "minecraft:dried_kelp",
+  "minecraft:glow_berries",
+  "minecraft:golden_apple",
+  "minecraft:golden_carrot",
+  "minecraft:honey_bottle",
+  "minecraft:melon_slice",
+  "minecraft:mushroom_stew",
+  "minecraft:pumpkin_pie",
+  "minecraft:rabbit_stew",
+  "minecraft:sweet_berries",
+  "minecraft:tropical_fish",
 ] as const;
 
 export const EMERGENCY_FOOD_ITEM_IDS = [

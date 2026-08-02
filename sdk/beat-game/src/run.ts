@@ -540,6 +540,7 @@ const ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES = new Set([
   "minecraft:witch",
 ]);
 const PROACTIVE_ESCAPE_ONLY_EVASION_RADIUS = 12;
+const CREEPER_PROACTIVE_EVASION_RADIUS = 8;
 const PROACTIVE_RANGED_ENGAGEMENT_RADIUS = 16;
 const PROACTIVE_THREAT_MAXIMUM_VERTICAL_DISTANCE = 6;
 const RANGED_THREAT_ESCAPE_TRIGGER_RADIUS = 24;
@@ -2245,8 +2246,7 @@ function findImmediateThreat(
         ({ target, distanceSquared }) =>
           ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(target.entityType)
         && distanceSquared
-          <= PROACTIVE_ESCAPE_ONLY_EVASION_RADIUS
-            * PROACTIVE_ESCAPE_ONLY_EVASION_RADIUS,
+          <= proactiveEscapeOnlyEvasionRadius(target) ** 2,
       );
       if (escapeOnlyThreat !== undefined) {
         return { target: escapeOnlyThreat.target, response: "flee" };
@@ -2344,6 +2344,14 @@ function shouldDisengageFromThreat(
     return true;
   }
   return false;
+}
+
+function proactiveEscapeOnlyEvasionRadius(
+  target: BeatGameEntityObservation,
+): number {
+  return target.entityType === "minecraft:creeper"
+    ? CREEPER_PROACTIVE_EVASION_RADIUS
+    : PROACTIVE_ESCAPE_ONLY_EVASION_RADIUS;
 }
 
 function escapeThreatSelector(
@@ -3888,7 +3896,7 @@ function findNearbyAttackThreat(
         && distanceSquared(
             observation.player.position,
             candidate.position,
-          ) <= PROACTIVE_ESCAPE_ONLY_EVASION_RADIUS ** 2
+          ) <= proactiveEscapeOnlyEvasionRadius(candidate) ** 2
       );
       const rangedAttacker = candidates.find((candidate) =>
         PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(candidate.entityType)
@@ -3905,7 +3913,11 @@ function findNearbyAttackThreat(
         distanceSquared(
           observation.player.position,
           candidate.position,
-        ) <= PROACTIVE_ESCAPE_ONLY_EVASION_RADIUS ** 2
+        ) <= (
+          ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(candidate.entityType)
+            ? proactiveEscapeOnlyEvasionRadius(candidate)
+            : PROACTIVE_ESCAPE_ONLY_EVASION_RADIUS
+        ) ** 2
       );
       const nearest = escapeOnlyThreat
         ?? closeMeleeAttacker

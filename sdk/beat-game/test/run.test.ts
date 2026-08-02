@@ -4685,14 +4685,14 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks.filter((task) => task.type === "flee")).toHaveLength(2);
   }, 10_000);
 
-  it("does not abandon work for a distant creeper", async () => {
+  it("does not abandon work for a creeper outside its proactive range", async () => {
     const driver = new FakeBeatGameDriver();
     driver.entityResults = [{
       connectionEpoch: "epoch-1",
       networkId: 42,
       entityType: "minecraft:creeper",
       position: {
-        x: 16,
+        x: 10,
         y: 64,
         z: 0,
         dimension: "minecraft:overworld",
