@@ -145,7 +145,6 @@ const LOCAL_NAVIGATION_RECOVERY_TIMEOUT_MS = 15_000;
 const EXPLORATION_MAXIMUM_LEG_DISTANCE = 32;
 const EXPLORATION_MAXIMUM_SURFACE_ELEVATION_CHANGE = 12;
 const MAX_SAFE_DEATH_RECOVERY_FAILURES = 3;
-const FOOD_SEARCH_AQUATIC_ESCALATION_ATTEMPTS = 4;
 const DISTANT_DEATH_RECOVERY_BOOTSTRAP_DISTANCE = 128;
 const ACTIVE_CORPSE_RECOVERY_DISTANCE = 256;
 const IMMEDIATE_CORPSE_RECOVERY_DISTANCE = 12;
@@ -285,9 +284,6 @@ const HUNT_APPROACH_GOAL_RADIUS = 2;
 const HUNT_MAXIMUM_APPROACH_DISTANCE = 48;
 const DIRECTED_HUNT_MAXIMUM_DETOUR = 32;
 const DIRECTED_HUNT_DESTINATION_REACHED_RADIUS = 3;
-const AQUATIC_HUNT_MAXIMUM_HORIZONTAL_DISTANCE = 10;
-const AQUATIC_HUNT_MAXIMUM_VERTICAL_DISTANCE = 6;
-const ESCALATED_AQUATIC_HUNT_MAXIMUM_HORIZONTAL_DISTANCE = 64;
 const URGENT_AQUATIC_HUNT_MAXIMUM_HORIZONTAL_DISTANCE = 64;
 const URGENT_AQUATIC_HUNT_MAXIMUM_VERTICAL_DISTANCE = 16;
 const URGENT_AQUATIC_HUNT_FOOD_LEVEL = 10;
@@ -4757,7 +4753,6 @@ function satisfyFoodSupplyRequirement(
               state,
               current,
               bufferedCollectionCount("food", missing),
-              "satisfy:food-supply",
             )
         ),
       );
@@ -4915,58 +4910,32 @@ function huntForFoodRequirement(
   state: RunState,
   observation: BeatGameObservation,
   maximumTargets: number,
-  action = "satisfy:food",
 ): Effect.Effect<void, BeatGameError | BeatGameDriverError> {
-  return Ref.get(state.checkpoint).pipe(
-    Effect.map((checkpoint) =>
-      countTrailingActions(
-        checkpoint.planner.completedActions,
-        action,
-      ) >= FOOD_SEARCH_AQUATIC_ESCALATION_ATTEMPTS
-    ),
-    Effect.flatMap((allowAquaticTargets) =>
-      huntOrExplore(
-        state,
-        observation,
-        {
-          entityTypes: foodHuntEntityTypes(
-            observation.player.food,
-            observation.player.health >= state.strategy.minimumHealth,
-          ),
-          alive: true,
-        },
-        maximumTargets,
-        "find-food-animals",
-        {
-          preferredEntityTypes: HIGH_YIELD_FOOD_ANIMAL_TYPES,
-          preferredRadius: HIGH_YIELD_FOOD_PREFERENCE_RADIUS,
-          allowAquaticTargets,
-          allowUrgentAquaticTargets:
-            observation.player.food <= URGENT_AQUATIC_HUNT_FOOD_LEVEL,
-          allowFluidFallback:
-            observation.player.health >= state.strategy.minimumHealth,
-          path: {
-            ...state.strategy.path,
-            avoidFluids: true,
-          },
-        },
-      )
-    ),
+  return huntOrExplore(
+    state,
+    observation,
+    {
+      entityTypes: foodHuntEntityTypes(
+        observation.player.food,
+        observation.player.health >= state.strategy.minimumHealth,
+      ),
+      alive: true,
+    },
+    maximumTargets,
+    "find-food-animals",
+    {
+      preferredEntityTypes: HIGH_YIELD_FOOD_ANIMAL_TYPES,
+      preferredRadius: HIGH_YIELD_FOOD_PREFERENCE_RADIUS,
+      allowUrgentAquaticTargets:
+        observation.player.food <= URGENT_AQUATIC_HUNT_FOOD_LEVEL,
+      allowFluidFallback:
+        observation.player.health >= state.strategy.minimumHealth,
+      path: {
+        ...state.strategy.path,
+        avoidFluids: true,
+      },
+    },
   );
-}
-
-function countTrailingActions(
-  actions: readonly string[],
-  action: string,
-): number {
-  let count = 0;
-  for (let index = actions.length - 1; index >= 0; index -= 1) {
-    if (actions[index] !== action) {
-      break;
-    }
-    count += 1;
-  }
-  return count;
 }
 
 function tryFishForFood(
@@ -6921,7 +6890,6 @@ function ensureArrowIngredients(
 interface HuntTargetPreference {
   readonly preferredEntityTypes: ReadonlySet<string>;
   readonly preferredRadius: number;
-  readonly allowAquaticTargets?: boolean;
   readonly allowUrgentAquaticTargets?: boolean;
   readonly maximumExplorationHops?: number;
   readonly path?: BeatGameStrategy["path"];
@@ -6959,7 +6927,7 @@ function huntOrExplore(
     const attemptedTargets = new Set<string>();
     const locallyUnreachable = new Set<string>();
     let confirmedVisibleTarget: BeatGameEntityObservation | undefined;
-    let allowEmergencyAquaticFallback =
+    const allowEmergencyAquaticFallback =
       targetPreference?.allowUrgentAquaticTargets === true
       && observation.player.food <= URGENT_AQUATIC_HUNT_FOOD_LEVEL;
     let aquaticPursuitActive = false;
@@ -7053,13 +7021,7 @@ function huntOrExplore(
           target,
           current,
           state.strategy.minimumHealth,
-          allowEmergencyAquaticFallback && targetPreference !== undefined
-            ? {
-              ...targetPreference,
-              allowAquaticTargets: true,
-              allowFluidFallback: true,
-            }
-            : targetPreference,
+          targetPreference,
         )
       );
       const preferredCandidates = targetPreference === undefined
@@ -7204,8 +7166,6 @@ function huntOrExplore(
               ),
             );
           } else if (explorationOutcome.type === "route-failed") {
-            allowEmergencyAquaticFallback =
-              targetPreference?.allowAquaticTargets === true;
             const latest = yield* state.driver.observe;
             yield* recoverLocalNavigationTrap(
               state,
@@ -7649,10 +7609,6 @@ function isEligibleHuntingTarget(
     && (
       !aquaticTarget
       || urgentAquaticHunt
-      || (
-        observation.player.health >= minimumHealth
-        && targetPreference?.allowAquaticTargets === true
-      )
     )
     && (
       observation.player.health <= LETHAL_MELEE_DISENGAGE_HEALTH
@@ -7679,35 +7635,17 @@ function isHuntingTargetWithinReach(
         ) <= EMERGENCY_FOOD_MAXIMUM_HORIZONTAL_DISTANCE ** 2;
   }
   if (AQUATIC_FOOD_ENTITY_TYPES.has(target.entityType)) {
-    const emergencyAquaticFallback =
-      targetPreference?.allowAquaticTargets === true
-      && targetPreference.allowFluidFallback === true;
     const urgentAquaticHunt = shouldAllowUrgentAquaticHunt(
       observation,
       targetPreference,
     );
-    return (
-      observation.player.health >= minimumHealth
-      || observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
-      || emergencyAquaticFallback
-      || urgentAquaticHunt
-    )
+    return urgentAquaticHunt
       && Math.abs(target.position.y - observation.player.position.y)
-        <= (
-          urgentAquaticHunt
-            ? URGENT_AQUATIC_HUNT_MAXIMUM_VERTICAL_DISTANCE
-            : AQUATIC_HUNT_MAXIMUM_VERTICAL_DISTANCE
-        )
+        <= URGENT_AQUATIC_HUNT_MAXIMUM_VERTICAL_DISTANCE
       && horizontalDistanceSquared(
         target.position,
         observation.player.position,
-      ) <= (
-        emergencyAquaticFallback
-            ? ESCALATED_AQUATIC_HUNT_MAXIMUM_HORIZONTAL_DISTANCE
-            : urgentAquaticHunt
-            ? URGENT_AQUATIC_HUNT_MAXIMUM_HORIZONTAL_DISTANCE
-            : AQUATIC_HUNT_MAXIMUM_HORIZONTAL_DISTANCE
-      ) ** 2;
+      ) <= URGENT_AQUATIC_HUNT_MAXIMUM_HORIZONTAL_DISTANCE ** 2;
   }
   const maximumVerticalDistance =
     observation.player.health < minimumHealth ? 12 : 32;
@@ -10140,7 +10078,6 @@ function prepareForDistantDeathRecovery(
           maximumExplorationHops: 2,
           path: foodSearchPath,
           explorationTarget: pendingDeath.position,
-          allowAquaticTargets: true,
           allowUrgentAquaticTargets: true,
           allowFluidFallback: true,
           fallbackToLocalExploration: true,

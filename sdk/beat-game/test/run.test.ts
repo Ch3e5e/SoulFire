@@ -10831,26 +10831,11 @@ describe("beat-game run lifecycle", () => {
     expect(driver.xzPaths[1]?.policy.avoidFluids).toBe(false);
   }, 10_000);
 
-  it("prefers a shallow fish and hands its pursuit directly to combat", async () => {
+  it("prefers a shallow fish during an urgent aquatic hunt", async () => {
     const driver = new FakeBeatGameDriver();
-    const store = new InMemoryBeatGameCheckpointStore();
-    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
-      runId: "wounded-aquatic-food-run",
-      teamId: "wounded-aquatic-food-team",
-    });
-    await Effect.runPromise(store.save({
-      ...initial,
-      planner: {
-        ...initial.planner,
-        completedActions: Array.from(
-          { length: 4 },
-          () => "satisfy:food-supply",
-        ),
-      },
-    }, undefined));
     driver.currentObservation = observation({
       health: 20,
-      food: 16,
+      food: 10,
       counts: {
         "minecraft:cobblestone": 20,
         "minecraft:iron_ingot": 7,
@@ -10888,9 +10873,6 @@ describe("beat-game run lifecycle", () => {
 
     await Effect.runPromise(Effect.scoped(
       beatGameWithDriver(driver, {
-        runId: "wounded-aquatic-food-run",
-        team: { teamId: "wounded-aquatic-food-team" },
-        checkpointStore: store,
         strategy: { observationPollMs: 1 },
       }).pipe(
         Effect.flatMap((run) =>
@@ -10953,7 +10935,7 @@ describe("beat-game run lifecycle", () => {
     )).toBe(false);
   });
 
-  it("hunts visible fish after repeated dry food searches find nothing", async () => {
+  it("keeps searching on land after repeated dry food searches", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
@@ -10998,23 +10980,10 @@ describe("beat-game run lifecycle", () => {
       },
     });
     driver.entityResults = [salmon];
-    driver.pathResolver = (position, radius, policy) =>
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
       Effect.sync(() => {
-        driver.paths.push({ position, radius, policy });
-        driver.currentObservation = observation({
-          food: 12,
-          health: 20,
-          position,
-          counts: driver.currentObservation.inventory.counts,
-        });
-      });
-    driver.taskResolver = (task) =>
-      Effect.sync(() => {
-        driver.tasks.push(task);
-        if (task.type === "attack-entity") {
-          driver.entityResults = [];
-        }
-      });
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
 
     await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const run = yield* beatGameWithDriver(driver, {
@@ -11023,57 +10992,25 @@ describe("beat-game run lifecycle", () => {
         checkpointStore: store,
         strategy: { observationPollMs: 1 },
       });
-      while (!driver.tasks.some((task) => task.type === "attack-entity")) {
+      while (driver.xzPaths.length === 0) {
         yield* Effect.sleep(1);
       }
       yield* run.stop;
     })));
 
-    const attackIndex = driver.tasks.findIndex(
-      (task) => task.type === "attack-entity",
-    );
-    expect(driver.tasks[attackIndex]).toEqual(expect.objectContaining({
-      target: expect.objectContaining({
-        connectionEpoch: salmon.connectionEpoch,
-        networkId: salmon.networkId,
-      }),
-    }));
-    expect(driver.taskPolicies[attackIndex]).toMatchObject({
+    expect(driver.tasks.some((task) => task.type === "attack-entity"))
+      .toBe(false);
+    expect(driver.paths).toHaveLength(0);
+    expect(driver.xzPaths[0]?.policy).toMatchObject({
       allowMining: false,
       allowPlacing: false,
-      avoidFluids: false,
-      sprint: true,
+      avoidFluids: true,
+      sprint: false,
     });
-    expect(driver.paths).toContainEqual(expect.objectContaining({
-      position: salmon.position,
-      radius: 12,
-      policy: expect.objectContaining({
-        allowMining: false,
-        allowPlacing: false,
-        avoidFluids: false,
-        sprint: true,
-      }),
-    }));
-    expect(driver.xzPaths).toHaveLength(0);
   });
 
-  it("keeps an injured bot on dry land after aquatic food escalation", async () => {
+  it("keeps an injured bot on dry land when fish are nearby", async () => {
     const driver = new FakeBeatGameDriver();
-    const store = new InMemoryBeatGameCheckpointStore();
-    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
-      runId: "injured-aquatic-food-run",
-      teamId: "injured-aquatic-food-team",
-    });
-    await Effect.runPromise(store.save({
-      ...initial,
-      planner: {
-        ...initial.planner,
-        completedActions: Array.from(
-          { length: 4 },
-          () => "satisfy:food",
-        ),
-      },
-    }, undefined));
     driver.currentObservation = observation({
       food: 12,
       health: 8,
@@ -11108,9 +11045,6 @@ describe("beat-game run lifecycle", () => {
 
     await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const run = yield* beatGameWithDriver(driver, {
-        runId: "injured-aquatic-food-run",
-        team: { teamId: "injured-aquatic-food-team" },
-        checkpointStore: store,
         strategy: { observationPollMs: 1 },
       });
       while (driver.xzPaths.length === 0) {
@@ -11130,21 +11064,6 @@ describe("beat-game run lifecycle", () => {
 
   it("enters water to pursue nearby food when hunger is urgent", async () => {
     const driver = new FakeBeatGameDriver();
-    const store = new InMemoryBeatGameCheckpointStore();
-    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
-      runId: "stranded-aquatic-food-run",
-      teamId: "stranded-aquatic-food-team",
-    });
-    await Effect.runPromise(store.save({
-      ...initial,
-      planner: {
-        ...initial.planner,
-        completedActions: Array.from(
-          { length: 4 },
-          () => "satisfy:food",
-        ),
-      },
-    }, undefined));
     const salmon = {
       connectionEpoch: "epoch-1",
       networkId: 46,
@@ -11260,9 +11179,6 @@ describe("beat-game run lifecycle", () => {
 
     await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const run = yield* beatGameWithDriver(driver, {
-        runId: "stranded-aquatic-food-run",
-        team: { teamId: "stranded-aquatic-food-team" },
-        checkpointStore: store,
         strategy: { observationPollMs: 1 },
       });
       while (!driver.tasks.some((task) => task.type === "attack-entity")) {
