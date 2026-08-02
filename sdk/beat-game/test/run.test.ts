@@ -12032,6 +12032,94 @@ describe("beat-game run lifecycle", () => {
     });
   });
 
+  it("falls back to shallow fish after a durable dry land search", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const runId = "dry-land-aquatic-fallback-run";
+    const teamId = "dry-land-aquatic-fallback-team";
+    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
+      runId,
+      teamId,
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        explorationFrontiers: {
+          "minecraft:overworld:find-food-animals": {
+            origin: {
+              x: 0,
+              y: 64,
+              z: 0,
+              dimension: "minecraft:overworld",
+            },
+            nextIndex: 13,
+            lastPosition: {
+              x: 0,
+              y: 64,
+              z: 0,
+              dimension: "minecraft:overworld",
+            },
+          },
+        },
+      },
+    }, undefined));
+    driver.currentObservation = observation({
+      health: 20,
+      food: 8,
+      counts: {
+        "minecraft:cobblestone": 20,
+        "minecraft:iron_ingot": 7,
+        "minecraft:oak_log": 8,
+        "minecraft:shield": 1,
+        "minecraft:stone_pickaxe": 1,
+        "minecraft:stone_sword": 1,
+      },
+    });
+    const salmon = {
+      connectionEpoch: "epoch-1",
+      networkId: 51,
+      entityType: "minecraft:salmon",
+      position: {
+        x: 10,
+        y: 62,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 3,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.entityResults = [salmon];
+    driver.taskResolver = (task) => {
+      driver.tasks.push(task);
+      return task.type === "attack-entity" ? Effect.never : Effect.void;
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        runId,
+        team: { teamId },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some((task) => task.type === "attack-entity")) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    })));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+      target: expect.objectContaining({ networkId: salmon.networkId }),
+    }));
+    expect(driver.paths).toContainEqual(expect.objectContaining({
+      position: salmon.position,
+      radius: 4,
+    }));
+  });
+
   it("hunts passive food barehanded when injured", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
@@ -13096,6 +13184,7 @@ describe("beat-game run lifecycle", () => {
           "minecraft:overworld:find-logs": {
             origin: driver.currentObservation.player.position,
             nextIndex: 2,
+            totalAdvances: 7,
             lastPosition: {
               x: 100,
               y: 64,
@@ -13114,6 +13203,12 @@ describe("beat-game run lifecycle", () => {
     });
 
     expect(path).toMatchObject({ x: 24, z: 0 });
+    const stored = await Effect.runPromise(store.load(runId));
+    expect(
+      stored?.memory.explorationFrontiers?.[
+        "minecraft:overworld:find-logs"
+      ]?.totalAdvances,
+    ).toBe(8);
   }, 10_000);
 
   it("reanchors resource exploration after a defensive escape", async () => {

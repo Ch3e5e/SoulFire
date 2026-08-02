@@ -342,6 +342,12 @@ function worldMemory(value: unknown): void {
           `checkpoint.memory.explorationFrontiers.${key}.lastPosition`,
         );
       }
+      if (frontier.totalAdvances !== undefined) {
+        nonNegativeInteger(
+          frontier.totalAdvances,
+          `checkpoint.memory.explorationFrontiers.${key}.totalAdvances`,
+        );
+      }
     }
   }
   if (memory.latestDeath !== undefined) {

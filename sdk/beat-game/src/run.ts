@@ -497,6 +497,7 @@ const HIGH_YIELD_FOOD_ANIMAL_TYPES = new Set([
   "minecraft:sheep",
 ]);
 const HIGH_YIELD_FOOD_PREFERENCE_RADIUS = 32;
+const SAFE_AQUATIC_FALLBACK_EXPLORATION_LEGS = 12;
 
 const DANGEROUS_NEUTRAL_ENTITY_TYPES = [
   "minecraft:bee",
@@ -5131,6 +5132,8 @@ function huntForFoodRequirement(
       allowCriticalAquaticTargets: true,
       maximumSafeAquaticFoodLevel: state.strategy.eatBelowFood,
       requireHealthRecoveryForSafeAquaticTargets: true,
+      safeAquaticFallbackAfterExplorationLegs:
+        SAFE_AQUATIC_FALLBACK_EXPLORATION_LEGS,
       allowFluidFallback:
         observation.player.health >= state.strategy.minimumHealth,
       path: {
@@ -7254,6 +7257,7 @@ interface HuntTargetPreference {
   readonly allowCriticalAquaticTargets?: boolean;
   readonly maximumSafeAquaticFoodLevel?: number;
   readonly requireHealthRecoveryForSafeAquaticTargets?: boolean;
+  readonly safeAquaticFallbackAfterExplorationLegs?: number;
   readonly maximumExplorationHops?: number;
   readonly path?: BeatGameStrategy["path"];
   readonly explorationTarget?: BeatGamePosition;
@@ -7310,11 +7314,18 @@ function huntOrExplore(
         RESOURCE_COLLECTION_RESERVED_SLOTS,
       );
       current = yield* state.driver.observe;
+      const checkpoint = yield* Ref.get(state.checkpoint);
+      const explorationLegs = completedExplorationLegs(
+        checkpoint,
+        current.player.position.dimension,
+        purpose,
+      );
       const aquaticHuntAllowed = strandedAquaticFallback
         || shouldAllowAquaticHunt(
           current,
           state.strategy.minimumHealth,
           targetPreference,
+          explorationLegs,
         );
       const overworldHunt =
         current.player.position.dimension === "minecraft:overworld";
@@ -7345,7 +7356,6 @@ function huntOrExplore(
         yield* escapeToOverworldSurface(state, current.player.position);
         return;
       }
-      const checkpoint = yield* Ref.get(state.checkpoint);
       const now = Date.now();
       const rememberedUnreachableTargets = new Map(
         checkpoint.memory.unreachable
@@ -8072,6 +8082,7 @@ function shouldAllowAquaticHunt(
   observation: BeatGameObservation,
   minimumHealth: number,
   targetPreference?: HuntTargetPreference,
+  completedDryExplorationLegs = 0,
 ): boolean {
   if (targetPreference?.allowCriticalAquaticTargets !== true) {
     return false;
@@ -8089,14 +8100,31 @@ function shouldAllowAquaticHunt(
     LETHAL_MELEE_DISENGAGE_HEALTH + 1,
     minimumHealth - 6,
   );
+  const exhaustedDrySearch =
+    targetPreference.safeAquaticFallbackAfterExplorationLegs !== undefined
+    && completedDryExplorationLegs
+      >= targetPreference.safeAquaticFallbackAfterExplorationLegs;
   return observation.player.health >= minimumSafeHealth
     && (
       targetPreference.requireHealthRecoveryForSafeAquaticTargets !== true
       || observation.player.health < minimumHealth
+      || exhaustedDrySearch
     )
     && targetPreference.maximumSafeAquaticFoodLevel !== undefined
     && observation.player.food
       <= targetPreference.maximumSafeAquaticFoodLevel;
+}
+
+function completedExplorationLegs(
+  checkpoint: BeatGameCheckpoint,
+  dimension: string,
+  purpose: string,
+): number {
+  const frontier = checkpoint.memory.explorationFrontiers?.[
+    `${dimension}:${purpose}`
+  ];
+  return frontier?.totalAdvances
+    ?? Math.max(0, (frontier?.nextIndex ?? 1) - 1);
 }
 
 function survivalPathPolicy(
@@ -8600,10 +8628,12 @@ function advanceExplorationFrontier(
             existing.lastPosition,
             checkpoint.memory.latestDeath,
           );
+        const totalAdvances = existing?.totalAdvances
+          ?? Math.max(0, (existing?.nextIndex ?? 1) - 1);
         const frontier = existing?.origin.dimension === position.dimension
             && !shouldReanchor
-          ? existing
-          : { origin: position, nextIndex: 1 };
+          ? { ...existing, totalAdvances }
+          : { origin: position, nextIndex: 1, totalAdvances };
         const offset = squareSpiralOffset(frontier.nextIndex);
         const target = {
           x: frontier.origin.x + offset.x * hop,
@@ -8614,6 +8644,7 @@ function advanceExplorationFrontier(
           retainExplorationFrontier(frontiers, key, {
             origin: frontier.origin,
             nextIndex: frontier.nextIndex + 1,
+            totalAdvances: frontier.totalAdvances + 1,
           }),
         ] as const;
       })

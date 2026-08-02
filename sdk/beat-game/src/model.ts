@@ -247,6 +247,7 @@ export interface BeatGameExplorationFrontier {
   readonly origin: BeatGamePosition;
   readonly nextIndex: number;
   readonly lastPosition?: BeatGamePosition;
+  readonly totalAdvances?: number;
 }
 
 export interface BeatGameWorldMemory {
