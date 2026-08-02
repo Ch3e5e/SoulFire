@@ -12309,7 +12309,7 @@ describe("beat-game run lifecycle", () => {
     });
   });
 
-  it("falls back to shallow fish after a durable dry land search", async () => {
+  it("falls back to shallow fish after a wounded dry land search", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const runId = "dry-land-aquatic-fallback-run";
@@ -12342,7 +12342,7 @@ describe("beat-game run lifecycle", () => {
       },
     }, undefined));
     driver.currentObservation = observation({
-      health: 20,
+      health: 8,
       food: 8,
       counts: {
         "minecraft:cobblestone": 20,
