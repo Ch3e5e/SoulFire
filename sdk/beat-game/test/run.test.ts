@@ -4270,7 +4270,7 @@ describe("beat-game run lifecycle", () => {
     const fleeIndex = driver.tasks.findIndex((task) => task.type === "flee");
     expect(driver.tasks[fleeIndex]).toEqual(expect.objectContaining({
       type: "flee",
-      selector: { networkId: 41, alive: true },
+      selector: { categories: [2], alive: true },
       triggerRadius: 12,
       safeDistance: 24,
     }));
@@ -4445,7 +4445,7 @@ describe("beat-game run lifecycle", () => {
       networkId: 42,
       entityType: "minecraft:creeper",
       position: {
-        x: 6,
+        x: 5,
         y: 64,
         z: 0,
         dimension: "minecraft:overworld",
@@ -4516,7 +4516,7 @@ describe("beat-game run lifecycle", () => {
 
     expect(driver.tasks).toContainEqual(expect.objectContaining({
       type: "flee",
-      selector: { networkId: 42, alive: true },
+      selector: { categories: [2], alive: true },
     }));
     expect(driver.paths.find(({ policy }) =>
       policy.allowMining === true
@@ -4599,13 +4599,11 @@ describe("beat-game run lifecycle", () => {
         alive: true,
       }),
     }));
-    expect(driver.actions).toContainEqual({
-      type: "set-movement",
-      forward: true,
-      jump: true,
-      sprint: true,
-    });
     const fleeIndex = driver.tasks.findIndex((task) => task.type === "flee");
+    expect(driver.tasks[fleeIndex]).toEqual(expect.objectContaining({
+      type: "flee",
+      selector: { categories: [2], alive: true },
+    }));
     expect(driver.taskPolicies[fleeIndex]?.sprint).toBe(true);
   });
 
@@ -4684,6 +4682,69 @@ describe("beat-game run lifecycle", () => {
     }));
     expect(driver.tasks.filter((task) => task.type === "flee")).toHaveLength(2);
   }, 10_000);
+
+  it("keeps group-aware creeper evasion active when a spider catches up", async () => {
+    const driver = new FakeBeatGameDriver();
+    const creeper = {
+      connectionEpoch: "epoch-1",
+      networkId: 41,
+      entityType: "minecraft:creeper",
+      position: {
+        x: 6,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:01.000Z",
+    } as const;
+    const spider = {
+      ...creeper,
+      networkId: 42,
+      entityType: "minecraft:spider",
+      position: { ...creeper.position, x: 2 },
+    } as const;
+    driver.entityResults = [creeper];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (task.type === "flee") {
+          driver.entityResults = [
+            { ...creeper, position: { ...creeper.position, x: 13 } },
+            spider,
+          ];
+          driver.currentObservation = observation({ health: 17 });
+        }
+      }).pipe(
+        Effect.zipRight(
+          task.type === "collect-blocks" || task.type === "flee"
+            ? Effect.never
+            : Effect.void,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some((task) => task.type === "flee")) {
+        yield* Effect.sleep(1);
+      }
+      yield* Effect.sleep(250);
+      yield* run.stop;
+    })));
+
+    expect(driver.tasks.filter((task) => task.type === "flee")).toHaveLength(1);
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "flee",
+      selector: { categories: [2], alive: true },
+    }));
+    expect(driver.tasks).not.toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+    }));
+  });
 
   it("does not abandon work for a creeper outside its proactive range", async () => {
     const driver = new FakeBeatGameDriver();

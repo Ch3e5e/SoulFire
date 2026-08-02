@@ -2357,7 +2357,9 @@ function proactiveEscapeOnlyEvasionRadius(
 function escapeThreatSelector(
   target: BeatGameEntityObservation,
 ): BeatGameEntitySelector {
-  return FAST_MELEE_PURSUER_ENTITY_TYPES.has(target.entityType)
+  const escapeFromHostileGroup = target.entityType === "minecraft:creeper"
+    || FAST_MELEE_PURSUER_ENTITY_TYPES.has(target.entityType);
+  return escapeFromHostileGroup
     ? { categories: [2], alive: true }
     : { networkId: target.networkId, alive: true };
 }
@@ -2717,7 +2719,9 @@ function monitorEscapeSafety(
           if (observation.player.health >= previousObservation.player.health) {
             return monitorEscapeSafety(
               state,
-              currentTarget,
+              target.entityType === "minecraft:creeper"
+                ? target
+                : currentTarget,
               observation,
               continueEscapingWhenHit,
             );
@@ -2728,6 +2732,17 @@ function monitorEscapeSafety(
                 return monitorEscapeSafety(
                   state,
                   currentTarget,
+                  observation,
+                  continueEscapingWhenHit,
+                );
+              }
+              if (
+                target.entityType === "minecraft:creeper"
+                && threat.target.networkId !== target.networkId
+              ) {
+                return monitorEscapeSafety(
+                  state,
+                  target,
                   observation,
                   continueEscapingWhenHit,
                 );
