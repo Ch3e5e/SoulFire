@@ -328,7 +328,9 @@ const HUNT_DROP_ITEM_IDS_BY_ENTITY_TYPE: Readonly<
 };
 const LIQUID_INTERACTION_APPROACH_RADIUS = 3;
 const LIQUID_INTERACTION_STAND_RADIUS = 0.75;
-const LIQUID_INTERACTION_REACH = 4.5;
+// Keep a margin below the protocol interaction limit. A candidate at the
+// exact limit can become unreachable after pathfinding settles within radius.
+const LIQUID_INTERACTION_REACH = 4;
 const FISHING_SHORE_SEARCH_RADIUS = Math.ceil(LIQUID_INTERACTION_REACH);
 const FISHING_COLLECTION_BATCH_SIZE = 3;
 const FISHING_MAXIMUM_FAILED_CASTS = 4;

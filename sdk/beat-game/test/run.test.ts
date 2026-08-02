@@ -9924,6 +9924,12 @@ describe("beat-game run lifecycle", () => {
       z: 0,
       dimension: "minecraft:overworld",
     } as const;
+    const borderlineStand = {
+      x: 3,
+      y: -50,
+      z: 0,
+      dimension: "minecraft:overworld",
+    } as const;
     const start = {
       x: 4.5,
       y: -51,
@@ -9956,6 +9962,12 @@ describe("beat-game run lifecycle", () => {
           replaceable: true,
         })];
       }
+      if (
+        selector.blockIds?.includes("minecraft:lava") === true
+        && selector.properties?.level === undefined
+      ) {
+        return [];
+      }
       if (Object.keys(selector).length === 0) {
         return [
           blockObservation(safeStand, {
@@ -9967,6 +9979,15 @@ describe("beat-game run lifecycle", () => {
             replaceable: true,
           }),
           blockObservation({ ...safeStand, y: safeStand.y - 1 }),
+          blockObservation(borderlineStand, {
+            blockId: "minecraft:air",
+            replaceable: true,
+          }),
+          blockObservation({ ...borderlineStand, y: borderlineStand.y + 1 }, {
+            blockId: "minecraft:air",
+            replaceable: true,
+          }),
+          blockObservation({ ...borderlineStand, y: borderlineStand.y - 1 }),
         ];
       }
       const position = {
@@ -10043,8 +10064,11 @@ describe("beat-game run lifecycle", () => {
       }).pipe(
         Effect.flatMap((run) =>
           Effect.gen(function* () {
-            while (
-              !driver.actions.some((action) => action.type === "use-item")
+            for (
+              let attempt = 0;
+              attempt < 1_000
+              && !driver.actions.some((action) => action.type === "use-item");
+              attempt += 1
             ) {
               yield* Effect.sleep(1);
             }
@@ -10057,7 +10081,11 @@ describe("beat-game run lifecycle", () => {
               },
               rotation: driver.currentObservation.player.rotation,
             });
-            while (!useItemInterrupted) {
+            for (
+              let attempt = 0;
+              attempt < 1_000 && !useItemInterrupted;
+              attempt += 1
+            ) {
               yield* Effect.sleep(1);
             }
             yield* run.stop;
@@ -10083,6 +10111,14 @@ describe("beat-game run lifecycle", () => {
     expect(driver.paths).not.toContainEqual(expect.objectContaining({
       position: source,
       radius: 3,
+    }));
+    expect(driver.paths).not.toContainEqual(expect.objectContaining({
+      position: {
+        x: 3.5,
+        y: -50,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
     }));
     expect(driver.actions.some((action) => action.type === "dig-block"))
       .toBe(false);
