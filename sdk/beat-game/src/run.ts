@@ -2336,7 +2336,11 @@ function shouldCommitToCloseRangedFight(
 ): boolean {
   return PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
     && distanceSquared(observation.player.position, target.position)
-      <= EMERGENCY_KNOCKBACK_RANGE ** 2;
+      <= EMERGENCY_KNOCKBACK_RANGE ** 2
+    && (
+      (observation.inventory.counts["minecraft:shield"] ?? 0) > 0
+      || isReadyForBarehandedDefense(observation)
+    );
 }
 
 function shouldCommitToCloseMeleeFight(

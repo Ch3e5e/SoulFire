@@ -5340,7 +5340,7 @@ describe("beat-game run lifecycle", () => {
     )).toBe(false);
   });
 
-  it("fights a ranged hostile already inside melee range at critical health", async () => {
+  it("knocks back and flees a close ranged hostile at critical health", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({ health: 6, food: 9 });
     driver.entityResults = [{
@@ -5360,11 +5360,6 @@ describe("beat-game run lifecycle", () => {
     }];
     driver.entityQueryResolver = (query) =>
       query.selector.categories?.includes(2) ? driver.entityResults : [];
-    driver.taskObserver = (task) => {
-      if (task.type === "attack-entity") {
-        driver.entityResults = [];
-      }
-    };
 
     await Effect.runPromise(Effect.scoped(
       beatGameWithDriver(driver, {
@@ -5373,7 +5368,7 @@ describe("beat-game run lifecycle", () => {
         Effect.flatMap((run) =>
           Effect.gen(function* () {
             while (
-              !driver.tasks.some((task) => task.type === "attack-entity")
+              !driver.tasks.some((task) => task.type === "flee")
             ) {
               yield* Effect.sleep(1);
             }
@@ -5384,18 +5379,23 @@ describe("beat-game run lifecycle", () => {
       ),
     ));
 
-    expect(driver.tasks).toContainEqual(expect.objectContaining({
+    expect(driver.actions).toContainEqual({
       type: "attack-entity",
-      target: expect.objectContaining({
-        networkId: 21,
-        entityType: "minecraft:skeleton",
-      }),
-      selectBestWeapon: true,
+      connectionEpoch: "epoch-1",
+      networkId: 21,
+      sprinting: true,
+    });
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "flee",
+      selector: { networkId: 21, alive: true },
+      triggerRadius: 24,
+      safeDistance: 32,
     }));
-    expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
+    expect(driver.tasks.some((task) => task.type === "attack-entity"))
+      .toBe(false);
   });
 
-  it("turns and fights when a ranged attacker closes the gap during escape", async () => {
+  it("keeps fleeing when a ranged attacker closes the gap", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({ health: 8, food: 9 });
     let skeleton: BeatGameEntityObservation = {
@@ -5429,8 +5429,6 @@ describe("beat-game run lifecycle", () => {
           };
           driver.entityResults = [skeleton];
           driver.currentObservation = observation({ health: 6, food: 9 });
-        } else if (task.type === "attack-entity") {
-          driver.entityResults = [];
         }
       }).pipe(
         Effect.zipRight(task.type === "flee" ? Effect.never : Effect.void),
@@ -5443,7 +5441,7 @@ describe("beat-game run lifecycle", () => {
         Effect.flatMap((run) =>
           Effect.gen(function* () {
             while (
-              !driver.tasks.some((task) => task.type === "attack-entity")
+              driver.tasks.filter((task) => task.type === "flee").length < 2
             ) {
               yield* Effect.sleep(1);
             }
@@ -5454,15 +5452,15 @@ describe("beat-game run lifecycle", () => {
       ),
     ));
 
-    expect(driver.tasks.filter((task) => task.type === "flee")).toHaveLength(1);
-    expect(driver.tasks).toContainEqual(expect.objectContaining({
+    expect(driver.tasks.filter((task) => task.type === "flee")).toHaveLength(2);
+    expect(driver.actions).toContainEqual({
       type: "attack-entity",
-      target: expect.objectContaining({
-        networkId: skeleton.networkId,
-        entityType: "minecraft:skeleton",
-      }),
-      selectBestWeapon: true,
-    }));
+      connectionEpoch: skeleton.connectionEpoch,
+      networkId: skeleton.networkId,
+      sprinting: true,
+    });
+    expect(driver.tasks.some((task) => task.type === "attack-entity"))
+      .toBe(false);
   });
 
   it("uses fluid-avoiding dynamic escape instead of sprinting into water", async () => {
