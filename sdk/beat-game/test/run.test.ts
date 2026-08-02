@@ -7178,6 +7178,88 @@ describe("beat-game run lifecycle", () => {
       .toBe(false);
   }, 10_000);
 
+  it("turns on a close zombie that catches an armed escape", async () => {
+    const driver = new FakeBeatGameDriver();
+    const zombie = {
+      connectionEpoch: "epoch-1",
+      networkId: 54,
+      entityType: "minecraft:zombie",
+      position: {
+        x: 8,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 14,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2) === true
+          || query.selector.networkId === zombie.networkId
+        ? driver.entityResults
+        : [];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(
+        Effect.zipRight(
+          task.type === "collect-blocks"
+              || task.type === "flee"
+              || task.type === "attack-entity"
+            ? Effect.never
+            : Effect.void,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (!driver.tasks.some((task) =>
+              task.type === "collect-blocks"
+            )) {
+              yield* Effect.sleep(1);
+            }
+            driver.currentObservation = observation({
+              health: 8,
+              food: 14,
+              counts: { "minecraft:wooden_sword": 1 },
+            });
+            driver.entityResults = [zombie];
+            while (!driver.tasks.some((task) => task.type === "flee")) {
+              yield* Effect.sleep(1);
+            }
+            driver.entityResults = [{
+              ...zombie,
+              position: { ...zombie.position, x: 2 },
+            }];
+            while (!driver.tasks.some((task) =>
+              task.type === "attack-entity"
+            )) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.tasks.filter((task) => task.type === "flee")).toHaveLength(1);
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+      target: expect.objectContaining({
+        connectionEpoch: zombie.connectionEpoch,
+        networkId: zombie.networkId,
+      }),
+      selectBestWeapon: true,
+    }));
+  }, 10_000);
+
   it("finishes a close spider fight at lethal health when armed", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
@@ -8418,7 +8500,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.xzPaths).toHaveLength(0);
   });
 
-  it("disengages from an armed close melee defense after a lethal wound", async () => {
+  it("commits to an armed close melee defense after a lethal wound", async () => {
     const driver = new FakeBeatGameDriver();
     const zombie = {
       connectionEpoch: "epoch-1",
@@ -8486,9 +8568,9 @@ describe("beat-game run lifecycle", () => {
             )) {
               yield* Effect.sleep(1);
             }
-            while (!driver.tasks.some((task) => task.type === "flee")) {
-              yield* Effect.sleep(1);
-            }
+            yield* Effect.sleep(250);
+            expect(driver.tasks.some((task) => task.type === "flee"))
+              .toBe(false);
             yield* run.stop;
             yield* run.awaitCompletion.pipe(Effect.either);
           })
@@ -8500,7 +8582,7 @@ describe("beat-game run lifecycle", () => {
       type: "attack-entity",
       target: expect.objectContaining({ networkId: zombie.networkId }),
     }));
-    expect(driver.tasks.some((task) => task.type === "flee")).toBe(true);
+    expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
     expect(driver.paths).toHaveLength(0);
     expect(driver.xzPaths).toHaveLength(0);
   });

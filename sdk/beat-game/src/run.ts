@@ -2827,6 +2827,15 @@ function monitorEscapeSafety(
           if (currentTarget === undefined) {
             return Effect.succeed({ type: "safe" } as const);
           }
+          if (
+            shouldCommitToCloseMeleeFight(observation, currentTarget)
+            && hasMeleeWeapon(observation)
+          ) {
+            return Effect.succeed({
+              type: "defend",
+              target: currentTarget,
+            } as const);
+          }
           if (observation.player.health >= previousObservation.player.health) {
             return monitorEscapeSafety(
               state,
@@ -4157,7 +4166,11 @@ function defendAgainstTarget(
         shouldCommitToUnshieldedRangedFight(observation, target);
       const commitThroughLethalWound =
         shouldCommitToCloseRangedFight(observation, target)
-        || shouldCommitToFastMeleePursuerFight(observation, target);
+        || shouldCommitToFastMeleePursuerFight(observation, target)
+        || (
+          hasMeleeWeapon(observation)
+          && shouldCommitToCloseMeleeFight(observation, target)
+        );
       const guardedAttack = Effect.raceFirst(
         attack.pipe(Effect.as("defended" as const)),
         monitorDefenseHealth(
@@ -4239,6 +4252,7 @@ function monitorDefenseHealth(
       if (
         !disengageWhenWounded
         || options.commitThroughWound === true
+        || options.commitThroughLethalWound === true
         || (
           observation.player.health >= state.strategy.minimumHealth
           || observation.player.health >= engagementHealth
