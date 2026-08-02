@@ -950,6 +950,8 @@ describe("beat-game behavior programs", () => {
     ]);
     expect(driver.actions.filter(({ type }) => type === "dig-block"))
       .toHaveLength(12);
+    expect(driver.actions.filter(({ type }) => type === "select-item"))
+      .toHaveLength(4);
     expect(driver.paths.slice(1).every(({ policy }) =>
       !policy.allowMining
       && !policy.allowPlacing

@@ -552,19 +552,16 @@ export function excavateStaircase(
     };
     const staircaseTo = adjustedStaircaseDestination(actualFrom, options.to);
     const steps = staircaseSteps(actualFrom, staircaseTo);
-    yield* driver.act({
-      type: "select-item",
-      selector: options.tool ?? {
-        itemIds: [
-          "minecraft:netherite_pickaxe",
-          "minecraft:diamond_pickaxe",
-          "minecraft:iron_pickaxe",
-          "minecraft:stone_pickaxe",
-          "minecraft:wooden_pickaxe",
-          "minecraft:golden_pickaxe",
-        ],
-      },
-    });
+    const tool = options.tool ?? {
+      itemIds: [
+        "minecraft:netherite_pickaxe",
+        "minecraft:diamond_pickaxe",
+        "minecraft:iron_pickaxe",
+        "minecraft:stone_pickaxe",
+        "minecraft:wooden_pickaxe",
+        "minecraft:golden_pickaxe",
+      ],
+    };
     let previousStep = actualFrom;
     for (const step of steps) {
       if (
@@ -584,26 +581,12 @@ export function excavateStaircase(
           return;
         }
       }
-      const placedSupport = yield* ensureStaircaseSupport(
+      yield* ensureStaircaseSupport(
         driver,
         previousStep,
         step,
       );
-      if (placedSupport) {
-        yield* driver.act({
-          type: "select-item",
-          selector: options.tool ?? {
-            itemIds: [
-              "minecraft:netherite_pickaxe",
-              "minecraft:diamond_pickaxe",
-              "minecraft:iron_pickaxe",
-              "minecraft:stone_pickaxe",
-              "minecraft:wooden_pickaxe",
-              "minecraft:golden_pickaxe",
-            ],
-          },
-        });
-      }
+      yield* driver.act({ type: "select-item", selector: tool });
       yield* digStaircaseBlockIfNeeded(driver, {
         ...step,
         y: step.y + 2,
