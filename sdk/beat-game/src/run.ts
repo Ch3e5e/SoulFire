@@ -544,7 +544,8 @@ const LETHAL_MELEE_DISENGAGE_HEALTH = 7;
 const THREAT_ESCAPE_SAFE_DISTANCE = 24;
 const SINGLE_THREAT_MAXIMUM_ESCAPES = 4;
 const DURABLE_DEATH_RECOVERY_WINDOW_MS = 8 * 60 * 60 * 1_000;
-const CHAINED_DEATH_RESPAWN_COOLDOWN_MS = 60_000;
+const CHAINED_DEATH_RESPAWN_BASE_COOLDOWN_MS = 60_000;
+const CHAINED_DEATH_RESPAWN_MAXIMUM_COOLDOWN_MS = 8 * 60_000;
 const RENEWABLE_DEATH_RECOVERY_MAX_DISTANCE = 64;
 const UNKNOWN_DEATH_RECOVERY_MAX_DISTANCE = 64;
 const RECOVERY_DURATION_MS = 20_000;
@@ -1311,16 +1312,19 @@ function executeDecision(
               beforeRespawn.player.dead
               && recoverableDeaths.length > 1
             ) {
+              const cooldownMs = chainedDeathRespawnCooldown(
+                recoverableDeaths.length,
+              );
               yield* emit(state, {
                 type: "diagnostic",
                 message:
                   "Delaying respawn after a chained corpse-recovery death",
                 data: {
-                  cooldownMs: CHAINED_DEATH_RESPAWN_COOLDOWN_MS,
+                  cooldownMs,
                   pendingDeaths: recoverableDeaths.length,
                 },
               });
-              yield* Effect.sleep(CHAINED_DEATH_RESPAWN_COOLDOWN_MS);
+              yield* Effect.sleep(cooldownMs);
             }
             yield* respawnAndRecover(state.driver, {
               path: state.strategy.path,
@@ -2130,8 +2134,12 @@ function monitorObservedSafety(
     } satisfies ActionResult);
   }
   if (
-    decision.type !== "recover-death"
+    !observation.player.dead
     && decision.type !== "eat"
+    && (
+      decision.type !== "recover-death"
+      || observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
+    )
     && observation.player.food <= URGENT_HUNGER_FOOD_LEVEL
     && !hasUsableFood(observation)
     && !(
@@ -10025,6 +10033,14 @@ function sweepRemainingDeathDrops(
       },
     });
   });
+}
+
+function chainedDeathRespawnCooldown(pendingDeathCount: number): number {
+  const exponent = Math.max(0, Math.floor(pendingDeathCount) - 2);
+  return Math.min(
+    CHAINED_DEATH_RESPAWN_MAXIMUM_COOLDOWN_MS,
+    CHAINED_DEATH_RESPAWN_BASE_COOLDOWN_MS * 2 ** exponent,
+  );
 }
 
 function isPendingDeathRecoverable(pendingDeath: PendingDeath): boolean {

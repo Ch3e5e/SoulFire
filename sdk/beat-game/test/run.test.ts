@@ -237,11 +237,12 @@ describe("beat-game run lifecycle", () => {
     expect(recoveryPosition).toEqual(deathPosition);
   });
 
-  it("delays respawn when another corpse recovery is already pending", async () => {
+  it("increases the respawn delay after repeated corpse-recovery deaths", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
-    const firstObservedAt = new Date(Date.now() - 60_000).toISOString();
-    const secondObservedAt = new Date().toISOString();
+    const firstObservedAt = new Date(Date.now() - 120_000).toISOString();
+    const secondObservedAt = new Date(Date.now() - 60_000).toISOString();
+    const thirdObservedAt = new Date().toISOString();
     const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
       runId: "chained-death-cooldown-run",
       teamId: "chained-death-cooldown-team",
@@ -275,12 +276,28 @@ describe("beat-game run lifecycle", () => {
             observedAt: secondObservedAt,
             confidence: 1,
           },
+          {
+            key: `death:${thirdObservedAt}`,
+            value: {
+              x: 8,
+              y: 64,
+              z: 0,
+              dimension: "minecraft:overworld",
+              inventoryCounts: { "minecraft:rotten_flesh": 1 },
+            },
+            observedAt: thirdObservedAt,
+            confidence: 1,
+          },
         ],
       },
     }, undefined));
-    driver.currentObservation = observation({ dead: true, health: 0 });
+    driver.currentObservation = observation({
+      dead: true,
+      health: 0,
+      food: 5,
+    });
 
-    const diagnostic = await Effect.runPromise(Effect.scoped(
+    const [diagnostic, interruptedDuringCooldown] = await Effect.runPromise(Effect.scoped(
       Effect.gen(function* () {
         const run = yield* beatGameWithDriver(driver, {
           runId: "chained-death-cooldown-run",
@@ -297,22 +314,36 @@ describe("beat-game run lifecycle", () => {
           Stream.runHead,
           Effect.timeout("5 seconds"),
         );
+        const interrupted = yield* Effect.race(
+          run.events.pipe(
+            Stream.filter((candidate) =>
+              candidate.type === "action-failed"
+              && candidate.detail?.includes(
+                "hunger became urgent without available food",
+              ) === true
+            ),
+            Stream.runHead,
+            Effect.as(true),
+          ),
+          Effect.sleep(25).pipe(Effect.as(false)),
+        );
         yield* run.stop;
         yield* run.awaitCompletion.pipe(Effect.either);
-        return event;
+        return [event, interrupted] as const;
       }),
     ));
 
     expect(Option.getOrUndefined(diagnostic)).toMatchObject({
       type: "diagnostic",
       data: {
-        cooldownMs: 60_000,
-        pendingDeaths: 2,
+        cooldownMs: 120_000,
+        pendingDeaths: 3,
       },
     });
     expect(driver.tasks).not.toContainEqual(expect.objectContaining({
       type: "auto-respawn",
     }));
+    expect(interruptedDuringCooldown).toBe(false);
   });
 
   it("preserves meaningful inventory when death packets clear it first", async () => {
@@ -895,7 +926,10 @@ describe("beat-game run lifecycle", () => {
     }, undefined));
     driver.currentObservation = observation({
       food: 14,
-      counts: { "minecraft:mutton": 2 },
+      counts: {
+        "minecraft:mutton": 2,
+        "minecraft:wooden_sword": 1,
+      },
     });
     const timeline: string[] = [];
     driver.pathResolver = (position, radius, policy) =>
@@ -908,7 +942,10 @@ describe("beat-game run lifecycle", () => {
       if (task.type === "auto-eat") {
         driver.currentObservation = observation({
           food: 16,
-          counts: { "minecraft:mutton": 1 },
+          counts: {
+            "minecraft:mutton": 1,
+            "minecraft:wooden_sword": 1,
+          },
         });
       }
     };
@@ -950,6 +987,102 @@ describe("beat-game run lifecycle", () => {
     expect(timeline.indexOf("path")).toBeLessThan(
       timeline.indexOf("auto-eat"),
     );
+  });
+
+  it("interrupts corpse travel to hunt when hunger becomes critical", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const deathPosition = {
+      x: 96,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    const observedAt = new Date().toISOString();
+    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
+      runId: "critical-corpse-hunger-run",
+      teamId: "critical-corpse-hunger-team",
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        deathPositions: [{
+          key: `death:${observedAt}`,
+          value: {
+            ...deathPosition,
+            inventoryCounts: { "minecraft:iron_pickaxe": 1 },
+          },
+          observedAt,
+          confidence: 1,
+        }],
+      },
+    }, undefined));
+    const chicken = {
+      connectionEpoch: "epoch-1",
+      networkId: 52,
+      entityType: "minecraft:chicken",
+      position: {
+        x: 3,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 4,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.currentObservation = observation({ food: 7 });
+    driver.entityQueryResolver = (query) =>
+      query.selector.entityTypes?.includes("minecraft:chicken") === true
+        ? [chicken]
+        : [];
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+        driver.currentObservation = observation({ food: 6 });
+      }).pipe(Effect.zipRight(Effect.never));
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(
+        Effect.zipRight(
+          task.type === "attack-entity" ? Effect.never : Effect.void,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        runId: "critical-corpse-hunger-run",
+        team: { teamId: "critical-corpse-hunger-team" },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            yield* Effect.gen(function* () {
+              while (!driver.tasks.some((task) =>
+                task.type === "attack-entity"
+              )) {
+                yield* Effect.sleep(1);
+              }
+            }).pipe(Effect.timeout("2 seconds"));
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.paths).toContainEqual(expect.objectContaining({
+      position: deathPosition,
+      radius: 2,
+    }));
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+      target: expect.objectContaining({ networkId: chicken.networkId }),
+    }));
   });
 
   it("does not risk returning to a corpse for disposable blocks", async () => {
