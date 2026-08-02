@@ -844,6 +844,45 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
       }
     }
 
+    private void recoverCraftingContents(
+      net.minecraft.client.player.LocalPlayer player
+    ) {
+      if (!(player.containerMenu instanceof AbstractCraftingMenu menu)) {
+        return;
+      }
+      var gameMode = context.bot().minecraft().gameMode;
+      if (gameMode == null) {
+        return;
+      }
+      var carried = menu.getCarried();
+      if (!carried.isEmpty()) {
+        SFInventoryHelpers.playerInventorySlots(menu)
+          .filter(slot -> canDeposit(menu, slot, carried))
+          .findFirst()
+          .ifPresent(slot -> gameMode.handleContainerInput(
+            menu.containerId,
+            slot,
+            0,
+            ContainerInput.PICKUP,
+            player
+          ));
+      }
+      if (!menu.getCarried().isEmpty()) {
+        return;
+      }
+      for (var inputSlot : menu.getInputGridSlots()) {
+        if (!inputSlot.getItem().isEmpty()) {
+          gameMode.handleContainerInput(
+            menu.containerId,
+            menu.slots.indexOf(inputSlot),
+            0,
+            ContainerInput.QUICK_MOVE,
+            player
+          );
+        }
+      }
+    }
+
     private void transition(Stage next, String message) {
       stage = next;
       stageTicks = 0;
@@ -867,6 +906,14 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
     }
 
     private void fail(Throwable throwable) {
+      var player = context.bot().minecraft().player;
+      if (player != null) {
+        try {
+          recoverCraftingContents(player);
+        } catch (Throwable recoveryFailure) {
+          throwable.addSuppressed(recoveryFailure);
+        }
+      }
       result.completeExceptionally(throwable);
     }
 
@@ -906,11 +953,20 @@ public final class CraftTaskProvider implements BotTaskProvider<CraftTask> {
     ) {
       stopPath(reason, cause);
       var player = context.bot().minecraft().player;
-      if (player != null && !(player.containerMenu instanceof InventoryMenu)) {
-        player.closeContainer();
-      }
-      if (reason != ControlStopReason.COMPLETED && !result.isDone()) {
-        result.cancel(true);
+      try {
+        if (player != null) {
+          recoverCraftingContents(player);
+        }
+      } finally {
+        if (
+          player != null
+            && !(player.containerMenu instanceof InventoryMenu)
+        ) {
+          player.closeContainer();
+        }
+        if (reason != ControlStopReason.COMPLETED && !result.isDone()) {
+          result.cancel(true);
+        }
       }
     }
 
