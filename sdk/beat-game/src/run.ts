@@ -340,6 +340,9 @@ const FISHING_MAXIMUM_DOWNWARD_CAST_PITCH = 30;
 const MAXIMUM_LIQUID_SIGHT_CLEARING_BLOCKS = 4;
 const LAVA_RETREAT_DISTANCE = 8;
 const LAVA_EMERGENCY_SPRINT_MS = 1_500;
+const IRON_SEARCH_Y = 16;
+const IRON_SEARCH_MAX_Y = 24;
+const IRON_SEARCH_DESCENT_STEP = 12;
 const DEEP_LAVA_SEARCH_Y = -52;
 const DEEP_LAVA_SEARCH_MAX_Y = -48;
 const DEEP_LAVA_DESCENT_STEP = 12;
@@ -5995,7 +5998,7 @@ function fillLiquidBucket(
               DEEP_LAVA_SEARCH_Y,
               Math.floor(beforeDescent.y) - DEEP_LAVA_DESCENT_STEP,
             );
-            yield* excavateLavaSearchStaircase(
+            yield* excavateResourceSearchStaircase(
               state,
               beforeDescent,
               targetY,
@@ -6281,6 +6284,35 @@ function satisfyIronRequirement(
       ),
     );
   }
+  if (
+    observation.player.position.dimension === "minecraft:overworld"
+    && observation.player.position.y > IRON_SEARCH_MAX_Y
+  ) {
+    return Effect.gen(function* () {
+      yield* ensureMiningPickaxe(
+        state,
+        observation,
+        "minecraft:stone_pickaxe",
+        STONE_OR_BETTER_MINING_PICKAXE_ITEM_IDS,
+      );
+      const current = yield* state.driver.observe;
+      if (
+        current.player.position.dimension !== "minecraft:overworld"
+        || current.player.position.y <= IRON_SEARCH_MAX_Y
+      ) {
+        return;
+      }
+      const targetY = Math.max(
+        IRON_SEARCH_Y,
+        Math.floor(current.player.position.y) - IRON_SEARCH_DESCENT_STEP,
+      );
+      yield* excavateResourceSearchStaircase(
+        state,
+        current.player.position,
+        targetY,
+      );
+    });
+  }
   return collectBlocksOrExplore(state, observation, {
     blockIds: [
       "minecraft:iron_ore",
@@ -6341,7 +6373,7 @@ function preparePortalCastingLavaPool(
         DEEP_LAVA_SEARCH_Y,
         Math.floor(current.player.position.y) - DEEP_LAVA_DESCENT_STEP,
       );
-      yield* excavateLavaSearchStaircase(
+      yield* excavateResourceSearchStaircase(
         state,
         current.player.position,
         targetY,
@@ -6361,25 +6393,25 @@ function preparePortalCastingLavaPool(
   });
 }
 
-function excavateLavaSearchStaircase(
+function excavateResourceSearchStaircase(
   state: RunState,
   position: BeatGamePosition,
   targetY: number,
 ): Effect.Effect<void, BeatGameDriverError> {
   return Effect.gen(function* () {
-    const origin = yield* findStableLavaSearchStaircaseOrigin(
+    const origin = yield* findStableResourceSearchStaircaseOrigin(
       state,
       position,
     ).pipe(Effect.either);
     if (origin._tag === "Left") {
-      if (origin.left.operation !== "find-lava-staircase-origin") {
+      if (origin.left.operation !== "find-resource-staircase-origin") {
         return yield* Effect.fail(origin.left);
       }
       yield* escapeToOverworldSurface(state, position);
       return;
     }
     const from = origin.right;
-    const to = yield* selectLavaSearchStaircaseDestination(
+    const to = yield* selectResourceSearchStaircaseDestination(
       state.driver,
       from,
       targetY,
@@ -6395,7 +6427,7 @@ function excavateLavaSearchStaircase(
   });
 }
 
-function findStableLavaSearchStaircaseOrigin(
+function findStableResourceSearchStaircaseOrigin(
   state: RunState,
   position: BeatGamePosition,
 ): Effect.Effect<BeatGameBlockPosition, BeatGameDriverError> {
@@ -6481,16 +6513,16 @@ function findStableLavaSearchStaircaseOrigin(
       }
     }
     return yield* Effect.fail(new BeatGameDriverError({
-      operation: "find-lava-staircase-origin",
+      operation: "find-resource-staircase-origin",
       code: "unreachable",
       retryable: true,
       message:
-        "No reachable dry ground with stable footing is available for a lava-search staircase",
+        "No reachable dry ground with stable footing is available for a resource-search staircase",
     }));
   });
 }
 
-function selectLavaSearchStaircaseDestination(
+function selectResourceSearchStaircaseDestination(
   driver: BeatGameDriver,
   from: BeatGameBlockPosition,
   targetY: number,

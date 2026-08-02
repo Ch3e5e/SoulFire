@@ -14952,16 +14952,87 @@ describe("beat-game run lifecycle", () => {
     )).toHaveLength(1);
   });
 
-  it("explores laterally at mining depth when iron candidates are unreachable", async () => {
+  it("descends toward iron-rich depth before exploring laterally", async () => {
     const driver = new FakeBeatGameDriver();
-    const miningPosition = {
+    const surfacePosition = {
       x: 24.5,
-      y: 54,
+      y: 64,
       z: -12.5,
       dimension: "minecraft:overworld",
     } as const;
     driver.currentObservation = observation({
-      position: { ...miningPosition, y: 63 },
+      position: surfacePosition,
+      counts: {
+        "minecraft:cooked_beef": 12,
+        "minecraft:oak_log": 8,
+        "minecraft:cobblestone": 30,
+        "minecraft:stone_sword": 1,
+        "minecraft:stone_pickaxe": 1,
+        "minecraft:water_bucket": 1,
+      },
+    });
+    const dugBlocks = new Set<string>();
+    driver.actionResolver = (action) =>
+      Effect.sync(() => {
+        if (action.type === "dig-block") {
+          dugBlocks.add(
+            `${action.position.x}:${action.position.y}:${action.position.z}`,
+          );
+        }
+        return {};
+      });
+    installStaircaseMovementSimulation(driver, {
+      x: Math.floor(surfacePosition.x),
+      y: surfacePosition.y,
+      z: Math.floor(surfacePosition.z),
+      dimension: surfacePosition.dimension,
+    });
+    driver.blockQueryResolver = ({ center }) => {
+      const position = {
+        x: Math.floor(center.x),
+        y: Math.floor(center.y),
+        z: Math.floor(center.z),
+        dimension: center.dimension,
+      };
+      const dug = dugBlocks.has(`${position.x}:${position.y}:${position.z}`);
+      return [blockObservation(position, dug
+        ? {
+          blockId: "minecraft:air",
+          diggable: false,
+          replaceable: true,
+        }
+        : { blockId: "minecraft:stone" })];
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (driver.currentObservation.player.position.y > 52) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    })));
+
+    expect(driver.currentObservation.player.position.y).toBeLessThanOrEqual(
+      52,
+    );
+    expect(driver.tasks.filter((task) =>
+      task.type === "collect-blocks"
+      && task.blockIds.includes("minecraft:iron_ore")
+    )).toHaveLength(0);
+  });
+
+  it("explores laterally at iron mining depth when candidates are unreachable", async () => {
+    const driver = new FakeBeatGameDriver();
+    const miningPosition = {
+      x: 24.5,
+      y: 16,
+      z: -12.5,
+      dimension: "minecraft:overworld",
+    } as const;
+    driver.currentObservation = observation({
+      position: miningPosition,
       counts: {
         "minecraft:cooked_beef": 12,
         "minecraft:oak_log": 8,
