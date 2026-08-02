@@ -14168,6 +14168,96 @@ describe("beat-game run lifecycle", () => {
       .toEqual([0, 10, 20]);
   });
 
+  it("does not let ineligible aquatic mobs crowd land animals out of a hunt", async () => {
+    const driver = new FakeBeatGameDriver();
+    const preparedItems = {
+      "minecraft:oak_log": 2,
+      "minecraft:cobblestone": 20,
+      "minecraft:stone_sword": 1,
+      "minecraft:iron_ingot": 7,
+      "minecraft:iron_pickaxe": 1,
+      "minecraft:water_bucket": 1,
+      "minecraft:flint_and_steel": 1,
+      "minecraft:shield": 1,
+    };
+    const salmon = Array.from({ length: 16 }, (_, index) => ({
+      connectionEpoch: "epoch-1",
+      networkId: index + 1,
+      entityType: "minecraft:salmon",
+      position: {
+        x: index + 2,
+        y: 60,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    })) satisfies readonly BeatGameEntityObservation[];
+    const cow = {
+      connectionEpoch: "epoch-1",
+      networkId: 17,
+      entityType: "minecraft:cow",
+      position: {
+        x: 1,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } satisfies BeatGameEntityObservation;
+    const candidates = [...salmon, cow];
+    driver.currentObservation = observation({
+      food: 20,
+      counts: preparedItems,
+    });
+    driver.entityQueryResolver = (query) =>
+      query.selector.entityTypes?.includes("minecraft:cow") === true
+        ? candidates.slice(0, query.maximumResults ?? candidates.length)
+        : [];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        driver.taskObserver(task);
+      }).pipe(
+        Effect.zipRight(
+          task.type === "attack-entity" ? Effect.never : Effect.void,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (
+              !driver.tasks.some((task) => task.type === "attack-entity")
+            ) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    const firstHuntQuery = driver.entityQueries.find(({ selector }) =>
+      selector.entityTypes?.includes("minecraft:cow") === true
+    );
+    expect(firstHuntQuery?.maximumResults).toBeGreaterThanOrEqual(
+      candidates.length,
+    );
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+      target: expect.objectContaining({ networkId: cow.networkId }),
+    }));
+    expect(driver.xzPaths).toHaveLength(0);
+  });
+
   it("crosses nearby water to collect food after a hunt", async () => {
     const driver = new FakeBeatGameDriver();
     const preparedItems = {

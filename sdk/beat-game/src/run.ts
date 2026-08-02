@@ -7291,7 +7291,7 @@ function huntOrExplore(
         selector,
         maximumResults: Math.min(
           256,
-          Math.max(16, maximumTargets + attemptedTargets.size),
+          Math.max(64, maximumTargets + attemptedTargets.size),
         ),
       });
       const targets = confirmedVisibleTarget === undefined
