@@ -11708,6 +11708,69 @@ describe("beat-game run lifecycle", () => {
     });
   }, 10_000);
 
+  it("finishes a nearby wounded fish during a critical aquatic hunt", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      health: 20,
+      food: 6,
+      counts: {
+        "minecraft:cobblestone": 20,
+        "minecraft:iron_ingot": 7,
+        "minecraft:oak_log": 8,
+        "minecraft:shield": 1,
+        "minecraft:stone_pickaxe": 1,
+        "minecraft:stone_sword": 1,
+      },
+    });
+    const healthyCod = {
+      connectionEpoch: "epoch-1",
+      networkId: 49,
+      entityType: "minecraft:cod",
+      position: {
+        x: 3,
+        y: 62,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 3,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    const woundedCod = {
+      ...healthyCod,
+      networkId: 50,
+      position: {
+        ...healthyCod.position,
+        x: 4,
+      },
+      health: 1,
+    } as const;
+    driver.entityResults = [healthyCod, woundedCod];
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (!driver.tasks.some((task) => task.type === "attack-entity")) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+      target: expect.objectContaining({ networkId: woundedCod.networkId }),
+    }));
+    expect(driver.paths).toHaveLength(0);
+  }, 10_000);
+
   it("searches on land instead of chasing fish above critical hunger", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
