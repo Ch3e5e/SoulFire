@@ -279,6 +279,39 @@ public final class CollectBlocksTaskProvider
     return true;
   }
 
+  static Set<SFVec3i> directBreakApproachPositions(
+    BlockGetter level,
+    SFVec3i target
+  ) {
+    return AdjacentToBlockGoal.interactionPositions(target).stream()
+      .filter(position -> canDirectlyBreakFrom(level, position, target))
+      .collect(Collectors.toUnmodifiableSet());
+  }
+
+  private static boolean canDirectlyBreakFrom(
+    BlockGetter level,
+    SFVec3i playerFeet,
+    SFVec3i target
+  ) {
+    var eyePosition = new Vec3(
+      playerFeet.x + 0.5D,
+      playerFeet.y + 1.62D,
+      playerFeet.z + 0.5D
+    );
+    var targetPosition = target.toBlockPos();
+    return directBreakFaces(eyePosition, target).stream()
+      .anyMatch(face -> hitsTargetBlock(
+        targetPosition,
+        level.clip(new ClipContext(
+          eyePosition,
+          face.getMiddleOfFace(target),
+          ClipContext.Block.OUTLINE,
+          ClipContext.Fluid.NONE,
+          CollisionContext.empty()
+        ))
+      ));
+  }
+
   private static final class CollectBlocksControl implements ControlTask {
     private final BotTaskContext context;
     private final Set<String> blockIds;
@@ -378,19 +411,29 @@ public final class CollectBlocksTaskProvider
         );
       }
       activeTargets = Set.copyOf(candidates);
+      var level = context.bot().minecraft().level;
       activePath = PathExecutor.createPathfinding(
         context.bot(),
         new CompositeGoal(candidates.stream()
           .<GoalScorer>mapMulti(
             (candidate, goals) -> {
               goals.accept(new BreakBlockPosGoal(candidate));
-              goals.accept(new AdjacentToBlockGoal(
-                candidate,
-                rejectedAdjacentPositions.getOrDefault(
-                  candidate,
-                  Set.of()
-                )
-              ));
+              if (level != null) {
+                var interactionPositions = directBreakApproachPositions(
+                  level,
+                  candidate
+                );
+                if (!interactionPositions.isEmpty()) {
+                  goals.accept(new AdjacentToBlockGoal(
+                    candidate,
+                    rejectedAdjacentPositions.getOrDefault(
+                      candidate,
+                      Set.of()
+                    ),
+                    interactionPositions
+                  ));
+                }
+              }
             }
           )
           .collect(Collectors.toUnmodifiableSet())),

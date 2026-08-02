@@ -22,6 +22,7 @@ import com.soulfiremc.server.pathfinding.SFVec3i;
 import com.soulfiremc.server.pathfinding.execution.WorldAction;
 import com.soulfiremc.server.pathfinding.graph.MinecraftGraph;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -33,13 +34,22 @@ import java.util.Set;
 /// overhead block can be reached from directly below it.
 public record AdjacentToBlockGoal(
   SFVec3i block,
-  Set<SFVec3i> excludedPositions
+  Set<SFVec3i> excludedPositions,
+  Set<SFVec3i> interactionPositions
 ) implements GoalScorer {
   private static final int MINIMUM_OVERHEAD_REACH = 2;
   private static final int MAXIMUM_OVERHEAD_REACH = 6;
 
   public AdjacentToBlockGoal {
     excludedPositions = Set.copyOf(excludedPositions);
+    interactionPositions = Set.copyOf(interactionPositions);
+  }
+
+  public AdjacentToBlockGoal(
+    SFVec3i block,
+    Set<SFVec3i> excludedPositions
+  ) {
+    this(block, excludedPositions, interactionPositions(block));
   }
 
   public AdjacentToBlockGoal(SFVec3i block) {
@@ -52,20 +62,35 @@ public record AdjacentToBlockGoal(
     SFVec3i position,
     List<WorldAction> actions
   ) {
-    var closestDistance = Double.POSITIVE_INFINITY;
+    return interactionPositions.stream()
+      .filter(candidate -> !excludedPositions.contains(candidate))
+      .mapToDouble(position::distance)
+      .min()
+      .orElse(Double.POSITIVE_INFINITY);
+  }
+
+  @Override
+  public boolean isFinished(MinecraftRouteNode current) {
+    var position = current.node().blockPosition();
+    return !excludedPositions.contains(position)
+      && interactionPositions.contains(position);
+  }
+
+  public static boolean isAdjacentPosition(
+    SFVec3i block,
+    SFVec3i position
+  ) {
+    return interactionPositions(block).contains(position);
+  }
+
+  public static Set<SFVec3i> interactionPositions(SFVec3i block) {
+    var positions = new HashSet<SFVec3i>();
     for (
       var deltaY = MINIMUM_OVERHEAD_REACH;
       deltaY <= MAXIMUM_OVERHEAD_REACH;
       deltaY++
     ) {
-      var candidate = block.add(0, -deltaY, 0);
-      if (excludedPositions.contains(candidate)) {
-        continue;
-      }
-      closestDistance = Math.min(
-        closestDistance,
-        position.distance(candidate)
-      );
+      positions.add(block.add(0, -deltaY, 0));
     }
     for (var x = -1; x <= 1; x++) {
       for (var z = -1; z <= 1; z++) {
@@ -73,43 +98,10 @@ public record AdjacentToBlockGoal(
           continue;
         }
         for (var y = -2; y <= 1; y++) {
-          var candidate = block.add(x, y, z);
-          if (excludedPositions.contains(candidate)) {
-            continue;
-          }
-          closestDistance = Math.min(
-            closestDistance,
-            position.distance(candidate)
-          );
+          positions.add(block.add(x, y, z));
         }
       }
     }
-    return closestDistance;
-  }
-
-  @Override
-  public boolean isFinished(MinecraftRouteNode current) {
-    var position = current.node().blockPosition();
-    return !excludedPositions.contains(position)
-      && isAdjacentPosition(block, position);
-  }
-
-  public static boolean isAdjacentPosition(
-    SFVec3i block,
-    SFVec3i position
-  ) {
-    var deltaX = block.x - position.x;
-    var deltaY = block.y - position.y;
-    var deltaZ = block.z - position.z;
-    var horizontalDistanceSquared =
-      deltaX * deltaX + deltaZ * deltaZ;
-    if (horizontalDistanceSquared == 0) {
-      return deltaY >= MINIMUM_OVERHEAD_REACH
-        && deltaY <= MAXIMUM_OVERHEAD_REACH;
-    }
-    return horizontalDistanceSquared >= 1
-      && horizontalDistanceSquared <= 2
-      && deltaY >= -1
-      && deltaY <= 2;
+    return Set.copyOf(positions);
   }
 }

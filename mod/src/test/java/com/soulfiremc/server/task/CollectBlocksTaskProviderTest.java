@@ -172,6 +172,22 @@ final class CollectBlocksTaskProviderTest {
   }
 
   @Test
+  void routesAroundLogsThatOccludeAnOverheadTarget() {
+    var blocks = new TestBlockAccessorBuilder();
+    var target = new SFVec3i(0, 70, 0);
+    blocks.setBlockAt(0, 69, 0, Blocks.OAK_LOG);
+    blocks.setBlockAt(0, 70, 0, Blocks.OAK_LOG);
+
+    var positions = CollectBlocksTaskProvider.directBreakApproachPositions(
+      blocks.build(),
+      target
+    );
+
+    assertFalse(positions.contains(new SFVec3i(0, 64, 0)));
+    assertTrue(positions.contains(new SFVec3i(1, 68, 0)));
+  }
+
+  @Test
   void rejectsDropSensitiveBlocksWhenNoSuitableToolExists() {
     assertFalse(CollectBlocksTaskProvider.hasDropPreservingTool(
       Blocks.STONE.defaultBlockState(),
