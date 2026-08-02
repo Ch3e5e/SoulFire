@@ -4335,6 +4335,16 @@ function retreatAndRecover(
         ) {
           return Effect.void;
         }
+        if (hasUnsafeAir(observation)) {
+          return emergencyAirAscent(
+            state,
+            observation.player.position,
+          ).pipe(
+            Effect.zipRight(
+              recoverUntilSafe(attemptsRemaining - 1),
+            ),
+          );
+        }
         return findNearbyAttackThreat(state, observation).pipe(
           Effect.flatMap((threat) => {
             if (threat === undefined) {

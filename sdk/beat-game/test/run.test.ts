@@ -8185,6 +8185,133 @@ describe("beat-game run lifecycle", () => {
     )).toHaveLength(2);
   });
 
+  it("surfaces before recovering after an escape ends underwater", async () => {
+    const driver = new FakeBeatGameDriver();
+    const skeleton = {
+      connectionEpoch: "epoch-1",
+      networkId: 251,
+      entityType: "minecraft:skeleton",
+      position: {
+        x: 6,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:01.000Z",
+    } as const;
+    const recoveryTrace: string[] = [];
+    driver.currentObservation = observation({
+      counts: {
+        "minecraft:cooked_beef": 1,
+        "minecraft:stone_sword": 1,
+      },
+    });
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2) === true
+          || query.selector.networkId === skeleton.networkId
+        ? driver.entityResults
+        : [];
+    driver.blockQueryResolver = (query) =>
+      query.selector.blockIds?.includes("minecraft:water") === true
+          && driver.currentObservation.player.position.y < 63
+        ? [blockObservation({
+          x: Math.floor(query.center.x),
+          y: Math.floor(query.center.y),
+          z: Math.floor(query.center.z),
+          dimension: query.center.dimension,
+        }, {
+          blockId: "minecraft:water",
+          diggable: false,
+          replaceable: true,
+        })]
+        : [];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        recoveryTrace.push(`task:${task.type}`);
+        if (task.type === "flee") {
+          driver.entityResults = [];
+          driver.currentObservation = observation({
+            air: 199,
+            food: 19,
+            health: 10,
+            position: { x: 12, y: 56, z: 0 },
+            counts: {
+              "minecraft:cooked_beef": 1,
+              "minecraft:stone_sword": 1,
+            },
+          });
+        }
+      }).pipe(
+        Effect.zipRight(
+          task.type === "collect-blocks" ? Effect.never : Effect.void,
+        ),
+      );
+    driver.actionObserver = (action) => {
+      if (action.type === "look") {
+        driver.currentObservation = {
+          ...driver.currentObservation,
+          player: {
+            ...driver.currentObservation.player,
+            rotation: { yaw: action.yaw, pitch: action.pitch },
+          },
+        };
+        if (action.pitch === -90) {
+          recoveryTrace.push("ascend");
+        }
+        return;
+      }
+      if (
+        action.type === "set-movement"
+        && action.forward === true
+        && action.jump === true
+        && driver.currentObservation.player.rotation.pitch === -90
+      ) {
+        driver.currentObservation = observation({
+          air: 300,
+          food: 19,
+          health: 10,
+          position: { x: 12, y: 64, z: 0 },
+          counts: {
+            "minecraft:cooked_beef": 1,
+            "minecraft:stone_sword": 1,
+          },
+        });
+      }
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some((task) => task.type === "collect-blocks")) {
+        yield* Effect.sleep(1);
+      }
+      driver.entityResults = [skeleton];
+      driver.currentObservation = observation({
+        health: 10,
+        counts: {
+          "minecraft:cooked_beef": 1,
+          "minecraft:stone_sword": 1,
+        },
+      });
+      while (!recoveryTrace.includes("ascend")) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    })));
+
+    const fleeIndex = recoveryTrace.indexOf("task:flee");
+    const ascentIndex = recoveryTrace.indexOf("ascend");
+    const eatIndex = recoveryTrace.indexOf("task:auto-eat");
+    expect(fleeIndex).toBeGreaterThanOrEqual(0);
+    expect(ascentIndex).toBeGreaterThan(fleeIndex);
+    expect(eatIndex === -1 || eatIndex > ascentIndex).toBe(true);
+  }, 10_000);
+
   it("interrupts work and swims upward before running out of air", async () => {
     const driver = new FakeBeatGameDriver();
     driver.blockQueryResolver = (query) =>
