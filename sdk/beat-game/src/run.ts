@@ -2858,6 +2858,23 @@ function monitorEscapeSafety(
                   continueEscapingWhenHit,
                 );
               }
+              const caughtByFastMeleePursuer =
+                FAST_MELEE_PURSUER_ENTITY_TYPES.has(
+                  threat.target.entityType,
+                )
+                && distanceSquared(
+                    observation.player.position,
+                    threat.target.position,
+                  ) <= EMERGENCY_KNOCKBACK_RANGE ** 2;
+              if (
+                caughtByFastMeleePursuer
+                && isSameEntityTarget(target, threat.target)
+              ) {
+                return Effect.succeed({
+                  type: "escape",
+                  target: threat.target,
+                } as const);
+              }
               const shouldKeepEscaping = continueEscapingWhenHit
                 && !shouldCommitToMeleeFight(observation, threat.target);
               if (

@@ -7097,6 +7097,87 @@ describe("beat-game run lifecycle", () => {
       .toBe(false);
   }, 10_000);
 
+  it("knocks back a fast pursuer that catches an active escape", async () => {
+    const driver = new FakeBeatGameDriver();
+    const distantSpider = {
+      connectionEpoch: "epoch-1",
+      networkId: 53,
+      entityType: "minecraft:spider",
+      position: {
+        x: 8,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 16,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2) === true
+          || query.selector.networkId === distantSpider.networkId
+        ? driver.entityResults
+        : [];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(
+        Effect.zipRight(
+          task.type === "collect-blocks" || task.type === "flee"
+            ? Effect.never
+            : Effect.void,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (!driver.tasks.some((task) =>
+              task.type === "collect-blocks"
+            )) {
+              yield* Effect.sleep(1);
+            }
+            driver.currentObservation = observation({ health: 15, food: 14 });
+            driver.entityResults = [distantSpider];
+            while (!driver.tasks.some((task) => task.type === "flee")) {
+              yield* Effect.sleep(1);
+            }
+            driver.currentObservation = observation({
+              health: 13,
+              food: 14,
+            });
+            driver.entityResults = [{
+              ...distantSpider,
+              position: { ...distantSpider.position, x: 2 },
+            }];
+            while (!driver.actions.some((action) =>
+              action.type === "attack-entity"
+            )) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.tasks.filter((task) => task.type === "flee").length)
+      .toBeGreaterThanOrEqual(1);
+    expect(driver.actions).toContainEqual({
+      type: "attack-entity",
+      connectionEpoch: distantSpider.connectionEpoch,
+      networkId: distantSpider.networkId,
+      sprinting: true,
+    });
+    expect(driver.tasks.some((task) => task.type === "attack-entity"))
+      .toBe(false);
+  }, 10_000);
+
   it("finishes a close spider fight at lethal health when armed", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
