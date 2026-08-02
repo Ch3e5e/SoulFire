@@ -4649,50 +4649,49 @@ describe("beat-game run lifecycle", () => {
       Effect.sync(() => {
         driver.tasks.push(task);
         if (task.type !== "flee") {
-          return false;
+          return;
         }
-        const shouldRemainActive = escapes === 0;
         escapes += 1;
-        if (escapes === 1) {
-          driver.entityResults = [creeper, skeleton];
-          driver.currentObservation = observation({ health: 17 });
-        } else {
-          driver.entityResults = [];
-        }
-        return shouldRemainActive;
+        driver.entityResults = [creeper, skeleton];
+        driver.currentObservation = observation({ health: 17 });
       }).pipe(
-        Effect.flatMap((shouldRemainActive) =>
-          shouldRemainActive ? Effect.never : Effect.void
+        Effect.zipRight(
+          task.type === "flee" ? Effect.never : Effect.void,
         ),
         Effect.onInterrupt(() =>
           Effect.sync(() => {
-            interruptedEscapes += 1;
+            if (task.type === "flee") {
+              interruptedEscapes += 1;
+            }
           })
         ),
       );
 
-    await Effect.runPromise(Effect.scoped(
+    const interruptedBeforeStop = await Effect.runPromise(Effect.scoped(
       beatGameWithDriver(driver, {
         strategy: { observationPollMs: 1 },
       }).pipe(
         Effect.flatMap((run) =>
           Effect.gen(function* () {
-            while (escapes < 2) {
+            while (escapes === 0) {
               yield* Effect.sleep(1);
             }
+            yield* Effect.sleep(250);
+            const result = interruptedEscapes;
             yield* run.stop;
             yield* run.awaitCompletion.pipe(Effect.either);
+            return result;
           })
         ),
       ),
     ));
 
-    expect(interruptedEscapes).toBe(1);
-    expect(escapes).toBeGreaterThanOrEqual(2);
+    expect(interruptedBeforeStop).toBe(0);
+    expect(escapes).toBe(1);
     expect(driver.tasks).not.toContainEqual(expect.objectContaining({
       type: "attack-entity",
     }));
-    expect(driver.tasks.filter((task) => task.type === "flee")).toHaveLength(2);
+    expect(driver.tasks.filter((task) => task.type === "flee")).toHaveLength(1);
   }, 10_000);
 
   it("keeps group-aware creeper evasion active when a spider catches up", async () => {
@@ -4753,6 +4752,84 @@ describe("beat-game run lifecycle", () => {
       type: "flee",
       selector: { categories: [2], alive: true },
     }));
+    expect(driver.tasks).not.toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+    }));
+  });
+
+  it("keeps the active ranged escape alive after another hit", async () => {
+    const driver = new FakeBeatGameDriver();
+    const skeleton = {
+      connectionEpoch: "epoch-1",
+      networkId: 45,
+      entityType: "minecraft:skeleton",
+      position: {
+        x: 8,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:01.000Z",
+    } as const;
+    driver.currentObservation = observation({ health: 8 });
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2) === true
+          || query.selector.networkId === skeleton.networkId
+        ? [skeleton]
+        : [];
+    let interruptedEscapes = 0;
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (task.type === "flee") {
+          driver.currentObservation = observation({ health: 5 });
+        }
+      }).pipe(
+        Effect.zipRight(
+          task.type === "collect-blocks" || task.type === "flee"
+            ? Effect.never
+            : Effect.void,
+        ),
+        Effect.onInterrupt(() =>
+          Effect.sync(() => {
+            if (task.type === "flee") {
+              interruptedEscapes += 1;
+            }
+          })
+        ),
+      );
+
+    const stateBeforeStop = await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { minimumHealth: 4, observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (!driver.tasks.some((task) => task.type === "flee")) {
+              yield* Effect.sleep(1);
+            }
+            yield* Effect.sleep(250);
+            const result = {
+              interruptedEscapes,
+              fleeTasks: driver.tasks.filter((task) => task.type === "flee")
+                .length,
+            };
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+            return result;
+          })
+        ),
+      ),
+    ));
+
+    expect(stateBeforeStop).toEqual({
+      interruptedEscapes: 0,
+      fleeTasks: 1,
+    });
+    expect(driver.tasks.filter((task) => task.type === "flee")).toHaveLength(1);
     expect(driver.tasks).not.toContainEqual(expect.objectContaining({
       type: "attack-entity",
     }));
@@ -5939,7 +6016,7 @@ describe("beat-game run lifecycle", () => {
 
   it("keeps fleeing when a ranged attacker closes the gap", async () => {
     const driver = new FakeBeatGameDriver();
-    driver.currentObservation = observation({ health: 8, food: 9 });
+    driver.currentObservation = observation({ health: 8 });
     let skeleton: BeatGameEntityObservation = {
       connectionEpoch: "epoch-1",
       networkId: 22,
@@ -5970,7 +6047,7 @@ describe("beat-game run lifecycle", () => {
             position: { ...skeleton.position, x: 1.5 },
           };
           driver.entityResults = [skeleton];
-          driver.currentObservation = observation({ health: 6, food: 9 });
+          driver.currentObservation = observation({ health: 6 });
         }
       }).pipe(
         Effect.zipRight(task.type === "flee" ? Effect.never : Effect.void),
@@ -5978,15 +6055,14 @@ describe("beat-game run lifecycle", () => {
 
     await Effect.runPromise(Effect.scoped(
       beatGameWithDriver(driver, {
-        strategy: { observationPollMs: 1 },
+        strategy: { minimumHealth: 4, observationPollMs: 1 },
       }).pipe(
         Effect.flatMap((run) =>
           Effect.gen(function* () {
-            while (
-              driver.tasks.filter((task) => task.type === "flee").length < 2
-            ) {
+            while (!driver.tasks.some((task) => task.type === "flee")) {
               yield* Effect.sleep(1);
             }
+            yield* Effect.sleep(250);
             yield* run.stop;
             yield* run.awaitCompletion.pipe(Effect.either);
           })
@@ -5994,13 +6070,7 @@ describe("beat-game run lifecycle", () => {
       ),
     ));
 
-    expect(driver.tasks.filter((task) => task.type === "flee")).toHaveLength(2);
-    expect(driver.actions).toContainEqual({
-      type: "attack-entity",
-      connectionEpoch: skeleton.connectionEpoch,
-      networkId: skeleton.networkId,
-      sprinting: true,
-    });
+    expect(driver.tasks.filter((task) => task.type === "flee")).toHaveLength(1);
     expect(driver.tasks.some((task) => task.type === "attack-entity"))
       .toBe(false);
   });

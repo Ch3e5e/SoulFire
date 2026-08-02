@@ -2808,6 +2808,17 @@ function monitorEscapeSafety(
               }
               const shouldKeepEscaping = continueEscapingWhenHit
                 && !shouldCommitToMeleeFight(observation, threat.target);
+              if (
+                (shouldKeepEscaping || threat.response === "flee")
+                && isSameEntityTarget(target, threat.target)
+              ) {
+                return monitorEscapeSafety(
+                  state,
+                  currentTarget,
+                  observation,
+                  continueEscapingWhenHit,
+                );
+              }
               return Effect.succeed({
                 type: shouldKeepEscaping || threat.response === "flee"
                   ? "escape"
@@ -2826,10 +2837,7 @@ function shouldPreemptEscapeTarget(
   currentTarget: BeatGameEntityObservation,
   candidate: BeatGameEntityObservation,
 ): boolean {
-  if (
-    currentTarget.connectionEpoch === candidate.connectionEpoch
-    && currentTarget.networkId === candidate.networkId
-  ) {
+  if (isSameEntityTarget(currentTarget, candidate)) {
     return false;
   }
   if (candidate.entityType === "minecraft:creeper") {
@@ -2837,6 +2845,14 @@ function shouldPreemptEscapeTarget(
   }
   return ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(candidate.entityType)
     && !ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(currentTarget.entityType);
+}
+
+function isSameEntityTarget(
+  left: BeatGameEntityObservation,
+  right: BeatGameEntityObservation,
+): boolean {
+  return left.connectionEpoch === right.connectionEpoch
+    && left.networkId === right.networkId;
 }
 
 function knockBackAndSprintAway(
