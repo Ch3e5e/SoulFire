@@ -1014,6 +1014,49 @@ describe("beat-game behavior programs", () => {
     });
   });
 
+  it("retries staircase excavation after its tool breaks", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.blockQueryResolver = ({ center }) => [
+      blockObservation(queriedBlockPosition(center)),
+    ];
+    const from = {
+      x: 0,
+      y: 3,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    const to = {
+      x: 0,
+      y: 2,
+      z: 1,
+      dimension: "minecraft:overworld",
+    };
+    driver.actionResolver = (action) =>
+      action.type === "select-item"
+        ? Effect.fail(new BeatGameDriverError({
+          operation: "select-hotbar-item",
+          code: "not_found",
+          retryable: false,
+          message: "No matching item is available",
+        }))
+        : Effect.succeed({});
+    installStaircaseMovementSimulation(driver, from);
+
+    const result = await Effect.runPromise(
+      excavateStaircase(driver, { from, to }).pipe(Effect.either),
+    );
+
+    expect(result).toMatchObject({
+      _tag: "Left",
+      left: {
+        operation: "select-staircase-tool",
+        code: "not_found",
+        retryable: true,
+      },
+    });
+    expect(driver.activeControlScopes).toBe(0);
+  });
+
   it("walks a prepared staircase step directly when pathfinding stalls", async () => {
     const driver = new FakeBeatGameDriver();
     driver.blockQueryResolver = ({ center }) => [

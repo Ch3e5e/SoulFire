@@ -586,7 +586,7 @@ export function excavateStaircase(
         previousStep,
         step,
       );
-      yield* driver.act({ type: "select-item", selector: tool });
+      yield* selectStaircaseTool(driver, tool);
       yield* digStaircaseBlockIfNeeded(driver, {
         ...step,
         y: step.y + 2,
@@ -626,6 +626,26 @@ export function excavateStaircase(
       Effect.ignore,
     )),
   ));
+}
+
+function selectStaircaseTool(
+  driver: BeatGameDriver,
+  tool: BeatGameItemSelector,
+): Effect.Effect<void, BeatGameDriverError> {
+  return driver.act({ type: "select-item", selector: tool }).pipe(
+    Effect.mapError((cause) =>
+      cause.code === "not_found"
+        ? new BeatGameDriverError({
+          operation: "select-staircase-tool",
+          code: cause.code,
+          retryable: true,
+          message: "No usable staircase tool remains",
+          cause,
+        })
+        : cause
+    ),
+    Effect.asVoid,
+  );
 }
 
 export interface AttackEntityOptions extends BeatGameBehaviorOptions {
