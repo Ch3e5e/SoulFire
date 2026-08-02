@@ -37,6 +37,7 @@ import {
   Effect,
   Fiber,
   Ref,
+  Schedule,
   Scope,
   Stream,
 } from "effect";
@@ -449,6 +450,12 @@ const program = Effect.scoped(Effect.gen(function* () {
   yield* record("bot-online", { instanceId: instance.id, profileId });
   let lastTaskProgressFingerprint: string | undefined;
   yield* bot.tasks.watch({ includeSnapshot: false }).pipe(
+    Stream.tapError((cause) =>
+      record("task-progress-watch-failed", {
+        cause: String(cause),
+      }).pipe(Effect.ignore)
+    ),
+    Stream.retry(Schedule.spaced(Duration.seconds(1))),
     Stream.runForEach((event) => {
       const task = event.task;
       const fingerprint = json(task === undefined
@@ -483,11 +490,6 @@ const program = Effect.scoped(Effect.gen(function* () {
           }),
       });
     }),
-    Effect.catchAll((cause) =>
-      record("task-progress-watch-failed", {
-        cause: String(cause),
-      }).pipe(Effect.ignore)
-    ),
     Effect.forkScoped,
   );
 
