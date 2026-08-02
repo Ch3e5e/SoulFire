@@ -3156,7 +3156,12 @@ function recoverFromFluid(
     Effect.flatMap((reachedDrySurface) =>
       reachedDrySurface
         ? Effect.void
-        : escapeToOverworldSurface(state, originalPosition).pipe(
+        : state.driver.observe.pipe(
+          Effect.flatMap((latest) =>
+            hasUnsafeAir(latest)
+              ? excavateAirEscapeShaft(state)
+              : escapeToOverworldSurface(state, originalPosition)
+          ),
           Effect.either,
           Effect.flatMap(() => state.driver.observe),
           Effect.flatMap((latest) =>
@@ -3381,12 +3386,14 @@ function excavateAirEscapeShaft(
       if (observation.player.dead) {
         return;
       }
-      const routed = yield* returnToOverworldSurface(
-        state,
-        observation.player.position,
-      ).pipe(Effect.either);
-      if (routed._tag === "Right") {
-        return;
+      if (!hasUnsafeAir(observation)) {
+        const routed = yield* returnToOverworldSurface(
+          state,
+          observation.player.position,
+        ).pipe(Effect.either);
+        if (routed._tag === "Right") {
+          return;
+        }
       }
       const surface = yield* nearestAirEscapeSurface(
         state,

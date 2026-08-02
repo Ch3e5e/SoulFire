@@ -8964,7 +8964,22 @@ describe("beat-game run lifecycle", () => {
       "minecraft:wooden_pickaxe": 1,
       "minecraft:beef": 8,
     };
-    driver.surfaceColumns = [];
+    let surfaceQueries = 0;
+    driver.surfaceQueryResolver = () => {
+      surfaceQueries += 1;
+      return surfaceQueries <= 2
+        ? []
+        : [{
+          x: 8,
+          z: 0,
+          loaded: true,
+          surfaceY: 64,
+          blockId: "minecraft:grass_block",
+          biomeId: "minecraft:plains",
+          skyLight: 15,
+          blockLight: 0,
+        }];
+    };
     driver.taskResolver = (task) =>
       Effect.sync(() => {
         driver.tasks.push(task);
