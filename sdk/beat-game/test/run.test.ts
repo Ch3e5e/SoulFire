@@ -10634,9 +10634,15 @@ describe("beat-game run lifecycle", () => {
     driver.currentObservation = observation({
       position: start,
       counts: {
+        "minecraft:cobblestone": 20,
+        "minecraft:cooked_beef": 8,
         "minecraft:flint_and_steel": 1,
+        "minecraft:iron_ingot": 7,
         "minecraft:iron_pickaxe": 1,
         "minecraft:lava_bucket": 1,
+        "minecraft:oak_log": 4,
+        "minecraft:shield": 1,
+        "minecraft:stone_sword": 1,
         "minecraft:water_bucket": 1,
       },
     });
@@ -10736,9 +10742,9 @@ describe("beat-game run lifecycle", () => {
 
     expect(driver.paths).toContainEqual(expect.objectContaining({
       position: {
-        x: 0,
+        x: 0.5,
         y: 42,
-        z: -9,
+        z: -8.5,
         dimension: "minecraft:overworld",
       },
       radius: 0.5,

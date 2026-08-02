@@ -3175,8 +3175,9 @@ describe("beat-game behavior programs", () => {
     }
     const water = { ...target, z: target.z - 1 };
     const interior = frame.interior[0];
-    if (interior === undefined) {
-      throw new Error("Expected a portal interior");
+    const replaceableInterior = frame.interior[1];
+    if (interior === undefined || replaceableInterior === undefined) {
+      throw new Error("Expected portal interior blocks");
     }
     const castingStand = {
       ...origin,
@@ -3209,6 +3210,13 @@ describe("beat-game behavior programs", () => {
       key(interior),
       blockObservation(interior, { blockId: "minecraft:deepslate" }),
     );
+    blocks.set(
+      key(replaceableInterior),
+      blockObservation(replaceableInterior, {
+        blockId: "minecraft:cave_air",
+        replaceable: true,
+      }),
+    );
     for (const support of [
       { ...target, y: target.y - 1 },
       { ...water, y: water.y - 1 },
@@ -3228,6 +3236,8 @@ describe("beat-game behavior programs", () => {
       },
       position: origin,
     });
+    let conversionPending = false;
+    let conversionQueries = 0;
     driver.blockQueryResolver = ({ center, selector }) => {
       if (selector.blockIds?.includes("minecraft:lava") === true) {
         return [];
@@ -3243,6 +3253,15 @@ describe("beat-game behavior programs", () => {
         z: Math.floor(center.z),
         dimension: center.dimension,
       };
+      if (conversionPending && key(position) === key(target)) {
+        conversionQueries += 1;
+        if (conversionQueries >= 3) {
+          conversionPending = false;
+          blocks.set(key(target), blockObservation(target, {
+            blockId: "minecraft:obsidian",
+          }));
+        }
+      }
       return [blocks.get(key(position)) ?? blockObservation(position, {
         blockId: "minecraft:air",
         replaceable: true,
@@ -3291,12 +3310,7 @@ describe("beat-game behavior programs", () => {
         selectedItemId === "minecraft:water_bucket"
         && pendingLavaTarget !== undefined
       ) {
-        blocks.set(
-          key(pendingLavaTarget),
-          blockObservation(pendingLavaTarget, {
-            blockId: "minecraft:obsidian",
-          }),
-        );
+        conversionPending = true;
         blocks.set(
           key(water),
           blockObservation(water, {
@@ -3317,7 +3331,7 @@ describe("beat-game behavior programs", () => {
     }));
 
     const liquidPlacementIndex = driver.actions.findIndex((action) =>
-      action.type === "interact-block"
+      action.type === "use-item"
     );
     expect(driver.actions).toContainEqual({
       type: "dig-block",
@@ -3330,6 +3344,10 @@ describe("beat-game behavior programs", () => {
     expect(driver.actions).toContainEqual({
       type: "dig-block",
       position: interior,
+    });
+    expect(driver.actions).not.toContainEqual({
+      type: "dig-block",
+      position: replaceableInterior,
     });
     const interiorDigIndex = driver.actions.findIndex((action) =>
       action.type === "dig-block"
@@ -3352,25 +3370,38 @@ describe("beat-game behavior programs", () => {
       position: castingStand,
       radius: 0,
     }));
-    expect(driver.actions).toContainEqual({
-      type: "interact-block",
-      position: { ...target, y: target.y - 1 },
-      face: "up",
-      hand: "main",
-    });
-    expect(driver.actions).toContainEqual({
-      type: "interact-block",
-      position: { ...water, y: water.y - 1 },
-      face: "up",
-      hand: "main",
+    const lavaSelectionIndex = driver.actions.findIndex((action) =>
+      action.type === "select-item"
+      && action.selector.itemIds?.includes("minecraft:lava_bucket") === true
+    );
+    const lavaLook = driver.actions.slice(lavaSelectionIndex + 1).find(
+      (action) => action.type === "look",
+    );
+    const expectedLavaRotation = rotationToward(
+      {
+        ...origin,
+        y: origin.y + 1.62,
+      },
+      {
+        ...target,
+        x: target.x + 0.5,
+        y: target.y,
+        z: target.z + 0.5,
+      },
+    );
+    expect(lavaLook).toEqual({
+      type: "look",
+      yaw: expectedLavaRotation.yaw,
+      pitch: expectedLavaRotation.pitch,
     });
     expect(water.z).toBeGreaterThan(castingStand.z);
     expect(water.z).toBeLessThan(target.z);
     expect(blocks.get(key(target))?.blockId).toBe("minecraft:obsidian");
+    expect(conversionQueries).toBe(3);
     expect(driver.actions.filter(({ type }) => type === "use-item"))
-      .toHaveLength(1);
-    expect(driver.actions.filter(({ type }) => type === "interact-block"))
-      .toHaveLength(2);
+      .toHaveLength(3);
+    expect(driver.actions.some(({ type }) => type === "interact-block"))
+      .toBe(false);
     expect(driver.tasks).toHaveLength(0);
     expect(driver.activeControlScopes).toBe(0);
   });
@@ -3456,6 +3487,17 @@ describe("beat-game behavior programs", () => {
       })];
     };
     let selectedItemId = "";
+    const updateInventory = (
+      update: (counts: Record<string, number>) => void,
+    ) => {
+      const counts = { ...driver.currentObservation.inventory.counts };
+      update(counts);
+      driver.currentObservation = observation({
+        counts,
+        position: driver.currentObservation.player.position,
+        rotation: driver.currentObservation.player.rotation,
+      });
+    };
     driver.actionObserver = (action) => {
       if (action.type === "select-item") {
         selectedItemId = action.selector.itemIds?.[0] ?? "";
@@ -3472,13 +3514,14 @@ describe("beat-game behavior programs", () => {
         });
         return;
       }
-      if (
-        action.type !== "use-item"
-        && action.type !== "interact-block"
-      ) {
+      if (action.type !== "use-item") {
         return;
       }
       if (selectedItemId === "minecraft:lava_bucket") {
+        updateInventory((counts) => {
+          delete counts["minecraft:lava_bucket"];
+          counts["minecraft:bucket"] = (counts["minecraft:bucket"] ?? 0) + 1;
+        });
         blocks.set(key(firstTarget), blockObservation(firstTarget, {
           blockId: "minecraft:lava",
           replaceable: true,
@@ -3486,6 +3529,10 @@ describe("beat-game behavior programs", () => {
         return;
       }
       if (selectedItemId === "minecraft:water_bucket") {
+        updateInventory((counts) => {
+          delete counts["minecraft:water_bucket"];
+          counts["minecraft:bucket"] = (counts["minecraft:bucket"] ?? 0) + 1;
+        });
         blocks.set(key(firstTarget), blockObservation(firstTarget, {
           blockId: "minecraft:obsidian",
         }));
@@ -3496,6 +3543,13 @@ describe("beat-game behavior programs", () => {
         return;
       }
       if (selectedItemId === "minecraft:bucket") {
+        updateInventory((counts) => {
+          counts["minecraft:bucket"] = Math.max(
+            0,
+            (counts["minecraft:bucket"] ?? 0) - 1,
+          );
+          counts["minecraft:water_bucket"] = 1;
+        });
         blocks.delete(key(water));
       }
     };

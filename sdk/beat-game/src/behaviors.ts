@@ -50,6 +50,8 @@ const SUBMERGED_DROP_PICKUP_MAXIMUM_VERTICAL_DISTANCE = 3.5;
 const DIRECT_DROP_PICKUP_POLL_INTERVAL_MS = 100;
 const DIRECT_DROP_PICKUP_MAXIMUM_POLLS = 8;
 const SUBMERGED_DROP_PICKUP_MAXIMUM_POLLS = 16;
+const PORTAL_CASTING_LAVA_SIGHT_CLEARING_BLOCKS = 4;
+const PORTAL_CASTING_LAVA_COLLECTION_POLLS = 10;
 const DROP_AVOIDED_FLUID_BLOCK_IDS = [
   "minecraft:water",
   "minecraft:bubble_column",
@@ -4475,7 +4477,7 @@ function clearPortalInterior(
           );
           if (
             block === undefined
-            || block.blockId === "minecraft:air"
+            || block.replaceable
             || block.blockId === "minecraft:nether_portal"
           ) {
             return Effect.void;
@@ -4541,6 +4543,12 @@ function castNetherPortalFromLavaPool(
       ]),
       options.path,
     );
+    const filledLavaBuckets =
+      observation.inventory.counts["minecraft:lava_bucket"] ?? 0;
+    const requiredLavaSources = Math.max(
+      0,
+      targets.length - Math.min(1, filledLavaBuckets),
+    );
     const lavaSources = yield* driver.queryBlocks({
       center: observation.player.position,
       radius: defaultBeatGameStrategy.blockSearchRadius,
@@ -4548,14 +4556,12 @@ function castNetherPortalFromLavaPool(
         blockIds: ["minecraft:lava"],
         properties: { level: "0" },
       },
-      maximumResults: Math.max(1, targets.length - 1),
+      maximumResults: Math.max(1, requiredLavaSources),
     });
-    if (lavaSources.length < targets.length - 1) {
+    if (lavaSources.length < requiredLavaSources) {
       return yield* Effect.fail(behaviorError(
         driver,
-        `Portal casting needs ${
-          targets.length - 1
-        } observable lava sources in addition to the filled bucket`,
+        `Portal casting needs ${requiredLavaSources} observable lava sources`,
       ));
     }
     const frameKeys = new Set(frame.blocks.map(positionKey));
@@ -4569,7 +4575,8 @@ function castNetherPortalFromLavaPool(
     )));
     yield* driver.withControl(Effect.gen(function* () {
       for (const [index, target] of targets.entries()) {
-        if (index > 0) {
+        const current = yield* driver.observe;
+        if ((current.inventory.counts["minecraft:lava_bucket"] ?? 0) === 0) {
           yield* collectPortalCastingLava(
             driver,
             targets.length - index,
@@ -4619,15 +4626,37 @@ function castNetherPortalFromLavaPool(
           yield* driver.act({
             type: "select-item",
             selector: { itemIds: ["minecraft:water_bucket"] },
-          });
+          }).pipe(
+            Effect.catchTag("BeatGameDriverError", (cause) =>
+              cause.code === "not_found"
+                ? recoverPortalCastingWaterBucket(driver, water).pipe(
+                  Effect.zipRight(driver.act({
+                    type: "select-item",
+                    selector: { itemIds: ["minecraft:water_bucket"] },
+                  })),
+                )
+                : Effect.fail(cause)
+            ),
+          );
           yield* placeBucketOnTopOf(driver, below(water));
         }));
-        yield* Effect.sleep(300);
-        yield* requireObservedBlock(
+        yield* waitForExactBlockState(
           driver,
           target,
-          ["minecraft:obsidian"],
-          "cast portal block",
+          (candidate) => candidate?.blockId === "minecraft:obsidian",
+          20,
+          100,
+        ).pipe(
+          Effect.flatMap((candidate) =>
+            candidate?.blockId === "minecraft:obsidian"
+              ? Effect.void
+              : Effect.fail(behaviorError(
+                driver,
+                `cast portal block did not produce minecraft:obsidian at ${
+                  positionKey(target)
+                }`,
+              ))
+          ),
         );
         yield* driver.act({
           type: "select-item",
@@ -4672,57 +4701,228 @@ function collectPortalCastingLava(
       },
       maximumResults: Math.max(8, remainingTargets),
     });
-    const source = [...sources].sort((left, right) =>
+    const orderedSources = [...sources].sort((left, right) =>
       distanceSquared(left.position, observation.player.position)
       - distanceSquared(right.position, observation.player.position)
-    )[0];
-    if (source === undefined) {
+    );
+    if (orderedSources.length === 0) {
       return yield* Effect.fail(behaviorError(
         driver,
         "No live lava source remained for the next portal casting step",
       ));
     }
+    let lastFailure: BeatGameDriverError | undefined;
+    for (const source of orderedSources) {
+      const attempt = yield* collectPortalCastingLavaSource(
+        driver,
+        source,
+        path,
+      ).pipe(Effect.either);
+      if (attempt._tag === "Right") {
+        return;
+      }
+      lastFailure = attempt.left;
+    }
+    return yield* Effect.fail(lastFailure ?? behaviorError(
+      driver,
+      "No reachable lava source remained for the next portal casting step",
+    ));
+  });
+}
+
+function collectPortalCastingLavaSource(
+  driver: BeatGameDriver,
+  source: BeatGameBlockObservation,
+  path?: Partial<BeatGamePathPolicy>,
+): Effect.Effect<void, BeatGameDriverError> {
+  return Effect.gen(function* () {
     yield* driver.pathfind(
       source.position,
       3,
       mergePathPolicy(path),
     );
-    const liveSource = yield* driver.queryBlocks({
-      center: blockCenter(source.position),
-      radius: 0.25,
-      selector: {
-        blockIds: ["minecraft:lava"],
-        properties: { level: "0" },
-      },
-      maximumResults: 1,
-    });
-    if (!liveSource.some(({ position }) =>
-      samePosition(position, source.position)
-    )) {
+    for (
+      let clearedBlocks = 0;
+      clearedBlocks <= PORTAL_CASTING_LAVA_SIGHT_CLEARING_BLOCKS;
+      clearedBlocks += 1
+    ) {
+      const observation = yield* driver.observe;
+      const sourceCenter = blockCenter(source.position);
+      const eyePosition = {
+        ...observation.player.position,
+        y: observation.player.position.y + 1.62,
+      };
+      const direction = {
+        x: sourceCenter.x - eyePosition.x,
+        y: sourceCenter.y - eyePosition.y,
+        z: sourceCenter.z - eyePosition.z,
+      };
+      const distance = Math.sqrt(
+        direction.x * direction.x
+          + direction.y * direction.y
+          + direction.z * direction.z,
+      );
+      const rotation = rotationToward(eyePosition, sourceCenter);
+      yield* driver.act({
+        type: "look",
+        yaw: rotation.yaw,
+        pitch: rotation.pitch,
+      });
+      yield* waitForRotation(driver, rotation.yaw, rotation.pitch, 40, 50);
+      const obstruction = (yield* driver.raycast({
+        direction,
+        maximumDistance: distance + 0.05,
+        includeFluids: false,
+      })).block;
+      if (
+        obstruction !== undefined
+        && !samePosition(obstruction.position, source.position)
+      ) {
+        if (
+          !obstruction.diggable
+          || isPortalCastingPlayerStabilityBlock(
+            observation.player.position,
+            obstruction.position,
+          )
+          || clearedBlocks === PORTAL_CASTING_LAVA_SIGHT_CLEARING_BLOCKS
+        ) {
+          return yield* Effect.fail(behaviorError(
+            driver,
+            `Could not expose the portal casting lava source through ${
+              obstruction.blockId
+            } at ${positionKey(obstruction.position)}`,
+          ));
+        }
+        const tool = preferredPortalDigTool(observation);
+        if (tool !== undefined) {
+          yield* driver.act({
+            type: "select-item",
+            selector: { itemIds: [tool] },
+          });
+        }
+        yield* driver.act({
+          type: "dig-block",
+          position: obstruction.position,
+        });
+        continue;
+      }
+      const liveSource = yield* driver.queryBlocks({
+        center: sourceCenter,
+        radius: 0.25,
+        selector: {
+          blockIds: ["minecraft:lava"],
+          properties: { level: "0" },
+        },
+        maximumResults: 1,
+      });
+      if (!liveSource.some(({ position }) =>
+        samePosition(position, source.position)
+      )) {
+        return yield* Effect.fail(behaviorError(
+          driver,
+          `The portal casting lava source at ${
+            positionKey(source.position)
+          } changed while the bot approached it`,
+        ));
+      }
+      yield* driver.act({
+        type: "select-item",
+        selector: { itemIds: ["minecraft:bucket"] },
+      });
+      yield* useBucketToward(driver, sourceCenter).pipe(
+        Effect.mapError((cause) =>
+          new BeatGameDriverError({
+            operation: "collect-portal-casting-lava",
+            ...(cause.code === undefined ? {} : { code: cause.code }),
+            retryable: true,
+            message: `Could not collect the portal casting lava source at ${
+              positionKey(source.position)
+            }: ${cause.message}`,
+            cause,
+          })
+        ),
+      );
+      for (
+        let poll = 0;
+        poll < PORTAL_CASTING_LAVA_COLLECTION_POLLS;
+        poll += 1
+      ) {
+        const current = yield* driver.observe;
+        if ((current.inventory.counts["minecraft:lava_bucket"] ?? 0) > 0) {
+          return;
+        }
+        yield* Effect.sleep(50);
+      }
       return yield* Effect.fail(behaviorError(
         driver,
-        `The portal casting lava source at ${
-          positionKey(source.position)
-        } changed while the bot approached it`,
+        `The lava source at ${positionKey(source.position)} was not collected`,
+      ));
+    }
+  });
+}
+
+function isPortalCastingPlayerStabilityBlock(
+  player: BeatGamePosition,
+  block: BeatGameBlockPosition,
+): boolean {
+  if (player.dimension !== block.dimension) {
+    return false;
+  }
+  return block.x === Math.floor(player.x)
+    && block.z === Math.floor(player.z)
+    && block.y >= Math.floor(player.y) - 1
+    && block.y <= Math.floor(player.y) + 1;
+}
+
+function recoverPortalCastingWaterBucket(
+  driver: BeatGameDriver,
+  expectedWater: BeatGameBlockPosition,
+): Effect.Effect<void, BeatGameDriverError> {
+  return Effect.gen(function* () {
+    const nearby = yield* driver.queryBlocks({
+      center: blockCenter(expectedWater),
+      radius: 3,
+      selector: {},
+      maximumResults: 256,
+    });
+    const source = [...nearby]
+      .filter((block) =>
+        (
+          block.blockId === "minecraft:water"
+          && block.properties.level === "0"
+        )
+        || block.properties.waterlogged === "true"
+      )
+      .sort((left, right) =>
+        distanceSquared(left.position, expectedWater)
+        - distanceSquared(right.position, expectedWater)
+      )[0];
+    if (source === undefined) {
+      return yield* Effect.fail(behaviorError(
+        driver,
+        "The portal casting water bucket is missing and no nearby source remains",
       ));
     }
     yield* driver.act({
       type: "select-item",
       selector: { itemIds: ["minecraft:bucket"] },
     });
-    yield* useBucketToward(driver, blockCenter(source.position)).pipe(
-      Effect.mapError((cause) =>
-        new BeatGameDriverError({
-          operation: "collect-portal-casting-lava",
-          ...(cause.code === undefined ? {} : { code: cause.code }),
-          retryable: true,
-          message: `Could not collect the portal casting lava source at ${
-            positionKey(source.position)
-          }: ${cause.message}`,
-          cause,
-        })
-      ),
-    );
+    yield* useBucketToward(driver, blockCenter(source.position));
+    for (
+      let poll = 0;
+      poll < PORTAL_CASTING_LAVA_COLLECTION_POLLS;
+      poll += 1
+    ) {
+      const current = yield* driver.observe;
+      if ((current.inventory.counts["minecraft:water_bucket"] ?? 0) > 0) {
+        return;
+      }
+      yield* Effect.sleep(50);
+    }
+    return yield* Effect.fail(behaviorError(
+      driver,
+      `The water source at ${positionKey(source.position)} was not collected`,
+    ));
   });
 }
 
@@ -4739,7 +4939,7 @@ function buildTemporaryPortalCastingSupports(
     const missing: BeatGameBlockPosition[] = [];
     for (const support of candidates) {
       const observedSupport = yield* observeExactBlock(driver, support);
-      if (observedSupport === undefined || observedSupport.replaceable) {
+      if (!isReliablePortalCastingSupport(observedSupport)) {
         missing.push(support);
       }
     }
@@ -4777,7 +4977,7 @@ function ensurePortalCastingSupports(
       const stillMissing: BeatGameBlockPosition[] = [];
       for (const support of missing) {
         const observedSupport = yield* observeExactBlock(driver, support);
-        if (observedSupport === undefined || observedSupport.replaceable) {
+        if (!isReliablePortalCastingSupport(observedSupport)) {
           stillMissing.push(support);
         }
       }
@@ -4791,6 +4991,14 @@ function ensurePortalCastingSupports(
       ));
     }
   });
+}
+
+function isReliablePortalCastingSupport(
+  block: BeatGameBlockObservation | undefined,
+): block is BeatGameBlockObservation {
+  return block !== undefined
+    && !block.replaceable
+    && block.properties.waterlogged === undefined;
 }
 
 function useBucketToward(
@@ -4824,11 +5032,26 @@ function placeBucketOnTopOf(
   driver: BeatGameDriver,
   support: BeatGameBlockPosition,
 ): Effect.Effect<void, BeatGameDriverError> {
-  return driver.act({
-    type: "interact-block",
-    position: support,
-    face: "up",
-    hand: "main",
+  return Effect.gen(function* () {
+    const observation = yield* driver.observe;
+    const eyePosition = {
+      ...observation.player.position,
+      y: observation.player.position.y + 1.62,
+    };
+    const rotation = rotationToward(eyePosition, topFaceCenter(support));
+    yield* driver.act({
+      type: "look",
+      yaw: rotation.yaw,
+      pitch: rotation.pitch,
+    });
+    yield* waitForRotation(
+      driver,
+      rotation.yaw,
+      rotation.pitch,
+      40,
+      50,
+    );
+    yield* driver.act({ type: "use-item", hand: "main" });
   });
 }
 
@@ -4847,6 +5070,15 @@ function staircaseFeetCenter(
   return {
     ...position,
     x: position.x + 0.5,
+    z: position.z + 0.5,
+  };
+}
+
+function topFaceCenter(position: BeatGameBlockPosition): BeatGamePosition {
+  return {
+    ...position,
+    x: position.x + 0.5,
+    y: position.y + 1,
     z: position.z + 0.5,
   };
 }

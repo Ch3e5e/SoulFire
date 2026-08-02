@@ -5985,7 +5985,7 @@ function fillLiquidBucket(
       );
       current = yield* state.driver.observe;
     }
-    const sources = yield* state.driver.queryBlocks({
+    const liquidSources = yield* state.driver.queryBlocks({
       center: current.player.position,
       radius: state.strategy.blockSearchRadius,
       selector: {
@@ -5994,6 +5994,15 @@ function fillLiquidBucket(
       },
       maximumResults: liquid === "lava" ? 32 : 1,
     });
+    const waterloggedSources = liquid === "water"
+      ? yield* state.driver.queryBlocks({
+        center: current.player.position,
+        radius: state.strategy.blockSearchRadius,
+        selector: { properties: { waterlogged: "true" } },
+        maximumResults: 8,
+      })
+      : [];
+    const sources = [...liquidSources, ...waterloggedSources];
     let source = sources[0];
     if (source === undefined) {
       if (liquid === "lava") {
@@ -6180,14 +6189,22 @@ function fillLiquidBucket(
               dimension: source.position.dimension,
             },
             radius: 0.25,
-            selector: {
-              blockIds: [`minecraft:${liquid}`],
-              properties: { level: "0" },
-            },
+            selector: liquid === "water"
+              ? {}
+              : {
+                blockIds: ["minecraft:lava"],
+                properties: { level: "0" },
+              },
             maximumResults: 1,
           });
-          if (!liveSources.some(({ position }) =>
-            sameBlockPosition(position, source.position)
+          if (!liveSources.some((candidate) =>
+            sameBlockPosition(candidate.position, source.position)
+            && (
+              candidate.blockId === `minecraft:${liquid}`
+                && candidate.properties.level === "0"
+              || liquid === "water"
+                && candidate.properties.waterlogged === "true"
+            )
           )) {
             return yield* Effect.fail(new BeatGameDriverError({
               operation: `fill-${liquid}-bucket`,
