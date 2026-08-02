@@ -253,6 +253,13 @@ const INVENTORY_DISCARD_PRIORITY = [
   "minecraft:tripwire_hook",
   "minecraft:spider_eye",
   "minecraft:pufferfish",
+  "minecraft:lily_pad",
+  "minecraft:beetroot_seeds",
+  "minecraft:melon_seeds",
+  "minecraft:pitcher_pod",
+  "minecraft:pumpkin_seeds",
+  "minecraft:torchflower_seeds",
+  "minecraft:wheat_seeds",
   "minecraft:oak_sapling",
   "minecraft:birch_sapling",
   "minecraft:spruce_sapling",
@@ -266,7 +273,19 @@ const INVENTORY_DISCARD_PRIORITY = [
   "minecraft:sand",
   "minecraft:gravel",
   "minecraft:dirt",
+  "minecraft:coarse_dirt",
+  "minecraft:grass_block",
+  "minecraft:mud",
+  "minecraft:mycelium",
+  "minecraft:podzol",
+  "minecraft:rooted_dirt",
+  "minecraft:raw_copper",
+  "minecraft:andesite",
+  "minecraft:diorite",
+  "minecraft:granite",
+  "minecraft:tuff",
 ] as const;
+const INVENTORY_BUILDING_BLOCK_RESERVE = 64;
 const LOW_VALUE_DEATH_RECOVERY_ITEM_IDS = new Set([
   ...DISPOSABLE_DEATH_RECOVERY_ITEM_IDS,
   "minecraft:acacia_sapling",
@@ -9052,10 +9071,18 @@ function ensureInventorySpace(
       const discardItemId = INVENTORY_DISCARD_PRIORITY.find((itemId) =>
         (current.inventory.counts[itemId] ?? 0) > 0
       );
+      const cobbledDeepslateCount =
+        current.inventory.counts["minecraft:cobbled_deepslate"] ?? 0;
+      const excessCobbledDeepslate =
+        cobbledDeepslateCount - INVENTORY_BUILDING_BLOCK_RESERVE;
       const cobblestoneCount =
         current.inventory.counts["minecraft:cobblestone"] ?? 0;
       const itemId = discardItemId
-        ?? (cobblestoneCount > 0 ? "minecraft:cobblestone" : undefined);
+        ?? (excessCobbledDeepslate >= 64
+          ? "minecraft:cobbled_deepslate"
+          : cobblestoneCount > 0
+          ? "minecraft:cobblestone"
+          : undefined);
       if (itemId === undefined) {
         return yield* Effect.fail(new BeatGameDriverError({
           operation: "ensure-inventory-space",
@@ -9065,7 +9092,9 @@ function ensureInventorySpace(
             `The player inventory needs ${minimumEmptySlots} empty slots and contains no disposable items`,
         }));
       }
-      const count = itemId === "minecraft:cobblestone"
+      const count = itemId === "minecraft:cobbled_deepslate"
+        ? excessCobbledDeepslate
+        : itemId === "minecraft:cobblestone"
         ? Math.min(64, cobblestoneCount)
         : current.inventory.counts[itemId] ?? 0;
       const emptySlotsBefore = current.inventory.emptyPlayerSlots;

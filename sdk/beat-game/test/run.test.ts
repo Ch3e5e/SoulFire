@@ -14882,6 +14882,7 @@ describe("beat-game run lifecycle", () => {
         "minecraft:wooden_sword": 1,
         "minecraft:wooden_pickaxe": 1,
         "minecraft:cobblestone": 14,
+        "minecraft:raw_copper": 26,
       },
     });
     driver.recipeResolver = (resultItemId) => [{
@@ -14972,6 +14973,17 @@ describe("beat-game run lifecycle", () => {
     driver.actionResolver = (action) =>
       Effect.sync(() => {
         if (action.type === "toss-items") {
+          const itemId = action.selector.itemIds?.[0];
+          if (itemId !== undefined) {
+            const counts = {
+              ...driver.currentObservation.inventory.counts,
+            };
+            delete counts[itemId];
+            driver.currentObservation = observation({
+              counts,
+              emptyPlayerSlots: 0,
+            });
+          }
           pendingInventoryObservations = 2;
         }
         return {};
@@ -15000,7 +15012,12 @@ describe("beat-game run lifecycle", () => {
       action.type === "toss-items"
       && action.selector.itemIds?.includes("minecraft:cobblestone") === true
       && action.count === 18
-    )).toHaveLength(2);
+    )).toHaveLength(1);
+    expect(driver.actions.filter((action) =>
+      action.type === "toss-items"
+      && action.selector.itemIds?.includes("minecraft:raw_copper") === true
+      && action.count === 26
+    )).toHaveLength(1);
   });
 
   it("stops an in-flight collection once external inventory gains meet its buffered target", async () => {
