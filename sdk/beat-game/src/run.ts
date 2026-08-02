@@ -313,7 +313,7 @@ const SUBSTANTIAL_RENEWABLE_DEATH_RECOVERY_ITEM_COUNT = 8;
 const SUBSTANTIAL_RENEWABLE_DEATH_RECOVERY_MAX_DISTANCE = 256;
 const FURNACE_FUEL_SEARCH_RADIUS = 16;
 const HUNT_ATTACK_APPROACH_RADIUS = 24;
-const AQUATIC_HUNT_ATTACK_APPROACH_RADIUS = 4;
+const AQUATIC_HUNT_ATTACK_APPROACH_RADIUS = 16;
 const HUNT_UNREACHABLE_TARGET_RETRY_DISTANCE = 4;
 const HUNT_NEARBY_UNREACHABLE_RETRY_DELAY_MS = 5_000;
 const AQUATIC_HUNT_VERTICAL_ROUTE_COST = 4;
@@ -2352,7 +2352,7 @@ function shouldDisengageFromThreat(
   if (shouldCommitToRangedFight(observation, target)) {
     return false;
   }
-  if (shouldCommitToFastMeleePursuerFight(observation, target)) {
+  if (shouldCommitToFastMeleePursuerFight(target)) {
     return false;
   }
   if (observation.player.health <= LETHAL_MELEE_DISENGAGE_HEALTH) {
@@ -2471,14 +2471,9 @@ function shouldCommitToUndergroundMeleeFight(
 }
 
 function shouldCommitToFastMeleePursuerFight(
-  observation: BeatGameObservation,
   target: BeatGameEntityObservation,
 ): boolean {
-  return FAST_MELEE_PURSUER_ENTITY_TYPES.has(target.entityType)
-    && (
-      hasMeleeWeapon(observation)
-      || isReadyForBarehandedDefense(observation)
-    );
+  return FAST_MELEE_PURSUER_ENTITY_TYPES.has(target.entityType);
 }
 
 function isReadyForBarehandedDefense(
@@ -2494,7 +2489,7 @@ function shouldCommitToMeleeFight(
 ): boolean {
   return shouldCommitToCloseMeleeFight(observation, target)
     || shouldCommitToUndergroundMeleeFight(observation, target)
-    || shouldCommitToFastMeleePursuerFight(observation, target);
+    || shouldCommitToFastMeleePursuerFight(target);
 }
 
 function escapeFromTarget(
@@ -4034,7 +4029,7 @@ function defendAgainstTarget(
       );
       const commitThroughLethalWound =
         shouldCommitToCloseRangedFight(observation, target)
-        || shouldCommitToFastMeleePursuerFight(observation, target);
+        || shouldCommitToFastMeleePursuerFight(target);
       const guardedAttack = Effect.raceFirst(
         attack.pipe(Effect.as("defended" as const)),
         monitorDefenseHealth(
@@ -4047,7 +4042,7 @@ function defendAgainstTarget(
               && PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
             )
             || shouldCommitToCloseRangedFight(observation, target)
-            || shouldCommitToFastMeleePursuerFight(observation, target)
+            || shouldCommitToFastMeleePursuerFight(target)
           ),
           {
             commitThroughWound,

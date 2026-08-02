@@ -6732,10 +6732,9 @@ describe("beat-game run lifecycle", () => {
       .toBe(false);
   }, 10_000);
 
-  it("escapes a close spider when bare-handed and underfed", async () => {
+  it("fights a close spider bare-handed even when underfed", async () => {
     const driver = new FakeBeatGameDriver();
-    driver.currentObservation = observation({ health: 15, food: 14 });
-    driver.entityResults = [
+    const spiders = [
       {
         connectionEpoch: "epoch-1",
         networkId: 51,
@@ -6769,11 +6768,16 @@ describe("beat-game run lifecycle", () => {
     ];
     driver.entityQueryResolver = (query) =>
       query.selector.categories?.includes(2) ? driver.entityResults : [];
-    driver.taskObserver = (task) => {
-      if (task.type === "flee") {
-        driver.entityResults = [];
-      }
-    };
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(
+        Effect.zipRight(
+          task.type === "collect-blocks" || task.type === "attack-entity"
+            ? Effect.never
+            : Effect.void,
+        ),
+      );
 
     await Effect.runPromise(Effect.scoped(
       beatGameWithDriver(driver, {
@@ -6781,9 +6785,16 @@ describe("beat-game run lifecycle", () => {
       }).pipe(
         Effect.flatMap((run) =>
           Effect.gen(function* () {
+            while (!driver.tasks.some((task) =>
+              task.type === "collect-blocks"
+            )) {
+              yield* Effect.sleep(1);
+            }
+            driver.currentObservation = observation({ health: 15, food: 14 });
+            driver.entityResults = spiders;
             let attempts = 3_000;
             while (
-              !driver.tasks.some((task) => task.type === "flee")
+              !driver.tasks.some((task) => task.type === "attack-entity")
               && attempts > 0
             ) {
               attempts -= 1;
@@ -6797,14 +6808,11 @@ describe("beat-game run lifecycle", () => {
     ));
 
     expect(driver.tasks).toContainEqual(expect.objectContaining({
-      type: "flee",
-      selector: {
-        categories: [2],
-        alive: true,
-      },
+      type: "attack-entity",
+      target: expect.objectContaining({ networkId: 51 }),
+      selectBestWeapon: true,
     }));
-    expect(driver.tasks.some((task) => task.type === "attack-entity"))
-      .toBe(false);
+    expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
   }, 10_000);
 
   it("finishes a close spider fight at lethal health when armed", async () => {
@@ -11558,17 +11566,6 @@ describe("beat-game run lifecycle", () => {
       },
     } as const;
     driver.entityResults = [deepSalmon, shallowSalmon];
-    driver.pathResolver = (position, radius, policy) =>
-      Effect.sync(() => {
-        driver.paths.push({ position, radius, policy });
-        driver.currentObservation = observation({
-          position,
-          health: 20,
-          food: 6,
-          counts: driver.currentObservation.inventory.counts,
-        });
-      });
-
     await Effect.runPromise(Effect.scoped(
       beatGameWithDriver(driver, {
         strategy: { observationPollMs: 1 },
@@ -11589,11 +11586,14 @@ describe("beat-game run lifecycle", () => {
       type: "attack-entity",
       target: expect.objectContaining({ networkId: shallowSalmon.networkId }),
     }));
-    expect(driver.paths).toContainEqual(expect.objectContaining({
-      position: shallowSalmon.position,
-      radius: 4,
-      policy: expect.objectContaining({ avoidFluids: false }),
-    }));
+    expect(driver.paths).toHaveLength(0);
+    const attackIndex = driver.tasks.findIndex(
+      (task) => task.type === "attack-entity",
+    );
+    expect(driver.taskPolicies[attackIndex]).toMatchObject({
+      avoidFluids: false,
+      sprint: true,
+    });
   }, 10_000);
 
   it("searches on land instead of chasing fish above critical hunger", async () => {
@@ -12076,6 +12076,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.xzPaths).toHaveLength(0);
     expect(driver.paths[0]).toMatchObject({
       position: salmon.position,
+      radius: 16,
       policy: {
         allowMining: false,
         allowPlacing: false,

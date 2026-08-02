@@ -217,14 +217,8 @@ public final class AttackEntityTaskProvider
     );
   }
 
-  static int fluidVerticalInput(double verticalOffset) {
-    if (verticalOffset > 0.35) {
-      return 1;
-    }
-    if (verticalOffset < -0.35) {
-      return -1;
-    }
-    return 0;
+  static boolean shouldAscendInFluid(double verticalOffset) {
+    return verticalOffset > 0.35;
   }
 
   private static final class AttackControl implements ControlTask {
@@ -357,12 +351,13 @@ public final class AttackEntityTaskProvider
           bot.controlState().up(true);
           bot.controlState().sprint(sprinting);
           if (movingInFluid) {
-            var verticalInput = fluidVerticalInput(
+            var verticalOffset =
               entity.getBoundingBox().getCenter().y
-                - player.getBoundingBox().getCenter().y
-            );
-            bot.controlState().jump(verticalInput > 0);
-            bot.controlState().shift(verticalInput < 0);
+                - player.getBoundingBox().getCenter().y;
+            // Looking at the live target already steers sprint-swimming up or
+            // down. Sneaking toward a lower target pins the player against the
+            // lake floor and can stop horizontal pursuit entirely.
+            bot.controlState().jump(shouldAscendInFluid(verticalOffset));
           } else {
             bot.controlState().jump(player.onGround() && distance > 4.0);
           }

@@ -113,10 +113,9 @@ final class AttackEntityTaskProviderTest {
       false
     ));
 
-    assertEquals(1, AttackEntityTaskProvider.fluidVerticalInput(0.36));
-    assertEquals(0, AttackEntityTaskProvider.fluidVerticalInput(0.35));
-    assertEquals(0, AttackEntityTaskProvider.fluidVerticalInput(-0.35));
-    assertEquals(-1, AttackEntityTaskProvider.fluidVerticalInput(-0.36));
+    assertTrue(AttackEntityTaskProvider.shouldAscendInFluid(0.36));
+    assertFalse(AttackEntityTaskProvider.shouldAscendInFluid(0.35));
+    assertFalse(AttackEntityTaskProvider.shouldAscendInFluid(-0.36));
   }
 
   @Test
