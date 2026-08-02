@@ -23,6 +23,42 @@ import {
   postDragonHooks,
 } from "./fixtures.js";
 
+async function runUntilExplorationStarts(options: {
+  readonly driver: FakeBeatGameDriver;
+  readonly store: InMemoryBeatGameCheckpointStore;
+  readonly runId: string;
+  readonly teamId: string;
+}): Promise<{ readonly x: number; readonly z: number }> {
+  const { driver, store, runId, teamId } = options;
+  driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+    Effect.sync(() => {
+      driver.xzPaths.push({ x, z, dimension, radius, policy });
+    }).pipe(Effect.zipRight(Effect.never));
+  await Effect.runPromise(Effect.scoped(
+    beatGameWithDriver(driver, {
+      runId,
+      team: { teamId },
+      checkpointStore: store,
+      strategy: { observationPollMs: 1 },
+    }).pipe(
+      Effect.flatMap((run) =>
+        Effect.gen(function* () {
+          while (driver.xzPaths.length === 0) {
+            yield* Effect.sleep(1);
+          }
+          yield* run.stop;
+          yield* run.awaitCompletion.pipe(Effect.either);
+        })
+      ),
+    ),
+  ));
+  const path = driver.xzPaths[0];
+  if (path === undefined) {
+    throw new Error("Exploration did not start");
+  }
+  return path;
+}
+
 describe("beat-game run lifecycle", () => {
   it("adopts a durable checkpoint on a replacement SoulFire instance", async () => {
     const driver = new FakeBeatGameDriver("replacement-instance", "bot-1");
@@ -12954,6 +12990,131 @@ describe("beat-game run lifecycle", () => {
       { x: 24, z: 24 },
     ]);
   });
+
+  it("continues durable exploration progress after an SDK restart", async () => {
+    const store = new InMemoryBeatGameCheckpointStore();
+    const runId = "durable-exploration-run";
+    const teamId = "durable-exploration-team";
+    const firstDriver = new FakeBeatGameDriver();
+    const firstPath = await runUntilExplorationStarts({
+      driver: firstDriver,
+      store,
+      runId,
+      teamId,
+    });
+
+    const stored = await Effect.runPromise(store.load(runId));
+    expect(stored?.memory.explorationFrontiers).toMatchObject({
+      "minecraft:overworld:find-logs": {
+        nextIndex: 2,
+        lastPosition: {
+          x: 0,
+          y: 64,
+          z: 0,
+          dimension: "minecraft:overworld",
+        },
+      },
+    });
+
+    const secondDriver = new FakeBeatGameDriver();
+    const secondPath = await runUntilExplorationStarts({
+      driver: secondDriver,
+      store,
+      runId,
+      teamId,
+    });
+
+    expect(firstPath).toMatchObject({ x: 24, z: 0 });
+    expect(secondPath).toMatchObject({
+      x: 22.62741699796952,
+      z: 22.62741699796952,
+    });
+  }, 10_000);
+
+  it("does not reanchor durable exploration after a recent death", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const runId = "death-displaced-exploration-run";
+    const teamId = "death-displaced-exploration-team";
+    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
+      runId,
+      teamId,
+    });
+    const deathPosition = {
+      x: 100,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    } as const;
+    const observedAt = new Date().toISOString();
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        explorationFrontiers: {
+          "minecraft:overworld:find-logs": {
+            origin: driver.currentObservation.player.position,
+            nextIndex: 2,
+            lastPosition: deathPosition,
+          },
+        },
+        latestDeath: {
+          key: `death:${observedAt}`,
+          value: deathPosition,
+          observedAt,
+          confidence: 1,
+        },
+      },
+    }, undefined));
+    const path = await runUntilExplorationStarts({
+      driver,
+      store,
+      runId,
+      teamId,
+    });
+
+    expect(path).toMatchObject({
+      x: 22.62741699796952,
+      z: 22.62741699796952,
+    });
+  }, 10_000);
+
+  it("reanchors durable exploration after an unrelated displacement", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const runId = "displaced-exploration-run";
+    const teamId = "displaced-exploration-team";
+    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
+      runId,
+      teamId,
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        explorationFrontiers: {
+          "minecraft:overworld:find-logs": {
+            origin: driver.currentObservation.player.position,
+            nextIndex: 2,
+            lastPosition: {
+              x: 100,
+              y: 64,
+              z: 0,
+              dimension: "minecraft:overworld",
+            },
+          },
+        },
+      },
+    }, undefined));
+    const path = await runUntilExplorationStarts({
+      driver,
+      store,
+      runId,
+      teamId,
+    });
+
+    expect(path).toMatchObject({ x: 24, z: 0 });
+  }, 10_000);
 
   it("reanchors resource exploration after a defensive escape", async () => {
     const driver = new FakeBeatGameDriver();

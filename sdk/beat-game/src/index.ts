@@ -137,6 +137,7 @@ export {
   type BeatGameCheckpoint,
   type BeatGameClaim,
   type BeatGameDeathPosition,
+  type BeatGameExplorationFrontier,
   type BeatGameEntityObservation,
   type BeatGameEntityReference,
   type BeatGameEvent,

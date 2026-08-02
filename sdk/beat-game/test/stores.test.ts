@@ -99,4 +99,31 @@ describe("beat-game checkpoint stores", () => {
       expect(loaded.left).toBeInstanceOf(BeatGameCheckpointError);
     }
   });
+
+  it("rejects corrupt durable exploration progress", async () => {
+    const store = new InMemoryBeatGameCheckpointStore();
+    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD);
+    const result = await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        explorationFrontiers: {
+          "minecraft:overworld:find-logs": {
+            origin: {
+              x: 0,
+              y: 64,
+              z: 0,
+              dimension: "minecraft:overworld",
+            },
+            nextIndex: 0,
+          },
+        },
+      },
+    }, undefined).pipe(Effect.either));
+
+    expect(Either.isLeft(result)).toBe(true);
+    if (Either.isLeft(result)) {
+      expect(result.left).toBeInstanceOf(BeatGameCheckpointError);
+    }
+  });
 });

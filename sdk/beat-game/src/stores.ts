@@ -317,6 +317,40 @@ function worldMemory(value: unknown): void {
     "checkpoint.memory.deathPositions",
     deathPosition,
   );
+  if (memory.explorationFrontiers !== undefined) {
+    const frontiers = record(
+      memory.explorationFrontiers,
+      "checkpoint.memory.explorationFrontiers",
+    );
+    for (const [key, value] of Object.entries(frontiers)) {
+      nonEmptyString(key, "checkpoint.memory.explorationFrontiers key");
+      const frontier = record(
+        value,
+        `checkpoint.memory.explorationFrontiers.${key}`,
+      );
+      position(
+        frontier.origin,
+        `checkpoint.memory.explorationFrontiers.${key}.origin`,
+      );
+      positiveInteger(
+        frontier.nextIndex,
+        `checkpoint.memory.explorationFrontiers.${key}.nextIndex`,
+      );
+      if (frontier.lastPosition !== undefined) {
+        position(
+          frontier.lastPosition,
+          `checkpoint.memory.explorationFrontiers.${key}.lastPosition`,
+        );
+      }
+    }
+  }
+  if (memory.latestDeath !== undefined) {
+    memoryEntry(
+      memory.latestDeath,
+      "checkpoint.memory.latestDeath",
+      position,
+    );
+  }
   if (!Array.isArray(memory.eyeSamples)) {
     throw new TypeError("checkpoint.memory.eyeSamples must be an array");
   }
@@ -361,16 +395,24 @@ function memoryEntries(
   if (!Array.isArray(value)) {
     throw new TypeError(`${name} must be an array`);
   }
-  value.forEach((entry, index) => {
-    const item = record(entry, `${name}[${index}]`);
-    nonEmptyString(item.key, `${name}[${index}].key`);
-    validateValue(item.value, `${name}[${index}].value`);
-    timestamp(item.observedAt, `${name}[${index}].observedAt`);
-    if (item.expiresAt !== undefined) {
-      timestamp(item.expiresAt, `${name}[${index}].expiresAt`);
-    }
-    confidence(item.confidence, `${name}[${index}].confidence`);
-  });
+  value.forEach((entry, index) =>
+    memoryEntry(entry, `${name}[${index}]`, validateValue)
+  );
+}
+
+function memoryEntry(
+  value: unknown,
+  name: string,
+  validateValue: (value: unknown, name: string) => void,
+): void {
+  const item = record(value, name);
+  nonEmptyString(item.key, `${name}.key`);
+  validateValue(item.value, `${name}.value`);
+  timestamp(item.observedAt, `${name}.observedAt`);
+  if (item.expiresAt !== undefined) {
+    timestamp(item.expiresAt, `${name}.expiresAt`);
+  }
+  confidence(item.confidence, `${name}.confidence`);
 }
 
 function blockObservation(value: unknown, name: string): void {

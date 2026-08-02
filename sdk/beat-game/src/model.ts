@@ -243,6 +243,12 @@ export interface BeatGameDeathPosition extends BeatGamePosition {
   readonly inventoryCounts?: Readonly<Record<string, number>>;
 }
 
+export interface BeatGameExplorationFrontier {
+  readonly origin: BeatGamePosition;
+  readonly nextIndex: number;
+  readonly lastPosition?: BeatGamePosition;
+}
+
 export interface BeatGameWorldMemory {
   readonly blocks: readonly BeatGameMemoryEntry<BeatGameBlockObservation>[];
   readonly entities: readonly BeatGameMemoryEntry<BeatGameEntityObservation>[];
@@ -253,6 +259,10 @@ export interface BeatGameWorldMemory {
   readonly deathPositions: readonly BeatGameMemoryEntry<
     BeatGameDeathPosition
   >[];
+  readonly explorationFrontiers?: Readonly<
+    Record<string, BeatGameExplorationFrontier>
+  >;
+  readonly latestDeath?: BeatGameMemoryEntry<BeatGamePosition>;
   readonly strongholdEstimate?: BeatGamePosition;
 }
 
@@ -264,6 +274,7 @@ export const emptyBeatGameWorldMemory = (): BeatGameWorldMemory => ({
   unreachable: [],
   eyeSamples: [],
   deathPositions: [],
+  explorationFrontiers: {},
 });
 
 export interface BeatGameClaim {

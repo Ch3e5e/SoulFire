@@ -76,6 +76,7 @@ import {
   type BeatGameClaim,
   type BeatGameEntityObservation,
   type BeatGameEvent,
+  type BeatGameExplorationFrontier,
   type BeatGameItemRequirement,
   type BeatGameMemoryEntry,
   type BeatGameObservation,
@@ -375,6 +376,8 @@ const DEEP_LAVA_DESCENT_STEP = 12;
 const PORTAL_CASTING_ADDITIONAL_LAVA_SOURCE_COUNT =
   NETHER_PORTAL_FRAME_OBSIDIAN_COUNT - 1;
 const EXPLORATION_REANCHOR_DISTANCE = 16;
+const EXPLORATION_FRONTIER_LIMIT = 64;
+const EXPLORATION_DEATH_DISPLACEMENT_WINDOW_MS = 10 * 60 * 1_000;
 const AIR_ESCAPE_SURFACE_SEARCH_RADIUS = 16;
 const AIR_ESCAPE_EXTENDED_SURFACE_SEARCH_RADIUS = 96;
 const AIR_ESCAPE_EXTENDED_SURFACE_SAMPLE_STEP = 4;
@@ -639,7 +642,7 @@ interface RunState {
   readonly pendingDeaths: Ref.Ref<readonly PendingDeath[]>;
   readonly deathRecoveryFailures: Ref.Ref<ReadonlyMap<string, number>>;
   readonly explorationFrontiers: Ref.Ref<
-    Readonly<Record<string, ExplorationFrontier>>
+    Readonly<Record<string, BeatGameExplorationFrontier>>
   >;
   readonly checkedRecoveryContainers: Ref.Ref<ReadonlySet<string>>;
   readonly paused: Ref.Ref<boolean>;
@@ -650,12 +653,6 @@ interface RunState {
   readonly snapshots: ReplayBroadcast<BeatGameSnapshot>;
   readonly sequence: Ref.Ref<bigint>;
   readonly startedAtMs: number;
-}
-
-interface ExplorationFrontier {
-  readonly origin: BeatGamePosition;
-  readonly nextIndex: number;
-  readonly lastPosition?: BeatGamePosition;
 }
 
 interface PendingDeath {
@@ -785,8 +782,8 @@ export function beatGameWithDriver(
       new Map(),
     );
     const explorationFrontiers = yield* Ref.make<
-      Readonly<Record<string, ExplorationFrontier>>
-    >({});
+      Readonly<Record<string, BeatGameExplorationFrontier>>
+    >(stored.memory.explorationFrontiers ?? {});
     const checkedRecoveryContainers = yield* Ref.make<ReadonlySet<string>>(
       new Set(),
     );
@@ -8590,32 +8587,37 @@ function advanceExplorationFrontier(
 ): Effect.Effect<void, BeatGameDriverError> {
   const key = `${position.dimension}:${purpose}`;
   const hop = discoveryHopRadius(state, scanRadius);
-  return Ref.modify(state.explorationFrontiers, (frontiers) => {
-    const existing = frontiers[key];
-    const wasExternallyDisplaced = existing?.lastPosition !== undefined
-      && horizontalDistanceSquared(existing.lastPosition, position)
-        > EXPLORATION_REANCHOR_DISTANCE
-          * EXPLORATION_REANCHOR_DISTANCE;
-    const frontier = existing?.origin.dimension === position.dimension
-        && !wasExternallyDisplaced
-      ? existing
-      : { origin: position, nextIndex: 1 };
-    const offset = squareSpiralOffset(frontier.nextIndex);
-    const target = {
-      x: frontier.origin.x + offset.x * hop,
-      z: frontier.origin.z + offset.z * hop,
-    };
-    return [
-      target,
-      {
-        ...frontiers,
-        [key]: {
-          origin: frontier.origin,
-          nextIndex: frontier.nextIndex + 1,
-        },
-      },
-    ] as const;
-  }).pipe(
+  return Ref.get(state.checkpoint).pipe(
+    Effect.flatMap((checkpoint) =>
+      Ref.modify(state.explorationFrontiers, (frontiers) => {
+        const existing = frontiers[key];
+        const wasExternallyDisplaced = existing?.lastPosition !== undefined
+          && horizontalDistanceSquared(existing.lastPosition, position)
+            > EXPLORATION_REANCHOR_DISTANCE
+              * EXPLORATION_REANCHOR_DISTANCE;
+        const shouldReanchor = wasExternallyDisplaced
+          && !isRecentDeathDisplacement(
+            existing.lastPosition,
+            checkpoint.memory.latestDeath,
+          );
+        const frontier = existing?.origin.dimension === position.dimension
+            && !shouldReanchor
+          ? existing
+          : { origin: position, nextIndex: 1 };
+        const offset = squareSpiralOffset(frontier.nextIndex);
+        const target = {
+          x: frontier.origin.x + offset.x * hop,
+          z: frontier.origin.z + offset.z * hop,
+        };
+        return [
+          target,
+          retainExplorationFrontier(frontiers, key, {
+            origin: frontier.origin,
+            nextIndex: frontier.nextIndex + 1,
+          }),
+        ] as const;
+      })
+    ),
     Effect.flatMap((target) =>
       pathfindExplorationTarget(
         state,
@@ -8638,18 +8640,31 @@ function advanceExplorationFrontier(
         Effect.ensuring(
           state.driver.observe.pipe(
             Effect.flatMap((observation) =>
-              Ref.update(state.explorationFrontiers, (frontiers) => {
+              Ref.modify(state.explorationFrontiers, (frontiers) => {
                 const frontier = frontiers[key];
                 return frontier === undefined
-                  ? frontiers
-                  : {
-                    ...frontiers,
-                    [key]: {
-                      ...frontier,
-                      lastPosition: observation.player.position,
-                    },
-                  };
+                  ? [frontiers, frontiers] as const
+                  : (() => {
+                    const updated = retainExplorationFrontier(
+                      frontiers,
+                      key,
+                      {
+                        ...frontier,
+                        lastPosition: observation.player.position,
+                      },
+                    );
+                    return [updated, updated] as const;
+                  })();
               })
+            ),
+            Effect.flatMap((frontiers) =>
+              persist(state, (checkpoint) => ({
+                ...checkpoint,
+                memory: {
+                  ...checkpoint.memory,
+                  explorationFrontiers: frontiers,
+                },
+              }))
             ),
             Effect.ignore,
           ),
@@ -8657,6 +8672,35 @@ function advanceExplorationFrontier(
       )
     ),
   );
+}
+
+function retainExplorationFrontier(
+  frontiers: Readonly<Record<string, BeatGameExplorationFrontier>>,
+  key: string,
+  frontier: BeatGameExplorationFrontier,
+): Readonly<Record<string, BeatGameExplorationFrontier>> {
+  const entries = Object.entries(frontiers)
+    .filter(([candidate]) => candidate !== key)
+    .slice(-(EXPLORATION_FRONTIER_LIMIT - 1));
+  return Object.fromEntries([...entries, [key, frontier]]);
+}
+
+function isRecentDeathDisplacement(
+  previousPosition: BeatGamePosition,
+  latestDeath: BeatGameMemoryEntry<BeatGamePosition> | undefined,
+): boolean {
+  if (
+    latestDeath === undefined
+    || latestDeath.value.dimension !== previousPosition.dimension
+    || horizontalDistanceSquared(latestDeath.value, previousPosition)
+      > EXPLORATION_REANCHOR_DISTANCE ** 2
+  ) {
+    return false;
+  }
+  const deathAgeMs = Date.now() - Date.parse(latestDeath.observedAt);
+  return Number.isFinite(deathAgeMs)
+    && deathAgeMs >= 0
+    && deathAgeMs <= EXPLORATION_DEATH_DISPLACEMENT_WINDOW_MS;
 }
 
 function pathfindExplorationTarget(
@@ -10240,29 +10284,36 @@ function rememberDeathPosition(
   pendingDeath: PendingDeath,
 ): BeatGameCheckpoint {
   const key = `death:${pendingDeath.observedAt}`;
-  if (
-    checkpoint.memory.deathPositions.some((entry) => entry.key === key)
-  ) {
-    return checkpoint;
-  }
+  const latestDeath = {
+    key,
+    value: pendingDeath.position,
+    observedAt: pendingDeath.observedAt,
+    confidence: 1,
+  } satisfies BeatGameMemoryEntry<BeatGamePosition>;
+  const alreadyRemembered = checkpoint.memory.deathPositions.some(
+    (entry) => entry.key === key,
+  );
   return {
     ...checkpoint,
     memory: {
       ...checkpoint.memory,
-      deathPositions: [
-        ...checkpoint.memory.deathPositions,
-        {
-          key,
-          value: {
-            ...pendingDeath.position,
-            ...(pendingDeath.inventoryCounts === undefined
-              ? {}
-              : { inventoryCounts: pendingDeath.inventoryCounts }),
+      latestDeath,
+      deathPositions: alreadyRemembered
+        ? checkpoint.memory.deathPositions
+        : [
+          ...checkpoint.memory.deathPositions,
+          {
+            key,
+            value: {
+              ...pendingDeath.position,
+              ...(pendingDeath.inventoryCounts === undefined
+                ? {}
+                : { inventoryCounts: pendingDeath.inventoryCounts }),
+            },
+            observedAt: pendingDeath.observedAt,
+            confidence: 1,
           },
-          observedAt: pendingDeath.observedAt,
-          confidence: 1,
-        },
-      ].slice(-16),
+        ].slice(-16),
     },
   };
 }
