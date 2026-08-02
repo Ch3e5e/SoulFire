@@ -5905,6 +5905,13 @@ function fillLiquidBucket(
 ): Effect.Effect<void, BeatGameDriverError> {
   return Effect.gen(function* () {
     let current = observation;
+    if (
+      liquid === "lava"
+      && (yield* isPlayerInFluid(state.driver, current.player.position))
+    ) {
+      yield* emergencyAirAscent(state, current.player.position);
+      return;
+    }
     if ((observation.inventory.counts["minecraft:bucket"] ?? 0) === 0) {
       const ironIngots =
         observation.inventory.counts["minecraft:iron_ingot"] ?? 0;
@@ -5965,6 +5972,9 @@ function fillLiquidBucket(
               targetY,
             );
             current = yield* state.driver.observe;
+            if (current.player.position.y > beforeDescent.y + 0.5) {
+              return;
+            }
             if (current.player.position.y >= beforeDescent.y - 0.5) {
               return yield* Effect.fail(new BeatGameDriverError({
                 operation: "find-deep-lava",
@@ -6328,10 +6338,18 @@ function excavateLavaSearchStaircase(
   targetY: number,
 ): Effect.Effect<void, BeatGameDriverError> {
   return Effect.gen(function* () {
-    const from = yield* findStableLavaSearchStaircaseOrigin(
+    const origin = yield* findStableLavaSearchStaircaseOrigin(
       state,
       position,
-    );
+    ).pipe(Effect.either);
+    if (origin._tag === "Left") {
+      if (origin.left.operation !== "find-lava-staircase-origin") {
+        return yield* Effect.fail(origin.left);
+      }
+      yield* escapeToOverworldSurface(state, position);
+      return;
+    }
+    const from = origin.right;
     const to = yield* selectLavaSearchStaircaseDestination(
       state.driver,
       from,

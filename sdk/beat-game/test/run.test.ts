@@ -10249,10 +10249,12 @@ describe("beat-game run lifecycle", () => {
       "minecraft:cobblestone": 120,
       "minecraft:flint_and_steel": 1,
       "minecraft:iron_ingot": 8,
-      "minecraft:oak_log": 1,
+      "minecraft:cooked_beef": 12,
+      "minecraft:oak_log": 12,
       "minecraft:shield": 1,
       "minecraft:stick": 3,
       "minecraft:stone_pickaxe": 1,
+      "minecraft:stone_sword": 1,
       "minecraft:water_bucket": 1,
     };
     driver.currentObservation = observation({ counts });
@@ -10398,6 +10400,108 @@ describe("beat-game run lifecycle", () => {
       avoidFluids: true,
       maxFallDistance: 1,
     });
+  });
+
+  it("returns to dry surface before retrying lava search from an aquifer", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const aquiferPosition = {
+      x: 12.5,
+      y: 54,
+      z: -8.5,
+      dimension: "minecraft:overworld",
+    } as const;
+    driver.currentObservation = observation({
+      position: aquiferPosition,
+      counts: {
+        "minecraft:bucket": 1,
+        "minecraft:cobblestone": 120,
+        "minecraft:cooked_beef": 12,
+        "minecraft:flint_and_steel": 1,
+        "minecraft:iron_ingot": 10,
+        "minecraft:iron_pickaxe": 1,
+        "minecraft:oak_log": 12,
+        "minecraft:shield": 1,
+        "minecraft:stone_sword": 1,
+        "minecraft:water_bucket": 1,
+      },
+    });
+    driver.surfaceColumns = [-1, 0, 1].flatMap((deltaX) =>
+      [-1, 0, 1].map((deltaZ) => ({
+        x: 12 + deltaX,
+        z: -9 + deltaZ,
+        loaded: true,
+        surfaceY: 63,
+        blockId: "minecraft:grass_block",
+        biomeId: "minecraft:plains",
+        skyLight: 15,
+        blockLight: 0,
+      }))
+    );
+    driver.blockQueryResolver = ({ center, selector }) => {
+      if (selector.blockIds !== undefined) {
+        return [];
+      }
+      if (selector.replaceable === false) {
+        return [];
+      }
+      return [blockObservation({
+        x: Math.floor(center.x),
+        y: Math.floor(center.y),
+        z: Math.floor(center.z),
+        dimension: center.dimension,
+      }, {
+        blockId: "minecraft:water",
+        replaceable: true,
+      })];
+    };
+    let resolveSurfaceRecovery!: () => void;
+    const surfaceRecovered = new Promise<void>((resolve) => {
+      resolveSurfaceRecovery = resolve;
+    });
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+        if (position.y >= 64) {
+          driver.currentObservation = observation({
+            position,
+            counts: driver.currentObservation.inventory.counts,
+          });
+          resolveSurfaceRecovery();
+        }
+      });
+    await Effect.runPromise(store.save(checkpoint(
+      BeatGamePhase.ENTER_NETHER,
+      {
+        runId: "aquifer-lava-recovery-run",
+        teamId: "aquifer-lava-recovery-team",
+      },
+    ), undefined));
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        runId: "aquifer-lava-recovery-run",
+        team: { teamId: "aquifer-lava-recovery-team" },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      });
+      yield* Effect.promise(() => surfaceRecovered).pipe(
+        Effect.timeout("5 seconds"),
+      );
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    expect(driver.paths).toContainEqual(expect.objectContaining({
+      position: expect.objectContaining({ y: 64 }),
+      policy: expect.objectContaining({
+        allowMining: true,
+        allowPlacing: true,
+      }),
+    }));
+    expect(driver.paths).not.toContainEqual(expect.objectContaining({
+      position: expect.objectContaining({ y: 53 }),
+    }));
   });
 
   it("searches for a lava pool before casting with a lone source", async () => {
