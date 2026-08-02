@@ -582,6 +582,7 @@ const CREEPER_ESCAPE_SPRINT_MS = 2_500;
 const CREEPER_ESCAPE_SURFACE_PROJECTION_DISTANCE = 18;
 const EMERGENCY_ESCAPE_LAVA_CHECK_RADIUS = 4;
 const DEATH_OBSERVATION_DEDUPLICATION_WINDOW_MS = 5_000;
+const BAREHANDED_DEFENSE_MINIMUM_HEALTH = 18;
 const MELEE_DISENGAGE_HEALTH = 16;
 const LETHAL_MELEE_DISENGAGE_HEALTH = 7;
 const THREAT_ESCAPE_SAFE_DISTANCE = 24;
@@ -2461,7 +2462,7 @@ function shouldCommitToCloseMeleeFight(
     && observation.player.health > LETHAL_MELEE_DISENGAGE_HEALTH
     && (
       hasMeleeWeapon(observation)
-      || observation.player.health >= MELEE_DISENGAGE_HEALTH
+      || observation.player.health >= BAREHANDED_DEFENSE_MINIMUM_HEALTH
     );
 }
 
@@ -2482,7 +2483,7 @@ function shouldCommitToFastMeleePursuerFight(
     && (
       hasMeleeWeapon(observation)
       || (
-        observation.player.health >= MELEE_DISENGAGE_HEALTH
+        observation.player.health >= BAREHANDED_DEFENSE_MINIMUM_HEALTH
         && observation.player.food >= 18
       )
     );
@@ -2491,7 +2492,7 @@ function shouldCommitToFastMeleePursuerFight(
 function isReadyForBarehandedDefense(
   observation: BeatGameObservation,
 ): boolean {
-  return observation.player.health >= MELEE_DISENGAGE_HEALTH
+  return observation.player.health >= BAREHANDED_DEFENSE_MINIMUM_HEALTH
     && observation.player.food > URGENT_HUNGER_FOOD_LEVEL;
 }
 
@@ -4085,8 +4086,7 @@ function defendAgainstTarget(
         }))
         : Effect.void;
       const commitThroughWound =
-        shouldCommitToUnshieldedRangedFight(observation, target)
-        || isReadyForBarehandedDefense(observation);
+        shouldCommitToUnshieldedRangedFight(observation, target);
       const commitThroughLethalWound =
         shouldCommitToCloseRangedFight(observation, target)
         || shouldCommitToFastMeleePursuerFight(observation, target);

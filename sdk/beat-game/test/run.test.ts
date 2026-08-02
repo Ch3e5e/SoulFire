@@ -8220,7 +8220,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
   });
 
-  it("disengages from a barehanded defense after a lethal wound", async () => {
+  it("disengages from a barehanded defense after the first wound", async () => {
     const driver = new FakeBeatGameDriver();
     const zombie = {
       connectionEpoch: "epoch-1",
@@ -8245,7 +8245,7 @@ describe("beat-game run lifecycle", () => {
       Effect.sync(() => {
         driver.tasks.push(task);
         if (task.type === "attack-entity") {
-          driver.currentObservation = observation({ health: 7 });
+          driver.currentObservation = observation({ health: 17.5 });
         }
       }).pipe(
         Effect.zipRight(
