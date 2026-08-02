@@ -14638,7 +14638,7 @@ describe("beat-game run lifecycle", () => {
         entityType: "minecraft:cow",
         position: {
           x: 1,
-          y: 0,
+          y: 36,
           z: 0,
           dimension: "minecraft:overworld",
         },

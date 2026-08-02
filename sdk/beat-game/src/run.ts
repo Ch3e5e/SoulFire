@@ -324,6 +324,7 @@ const AQUATIC_HUNT_DEFAULT_HEALTH = 3;
 const HUNT_APPROACH_BUFFER = 4;
 const HUNT_APPROACH_GOAL_RADIUS = 2;
 const HUNT_MAXIMUM_APPROACH_DISTANCE = 48;
+const LAND_HUNT_MAXIMUM_VERTICAL_DISTANCE = 12;
 const DIRECTED_HUNT_MAXIMUM_DETOUR = 32;
 const DIRECTED_HUNT_DESTINATION_REACHED_RADIUS = 3;
 const URGENT_AQUATIC_HUNT_MAXIMUM_HORIZONTAL_DISTANCE = 64;
@@ -7389,7 +7390,6 @@ function huntOrExplore(
         && isEligibleHuntingTarget(
           target,
           current,
-          state.strategy.minimumHealth,
           targetPreference,
           aquaticHuntAllowed,
         )
@@ -7957,7 +7957,6 @@ function waitForVisibleHuntingTarget(
               && isEligibleHuntingTarget(
                 target,
                 observation,
-                state.strategy.minimumHealth,
                 targetPreference,
                 aquaticHuntAllowed,
               )
@@ -8023,7 +8022,6 @@ function isHuntingTargetUnreachable(
 function isEligibleHuntingTarget(
   target: BeatGameEntityObservation,
   observation: BeatGameObservation,
-  minimumHealth: number,
   targetPreference?: HuntTargetPreference,
   aquaticHuntAllowed = false,
 ): boolean {
@@ -8031,8 +8029,6 @@ function isEligibleHuntingTarget(
   return isHuntingTargetWithinReach(
     target,
     observation,
-    minimumHealth,
-    targetPreference,
     aquaticHuntAllowed,
   )
     && (
@@ -8052,8 +8048,6 @@ function isEligibleHuntingTarget(
 function isHuntingTargetWithinReach(
   target: BeatGameEntityObservation,
   observation: BeatGameObservation,
-  minimumHealth: number,
-  targetPreference?: HuntTargetPreference,
   aquaticHuntAllowed = false,
 ): boolean {
   if (EMERGENCY_FOOD_ENTITY_TYPE_SET.has(target.entityType)) {
@@ -8073,10 +8067,8 @@ function isHuntingTargetWithinReach(
         observation.player.position,
       ) <= URGENT_AQUATIC_HUNT_MAXIMUM_HORIZONTAL_DISTANCE ** 2;
   }
-  const maximumVerticalDistance =
-    observation.player.health < minimumHealth ? 12 : 32;
   return Math.abs(target.position.y - observation.player.position.y)
-    <= maximumVerticalDistance;
+    <= LAND_HUNT_MAXIMUM_VERTICAL_DISTANCE;
 }
 
 function shouldAllowAquaticHunt(
