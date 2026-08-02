@@ -233,6 +233,11 @@ describe("beat-game requirements", () => {
       targetCount: 8,
       satisfied: false,
     });
+    expect(requirements.find(({ key }) => key === "logs")).toMatchObject({
+      currentCount: 8,
+      targetCount: 4,
+      satisfied: true,
+    });
     expect(
       requirements.filter(({ key }) => key === "water-bucket"),
     ).toHaveLength(1);

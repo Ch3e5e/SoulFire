@@ -64,6 +64,7 @@ export const EMERGENCY_FOOD_ITEM_IDS = [
 
 export const CRITICAL_HUNGER_FOOD_LEVEL = 6;
 export const URGENT_HUNGER_FOOD_LEVEL = 10;
+const PORTAL_LOG_RESERVE = 4;
 
 export const LOG_ITEM_IDS = [
   "minecraft:oak_log",
@@ -324,7 +325,17 @@ function portalRequirements(
 ): readonly BeatGameRequirementDefinition[] {
   const survivalRequirements = REQUIREMENTS[
     BeatGamePhase.PREPARE_OVERWORLD
-  ].filter(({ key }) => key !== "water-bucket" && key !== "ignition");
+  ]
+    .filter(({ key }) => key !== "water-bucket" && key !== "ignition")
+    .map((definition) =>
+      definition.key === "logs"
+        ? {
+          ...definition,
+          target: ({ targetLogCount }: BeatGameStrategy) =>
+            Math.min(targetLogCount, PORTAL_LOG_RESERVE),
+        }
+        : definition
+    );
   const hasCompleteObsidianFrame =
     (inventory.counts["minecraft:obsidian"] ?? 0)
       >= strategy.targetObsidianCount;
