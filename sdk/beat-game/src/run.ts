@@ -317,6 +317,7 @@ const HUNT_ATTACK_APPROACH_RADIUS = 24;
 const AQUATIC_HUNT_ATTACK_APPROACH_RADIUS = 16;
 const HUNT_UNREACHABLE_TARGET_RETRY_DISTANCE = 4;
 const HUNT_NEARBY_UNREACHABLE_RETRY_DELAY_MS = 5_000;
+const HUNT_DISTANT_UNREACHABLE_RETRY_DELAY_MS = 15_000;
 const AQUATIC_HUNT_VERTICAL_ROUTE_COST = 4;
 const AQUATIC_HUNT_HEALTH_ROUTE_COST = 2;
 const AQUATIC_HUNT_DEFAULT_HEALTH = 3;
@@ -7937,9 +7938,14 @@ function isHuntingTargetUnreachable(
     ? AQUATIC_HUNT_ATTACK_APPROACH_RADIUS
     : HUNT_ATTACK_APPROACH_RADIUS;
   const observedAt = Date.parse(remembered.observedAt);
-  return distanceSquared(playerPosition, target.position) > approachRadius ** 2
-    || !Number.isFinite(observedAt)
-    || now - observedAt < HUNT_NEARBY_UNREACHABLE_RETRY_DELAY_MS;
+  if (!Number.isFinite(observedAt)) {
+    return true;
+  }
+  const retryDelay = distanceSquared(playerPosition, target.position)
+      > approachRadius ** 2
+    ? HUNT_DISTANT_UNREACHABLE_RETRY_DELAY_MS
+    : HUNT_NEARBY_UNREACHABLE_RETRY_DELAY_MS;
+  return now - observedAt < retryDelay;
 }
 
 function isEligibleHuntingTarget(

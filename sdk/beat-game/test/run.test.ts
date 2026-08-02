@@ -14834,6 +14834,85 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("retries a distant animal from a new approach after a cooldown", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
+      runId: "distant-animal-retry-run",
+      teamId: "distant-animal-retry-team",
+    });
+    const cow = {
+      connectionEpoch: "epoch-1",
+      networkId: 1,
+      entityType: "minecraft:cow",
+      position: {
+        x: 100,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 10,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        unreachable: [{
+          key: `target:${cow.connectionEpoch}:${cow.networkId}`,
+          value: cow.position,
+          observedAt: new Date(Date.now() - 30_000).toISOString(),
+          expiresAt: "2030-01-01T00:00:00.000Z",
+          confidence: 1,
+        }],
+      },
+    }, undefined));
+    driver.currentObservation = observation({
+      health: 8,
+      food: 17,
+      counts: {
+        "minecraft:cobblestone": 20,
+        "minecraft:oak_log": 8,
+        "minecraft:stone_sword": 1,
+      },
+    });
+    driver.entityResults = [cow];
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        runId: "distant-animal-retry-run",
+        team: { teamId: "distant-animal-retry-team" },
+        checkpointStore: store,
+        strategy: {
+          observationPollMs: 1,
+          entitySearchRadius: 320,
+        },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (driver.xzPaths.length === 0) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.xzPaths[0]).toEqual(expect.objectContaining({
+      x: 12,
+      z: 0,
+      radius: 2,
+    }));
+  });
+
   it("moves inside attack range instead of repeating a satisfied approach", async () => {
     const driver = new FakeBeatGameDriver();
     const preparedItems = {
