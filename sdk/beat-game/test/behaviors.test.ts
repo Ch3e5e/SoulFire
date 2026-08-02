@@ -516,7 +516,7 @@ describe("beat-game behavior programs", () => {
     ]);
   });
 
-  it("uses the drop's full position when collecting through water", async () => {
+  it("uses a horizontal goal for a vertically offset drop in water", async () => {
     const driver = new FakeBeatGameDriver();
     const position = {
       x: 4,
@@ -541,7 +541,7 @@ describe("beat-game behavior programs", () => {
     } as const;
     driver.currentObservation = observation({ position });
     driver.entityQueryResolver = () =>
-      driver.paths.length === 0 ? [drop] : [];
+      driver.xzPaths.length === 0 ? [drop] : [];
 
     await Effect.runPromise(collectNearbyDrops(driver, {
       itemIds: ["minecraft:salmon"],
@@ -549,10 +549,12 @@ describe("beat-game behavior programs", () => {
       path: { avoidFluids: false, sprint: true },
     }));
 
-    expect(driver.xzPaths).toHaveLength(0);
-    expect(driver.paths).toEqual([
+    expect(driver.paths).toHaveLength(0);
+    expect(driver.xzPaths).toEqual([
       expect.objectContaining({
-        position: drop.position,
+        x: drop.position.x,
+        z: drop.position.z,
+        dimension: drop.position.dimension,
         radius: 1.25,
         policy: expect.objectContaining({
           avoidFluids: false,

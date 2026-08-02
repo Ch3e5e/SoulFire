@@ -244,8 +244,17 @@ export function collectNearbyDrops(
           drop.position.y - observation.player.position.y,
         );
         const pickupRoute = requestedPath.avoidFluids === false
+            && verticalDistance <= 1.75
           ? driver.pathfind(
             drop.position,
+            DROP_PICKUP_PATH_RADIUS,
+            pickupPath,
+          )
+          : requestedPath.avoidFluids === false
+          ? driver.pathfindXZ(
+            drop.position.x,
+            drop.position.z,
+            drop.position.dimension,
             DROP_PICKUP_PATH_RADIUS,
             pickupPath,
           )

@@ -150,6 +150,7 @@ const MAX_SAFE_DEATH_RECOVERY_FAILURES = 3;
 const DISTANT_DEATH_RECOVERY_BOOTSTRAP_DISTANCE = 128;
 const ACTIVE_CORPSE_RECOVERY_DISTANCE = 256;
 const IMMEDIATE_CORPSE_RECOVERY_DISTANCE = 12;
+const CORPSE_DROP_INSPECTION_DISTANCE = 32;
 const EMERGENCY_ARMAMENT_LOG_COUNT = 2;
 const DEATH_RECOVERY_BOOTSTRAP_LOG_COUNT = 12;
 const DEATH_RECOVERY_BOOTSTRAP_BLOCK_COUNT = 16;
@@ -279,7 +280,7 @@ const SUBSTANTIAL_RENEWABLE_DEATH_RECOVERY_ITEM_COUNT = 8;
 const SUBSTANTIAL_RENEWABLE_DEATH_RECOVERY_MAX_DISTANCE = 256;
 const FURNACE_FUEL_SEARCH_RADIUS = 16;
 const HUNT_ATTACK_APPROACH_RADIUS = 24;
-const AQUATIC_HUNT_ATTACK_APPROACH_RADIUS = 12;
+const AQUATIC_HUNT_ATTACK_APPROACH_RADIUS = 4;
 const HUNT_UNREACHABLE_TARGET_RETRY_DISTANCE = 4;
 const HUNT_NEARBY_UNREACHABLE_RETRY_DELAY_MS = 5_000;
 const AQUATIC_HUNT_VERTICAL_ROUTE_COST = 4;
@@ -1340,12 +1341,34 @@ function executeDecision(
                 respawned.player.position,
               );
             if (recoveryAttempted) {
-              const preparationPending =
-                yield* prepareForDistantDeathRecovery(
+              const nearbyCorpseDrops = yield* inspectNearbyCorpseDrops(
+                state,
+                pendingDeath,
+                respawned,
+              );
+              if (nearbyCorpseDrops?.length === 0) {
+                return yield* abandonPendingDeath(
                   state,
                   pendingDeath,
                   respawned,
+                  "Abandoned a stale corpse after confirming no drops remain nearby",
                 );
+              }
+              if (nearbyCorpseDrops !== undefined) {
+                yield* emit(state, {
+                  type: "diagnostic",
+                  message:
+                    "Attempting nearby corpse recovery before gathering more travel supplies",
+                  data: { drops: nearbyCorpseDrops.length },
+                });
+              }
+              const preparationPending = nearbyCorpseDrops === undefined
+                ? yield* prepareForDistantDeathRecovery(
+                  state,
+                  pendingDeath,
+                  respawned,
+                )
+                : undefined;
               if (preparationPending !== undefined) {
                 const preparationFailures =
                   yield* recordDeathRecoveryFailure(
@@ -1434,32 +1457,14 @@ function executeDecision(
             ))
           ) {
             const current = yield* state.driver.observe;
+            const inspectedCorpseDrops = yield* inspectNearbyCorpseDrops(
+              state,
+              pendingDeath,
+              current,
+            );
             const closeEnoughToInspectDrops =
-              current.player.position.dimension
-                === pendingDeath.position.dimension
-              && distanceSquared(
-                  current.player.position,
-                  pendingDeath.position,
-                ) <= 24 * 24;
-            const corpseItemIds = new Set(
-              Object.entries(pendingDeath.inventoryCounts ?? {})
-                .filter(([, count]) => count > 0)
-                .map(([itemId]) => itemId),
-            );
-            const remainingDrops = closeEnoughToInspectDrops
-              ? yield* state.driver.queryEntities({
-                origin: pendingDeath.position,
-                radius: 24,
-                selector: {
-                  alive: true,
-                  categories: [6],
-                },
-                maximumResults: 64,
-              })
-              : [];
-            const remainingCorpseDrops = remainingDrops.filter(({ itemId }) =>
-              itemId !== undefined && corpseItemIds.has(itemId)
-            );
+              inspectedCorpseDrops !== undefined;
+            const remainingCorpseDrops = inspectedCorpseDrops ?? [];
             if (
               closeEnoughToInspectDrops
               && remainingCorpseDrops.length === 0
@@ -1906,7 +1911,7 @@ function executeDecision(
                   ? Effect.succeed({
                     replanReason: "bot died again during recovery",
                   } satisfies ActionResult)
-                  : executeWithSafety(latest);
+                  : Effect.succeed(result);
               }),
             )
             : Effect.succeed(result)
@@ -6979,6 +6984,7 @@ interface HuntTargetPreference {
   readonly preferredEntityTypes: ReadonlySet<string>;
   readonly preferredRadius: number;
   readonly allowCriticalAquaticTargets?: boolean;
+  readonly maximumSafeAquaticFoodLevel?: number;
   readonly maximumExplorationHops?: number;
   readonly path?: BeatGameStrategy["path"];
   readonly explorationTarget?: BeatGamePosition;
@@ -7015,9 +7021,11 @@ function huntOrExplore(
     const attemptedTargets = new Set<string>();
     const locallyUnreachable = new Set<string>();
     let confirmedVisibleTarget: BeatGameEntityObservation | undefined;
-    const allowEmergencyAquaticFallback =
-      targetPreference?.allowCriticalAquaticTargets === true
-      && observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL;
+    const allowAquaticFallback = shouldAllowAquaticHunt(
+      observation,
+      state.strategy.minimumHealth,
+      targetPreference,
+    );
     let aquaticPursuitActive = false;
     let attacked = 0;
     let explorationHops = 0;
@@ -7041,7 +7049,7 @@ function huntOrExplore(
         current.player.position.dimension === "minecraft:overworld";
       if (
         overworldHunt
-        && !allowEmergencyAquaticFallback
+        && !allowAquaticFallback
         && !aquaticPursuitActive
         && (yield* isPlayerInFluid(state.driver, current.player.position))
       ) {
@@ -7053,10 +7061,12 @@ function huntOrExplore(
         current.player.health,
         state.strategy.minimumHealth,
       );
-      const criticalAquaticExploration =
-        targetPreference?.allowCriticalAquaticTargets === true
-        && current.player.food <= CRITICAL_HUNGER_FOOD_LEVEL;
-      const huntingPath = criticalAquaticExploration
+      const aquaticExploration = shouldAllowAquaticHunt(
+        current,
+        state.strategy.minimumHealth,
+        targetPreference,
+      );
+      const huntingPath = aquaticExploration
         ? { ...survivalPath, avoidFluids: false }
         : survivalPath;
       const explorationPath = {
@@ -7310,7 +7320,7 @@ function huntOrExplore(
             ),
           );
           if (!approached) {
-            const enteredWater = allowEmergencyAquaticFallback
+            const enteredWater = allowAquaticFallback
               ? yield* enterWaterTowardAquaticTarget(state, current, target)
               : false;
             if (enteredWater) {
@@ -7730,8 +7740,9 @@ function isEligibleHuntingTarget(
   targetPreference?: HuntTargetPreference,
 ): boolean {
   const aquaticTarget = AQUATIC_FOOD_ENTITY_TYPES.has(target.entityType);
-  const criticalAquaticHunt = shouldAllowCriticalAquaticHunt(
+  const aquaticHuntAllowed = shouldAllowAquaticHunt(
     observation,
+    minimumHealth,
     targetPreference,
   );
   return isHuntingTargetWithinReach(
@@ -7742,7 +7753,7 @@ function isEligibleHuntingTarget(
     )
     && (
       !aquaticTarget
-      || criticalAquaticHunt
+      || aquaticHuntAllowed
     )
     && (
       observation.player.health <= LETHAL_MELEE_DISENGAGE_HEALTH
@@ -7769,11 +7780,12 @@ function isHuntingTargetWithinReach(
         ) <= EMERGENCY_FOOD_MAXIMUM_HORIZONTAL_DISTANCE ** 2;
   }
   if (AQUATIC_FOOD_ENTITY_TYPES.has(target.entityType)) {
-    const criticalAquaticHunt = shouldAllowCriticalAquaticHunt(
+    const aquaticHuntAllowed = shouldAllowAquaticHunt(
       observation,
+      minimumHealth,
       targetPreference,
     );
-    return criticalAquaticHunt
+    return aquaticHuntAllowed
       && Math.abs(target.position.y - observation.player.position.y)
         <= URGENT_AQUATIC_HUNT_MAXIMUM_VERTICAL_DISTANCE
       && horizontalDistanceSquared(
@@ -7787,12 +7799,25 @@ function isHuntingTargetWithinReach(
     <= maximumVerticalDistance;
 }
 
-function shouldAllowCriticalAquaticHunt(
+function shouldAllowAquaticHunt(
   observation: BeatGameObservation,
+  minimumHealth: number,
   targetPreference?: HuntTargetPreference,
 ): boolean {
-  return targetPreference?.allowCriticalAquaticTargets === true
-    && observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL;
+  if (targetPreference?.allowCriticalAquaticTargets !== true) {
+    return false;
+  }
+  if (observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL) {
+    return true;
+  }
+  const minimumSafeHealth = Math.max(
+    LETHAL_MELEE_DISENGAGE_HEALTH + 1,
+    minimumHealth - 4,
+  );
+  return observation.player.health >= minimumSafeHealth
+    && targetPreference.maximumSafeAquaticFoodLevel !== undefined
+    && observation.player.food
+      <= targetPreference.maximumSafeAquaticFoodLevel;
 }
 
 function survivalPathPolicy(
@@ -10070,6 +10095,46 @@ function abandonPendingDeath(
   );
 }
 
+function inspectNearbyCorpseDrops(
+  state: RunState,
+  pendingDeath: PendingDeath,
+  observation: BeatGameObservation,
+): Effect.Effect<
+  readonly BeatGameEntityObservation[] | undefined,
+  BeatGameDriverError
+> {
+  if (
+    observation.player.position.dimension
+      !== pendingDeath.position.dimension
+    || distanceSquared(
+        observation.player.position,
+        pendingDeath.position,
+      ) > CORPSE_DROP_INSPECTION_DISTANCE ** 2
+  ) {
+    return Effect.succeed(undefined);
+  }
+  const corpseItemIds = new Set(
+    Object.entries(pendingDeath.inventoryCounts ?? {})
+      .filter(([, count]) => count > 0)
+      .map(([itemId]) => itemId),
+  );
+  return state.driver.queryEntities({
+    origin: pendingDeath.position,
+    radius: CORPSE_DROP_INSPECTION_DISTANCE,
+    selector: {
+      alive: true,
+      categories: [6],
+    },
+    maximumResults: 64,
+  }).pipe(
+    Effect.map((drops) =>
+      drops.filter(({ itemId }) =>
+        itemId !== undefined && corpseItemIds.has(itemId)
+      )
+    ),
+  );
+}
+
 function forgetDeathPosition(
   checkpoint: BeatGameCheckpoint,
   observedAt: string,
@@ -10210,6 +10275,7 @@ function prepareForDistantDeathRecovery(
           path: foodSearchPath,
           explorationTarget: pendingDeath.position,
           allowCriticalAquaticTargets: true,
+          maximumSafeAquaticFoodLevel: state.strategy.eatBelowFood,
           allowFluidFallback: true,
           fallbackToLocalExploration: true,
         },

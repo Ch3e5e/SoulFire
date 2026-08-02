@@ -1566,7 +1566,7 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
-  it("hunts nearby fish behind the corpse route at critical hunger", async () => {
+  it("hunts nearby fish for distant corpse supplies with enough health", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const deathPosition = {
@@ -1600,7 +1600,7 @@ describe("beat-game run lifecycle", () => {
       networkId: 30,
       entityType: "minecraft:salmon",
       position: {
-        x: -30,
+        x: 30,
         y: 62,
         z: 0,
         dimension: "minecraft:overworld",
@@ -1610,25 +1610,19 @@ describe("beat-game run lifecycle", () => {
       health: 3,
       observedAt: "2026-01-01T00:00:00.000Z",
     } as const;
-    const pig = {
-      ...salmon,
-      networkId: 31,
-      entityType: "minecraft:pig",
-      position: { ...salmon.position, x: 96 },
-      health: 10,
-    } as const;
     driver.currentObservation = observation({
-      health: 6,
-      food: 6,
+      health: 17,
+      food: 14,
       counts: {
         "minecraft:dirt": 16,
         "minecraft:oak_log": 12,
         "minecraft:wooden_pickaxe": 1,
+        "minecraft:wooden_sword": 1,
       },
     });
     driver.entityQueryResolver = (query) =>
       query.selector.entityTypes?.includes("minecraft:salmon") === true
-        ? [salmon, pig]
+        ? [salmon]
         : [];
     const resolvePath = driver.pathResolver;
     driver.pathResolver = (position, radius, policy) =>
@@ -1641,13 +1635,14 @@ describe("beat-game run lifecycle", () => {
               && position.z === salmon.position.z
             ) {
               driver.currentObservation = observation({
-                health: 6,
-                food: 6,
-                position: { x: -20 },
+                health: 17,
+                food: 14,
+                position: { x: 28 },
                 counts: {
                   "minecraft:dirt": 16,
                   "minecraft:oak_log": 12,
                   "minecraft:wooden_pickaxe": 1,
+                  "minecraft:wooden_sword": 1,
                 },
               });
             }
@@ -1672,11 +1667,19 @@ describe("beat-game run lifecycle", () => {
       }).pipe(
         Effect.flatMap((run) =>
           Effect.gen(function* () {
-            while (!driver.tasks.some((task) =>
-              task.type === "attack-entity"
-            )) {
-              yield* Effect.sleep(1);
-            }
+            yield* Effect.gen(function* () {
+              while (!driver.tasks.some((task) =>
+                task.type === "attack-entity"
+              )) {
+                yield* Effect.sleep(1);
+              }
+            }).pipe(Effect.timeoutFail({
+              duration: "2 seconds",
+              onTimeout: () =>
+                new Error(
+                  "Timed out waiting for aquatic corpse provisioning",
+                ),
+            }));
             yield* run.stop;
             yield* run.awaitCompletion.pipe(Effect.either);
           })
@@ -3055,6 +3058,78 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("abandons a stale valuable corpse once its loaded area has no matching drops", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const deathPosition = {
+      x: 24,
+      y: 55,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    const observedAt = new Date().toISOString();
+    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
+      runId: "stale-valuable-corpse-run",
+      teamId: "stale-valuable-corpse-team",
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        deathPositions: [{
+          key: `death:${observedAt}`,
+          value: {
+            ...deathPosition,
+            inventoryCounts: {
+              "minecraft:iron_pickaxe": 1,
+              "minecraft:cooked_beef": 5,
+            },
+          },
+          observedAt,
+          confidence: 1,
+        }],
+      },
+    }, undefined));
+    driver.currentObservation = observation({
+      health: 20,
+      food: 20,
+    });
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(6) ? [] : driver.entityResults;
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        runId: "stale-valuable-corpse-run",
+        team: { teamId: "stale-valuable-corpse-team" },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            yield* run.events.pipe(
+              Stream.filter((event) =>
+                event.type === "items-recovered"
+                && event.detail
+                  === "Abandoned a stale corpse after confirming no drops remain nearby"
+              ),
+              Stream.runHead,
+            );
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    const saved = await Effect.runPromise(
+      store.load("stale-valuable-corpse-run"),
+    );
+    expect(saved?.memory.deathPositions).toHaveLength(0);
+    expect(driver.paths).toHaveLength(0);
+    expect(driver.xzPaths).toHaveLength(0);
+    expect(driver.tasks).toHaveLength(0);
+  });
+
   it("keeps preparing instead of abandoning a valuable distant corpse", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
@@ -3687,6 +3762,7 @@ describe("beat-game run lifecycle", () => {
 
   it("resumes item recovery after fighting a melee hostile", async () => {
     const driver = new FakeBeatGameDriver();
+    const deathObservedAt = new Date().toISOString();
     const deathPosition = {
       x: 24,
       y: 64,
@@ -3711,8 +3787,14 @@ describe("beat-game run lifecycle", () => {
     driver.currentObservation = observation({
       dead: true,
       health: 0,
+      observedAt: deathObservedAt,
       position: deathPosition,
     });
+    driver.taskObserver = (task) => {
+      if (task.type === "attack-entity") {
+        driver.entityResults = [];
+      }
+    };
     let recoveries = 0;
 
     await Effect.runPromise(Effect.scoped(
@@ -3758,6 +3840,7 @@ describe("beat-game run lifecycle", () => {
 
   it("resumes promptly after evading a corpse recovery attacker", async () => {
     const driver = new FakeBeatGameDriver();
+    const deathObservedAt = new Date().toISOString();
     const deathPosition = {
       x: 24,
       y: 64,
@@ -3782,6 +3865,7 @@ describe("beat-game run lifecycle", () => {
     driver.currentObservation = observation({
       dead: true,
       health: 0,
+      observedAt: deathObservedAt,
       position: deathPosition,
       counts: { "minecraft:iron_ingot": 7 },
     });
@@ -3911,6 +3995,7 @@ describe("beat-game run lifecycle", () => {
 
   it("keeps monitoring for new attackers after resuming item recovery", async () => {
     const driver = new FakeBeatGameDriver();
+    const deathObservedAt = new Date().toISOString();
     const deathPosition = {
       x: 20,
       y: 64,
@@ -3935,6 +4020,7 @@ describe("beat-game run lifecycle", () => {
     driver.currentObservation = observation({
       dead: true,
       health: 0,
+      observedAt: deathObservedAt,
       position: deathPosition,
     });
     driver.entityQueryResolver = (query) =>
@@ -11076,6 +11162,16 @@ describe("beat-game run lifecycle", () => {
       },
     } as const;
     driver.entityResults = [deepSalmon, shallowSalmon];
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+        driver.currentObservation = observation({
+          position,
+          health: 20,
+          food: 6,
+          counts: driver.currentObservation.inventory.counts,
+        });
+      });
 
     await Effect.runPromise(Effect.scoped(
       beatGameWithDriver(driver, {
@@ -11097,7 +11193,11 @@ describe("beat-game run lifecycle", () => {
       type: "attack-entity",
       target: expect.objectContaining({ networkId: shallowSalmon.networkId }),
     }));
-    expect(driver.paths).toHaveLength(0);
+    expect(driver.paths).toContainEqual(expect.objectContaining({
+      position: shallowSalmon.position,
+      radius: 4,
+      policy: expect.objectContaining({ avoidFluids: false }),
+    }));
   }, 10_000);
 
   it("searches on land instead of chasing fish above critical hunger", async () => {
