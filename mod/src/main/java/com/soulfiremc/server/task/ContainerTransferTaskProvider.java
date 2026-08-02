@@ -60,6 +60,8 @@ public final class ContainerTransferTaskProvider
   implements BotTaskProvider<ContainerTransferTask> {
   private static final int MAX_OPERATIONS = 64;
   private static final int MAX_COUNT = 1_000_000;
+  private static final int CONTAINER_APPROACH_RADIUS = 1;
+  private static final int MAX_APPROACH_ATTEMPTS = 3;
   private static final int OPEN_TIMEOUT_TICKS = 100;
   private static final Set<ControlResource> RESOURCES = Set.of(
     ControlResource.MOVEMENT,
@@ -177,6 +179,7 @@ public final class ContainerTransferTaskProvider
     private Stage stage = Stage.NAVIGATE;
     private int initialContainerId;
     private int stageTicks;
+    private int approachAttempts;
     private int totalTransferred;
     private long containerRevision;
     private boolean openedMenu;
@@ -217,10 +220,8 @@ public final class ContainerTransferTaskProvider
 
     private void navigate() {
       var player = requirePlayer();
-      if (
-        player.isWithinBlockInteractionRange(container, 0)
-          || player.position().distanceToSqr(Vec3.atCenterOf(container)) <= 16
-      ) {
+      if (player.isWithinBlockInteractionRange(container, 0)) {
+        approachAttempts = 0;
         stopPath(ControlStopReason.CANCELLED, null);
         transition(Stage.OPEN, "Opening container");
         return;
@@ -228,7 +229,10 @@ public final class ContainerTransferTaskProvider
       if (path == null) {
         path = PathExecutor.createPathfinding(
           context.bot(),
-          new CloseToPosGoal(SFVec3i.fromInt(container), 3),
+          new CloseToPosGoal(
+            SFVec3i.fromInt(container),
+            CONTAINER_APPROACH_RADIUS
+          ),
           constraint
         );
         path.onStarted();
@@ -245,7 +249,20 @@ public final class ContainerTransferTaskProvider
       try {
         completed.completion().join();
         completed.onStopped(ControlStopReason.COMPLETED, null);
-        transition(Stage.OPEN, "Opening container");
+        if (requirePlayer().isWithinBlockInteractionRange(container, 0)) {
+          approachAttempts = 0;
+          transition(Stage.OPEN, "Opening container");
+          return;
+        }
+        approachAttempts++;
+        if (approachAttempts >= MAX_APPROACH_ATTEMPTS) {
+          throw Status.FAILED_PRECONDITION
+            .withDescription(
+              "Could not reach the container's interaction range"
+            )
+            .asRuntimeException();
+        }
+        report("Closing distance to container");
       } catch (CompletionException exception) {
         var cause = exception.getCause() == null
           ? exception
