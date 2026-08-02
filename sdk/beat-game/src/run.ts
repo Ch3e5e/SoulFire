@@ -2752,7 +2752,21 @@ function monitorEscapeSafety(
         selector: escapeThreatSelector(target),
         maximumResults: 1,
       }).pipe(
-        Effect.flatMap(([currentTarget]) => {
+        Effect.zip(findImmediateThreat(state, observation)),
+        Effect.flatMap(([[currentTarget], immediateThreat]) => {
+          if (
+            immediateThreat !== undefined
+            && immediateThreat.response === "flee"
+            && shouldPreemptEscapeTarget(
+              target,
+              immediateThreat.target,
+            )
+          ) {
+            return Effect.succeed({
+              type: "escape",
+              target: immediateThreat.target,
+            } as const);
+          }
           if (currentTarget === undefined) {
             return Effect.succeed({ type: "safe" } as const);
           }
@@ -2801,6 +2815,23 @@ function monitorEscapeSafety(
       );
     }),
   );
+}
+
+function shouldPreemptEscapeTarget(
+  currentTarget: BeatGameEntityObservation,
+  candidate: BeatGameEntityObservation,
+): boolean {
+  if (
+    currentTarget.connectionEpoch === candidate.connectionEpoch
+    && currentTarget.networkId === candidate.networkId
+  ) {
+    return false;
+  }
+  if (candidate.entityType === "minecraft:creeper") {
+    return currentTarget.entityType !== "minecraft:creeper";
+  }
+  return ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(candidate.entityType)
+    && !ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(currentTarget.entityType);
 }
 
 function knockBackAndSprintAway(

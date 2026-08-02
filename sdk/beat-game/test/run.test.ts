@@ -4758,6 +4758,102 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("preempts a ranged retreat when a creeper approaches", async () => {
+    const driver = new FakeBeatGameDriver();
+    const skeleton = {
+      connectionEpoch: "epoch-1",
+      networkId: 43,
+      entityType: "minecraft:skeleton",
+      position: {
+        x: 8,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    const creeper = {
+      ...skeleton,
+      networkId: 44,
+      entityType: "minecraft:creeper",
+      position: { ...skeleton.position, x: 4 },
+    } as const;
+    driver.currentObservation = observation({ health: 8 });
+    let creeperApproaching = false;
+    driver.entityQueryResolver = (query) => {
+      if (query.selector.networkId === skeleton.networkId) {
+        return [skeleton];
+      }
+      if (
+        query.selector.entityTypes?.includes("minecraft:creeper") === true
+      ) {
+        return creeperApproaching ? [creeper] : [];
+      }
+      return query.selector.categories?.includes(2) === true
+        ? creeperApproaching ? [creeper, skeleton] : [skeleton]
+        : [];
+    };
+    let interruptedEscapes = 0;
+    let escapes = 0;
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (task.type !== "flee") {
+          return false;
+        }
+        escapes += 1;
+        if (escapes === 1) {
+          creeperApproaching = true;
+          return true;
+        }
+        creeperApproaching = false;
+        return false;
+      }).pipe(
+        Effect.flatMap((shouldRemainActive) =>
+          task.type === "collect-blocks" || shouldRemainActive
+            ? Effect.never
+            : Effect.void
+        ),
+        Effect.onInterrupt(() =>
+          Effect.sync(() => {
+            if (task.type === "flee") {
+              interruptedEscapes += 1;
+            }
+          })
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (escapes < 2) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(interruptedEscapes).toBe(1);
+    expect(driver.tasks.filter((task) => task.type === "flee")).toEqual([
+      expect.objectContaining({
+        selector: { networkId: skeleton.networkId, alive: true },
+      }),
+      expect.objectContaining({
+        selector: { categories: [2], alive: true },
+      }),
+    ]);
+    expect(driver.currentObservation.player.health).toBe(8);
+  }, 10_000);
+
   it("does not abandon work for a creeper outside its proactive range", async () => {
     const driver = new FakeBeatGameDriver();
     driver.entityResults = [{
