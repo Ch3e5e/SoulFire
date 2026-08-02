@@ -397,6 +397,106 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("does not copy a previous corpse inventory into a later death", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    let observationCount = 0;
+    driver.observationResolver = () =>
+      Effect.sync(() => {
+        observationCount += 1;
+        return driver.currentObservation;
+      });
+    const firstDeathPosition = {
+      x: 32,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    const secondDeathPosition = {
+      x: -48,
+      y: 64,
+      z: 16,
+      dimension: "minecraft:overworld",
+    };
+    const firstDeathObservedAt = new Date().toISOString();
+    const secondDeathObservedAt = new Date(Date.now() + 1_000).toISOString();
+    driver.currentObservation = observation({
+      counts: {
+        "minecraft:oak_log": 12,
+        "minecraft:wooden_sword": 1,
+      },
+    });
+
+    await Effect.runPromise(Effect.scoped(
+      Effect.gen(function* () {
+        const driverEvents = yield* PubSub.unbounded<BeatGameDriverEvent>();
+        driver.events = Stream.fromPubSub(driverEvents);
+        const run = yield* beatGameWithDriver(driver, {
+          runId: "consecutive-death-inventory-run",
+          team: { teamId: "consecutive-death-inventory-team" },
+          checkpointStore: store,
+          strategy: { observationPollMs: 1 },
+        });
+        yield* Effect.sleep(20);
+
+        driver.currentObservation = observation({
+          observedAt: firstDeathObservedAt,
+          position: firstDeathPosition,
+          counts: {},
+          dead: true,
+          health: 0,
+        });
+        yield* PubSub.publish(driverEvents, {
+          type: "bot-died",
+          observedAt: firstDeathObservedAt,
+        });
+        while (
+          (yield* store.load("consecutive-death-inventory-run"))
+              ?.memory.deathPositions.length !== 1
+        ) {
+          yield* Effect.sleep(1);
+        }
+
+        driver.currentObservation = observation({ counts: {} });
+        const observationsBeforeRespawn = observationCount;
+        while (observationCount === observationsBeforeRespawn) {
+          yield* Effect.sleep(1);
+        }
+        driver.currentObservation = observation({
+          observedAt: secondDeathObservedAt,
+          position: secondDeathPosition,
+          counts: {},
+          dead: true,
+          health: 0,
+        });
+        yield* PubSub.publish(driverEvents, {
+          type: "bot-died",
+          observedAt: secondDeathObservedAt,
+        });
+        yield* Effect.gen(function* () {
+          while (
+            (yield* store.load("consecutive-death-inventory-run"))
+                ?.memory.deathPositions.length !== 2
+          ) {
+            yield* Effect.sleep(1);
+          }
+        }).pipe(Effect.timeout("5 seconds"));
+        yield* run.stop;
+        yield* run.awaitCompletion.pipe(Effect.either);
+      }),
+    ));
+
+    const saved = await Effect.runPromise(
+      store.load("consecutive-death-inventory-run"),
+    );
+    expect(saved?.memory.deathPositions).toContainEqual(expect.objectContaining({
+      value: expect.objectContaining({
+        ...secondDeathPosition,
+        inventoryCounts: {},
+      }),
+    }));
+  });
+
   it("heals before resuming a restored corpse journey", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
@@ -1466,7 +1566,7 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
-  it("hunts nearby fish before distant livestock for wounded recovery", async () => {
+  it("hunts nearby fish behind the corpse route at lethal health", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const deathPosition = {
@@ -1500,7 +1600,7 @@ describe("beat-game run lifecycle", () => {
       networkId: 30,
       entityType: "minecraft:salmon",
       position: {
-        x: 3,
+        x: -30,
         y: 62,
         z: 0,
         dimension: "minecraft:overworld",
@@ -1519,18 +1619,41 @@ describe("beat-game run lifecycle", () => {
     } as const;
     driver.currentObservation = observation({
       health: 6,
-      food: 9,
+      food: 11,
       counts: {
         "minecraft:dirt": 16,
         "minecraft:oak_log": 12,
         "minecraft:wooden_pickaxe": 1,
-        "minecraft:wooden_sword": 1,
       },
     });
     driver.entityQueryResolver = (query) =>
       query.selector.entityTypes?.includes("minecraft:salmon") === true
         ? [salmon, pig]
         : [];
+    const resolvePath = driver.pathResolver;
+    driver.pathResolver = (position, radius, policy) =>
+      resolvePath(position, radius, policy).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            if (
+              position.x === salmon.position.x
+              && position.y === salmon.position.y
+              && position.z === salmon.position.z
+            ) {
+              driver.currentObservation = observation({
+                health: 6,
+                food: 11,
+                position: { x: -20 },
+                counts: {
+                  "minecraft:dirt": 16,
+                  "minecraft:oak_log": 12,
+                  "minecraft:wooden_pickaxe": 1,
+                },
+              });
+            }
+          })
+        ),
+      );
     driver.taskResolver = (task) =>
       Effect.sync(() => {
         driver.tasks.push(task);
@@ -1567,6 +1690,9 @@ describe("beat-game run lifecycle", () => {
         networkId: salmon.networkId,
         entityType: salmon.entityType,
       }),
+    }));
+    expect(driver.paths).toContainEqual(expect.objectContaining({
+      position: salmon.position,
     }));
   });
 
@@ -6080,9 +6206,9 @@ describe("beat-game run lifecycle", () => {
       .toBe(false);
   }, 10_000);
 
-  it("fights a close spider bare-handed while healthy", async () => {
+  it("fights a close spider bare-handed even when hunger is low", async () => {
     const driver = new FakeBeatGameDriver();
-    driver.currentObservation = observation({ health: 20 });
+    driver.currentObservation = observation({ health: 15, food: 14 });
     driver.entityResults = [
       {
         connectionEpoch: "epoch-1",

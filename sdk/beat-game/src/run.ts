@@ -1267,27 +1267,34 @@ function executeDecision(
             inventoryCounts: lastLivingObservation.inventory.counts,
           };
           yield* enqueuePendingDeath(state, pendingDeath);
-          yield* persist(state, (checkpoint) =>
-            rememberDeathPosition(checkpoint, pendingDeath)
-          );
-          yield* Effect.all([
-            emit(state, {
-              type: "death-observed",
-              detail: positionKey(pendingDeath.position),
-            }),
-            state.coordinator.publishDiscovery(
-              actionCheckpoint.teamId,
-              {
-                key:
-                  `death:${actionCheckpoint.botId}:${pendingDeath.observedAt}`,
-                kind: "death",
-                botId: actionCheckpoint.botId,
-                position: pendingDeath.position,
-                observedAt: pendingDeath.observedAt,
-                confidence: 1,
-              },
-            ),
-          ], { discard: true });
+          const rememberedDeathKey = `death:${pendingDeath.observedAt}`;
+          const deathWasAlreadyRemembered =
+            actionCheckpoint.memory.deathPositions.some(({ key }) =>
+              key === rememberedDeathKey
+            );
+          if (!deathWasAlreadyRemembered) {
+            yield* persist(state, (checkpoint) =>
+              rememberDeathPosition(checkpoint, pendingDeath)
+            );
+            yield* Effect.all([
+              emit(state, {
+                type: "death-observed",
+                detail: positionKey(pendingDeath.position),
+              }),
+              state.coordinator.publishDiscovery(
+                actionCheckpoint.teamId,
+                {
+                  key:
+                    `death:${actionCheckpoint.botId}:${pendingDeath.observedAt}`,
+                  kind: "death",
+                  botId: actionCheckpoint.botId,
+                  position: pendingDeath.position,
+                  observedAt: pendingDeath.observedAt,
+                  confidence: 1,
+                },
+              ),
+            ], { discard: true });
+          }
           const customRecovery = state.hooks.recoverDeath;
           let recoveryAttempted = pendingDeath.recoverItems;
           if (customRecovery !== undefined) {
@@ -2356,7 +2363,7 @@ function shouldCommitToFastMeleePursuerFight(
   return FAST_MELEE_PURSUER_ENTITY_TYPES.has(target.entityType)
     && (
       hasMeleeWeapon(observation)
-      || isReadyForBarehandedDefense(observation)
+      || observation.player.health > LETHAL_MELEE_DISENGAGE_HEALTH
     );
 }
 
@@ -7614,10 +7621,13 @@ function isEligibleHuntingTarget(
       || targetPreference?.allowUrgentAquaticTargets === true
       || observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
     )
-    && isWithinDirectedHuntDetour(
-      observation.player.position,
-      target.position,
-      targetPreference?.explorationTarget,
+    && (
+      observation.player.health <= LETHAL_MELEE_DISENGAGE_HEALTH
+      || isWithinDirectedHuntDetour(
+        observation.player.position,
+        target.position,
+        targetPreference?.explorationTarget,
+      )
     );
 }
 
@@ -9601,7 +9611,8 @@ function updateObservedState(
         state.lastLivingObservation,
       );
       const inventoryWasClearedBeforeDeathState =
-        hasMeaningfulRecoveryInventory(lastLivingObservation)
+        !previousObservation.player.dead
+        && hasMeaningfulRecoveryInventory(lastLivingObservation)
         && !hasMeaningfulRecoveryInventory(observation)
         && inventoryItemCount(observation) === 0;
       if (!inventoryWasClearedBeforeDeathState) {
@@ -10129,7 +10140,10 @@ function prepareForDistantDeathRecovery(
     };
 
     if (
-      current.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
+      (
+        current.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
+        || current.player.health < state.strategy.minimumHealth
+      )
       && travelFoodCount(current) < DEATH_RECOVERY_MINIMUM_FOOD_COUNT
     ) {
       current = yield* ensureTravelFood(current);

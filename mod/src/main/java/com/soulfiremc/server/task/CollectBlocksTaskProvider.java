@@ -78,6 +78,7 @@ public final class CollectBlocksTaskProvider
   private static final int MAX_SEARCH_RADIUS = 64;
   private static final int MAX_CANDIDATES = 256;
   private static final int MAX_FAILED_APPROACHES_PER_TARGET = 4;
+  private static final int MAX_CONSECUTIVE_STALLED_PATHS = 4;
   private static final double DIRECT_BREAK_REACH_SQUARED = 4.5D * 4.5D;
   private static final Set<ControlResource> RESOURCES = Set.of(
     ControlResource.MOVEMENT,
@@ -269,6 +270,7 @@ public final class CollectBlocksTaskProvider
     private int activeNearbyBreakTicks;
     private Set<SFVec3i> activeTargets = Set.of();
     private int blocksBroken;
+    private int consecutiveStalledPaths;
 
     private CollectBlocksControl(
       BotTaskContext context,
@@ -455,21 +457,33 @@ public final class CollectBlocksTaskProvider
         activeTargets = Set.of();
         if (confirmedBreaks == 0) {
           rejectStalledAdjacentPositions(completedTargets);
+          if (reachedStalledPathLimit()) {
+            complete(
+              CollectBlocksCompletionReason
+                .COLLECT_BLOCKS_COMPLETION_REASON_NO_REACHABLE_BLOCKS
+            );
+            return;
+          }
           context.reportProgress(progress(
             "Trying another approach to a matching block"
           ));
           return;
         }
+        consecutiveStalledPaths = 0;
         blocksBroken += (int) Math.min(
           confirmedBreaks,
           targetCount - blocksBroken
         );
         context.reportProgress(progress("Matching block mined"));
       } catch (CompletionException exception) {
+        var confirmedBreaks = confirmedBreaks(path);
         blocksBroken += (int) Math.min(
-          confirmedBreaks(path),
+          confirmedBreaks,
           targetCount - blocksBroken
         );
+        if (confirmedBreaks > 0) {
+          consecutiveStalledPaths = 0;
+        }
         var failedTargets = activeTargets;
         activeTargets = Set.of();
         if (blocksBroken >= targetCount) {
@@ -484,7 +498,10 @@ public final class CollectBlocksTaskProvider
           : exception.getCause();
         path.onStopped(ControlStopReason.FAILED, cause);
         if (cause instanceof UnreachableGoalException) {
-          if (rejectStalledAdjacentPositions(failedTargets)) {
+          if (
+            rejectStalledAdjacentPositions(failedTargets)
+              && !reachedStalledPathLimit()
+          ) {
             context.reportProgress(progress(
               "Trying another approach after collection path stalled"
             ));
@@ -514,6 +531,11 @@ public final class CollectBlocksTaskProvider
         }
         result.completeExceptionally(cause);
       }
+    }
+
+    private boolean reachedStalledPathLimit() {
+      consecutiveStalledPaths++;
+      return consecutiveStalledPaths >= MAX_CONSECUTIVE_STALLED_PATHS;
     }
 
     private boolean rejectStalledAdjacentPositions(
