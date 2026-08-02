@@ -12018,6 +12018,7 @@ describe("beat-game run lifecycle", () => {
       position: {
         ...healthyCod.position,
         x: 4,
+        y: 60.5,
       },
       health: 1,
     } as const;
