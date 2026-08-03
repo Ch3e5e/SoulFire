@@ -5835,7 +5835,10 @@ function reclaimPlacedFurnace(
       path: state.strategy.path,
     })),
     // Reclaiming a temporary workstation is cleanup. A lost container drop or
-    // control lease must not suspend the main planner indefinitely.
+    // control lease must not suspend the main planner indefinitely. This can
+    // run as an ensuring finalizer, so restore interruptibility before racing
+    // the cleanup against its deadline.
+    Effect.interruptible,
     Effect.timeout(FURNACE_RECLAIM_TIMEOUT),
     Effect.catchTag("TimeoutException", () => Effect.void),
   );
