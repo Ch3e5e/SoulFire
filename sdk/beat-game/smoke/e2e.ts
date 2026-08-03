@@ -4,7 +4,15 @@ import {
   beatGameWithDriver,
   BeatGamePhase,
   BeatGameRunStatus,
+  defaultBeatGameStrategy,
   makeSoulFireBeatGameDriver,
+  type BeatGameBlockSelector,
+  type BeatGameEntitySelector,
+  type BeatGamePathPolicy,
+  type BeatGamePosition,
+  type BeatGameQueryBlocks,
+  type BeatGameQueryEntities,
+  type BeatGameRaycastQuery,
 } from "../dist/index.js";
 import { JsonFileBeatGameCheckpointStore } from "../dist/node.js";
 import {
@@ -14,12 +22,13 @@ import {
   SettingsNamespace_SettingsEntrySchema,
   SettingsNamespaceSchema,
 } from "@soulfiremc/sdk/generated/soulfire/common_pb";
-import type { SoulFireBot } from "@soulfiremc/sdk";
+import { goals, type SoulFireBot } from "@soulfiremc/sdk";
 import { SoulFire } from "@soulfiremc/sdk/node";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import { execFile as execFileCallback } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
+  chmod,
   lstat,
   mkdir,
   readFile,
@@ -43,6 +52,12 @@ import {
 } from "effect";
 import { pruneArtifactRuns } from "./artifact-retention.ts";
 import { BoundedLog } from "./bounded-log.ts";
+import {
+  SmokeDebugRequestError,
+  type SmokeDebugOperation,
+  SmokeDebugTimeline,
+  startSmokeDebugServer,
+} from "./debug-server.ts";
 
 const execFile = promisify(execFileCallback);
 const repositoryRoot = path.resolve(import.meta.dirname, "../../..");
@@ -106,6 +121,22 @@ const debugWorldNeighborhood = booleanEnvironment(
   "SOULFIRE_E2E_DEBUG_WORLD_NEIGHBORHOOD",
   false,
 );
+const debugApiEvalEnabled = booleanEnvironment(
+  "SOULFIRE_E2E_DEBUG_EVAL",
+  false,
+);
+const debugApiEnabled = debugApiEvalEnabled || booleanEnvironment(
+  "SOULFIRE_E2E_DEBUG_API",
+  false,
+);
+const debugApiPort = positiveIntegerEnvironment(
+  "SOULFIRE_E2E_DEBUG_PORT",
+  25_566,
+);
+const debugApiTimelineEntries = positiveIntegerEnvironment(
+  "SOULFIRE_E2E_DEBUG_TIMELINE_ENTRIES",
+  4_000,
+);
 const verboseOutput = booleanEnvironment("SOULFIRE_E2E_VERBOSE", false);
 const minecraftPort = 25_565;
 const attachedMinecraftContainer = optionalEnvironment(
@@ -127,6 +158,11 @@ const artifactRuns = positiveIntegerEnvironment(
   "SOULFIRE_E2E_ARTIFACT_RUNS",
   4,
 );
+const debugTimeline = new SmokeDebugTimeline(debugApiTimelineEntries);
+const debugTimelineOmittedKinds = new Set([
+  "inventory-observed",
+  "task-progress-observed",
+]);
 const eventLog = new BoundedLog(
   path.join(artifactDirectory, "events.ndjson"),
   {
@@ -236,6 +272,10 @@ const program = Effect.scoped(Effect.gen(function* () {
     artifactLogMaximumBytes,
     artifactLogFiles,
     artifactRuns,
+    debugApiEnabled,
+    debugApiEvalEnabled,
+    debugApiPort,
+    debugApiTimelineEntries,
     verboseOutput,
     fixtureConfiguration,
   });
@@ -820,6 +860,134 @@ const program = Effect.scoped(Effect.gen(function* () {
   yield* Stream.runForEach(run.events, (event) =>
     record("beat-game-event", { event })
   ).pipe(Effect.forkScoped);
+  if (debugApiEnabled) {
+    const debugOperations: SmokeDebugOperation[] = [
+      {
+        method: "GET",
+        path: "/state",
+        description:
+          "Return the live beat-game snapshot, raw player state, and inventory",
+        execute: () =>
+          Effect.all({
+            beatGame: run.snapshot,
+            player: bot.world.player(),
+            inventory: bot.inventory.snapshot(),
+          }, { concurrency: "unbounded" }),
+      },
+      {
+        method: "GET",
+        path: "/events",
+        description:
+          "Return recent decisions, tasks, primitives, queries, and path activity",
+        execute: (input) => debugRequest(() => queryDebugTimeline(input)),
+      },
+      {
+        method: "POST",
+        path: "/world/block",
+        description:
+          "Read one exact block with optional block entity and collision shapes",
+        execute: (input) =>
+          debugRequest(() => parseDebugBlockRequest(input)).pipe(
+            Effect.flatMap((request) => bot.world.block(request)),
+          ),
+      },
+      {
+        method: "POST",
+        path: "/world/nearby",
+        description:
+          "Read a bounded block volume around the player or an explicit center",
+        execute: (input) => inspectDebugWorldVolume(bot, input),
+      },
+      {
+        method: "POST",
+        path: "/world/blocks",
+        description: "Query nearby blocks with the beat-game block selector",
+        execute: (input) =>
+          debugRequest(() => parseDebugBlockQuery(input)).pipe(
+            Effect.flatMap(driver.queryBlocks),
+          ),
+      },
+      {
+        method: "POST",
+        path: "/world/entities",
+        description: "Query nearby entities with the beat-game entity selector",
+        execute: (input) =>
+          debugRequest(() => parseDebugEntityQuery(input)).pipe(
+            Effect.flatMap(driver.queryEntities),
+          ),
+      },
+      {
+        method: "POST",
+        path: "/world/raycast",
+        description: "Raycast from the bot player's current eye position",
+        execute: (input) =>
+          debugRequest(() => parseDebugRaycast(input)).pipe(
+            Effect.flatMap(driver.raycast),
+          ),
+      },
+      {
+        method: "POST",
+        path: "/world/surface",
+        description: "Sample loaded terrain columns around a position",
+        execute: (input) =>
+          debugRequest(() => parseDebugSurfaceRequest(input)).pipe(
+            Effect.flatMap(({ center, radius, sampleStep }) =>
+              driver.sampleSurface(center, radius, sampleStep)
+            ),
+          ),
+      },
+      {
+        method: "POST",
+        path: "/path/plan",
+        description:
+          "Plan a read-only route with step descriptions and break/place traces",
+        execute: (input) =>
+          debugRequest(() => parseDebugPathPlan(input)).pipe(
+            Effect.flatMap(({ position, radius, policy }) =>
+              bot.pathfinder.plan(goals.near(position, radius), {
+                path: pathfinderOptions(policy),
+                includeDescriptions: true,
+              })
+            ),
+          ),
+      },
+    ];
+    if (debugApiEvalEnabled) {
+      debugOperations.push({
+        method: "POST",
+        path: "/eval",
+        description:
+          "Execute explicitly enabled unsafe JavaScript against the live smoke context",
+        unsafe: true,
+        execute: (input) =>
+          evaluateDebugSource(input, {
+            artifactDirectory,
+            baseDriver,
+            bot,
+            checkpointStore,
+            driver,
+            Effect,
+            run,
+            runId,
+          }),
+      });
+    }
+    const debugServer = yield* startSmokeDebugServer({
+      operations: debugOperations,
+      port: debugApiPort,
+    });
+    yield* writePrivateJson("debug-api.json", {
+      url: debugServer.url,
+      token: debugServer.token,
+      unsafeEvalEnabled: debugApiEvalEnabled,
+      operations: debugServer.operations,
+    });
+    yield* record("debug-api-ready", {
+      url: debugServer.url,
+      unsafeEvalEnabled: debugApiEvalEnabled,
+      descriptor: path.join(artifactDirectory, "debug-api.json"),
+    });
+  }
 
   const result = yield* run.awaitCompletion.pipe(
     Effect.timeout(Duration.millis(timeoutMs)),
@@ -1702,12 +1870,587 @@ function poll<A>(
   );
 }
 
+function debugRequest<A>(
+  evaluate: () => A,
+): Effect.Effect<A, SmokeDebugRequestError> {
+  return Effect.try({
+    try: evaluate,
+    catch: (cause) =>
+      cause instanceof SmokeDebugRequestError
+        ? cause
+        : new SmokeDebugRequestError(
+          cause instanceof Error ? cause.message : String(cause),
+        ),
+  });
+}
+
+function queryDebugTimeline(input: unknown): readonly unknown[] {
+  const request = debugRecord(input, "event query");
+  const kinds = optionalDebugString(request, "kind")
+    ?.split(",")
+    .map((kind) => kind.trim())
+    .filter((kind) => kind.length > 0);
+  return debugTimeline.query({
+    ...(kinds === undefined || kinds.length === 0 ? {} : { kinds }),
+    limit: optionalDebugInteger(request, "limit", 1, debugApiTimelineEntries)
+      ?? 250,
+  });
+}
+
+function parseDebugBlockRequest(input: unknown): Readonly<{
+  position: Readonly<{ x: number; y: number; z: number; dimension: string }>;
+  includeBlockEntity: boolean;
+  includeShapes: boolean;
+}> {
+  const request = debugRecord(input, "block request");
+  return {
+    position: debugPosition(request.position, "position", true),
+    includeBlockEntity: optionalDebugBoolean(
+      request,
+      "includeBlockEntity",
+    ) ?? true,
+    includeShapes: optionalDebugBoolean(request, "includeShapes") ?? true,
+  };
+}
+
+function inspectDebugWorldVolume(
+  bot: SoulFireBot,
+  input: unknown,
+): Effect.Effect<unknown, unknown, never> {
+  return Effect.gen(function* () {
+    const parsed = yield* debugRequest(() => {
+      const request = debugRecord(input, "nearby world request");
+      return {
+        center: request.center === undefined
+          ? undefined
+          : debugPosition(request.center, "center", true),
+        horizontalRadius: optionalDebugInteger(
+          request,
+          "horizontalRadius",
+          0,
+          32,
+        ) ?? 8,
+        verticalRadius: optionalDebugInteger(
+          request,
+          "verticalRadius",
+          0,
+          16,
+        ) ?? 4,
+        includeAir: optionalDebugBoolean(request, "includeAir") ?? false,
+        includeBlockEntity: optionalDebugBoolean(
+          request,
+          "includeBlockEntity",
+        ) ?? true,
+        includeShapes: optionalDebugBoolean(request, "includeShapes") ?? false,
+      };
+    });
+    const center = parsed.center ?? (yield* bot.world.player().pipe(
+      Effect.flatMap((player) =>
+        player.position === undefined
+          ? Effect.fail(new SmokeDebugRequestError(
+            "The bot player has no current position",
+            409,
+          ))
+          : Effect.succeed({
+            x: Math.floor(player.position.x),
+            y: Math.floor(player.position.y),
+            z: Math.floor(player.position.z),
+            dimension: player.position.dimension,
+          })
+      ),
+    ));
+    const width = parsed.horizontalRadius * 2 + 1;
+    const height = parsed.verticalRadius * 2 + 1;
+    const volume = width * width * height;
+    if (volume > 32_768) {
+      return yield* Effect.fail(new SmokeDebugRequestError(
+        `Requested block volume ${volume} exceeds the 32768 block limit`,
+      ));
+    }
+    const positions: Array<Readonly<{
+      x: number;
+      y: number;
+      z: number;
+      dimension: string;
+    }>> = [];
+    for (
+      let x = center.x - parsed.horizontalRadius;
+      x <= center.x + parsed.horizontalRadius;
+      x += 1
+    ) {
+      for (
+        let y = center.y - parsed.verticalRadius;
+        y <= center.y + parsed.verticalRadius;
+        y += 1
+      ) {
+        for (
+          let z = center.z - parsed.horizontalRadius;
+          z <= center.z + parsed.horizontalRadius;
+          z += 1
+        ) {
+          positions.push({ x, y, z, dimension: center.dimension });
+        }
+      }
+    }
+    const blocks = yield* Effect.forEach(
+      positions,
+      (position) =>
+        bot.world.block({
+          position,
+          includeBlockEntity: parsed.includeBlockEntity,
+          includeShapes: parsed.includeShapes,
+        }).pipe(Effect.map((response) => ({ position, ...response }))),
+      { concurrency: 32 },
+    );
+    return {
+      center,
+      horizontalRadius: parsed.horizontalRadius,
+      verticalRadius: parsed.verticalRadius,
+      scanned: blocks.length,
+      blocks: parsed.includeAir
+        ? blocks
+        : blocks.filter(({ block }) =>
+          block !== undefined && block.blockId !== "minecraft:air"
+        ),
+    };
+  });
+}
+
+function parseDebugBlockQuery(input: unknown): BeatGameQueryBlocks {
+  const request = debugRecord(input, "block query");
+  return {
+    center: debugPosition(request.center, "center"),
+    radius: debugNumber(request, "radius", 0, 512),
+    selector: debugBlockSelector(request.selector),
+    ...(request.maximumResults === undefined
+      ? {}
+      : {
+        maximumResults: debugInteger(
+          request,
+          "maximumResults",
+          1,
+          10_000,
+        ),
+      }),
+  };
+}
+
+function parseDebugEntityQuery(input: unknown): BeatGameQueryEntities {
+  const request = debugRecord(input, "entity query");
+  return {
+    ...(request.origin === undefined
+      ? {}
+      : { origin: debugPosition(request.origin, "origin") }),
+    radius: debugNumber(request, "radius", 0, 1_024),
+    selector: debugEntitySelector(request.selector),
+    ...(request.maximumResults === undefined
+      ? {}
+      : {
+        maximumResults: debugInteger(
+          request,
+          "maximumResults",
+          1,
+          10_000,
+        ),
+      }),
+  };
+}
+
+function parseDebugRaycast(input: unknown): BeatGameRaycastQuery {
+  const request = debugRecord(input, "raycast request");
+  const direction = debugRecord(request.direction, "direction");
+  return {
+    direction: {
+      x: debugNumber(direction, "x", -1, 1),
+      y: debugNumber(direction, "y", -1, 1),
+      z: debugNumber(direction, "z", -1, 1),
+    },
+    maximumDistance: debugNumber(request, "maximumDistance", 0.01, 512),
+    ...(request.includeFluids === undefined
+      ? {}
+      : { includeFluids: debugBoolean(request, "includeFluids") }),
+  };
+}
+
+function parseDebugSurfaceRequest(input: unknown): Readonly<{
+  center: BeatGamePosition;
+  radius: number;
+  sampleStep: number;
+}> {
+  const request = debugRecord(input, "surface request");
+  return {
+    center: debugPosition(request.center, "center"),
+    radius: optionalDebugInteger(request, "radius", 0, 512) ?? 16,
+    sampleStep: optionalDebugInteger(request, "sampleStep", 1, 64) ?? 1,
+  };
+}
+
+function parseDebugPathPlan(input: unknown): Readonly<{
+  position: BeatGamePosition;
+  radius: number;
+  policy: BeatGamePathPolicy;
+}> {
+  const request = debugRecord(input, "path plan request");
+  const suppliedPolicy = request.policy === undefined
+    ? {}
+    : debugRecord(request.policy, "policy");
+  const defaults = defaultBeatGameStrategy.path;
+  return {
+    position: debugPosition(request.position, "position"),
+    radius: optionalDebugNumber(request, "radius", 0, 128) ?? 1,
+    policy: {
+      allowMining: optionalDebugBoolean(suppliedPolicy, "allowMining")
+        ?? defaults.allowMining,
+      allowPlacing: optionalDebugBoolean(suppliedPolicy, "allowPlacing")
+        ?? defaults.allowPlacing,
+      maxFallDistance: optionalDebugInteger(
+        suppliedPolicy,
+        "maxFallDistance",
+        0,
+        64,
+      ) ?? defaults.maxFallDistance,
+      maxSearchTimeMs: optionalDebugInteger(
+        suppliedPolicy,
+        "maxSearchTimeMs",
+        1,
+        10 * 60_000,
+      ) ?? defaults.maxSearchTimeMs,
+      ...(suppliedPolicy.avoidFluids === undefined
+        ? {}
+        : {
+          avoidFluids: debugBoolean(suppliedPolicy, "avoidFluids"),
+        }),
+      ...(suppliedPolicy.sprint === undefined
+        ? {}
+        : { sprint: debugBoolean(suppliedPolicy, "sprint") }),
+      ...(suppliedPolicy.minimumY === undefined
+        ? {}
+        : {
+          minimumY: debugInteger(suppliedPolicy, "minimumY", -2_048, 2_048),
+        }),
+      ...(suppliedPolicy.maximumY === undefined
+        ? {}
+        : {
+          maximumY: debugInteger(suppliedPolicy, "maximumY", -2_048, 2_048),
+        }),
+      ...(suppliedPolicy.additionalPlaceItemIds === undefined
+        ? {}
+        : {
+          additionalPlaceItemIds: debugStringArray(
+            suppliedPolicy.additionalPlaceItemIds,
+            "policy.additionalPlaceItemIds",
+          ),
+        }),
+    },
+  };
+}
+
+function pathfinderOptions(policy: BeatGamePathPolicy) {
+  const timeoutSeconds = Math.max(
+    1,
+    Math.ceil(policy.maxSearchTimeMs / 1_000),
+  );
+  return {
+    allowMining: policy.allowMining,
+    allowPlacing: policy.allowPlacing,
+    avoidFluids: policy.avoidFluids ?? false,
+    timeoutSeconds,
+    searchTimeoutSeconds: timeoutSeconds,
+    ...(policy.additionalPlaceItemIds === undefined
+        || policy.additionalPlaceItemIds.length === 0
+      ? {}
+      : { additionalPlaceItemIds: [...policy.additionalPlaceItemIds] }),
+    ...(policy.sprint === undefined ? {} : { sprint: policy.sprint }),
+    ...(policy.minimumY === undefined ? {} : { minimumY: policy.minimumY }),
+    ...(policy.maximumY === undefined ? {} : { maximumY: policy.maximumY }),
+  };
+}
+
+function evaluateDebugSource(
+  input: unknown,
+  context: Readonly<Record<string, unknown>>,
+): Effect.Effect<unknown, SmokeDebugRequestError | Error> {
+  return debugRequest(() => {
+    const request = debugRecord(input, "eval request");
+    return debugString(request, "source");
+  }).pipe(
+    Effect.flatMap((source) =>
+      Effect.tryPromise({
+        try: async () => {
+          const AsyncFunction = Object.getPrototypeOf(async function () {})
+            .constructor as new (
+              ...parameters: string[]
+            ) => (context: Readonly<Record<string, unknown>>) => Promise<unknown>;
+          const evaluator = new AsyncFunction(
+            "context",
+            `"use strict";\n${source}\n//# sourceURL=soulfire-smoke-debug-eval.js`,
+          );
+          const result = await evaluator(Object.freeze({
+            ...context,
+            runEffect: Effect.runPromise,
+          }));
+          return Effect.isEffect(result)
+            ? await Effect.runPromise(
+              result as Effect.Effect<unknown, unknown>,
+            )
+            : result;
+        },
+        catch: (cause) =>
+          cause instanceof Error ? cause : new Error(String(cause)),
+      })
+    ),
+  );
+}
+
+function debugBlockSelector(input: unknown): BeatGameBlockSelector {
+  const selector = input === undefined
+    ? {}
+    : debugRecord(input, "block selector");
+  return {
+    ...(selector.blockIds === undefined
+      ? {}
+      : { blockIds: debugStringArray(selector.blockIds, "selector.blockIds") }),
+    ...(selector.tags === undefined
+      ? {}
+      : { tags: debugStringArray(selector.tags, "selector.tags") }),
+    ...(selector.properties === undefined
+      ? {}
+      : {
+        properties: debugStringRecord(
+          selector.properties,
+          "selector.properties",
+        ),
+      }),
+    ...debugOptionalBooleans(selector, [
+      "solid",
+      "replaceable",
+      "interactive",
+      "diggable",
+      "requireLineOfSight",
+    ]),
+  };
+}
+
+function debugEntitySelector(input: unknown): BeatGameEntitySelector {
+  const selector = input === undefined
+    ? {}
+    : debugRecord(input, "entity selector");
+  return {
+    ...(selector.entityTypes === undefined
+      ? {}
+      : {
+        entityTypes: debugStringArray(
+          selector.entityTypes,
+          "selector.entityTypes",
+        ),
+      }),
+    ...(selector.tags === undefined
+      ? {}
+      : { tags: debugStringArray(selector.tags, "selector.tags") }),
+    ...(selector.categories === undefined
+      ? {}
+      : {
+        categories: debugNumberArray(
+          selector.categories,
+          "selector.categories",
+        ),
+      }),
+    ...(selector.uuid === undefined
+      ? {}
+      : { uuid: debugString(selector, "uuid") }),
+    ...(selector.networkId === undefined
+      ? {}
+      : { networkId: debugInteger(selector, "networkId") }),
+    ...debugOptionalBooleans(selector, ["alive", "requireLineOfSight"]),
+  };
+}
+
+function debugOptionalBooleans(
+  input: Readonly<Record<string, unknown>>,
+  keys: readonly string[],
+): Readonly<Record<string, boolean>> {
+  return Object.fromEntries(keys.flatMap((key) =>
+    input[key] === undefined ? [] : [[key, debugBoolean(input, key)]]
+  ));
+}
+
+function debugPosition(
+  input: unknown,
+  name: string,
+  integer = false,
+): BeatGamePosition {
+  const position = debugRecord(input, name);
+  const coordinate = (key: "x" | "y" | "z") => {
+    const value = debugNumber(position, key);
+    if (integer && !Number.isSafeInteger(value)) {
+      throw new SmokeDebugRequestError(`${name}.${key} must be an integer`);
+    }
+    return value;
+  };
+  return {
+    x: coordinate("x"),
+    y: coordinate("y"),
+    z: coordinate("z"),
+    dimension: debugString(position, "dimension"),
+  };
+}
+
+function debugRecord(
+  input: unknown,
+  name: string,
+): Readonly<Record<string, unknown>> {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    throw new SmokeDebugRequestError(`${name} must be an object`);
+  }
+  return input as Readonly<Record<string, unknown>>;
+}
+
+function debugString(
+  input: Readonly<Record<string, unknown>>,
+  key: string,
+): string {
+  const value = input[key];
+  if (typeof value !== "string" || value.length === 0) {
+    throw new SmokeDebugRequestError(`${key} must be a non-empty string`);
+  }
+  return value;
+}
+
+function optionalDebugString(
+  input: Readonly<Record<string, unknown>>,
+  key: string,
+): string | undefined {
+  return input[key] === undefined ? undefined : debugString(input, key);
+}
+
+function debugNumber(
+  input: Readonly<Record<string, unknown>>,
+  key: string,
+  minimum = -Number.MAX_VALUE,
+  maximum = Number.MAX_VALUE,
+): number {
+  const value = input[key];
+  if (
+    typeof value !== "number"
+    || !Number.isFinite(value)
+    || value < minimum
+    || value > maximum
+  ) {
+    throw new SmokeDebugRequestError(
+      `${key} must be a finite number between ${minimum} and ${maximum}`,
+    );
+  }
+  return value;
+}
+
+function optionalDebugNumber(
+  input: Readonly<Record<string, unknown>>,
+  key: string,
+  minimum = -Number.MAX_VALUE,
+  maximum = Number.MAX_VALUE,
+): number | undefined {
+  return input[key] === undefined
+    ? undefined
+    : debugNumber(input, key, minimum, maximum);
+}
+
+function debugInteger(
+  input: Readonly<Record<string, unknown>>,
+  key: string,
+  minimum = Number.MIN_SAFE_INTEGER,
+  maximum = Number.MAX_SAFE_INTEGER,
+): number {
+  const value = input[key];
+  const parsed = typeof value === "string" && value.trim().length > 0
+    ? Number(value)
+    : value;
+  if (
+    typeof parsed !== "number"
+    || !Number.isSafeInteger(parsed)
+    || parsed < minimum
+    || parsed > maximum
+  ) {
+    throw new SmokeDebugRequestError(
+      `${key} must be an integer between ${minimum} and ${maximum}`,
+    );
+  }
+  return parsed;
+}
+
+function optionalDebugInteger(
+  input: Readonly<Record<string, unknown>>,
+  key: string,
+  minimum = Number.MIN_SAFE_INTEGER,
+  maximum = Number.MAX_SAFE_INTEGER,
+): number | undefined {
+  return input[key] === undefined
+    ? undefined
+    : debugInteger(input, key, minimum, maximum);
+}
+
+function debugBoolean(
+  input: Readonly<Record<string, unknown>>,
+  key: string,
+): boolean {
+  const value = input[key];
+  if (typeof value !== "boolean") {
+    throw new SmokeDebugRequestError(`${key} must be a boolean`);
+  }
+  return value;
+}
+
+function optionalDebugBoolean(
+  input: Readonly<Record<string, unknown>>,
+  key: string,
+): boolean | undefined {
+  return input[key] === undefined ? undefined : debugBoolean(input, key);
+}
+
+function debugStringArray(input: unknown, name: string): readonly string[] {
+  if (
+    !Array.isArray(input)
+    || !input.every((value) => typeof value === "string" && value.length > 0)
+  ) {
+    throw new SmokeDebugRequestError(
+      `${name} must be an array of non-empty strings`,
+    );
+  }
+  return input;
+}
+
+function debugNumberArray(input: unknown, name: string): readonly number[] {
+  if (
+    !Array.isArray(input)
+    || !input.every((value) => typeof value === "number" && Number.isFinite(value))
+  ) {
+    throw new SmokeDebugRequestError(
+      `${name} must be an array of finite numbers`,
+    );
+  }
+  return input;
+}
+
+function debugStringRecord(
+  input: unknown,
+  name: string,
+): Readonly<Record<string, string>> {
+  const record = debugRecord(input, name);
+  if (!Object.values(record).every((value) => typeof value === "string")) {
+    throw new SmokeDebugRequestError(`${name} values must all be strings`);
+  }
+  return record as Readonly<Record<string, string>>;
+}
+
 function record(
   kind: string,
   value: Readonly<Record<string, unknown>>,
 ): Effect.Effect<void, Error> {
   return Effect.suspend(() => {
-    const line = json({ observedAt: new Date().toISOString(), kind, ...value });
+    const entry = { observedAt: new Date().toISOString(), kind, ...value };
+    if (!debugTimelineOmittedKinds.has(kind)) {
+      debugTimeline.append(entry);
+    }
+    const line = json(entry);
     if (verboseOutput) {
       process.stdout.write(`${line}\n`);
     }
@@ -1724,6 +2467,17 @@ function writeJson(
   return fromPromise(`write ${filename}`, () =>
     writeFile(path.join(artifactDirectory, filename), `${json(value, 2)}\n`)
   );
+}
+
+function writePrivateJson(
+  filename: string,
+  value: unknown,
+): Effect.Effect<void, Error> {
+  const target = path.join(artifactDirectory, filename);
+  return fromPromise(`write private ${filename}`, async () => {
+    await writeFile(target, `${json(value, 2)}\n`, { mode: 0o600 });
+    await chmod(target, 0o600);
+  });
 }
 
 function fromPromise<A>(
