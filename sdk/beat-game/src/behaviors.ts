@@ -4841,6 +4841,7 @@ function collectPortalCastingLavaSource(
       ) {
         if (
           !obstruction.diggable
+          || obstruction.blockId === "minecraft:obsidian"
           || isPortalCastingPlayerStabilityBlock(
             observation.player.position,
             obstruction.position,

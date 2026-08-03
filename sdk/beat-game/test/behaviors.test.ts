@@ -3845,6 +3845,113 @@ describe("beat-game behavior programs", () => {
     expect(driver.activeControlScopes).toBe(0);
   });
 
+  it("does not mine cast obsidian to expose another lava source", async () => {
+    const driver = new FakeBeatGameDriver();
+    const origin = {
+      x: 0,
+      y: -52,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    const frame = createNetherPortalFrame(origin);
+    const target = [...frame.blocks].sort((left, right) =>
+      left.y - right.y || left.x - right.x || left.z - right.z
+    )[0];
+    const obstruction = frame.blocks.find((position) =>
+      target !== undefined
+      && (
+        position.x !== target.x
+        || position.y !== target.y
+        || position.z !== target.z
+      )
+    );
+    if (target === undefined || obstruction === undefined) {
+      throw new Error("Expected distinct portal frame blocks");
+    }
+    const key = (position: BeatGameBlockPosition) =>
+      `${position.dimension}:${position.x}:${position.y}:${position.z}`;
+    const blocks = new Map(frame.blocks
+      .filter((position) => key(position) !== key(target))
+      .map((position) => [
+        key(position),
+        blockObservation(position, { blockId: "minecraft:obsidian" }),
+      ]));
+    const water = { ...target, z: target.z - 1 };
+    const castingStand = {
+      ...origin,
+      x: origin.x + 1,
+      y: origin.y + 1,
+      z: origin.z - 2,
+    };
+    for (const support of [
+      { ...target, y: target.y - 1 },
+      { ...water, y: water.y - 1 },
+      { ...castingStand, y: castingStand.y - 1 },
+    ]) {
+      blocks.set(key(support), blockObservation(support, {
+        blockId: "minecraft:deepslate",
+      }));
+    }
+    const source = blockObservation({
+      x: 8,
+      y: -53,
+      z: 8,
+      dimension: origin.dimension,
+    }, {
+      blockId: "minecraft:lava",
+      properties: { level: "0" },
+      replaceable: true,
+    });
+    driver.currentObservation = observation({
+      counts: {
+        "minecraft:bucket": 1,
+        "minecraft:cobblestone": 16,
+        "minecraft:iron_pickaxe": 1,
+        "minecraft:water_bucket": 1,
+      },
+      position: origin,
+    });
+    driver.blockQueryResolver = ({ center, selector }) => {
+      if (selector.blockIds?.includes("minecraft:lava") === true) {
+        return [source];
+      }
+      if (selector.blockIds?.includes("minecraft:obsidian") === true) {
+        return [...blocks.values()];
+      }
+      const position = queriedBlockPosition(center);
+      return [blocks.get(key(position)) ?? blockObservation(position, {
+        blockId: "minecraft:air",
+        replaceable: true,
+      })];
+    };
+    driver.raycastResolver = () => ({
+      block: blocks.get(key(obstruction))!,
+      distance: 1,
+    });
+    driver.actionObserver = (action) => {
+      if (action.type !== "look") {
+        return;
+      }
+      driver.currentObservation = observation({
+        counts: driver.currentObservation.inventory.counts,
+        position: driver.currentObservation.player.position,
+        rotation: { yaw: action.yaw, pitch: action.pitch },
+      });
+    };
+
+    await expect(Effect.runPromise(castNetherPortal(driver, {
+      origin,
+      ignite: false,
+    }))).rejects.toThrow("Could not expose the portal casting lava source");
+
+    expect(driver.actions).not.toContainEqual({
+      type: "dig-block",
+      position: obstruction,
+    });
+    expect(blocks.get(key(obstruction))?.blockId).toBe("minecraft:obsidian");
+    expect(driver.activeControlScopes).toBe(0);
+  });
+
   it("retries portal casting supports after a partial build", async () => {
     const driver = new FakeBeatGameDriver();
     const origin = {
