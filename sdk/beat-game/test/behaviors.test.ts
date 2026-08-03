@@ -3481,6 +3481,18 @@ describe("beat-game behavior programs", () => {
     };
     let selectedItemId = "";
     let pendingLavaTarget: typeof target | undefined;
+    let rejectedWaterPickup = false;
+    const updateInventory = (
+      update: (counts: Record<string, number>) => void,
+    ) => {
+      const counts = { ...driver.currentObservation.inventory.counts };
+      update(counts);
+      driver.currentObservation = observation({
+        counts,
+        position: driver.currentObservation.player.position,
+        rotation: driver.currentObservation.player.rotation,
+      });
+    };
     driver.raycastResolver = () =>
       blocks.has(key(liquidSightObstruction))
         ? {
@@ -3515,6 +3527,10 @@ describe("beat-game behavior programs", () => {
         return;
       }
       if (selectedItemId === "minecraft:lava_bucket") {
+        updateInventory((counts) => {
+          delete counts["minecraft:lava_bucket"];
+          counts["minecraft:bucket"] = (counts["minecraft:bucket"] ?? 0) + 1;
+        });
         pendingLavaTarget = target;
         blocks.set(
           key(target),
@@ -3529,19 +3545,50 @@ describe("beat-game behavior programs", () => {
         selectedItemId === "minecraft:water_bucket"
         && pendingLavaTarget !== undefined
       ) {
+        updateInventory((counts) => {
+          delete counts["minecraft:water_bucket"];
+          counts["minecraft:bucket"] = (counts["minecraft:bucket"] ?? 0) + 1;
+        });
         conversionPending = true;
         blocks.set(
           key(water),
           blockObservation(water, {
             blockId: "minecraft:water",
+            properties: { level: "0" },
             replaceable: true,
           }),
         );
         return;
       }
       if (selectedItemId === "minecraft:bucket") {
+        updateInventory((counts) => {
+          counts["minecraft:bucket"] = Math.max(
+            0,
+            (counts["minecraft:bucket"] ?? 0) - 1,
+          );
+          counts["minecraft:water_bucket"] = 1;
+        });
         blocks.delete(key(water));
       }
+    };
+    driver.actionResolver = (action) => {
+      if (
+        action.type === "use-item"
+        && selectedItemId === "minecraft:bucket"
+        && !rejectedWaterPickup
+      ) {
+        rejectedWaterPickup = true;
+        return Effect.fail(new BeatGameDriverError({
+          operation: "act",
+          code: "failed_precondition",
+          retryable: false,
+          message: "The held item could not be used",
+        }));
+      }
+      return Effect.sync(() => {
+        driver.actionObserver(action);
+        return {};
+      });
     };
 
     await Effect.runPromise(castNetherPortal(driver, {
@@ -3628,7 +3675,8 @@ describe("beat-game behavior programs", () => {
     expect(blocks.get(key(target))?.blockId).toBe("minecraft:obsidian");
     expect(conversionQueries).toBe(3);
     expect(driver.actions.filter(({ type }) => type === "use-item"))
-      .toHaveLength(3);
+      .toHaveLength(4);
+    expect(rejectedWaterPickup).toBe(true);
     expect(driver.actions.some(({ type }) => type === "interact-block"))
       .toBe(false);
     expect(driver.tasks).toHaveLength(0);
@@ -3767,6 +3815,7 @@ describe("beat-game behavior programs", () => {
         }));
         blocks.set(key(water), blockObservation(water, {
           blockId: "minecraft:water",
+          properties: { level: "0" },
           replaceable: true,
         }));
         return;
@@ -3911,6 +3960,7 @@ describe("beat-game behavior programs", () => {
         }));
         blocks.set(key(water), blockObservation(water, {
           blockId: "minecraft:water",
+          properties: { level: "0" },
           replaceable: true,
         }));
         return;

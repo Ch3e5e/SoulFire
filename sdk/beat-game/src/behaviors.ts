@@ -54,6 +54,7 @@ const SUBMERGED_DROP_PICKUP_STEERING_INTERVAL_POLLS = 2;
 const SUBMERGED_DROP_PICKUP_MINIMUM_AIR_RATIO = 0.35;
 const PORTAL_CASTING_LAVA_SIGHT_CLEARING_BLOCKS = 4;
 const PORTAL_CASTING_LAVA_COLLECTION_POLLS = 10;
+const PORTAL_CASTING_WATER_RECOVERY_ATTEMPTS = 3;
 const AVOIDED_FLUID_BLOCK_IDS = [
   "minecraft:water",
   "minecraft:bubble_column",
@@ -4722,11 +4723,7 @@ function castNetherPortalFromLavaPool(
               ))
           ),
         );
-        yield* driver.act({
-          type: "select-item",
-          selector: { itemIds: ["minecraft:bucket"] },
-        });
-        yield* useBucketToward(driver, blockCenter(water));
+        yield* recoverPortalCastingWaterBucket(driver, water);
       }
       for (const support of temporarySupports) {
         if (samePosition(support, castingStandSupport)) {
@@ -4943,49 +4940,71 @@ function recoverPortalCastingWaterBucket(
   expectedWater: BeatGameBlockPosition,
 ): Effect.Effect<void, BeatGameDriverError> {
   return Effect.gen(function* () {
-    const nearby = yield* driver.queryBlocks({
-      center: blockCenter(expectedWater),
-      radius: 3,
-      selector: {},
-      maximumResults: 256,
-    });
-    const source = [...nearby]
-      .filter((block) =>
-        (
-          block.blockId === "minecraft:water"
-          && block.properties.level === "0"
-        )
-        || block.properties.waterlogged === "true"
-      )
-      .sort((left, right) =>
-        distanceSquared(left.position, expectedWater)
-        - distanceSquared(right.position, expectedWater)
-      )[0];
-    if (source === undefined) {
-      return yield* Effect.fail(behaviorError(
-        driver,
-        "The portal casting water bucket is missing and no nearby source remains",
-      ));
-    }
-    yield* driver.act({
-      type: "select-item",
-      selector: { itemIds: ["minecraft:bucket"] },
-    });
-    yield* useBucketToward(driver, blockCenter(source.position));
+    let lastSource: BeatGameBlockObservation | undefined;
+    let lastFailure: BeatGameDriverError | undefined;
     for (
-      let poll = 0;
-      poll < PORTAL_CASTING_LAVA_COLLECTION_POLLS;
-      poll += 1
+      let attempt = 0;
+      attempt < PORTAL_CASTING_WATER_RECOVERY_ATTEMPTS;
+      attempt += 1
     ) {
       const current = yield* driver.observe;
       if ((current.inventory.counts["minecraft:water_bucket"] ?? 0) > 0) {
         return;
       }
-      yield* Effect.sleep(50);
+      const nearby = yield* driver.queryBlocks({
+        center: blockCenter(expectedWater),
+        radius: 3,
+        selector: {},
+        maximumResults: 256,
+      });
+      const source = [...nearby]
+        .filter((block) =>
+          (
+            block.blockId === "minecraft:water"
+            && block.properties.level === "0"
+          )
+          || block.properties.waterlogged === "true"
+        )
+        .sort((left, right) =>
+          distanceSquared(left.position, expectedWater)
+          - distanceSquared(right.position, expectedWater)
+        )[0];
+      if (source === undefined) {
+        yield* Effect.sleep(100);
+        continue;
+      }
+      lastSource = source;
+      const pickup = yield* driver.act({
+        type: "select-item",
+        selector: { itemIds: ["minecraft:bucket"] },
+      }).pipe(
+        Effect.zipRight(useBucketToward(driver, blockCenter(source.position))),
+        Effect.either,
+      );
+      if (pickup._tag === "Left") {
+        lastFailure = pickup.left;
+        yield* Effect.sleep(100);
+        continue;
+      }
+      for (
+        let poll = 0;
+        poll < PORTAL_CASTING_LAVA_COLLECTION_POLLS;
+        poll += 1
+      ) {
+        const observed = yield* driver.observe;
+        if ((observed.inventory.counts["minecraft:water_bucket"] ?? 0) > 0) {
+          return;
+        }
+        yield* Effect.sleep(50);
+      }
     }
     return yield* Effect.fail(behaviorError(
       driver,
-      `The water source at ${positionKey(source.position)} was not collected`,
+      lastSource === undefined
+        ? "The portal casting water bucket is missing and no nearby source remains"
+        : `The water source at ${positionKey(lastSource.position)} was not collected${
+          lastFailure === undefined ? "" : `: ${lastFailure.message}`
+        }`,
     ));
   });
 }
