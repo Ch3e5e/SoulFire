@@ -134,6 +134,7 @@ const WORKSTATION_APPROACH_RADIUS = 1.5;
 const WORKSTATION_REUSE_MAX_VERTICAL_DISTANCE = 8;
 const WORKSTATION_REUSE_MAX_SEARCH_TIME_MS = 5_000;
 const WORKSTATION_REUSE_TIMEOUT_MS = 12_000;
+const FURNACE_RECLAIM_TIMEOUT = "15 seconds";
 const SHORE_PATH_MAX_SEARCH_TIME_MS = 5_000;
 const SHORE_PATH_TIMEOUT_MS = 10_000;
 const DRY_SURFACE_APPROACH_RADIUS = 0.75;
@@ -5833,6 +5834,10 @@ function reclaimPlacedFurnace(
       settleDelayMs: 500,
       path: state.strategy.path,
     })),
+    // Reclaiming a temporary workstation is cleanup. A lost container drop or
+    // control lease must not suspend the main planner indefinitely.
+    Effect.timeout(FURNACE_RECLAIM_TIMEOUT),
+    Effect.catchTag("TimeoutException", () => Effect.void),
   );
 }
 
