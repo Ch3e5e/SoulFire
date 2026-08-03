@@ -438,14 +438,17 @@ const program = Effect.scoped(Effect.gen(function* () {
     bot.world.player().pipe(
       Effect.mapError((cause) => new Error("read bot readiness", { cause })),
       Effect.flatMap((player) =>
-        player.dead || player.onGround
+        player.dead || player.position !== undefined
           ? Effect.succeed(player)
-          : Effect.fail(new Error("Bot has not loaded its standing block"))
+          : Effect.fail(new Error("Bot has not loaded its position"))
       ),
     ),
     "SoulFire world readiness",
     180,
     500,
+  );
+  const startupAirGuard = yield* guardStartupAir(bot).pipe(
+    Effect.forkScoped,
   );
   yield* record("bot-online", { instanceId: instance.id, profileId });
   let lastTaskProgressFingerprint: string | undefined;
@@ -588,6 +591,8 @@ const program = Effect.scoped(Effect.gen(function* () {
   );
   const baseDriver = makeSoulFireBeatGameDriver(bot);
   yield* baseDriver.waitForChunks(4, 60_000);
+  yield* Fiber.interrupt(startupAirGuard);
+  yield* bot.resetMovement().pipe(Effect.ignore);
   yield* record("bot-chunks-ready", { radiusChunks: 4 });
   let lastObservedInventoryRevision: bigint | undefined;
   const observedEntityFingerprints = new Map<string, string>();
@@ -1656,6 +1661,21 @@ function runCommand(
       stderr: result.stderr,
     };
   });
+}
+
+function guardStartupAir(bot: SoulFireBot): Effect.Effect<never> {
+  const tick = bot.world.player().pipe(
+    Effect.flatMap((player) =>
+      !player.dead
+          && player.maxAir > 0
+          && player.air < player.maxAir
+        ? bot.setMovement({ jump: true })
+        : bot.resetMovement()
+    ),
+    Effect.catchAll(() => Effect.void),
+    Effect.zipRight(Effect.sleep(100)),
+  );
+  return tick.pipe(Effect.forever);
 }
 
 function poll<A>(
