@@ -16479,7 +16479,7 @@ describe("beat-game run lifecycle", () => {
           radius === 0.75
             && policy.allowMining === false
             && !(
-              Math.abs(position.x + 3) < 0.001
+              Math.abs(position.x) < 0.001
               && Math.abs(position.z) < 0.001
             )
             ? Effect.fail(new BeatGameDriverError({
@@ -16624,7 +16624,7 @@ describe("beat-game run lifecycle", () => {
     )).toHaveLength(1);
     expect(driver.paths.filter(({ position, radius, policy }) =>
       radius === 0.75
-      && Math.abs(position.x + 3) < 0.001
+      && Math.abs(position.x) < 0.001
       && Math.abs(position.z) < 0.001
       && policy.allowMining === false
       && policy.allowPlacing === false

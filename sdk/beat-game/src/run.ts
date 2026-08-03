@@ -9546,16 +9546,7 @@ function ensureInventorySpace(
       let discardPocketReady = false;
       const discardRetreatTarget = relocated
           && discardSiteDistance > INVENTORY_DISCARD_ESCAPE_DISTANCE
-        ? {
-          x: current.player.position.x
-            - discardSiteDeltaX / discardSiteDistance
-              * INVENTORY_DISCARD_ESCAPE_DISTANCE,
-          y: current.player.position.y,
-          z: current.player.position.z
-            - discardSiteDeltaZ / discardSiteDistance
-              * INVENTORY_DISCARD_ESCAPE_DISTANCE,
-          dimension: current.player.position.dimension,
-        }
+        ? discardSiteOrigin
         : undefined;
       if (discardRetreatTarget !== undefined) {
         const retreated = yield* state.driver.pathfind(
