@@ -2013,7 +2013,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.xzPaths).toHaveLength(0);
   });
 
-  it("recovers a corpse directly below before preparing travel supplies", async () => {
+  it("tries an existing route to a corpse below before mining by hand", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const deathPosition = {
@@ -2082,7 +2082,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.paths).toContainEqual(expect.objectContaining({
       position: deathPosition,
       radius: 2,
-      policy: expect.objectContaining({ allowMining: true }),
+      policy: expect.objectContaining({ allowMining: false }),
     }));
     expect(driver.tasks).not.toContainEqual(expect.objectContaining({
       type: "collect-blocks",

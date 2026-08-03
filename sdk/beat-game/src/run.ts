@@ -1524,6 +1524,7 @@ function executeDecision(
                 retryThroughFluids: true,
                 path: {
                   ...state.strategy.path,
+                  allowMining: hasMiningPickaxe(respawned),
                   avoidFluids: true,
                   additionalPlaceItemIds:
                     DEATH_RECOVERY_ADDITIONAL_PLACE_ITEM_IDS,
