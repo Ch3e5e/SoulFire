@@ -7071,6 +7071,7 @@ function preparePortalCastingLavaPool(
         ? "minecraft:iron_pickaxe"
         : "minecraft:stone_pickaxe",
       MINING_PICKAXE_ITEM_IDS,
+      RESOURCE_DESCENT_PICKAXE_DURABILITY_RESERVE,
     );
     const current = yield* state.driver.observe;
     const searchPath = {

@@ -12157,7 +12157,10 @@ describe("beat-game run lifecycle", () => {
       },
     });
     driver.blockQueryResolver = ({ center, selector }) => {
-      if (selector.blockIds?.includes("minecraft:lava") === true) {
+      if (
+        selector.blockIds?.includes("minecraft:lava") === true
+        && selector.properties?.level === "0"
+      ) {
         return [blockObservation({
           x: 14,
           y: 38,
@@ -12267,6 +12270,123 @@ describe("beat-game run lifecycle", () => {
     }));
     expect(driver.actions).not.toContainEqual(expect.objectContaining({
       type: "use-item",
+    }));
+  });
+
+  it("replaces a worn pickaxe before descending for portal lava", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const start = {
+      x: 12.5,
+      y: 54,
+      z: -8.5,
+      dimension: "minecraft:overworld",
+    } as const;
+    driver.currentObservation = observation({
+      position: start,
+      counts: {
+        "minecraft:cobblestone": 20,
+        "minecraft:cooked_beef": 8,
+        "minecraft:flint_and_steel": 1,
+        "minecraft:iron_ingot": 7,
+        "minecraft:iron_pickaxe": 1,
+        "minecraft:lava_bucket": 1,
+        "minecraft:oak_log": 4,
+        "minecraft:shield": 1,
+        "minecraft:stone_sword": 1,
+        "minecraft:water_bucket": 1,
+      },
+      remainingDurability: { "minecraft:iron_pickaxe": 1 },
+    });
+    driver.blockQueryResolver = ({ selector }) => {
+      if (selector.blockIds?.includes("minecraft:crafting_table") === true) {
+        return [blockObservation({
+          x: 11,
+          y: 54,
+          z: -8,
+          dimension: "minecraft:overworld",
+        }, { blockId: "minecraft:crafting_table" })];
+      }
+      if (
+        selector.blockIds?.includes("minecraft:lava") === true
+        && selector.properties?.level === "0"
+      ) {
+        return [blockObservation({
+          x: 14,
+          y: 38,
+          z: -8,
+          dimension: "minecraft:overworld",
+        }, {
+          blockId: "minecraft:lava",
+          properties: { level: "0" },
+          replaceable: true,
+        })];
+      }
+      return [];
+    };
+    driver.recipeResolver = (resultItemId) => [{
+      recipeId: resultItemId,
+      recipeType: "minecraft:crafting",
+      resultItemId,
+      resultCount: 1,
+      ingredients: [],
+    }];
+    driver.craftabilityResolver = () => ({
+      canCraft: true,
+      maximumCraftCount: 1,
+      requiredStation: "minecraft:crafting_table",
+      missing: [],
+    });
+    let resolveReplacementCrafted!: () => void;
+    const replacementCrafted = new Promise<void>((resolve) => {
+      resolveReplacementCrafted = resolve;
+    });
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (
+          task.type === "craft"
+          && task.recipeId === "minecraft:iron_pickaxe"
+        ) {
+          driver.currentObservation = observation({
+            position: driver.currentObservation.player.position,
+            counts: {
+              ...driver.currentObservation.inventory.counts,
+              "minecraft:iron_pickaxe": 2,
+            },
+            remainingDurability: { "minecraft:iron_pickaxe": 251 },
+          });
+          resolveReplacementCrafted();
+        }
+      });
+    await Effect.runPromise(store.save(checkpoint(
+      BeatGamePhase.ENTER_NETHER,
+      {
+        runId: "portal-lava-pickaxe-run",
+        teamId: "portal-lava-pickaxe-team",
+      },
+    ), undefined));
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        runId: "portal-lava-pickaxe-run",
+        team: { teamId: "portal-lava-pickaxe-team" },
+        checkpointStore: store,
+        strategy: {
+          observationPollMs: 1,
+          portalStrategy: "CAST",
+        },
+      });
+      yield* Effect.promise(() => replacementCrafted).pipe(
+        Effect.timeout("5 seconds"),
+      );
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "craft",
+      recipeId: "minecraft:iron_pickaxe",
     }));
   });
 
