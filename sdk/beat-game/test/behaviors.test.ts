@@ -1423,8 +1423,8 @@ describe("beat-game behavior programs", () => {
     await Effect.runPromise(excavateStaircase(driver, { from, to }));
 
     expect(driver.paths).toHaveLength(7);
-    expect(driver.paths[0]?.position).toEqual(from);
-    expect(driver.paths.at(-1)?.position).toEqual(to);
+    expect(driver.paths[0]?.position).toEqual(feetCenter(from));
+    expect(driver.paths.at(-1)?.position).toEqual(feetCenter(to));
     expect(driver.paths.slice(1).every(({ policy }) =>
       !policy.allowMining
       && !policy.allowPlacing
@@ -1624,7 +1624,7 @@ describe("beat-game behavior programs", () => {
     });
   });
 
-  it("does not try to dig replaceable staircase cells", async () => {
+  it("does not enter replaceable fluid in a staircase", async () => {
     const driver = new FakeBeatGameDriver();
     const from = {
       x: 0,
@@ -1652,15 +1652,92 @@ describe("beat-game behavior programs", () => {
     };
 
     installStaircaseMovementSimulation(driver, from);
-    await Effect.runPromise(excavateStaircase(driver, { from, to }));
+    const result = await Effect.runPromise(
+      excavateStaircase(driver, { from, to }).pipe(Effect.either),
+    );
 
     expect(driver.actions).not.toContainEqual(expect.objectContaining({
       type: "dig-block",
     }));
-    expect(driver.paths).toContainEqual(expect.objectContaining({
+    expect(driver.paths).not.toContainEqual(expect.objectContaining({
       position: feetCenter(to),
-      radius: 0.5,
     }));
+    expect(result).toMatchObject({
+      _tag: "Left",
+      left: {
+        code: "fluid_exposed",
+        retryable: true,
+      },
+    });
+  });
+
+  it("stops before entering fluid exposed while digging", async () => {
+    const driver = new FakeBeatGameDriver();
+    const from = {
+      x: 0,
+      y: 3,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    const to = {
+      x: 1,
+      y: 2,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    const ceiling = { ...to, y: to.y + 2 };
+    let ceilingOpened = false;
+    driver.actionObserver = (action) => {
+      if (
+        action.type === "dig-block"
+        && action.position.x === ceiling.x
+        && action.position.y === ceiling.y
+        && action.position.z === ceiling.z
+      ) {
+        ceilingOpened = true;
+      }
+    };
+    driver.blockQueryResolver = ({ center }) => {
+      const position = queriedBlockPosition(center);
+      if (
+        ceilingOpened
+        && position.x === ceiling.x
+        && position.y === ceiling.y
+        && position.z === ceiling.z
+      ) {
+        return [blockObservation(position, {
+          blockId: "minecraft:water",
+          diggable: false,
+          replaceable: true,
+        })];
+      }
+      return [blockObservation(position)];
+    };
+
+    installStaircaseMovementSimulation(driver, from);
+    const result = await Effect.runPromise(
+      excavateStaircase(driver, { from, to }).pipe(Effect.either),
+    );
+
+    expect(driver.actions).toContainEqual({
+      type: "dig-block",
+      position: ceiling,
+    });
+    expect(driver.paths).not.toContainEqual(expect.objectContaining({
+      position: feetCenter(to),
+    }));
+    expect(driver.currentObservation.player.position).toMatchObject({
+      x: from.x + 0.5,
+      y: from.y,
+      z: from.z + 0.5,
+    });
+    expect(result).toMatchObject({
+      _tag: "Left",
+      left: {
+        code: "fluid_exposed",
+        retryable: true,
+      },
+    });
   });
 
   it("bridges an open staircase tread from the current safe step", async () => {
@@ -1689,9 +1766,9 @@ describe("beat-game behavior programs", () => {
         && action.face === "east"
       ) {
         const current = driver.paths.at(-1)?.position;
-        bridgedFromCurrentStep = current?.x === firstStep.x
+        bridgedFromCurrentStep = current?.x === firstStep.x + 0.5
           && current.y === firstStep.y
-          && current.z === firstStep.z
+          && current.z === firstStep.z + 0.5
           && current.dimension === firstStep.dimension;
         treadPlaced = true;
       }
@@ -1739,9 +1816,9 @@ describe("beat-game behavior programs", () => {
 
     expect(bridgedFromCurrentStep).toBe(true);
     expect(driver.paths.filter(({ position }) =>
-      position.x === from.x
+      position.x === from.x + 0.5
       && position.y === from.y
-      && position.z === from.z
+      && position.z === from.z + 0.5
       && position.dimension === from.dimension
     )).toHaveLength(1);
   });
@@ -1879,7 +1956,7 @@ describe("beat-game behavior programs", () => {
     expect(driver.paths).not.toContainEqual(expect.objectContaining({
       radius: 1,
     }));
-    expect(driver.paths.at(-1)?.position).toEqual(to);
+    expect(driver.paths.at(-1)?.position).toEqual(feetCenter(to));
   });
 
   it("reselects and retries a transient staircase support placement", async () => {

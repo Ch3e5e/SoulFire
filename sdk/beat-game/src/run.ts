@@ -6929,14 +6929,44 @@ function excavateResourceSearchStaircase(
       from,
       targetY,
     );
-    yield* excavateStaircase(state.driver, {
+    const excavation = yield* excavateStaircase(state.driver, {
       from,
       to,
       path: {
         ...state.strategy.path,
         avoidFluids: true,
       },
-    });
+    }).pipe(Effect.either);
+    if (excavation._tag === "Right") {
+      return;
+    }
+    if (excavation.left.code !== "fluid_exposed") {
+      return yield* Effect.fail(excavation.left);
+    }
+
+    const floodedApproach = yield* state.driver.observe;
+    yield* emergencyAirAscent(
+      state,
+      floodedApproach.player.position,
+    );
+    const recovered = yield* state.driver.observe;
+    yield* escapeToOverworldSurface(state, recovered.player.position);
+    const surfaced = yield* state.driver.observe;
+    yield* advanceExplorationFrontier(
+      state,
+      surfaced.player.position,
+      explorationPurpose(
+        "avoid-flooded-resource-staircase",
+        surfaced.player.position,
+      ),
+      24,
+      {
+        ...state.strategy.path,
+        avoidFluids: true,
+      },
+      true,
+      false,
+    );
   });
 }
 

@@ -54,7 +54,7 @@ const SUBMERGED_DROP_PICKUP_STEERING_INTERVAL_POLLS = 2;
 const SUBMERGED_DROP_PICKUP_MINIMUM_AIR_RATIO = 0.35;
 const PORTAL_CASTING_LAVA_SIGHT_CLEARING_BLOCKS = 4;
 const PORTAL_CASTING_LAVA_COLLECTION_POLLS = 10;
-const DROP_AVOIDED_FLUID_BLOCK_IDS = [
+const AVOIDED_FLUID_BLOCK_IDS = [
   "minecraft:water",
   "minecraft:bubble_column",
   "minecraft:kelp",
@@ -488,7 +488,7 @@ function isDropInFluid(
   return driver.queryBlocks({
     center: blockCenter(position),
     radius: 0.25,
-    selector: { blockIds: DROP_AVOIDED_FLUID_BLOCK_IDS },
+    selector: { blockIds: AVOIDED_FLUID_BLOCK_IDS },
     maximumResults: 1,
   }).pipe(
     Effect.map((blocks) =>
@@ -623,6 +623,7 @@ export function excavateStaircase(
         y: step.y + 1,
       });
       yield* digStaircaseBlockIfNeeded(driver, step);
+      yield* refuseFloodedStaircaseStep(driver, step);
       const traversal = yield* walkStaircaseStep(
         driver,
         step,
@@ -4031,6 +4032,36 @@ function digStaircaseBlockIfNeeded(
     }
     yield* driver.act({ type: "dig-block", position });
   });
+}
+
+function refuseFloodedStaircaseStep(
+  driver: BeatGameDriver,
+  step: BeatGameBlockPosition,
+): Effect.Effect<void, BeatGameDriverError> {
+  return Effect.sleep(100).pipe(
+    Effect.zipRight(Effect.all([
+      queryExactBlock(driver, step),
+      queryExactBlock(driver, { ...step, y: step.y + 1 }),
+      queryExactBlock(driver, { ...step, y: step.y + 2 }),
+    ])),
+    Effect.flatMap((blocks) => {
+      const fluid = blocks.find((block) =>
+        block !== undefined
+        && AVOIDED_FLUID_BLOCK_IDS.includes(
+          block.blockId as (typeof AVOIDED_FLUID_BLOCK_IDS)[number],
+        )
+      );
+      return fluid === undefined
+        ? Effect.void
+        : Effect.fail(behaviorError(
+          driver,
+          `Refused to enter a staircase flooded by ${fluid.blockId} at ${
+            positionKey(fluid.position)
+          }`,
+          "fluid_exposed",
+        ));
+    }),
+  );
 }
 
 function isOpenStaircaseStep(
