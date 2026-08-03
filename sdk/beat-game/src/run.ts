@@ -293,6 +293,7 @@ const INVENTORY_BUILDING_BLOCK_RESERVE = 64;
 const INVENTORY_EMPTY_SLOT_BUFFER = 2;
 const INVENTORY_EMPTY_SLOT_STABILITY_OBSERVATIONS = 12;
 const INVENTORY_DISCARD_ESCAPE_DISTANCE = 3;
+const INVENTORY_DISCARD_POCKET_DEPTH = 2;
 const INVENTORY_DISCARD_SITE_DISTANCE = 6;
 const INVENTORY_DISCARD_ESCAPE_MAX_SEARCH_TIME_MS = 3_000;
 const LOW_VALUE_DEATH_RECOVERY_ITEM_IDS = new Set([
@@ -9519,56 +9520,6 @@ function ensureInventorySpace(
         }
         return false;
       });
-    const findDiscardPocketYaw = (
-      origin: BeatGamePosition,
-      pocket: BeatGamePosition,
-    ) =>
-      Effect.gen(function* () {
-        const idealYaw = Math.atan2(
-          -(pocket.x - origin.x),
-          pocket.z - origin.z,
-        ) * 180 / Math.PI;
-        for (
-          const offset of [
-            0,
-            -15,
-            15,
-            -30,
-            30,
-            -45,
-            45,
-            -60,
-            60,
-            -75,
-            75,
-            -90,
-            90,
-          ]
-        ) {
-          const yaw = wrappedDegrees(idealYaw + offset);
-          const yawRadians = yaw * Math.PI / 180;
-          const clearance = yield* state.driver.raycast({
-            direction: {
-              x: -Math.sin(yawRadians),
-              y: 0,
-              z: Math.cos(yawRadians),
-            },
-            maximumDistance: INVENTORY_DISCARD_ESCAPE_DISTANCE,
-            includeFluids: false,
-          }).pipe(Effect.either);
-          if (
-            clearance._tag === "Right"
-            && (
-              clearance.right.block === undefined
-              || clearance.right.distance
-                >= INVENTORY_DISCARD_ESCAPE_DISTANCE - 0.25
-            )
-          ) {
-            return yaw;
-          }
-        }
-        return undefined;
-      });
     const targetEmptySlots = Math.min(
       36,
       minimumEmptySlots + INVENTORY_EMPTY_SLOT_BUFFER,
@@ -9610,29 +9561,41 @@ function ensureInventorySpace(
             -(discardSitePosition.x - discardSiteOrigin.x),
             discardSitePosition.z - discardSiteOrigin.z,
           ) * 180 / Math.PI;
-          const excavatedPocket = yield* tryRelativeDiscardPath(
-            current,
-            INVENTORY_DISCARD_ESCAPE_DISTANCE,
-            true,
-            [90, -90],
-            corridorYaw,
+          const pocketYaw = wrappedDegrees(
+            Math.round((corridorYaw + 90) / 90) * 90,
           );
-          if (excavatedPocket) {
-            const discardPocketPosition = (yield* state.driver.observe)
-              .player.position;
-            const returnedToDiscardSite = yield* state.driver.pathfind(
-              discardSitePosition,
-              0.75,
-              discardPath(false),
-            ).pipe(Effect.either);
-            if (returnedToDiscardSite._tag === "Right") {
-              current = yield* state.driver.observe;
-              discardPocketYaw = yield* findDiscardPocketYaw(
-                current.player.position,
-                discardPocketPosition,
-              );
+          const pocketYawRadians = pocketYaw * Math.PI / 180;
+          const pocketStepX = Math.round(-Math.sin(pocketYawRadians));
+          const pocketStepZ = Math.round(Math.cos(pocketYawRadians));
+          const pocketOriginX = Math.floor(discardSitePosition.x);
+          const pocketOriginY = Math.floor(discardSitePosition.y);
+          const pocketOriginZ = Math.floor(discardSitePosition.z);
+          for (
+            let distance = 1;
+            distance <= INVENTORY_DISCARD_POCKET_DEPTH;
+            distance += 1
+          ) {
+            for (const yOffset of [1, 0]) {
+              const position = {
+                x: pocketOriginX + pocketStepX * distance,
+                y: pocketOriginY + yOffset,
+                z: pocketOriginZ + pocketStepZ * distance,
+                dimension: discardSitePosition.dimension,
+              };
+              const blocks = yield* state.driver.queryBlocks({
+                center: blockCenter(position),
+                radius: 0.25,
+                selector: { diggable: true },
+                maximumResults: 1,
+              });
+              if (blocks.some((block) =>
+                sameBlockPosition(block.position, position)
+              )) {
+                yield* state.driver.act({ type: "dig-block", position });
+              }
             }
           }
+          discardPocketYaw = pocketYaw;
         }
       }
       if (current.inventory.emptyPlayerSlots === undefined) {

@@ -16453,27 +16453,24 @@ describe("beat-game run lifecycle", () => {
       requiredStation: "minecraft:crafting_table",
       missing: [],
     });
-    driver.blockQueryResolver = ({ selector }) =>
-      selector.blockIds?.includes("minecraft:crafting_table") === true
-        ? [blockObservation({
+    driver.blockQueryResolver = ({ center, selector }) => {
+      if (selector.blockIds?.includes("minecraft:crafting_table") === true) {
+        return [blockObservation({
           x: 1,
           y: 64,
           z: 0,
           dimension: "minecraft:overworld",
-        }, { blockId: "minecraft:crafting_table" })]
+        }, { blockId: "minecraft:crafting_table" })];
+      }
+      return selector.diggable === true
+        ? [blockObservation({
+          x: Math.floor(center.x),
+          y: Math.floor(center.y),
+          z: Math.floor(center.z),
+          dimension: center.dimension,
+        })]
         : [];
-    driver.raycastResolver = ({ direction }) =>
-      direction.z < -0.9
-        ? { distance: 0 }
-        : {
-          distance: 1,
-          block: blockObservation({
-            x: -6,
-            y: 64,
-            z: 1,
-            dimension: "minecraft:overworld",
-          }),
-        };
+    };
     const discardTimeline: string[] = [];
     const resolvePath = driver.pathResolver;
     driver.pathResolver = (position, radius, policy) =>
@@ -16490,11 +16487,6 @@ describe("beat-game run lifecycle", () => {
                     ? "path:discard-site"
                     : "path:pocket-return",
                 );
-              } else if (
-                position.x < -5.9
-                && position.z < -2.9
-              ) {
-                discardTimeline.push("path:side-pocket");
               } else if (
                 Math.abs(position.x) < 0.01
                 && Math.abs(position.z) < 0.01
@@ -16529,10 +16521,6 @@ describe("beat-game run lifecycle", () => {
             && policy.allowMining === false
             && !(
               Math.abs(position.x) < 0.001
-              && Math.abs(position.z) < 0.001
-            )
-            && !(
-              Math.abs(position.x + 6) < 0.001
               && Math.abs(position.z) < 0.001
             )
             ? Effect.fail(new BeatGameDriverError({
@@ -16614,6 +16602,11 @@ describe("beat-game run lifecycle", () => {
             },
           });
         }
+        if (action.type === "dig-block") {
+          discardTimeline.push(
+            `dig:${action.position.x}:${action.position.y}:${action.position.z}`,
+          );
+        }
         if (action.type === "toss-items") {
           tossActions += 1;
           const itemId = action.selector.itemIds?.[0];
@@ -16672,10 +16665,12 @@ describe("beat-game run lifecycle", () => {
       action.type === "look"
       && Math.abs(Math.abs(action.yaw) - 180) < 0.001
     )).toHaveLength(1);
-    expect(discardTimeline.slice(0, 6)).toEqual([
+    expect(discardTimeline.slice(0, 8)).toEqual([
       "path:discard-site",
-      "path:side-pocket",
-      "path:pocket-return",
+      "dig:-6:65:-1",
+      "dig:-6:64:-1",
+      "dig:-6:65:-2",
+      "dig:-6:64:-2",
       "toss:minecraft:raw_copper",
       "toss:minecraft:cobblestone",
       "path:return",
@@ -16696,10 +16691,6 @@ describe("beat-game run lifecycle", () => {
       && policy.allowPlacing === false
       && policy.avoidFluids === true
     )).toHaveLength(1);
-    expect(driver.raycasts.some(({ direction, maximumDistance }) =>
-      direction.z < -0.9
-      && maximumDistance === 3
-    )).toBe(true);
   });
 
   it("stops an in-flight collection once external inventory gains meet its buffered target", async () => {
