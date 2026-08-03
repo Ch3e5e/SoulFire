@@ -11305,6 +11305,7 @@ describe("beat-game run lifecycle", () => {
     })));
 
     expect(driver.paths).toHaveLength(1);
+    expect(driver.paths[0]?.policy.avoidFluids).toBe(true);
     expect(driver.currentObservation.player.position.y).toBe(64);
   }, 15_000);
 

@@ -9213,6 +9213,7 @@ function pathfindToFirstReachableSurface(
     ...state.strategy.path,
     allowMining: true,
     allowPlacing: true,
+    avoidFluids: true,
   },
 ): Effect.Effect<void, BeatGameDriverError> {
   const target = targets[index];
