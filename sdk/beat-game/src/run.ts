@@ -8661,20 +8661,39 @@ function huntOrExplore(
         && targetDistanceSquared
           > AQUATIC_HUNT_ATTACK_APPROACH_RADIUS ** 2
       ) {
-        const approached = yield* state.driver.pathfind(
-          target.position,
-          AQUATIC_HUNT_ATTACK_APPROACH_RADIUS,
-          targetExplorationPath,
-        ).pipe(
-          Effect.as(true),
-          Effect.catchAll((cause) =>
-            cause.operation === "pathfind"
-                || cause.operation === "pathfindXZ"
-              ? Effect.succeed(false)
-              : Effect.fail(cause)
+        const approachOutcome = yield* Effect.raceFirst(
+          state.driver.pathfind(
+            target.position,
+            AQUATIC_HUNT_ATTACK_APPROACH_RADIUS,
+            targetExplorationPath,
+          ).pipe(
+            Effect.as("approached" as const),
+            Effect.catchAll((cause) =>
+              cause.operation === "pathfind"
+                  || cause.operation === "pathfindXZ"
+                ? Effect.succeed("route-failed" as const)
+                : Effect.fail(cause)
+            ),
+          ),
+          waitForUnsafeAquaticHunt(state).pipe(
+            Effect.catchTag("BeatGameDriverError", (cause) =>
+              cause.code === "aquatic_air_low"
+                ? Effect.succeed("air-low" as const)
+                : Effect.fail(cause)
+            ),
           ),
         );
-        if (!approached) {
+        if (approachOutcome === "air-low") {
+          aquaticRetryTargetId = targetId;
+          const latest = yield* state.driver.observe;
+          yield* emergencyAirAscent(
+            state,
+            latest.player.position,
+            { seekDrySurfaceAfterRecovery: false },
+          );
+          continue;
+        }
+        if (approachOutcome === "route-failed") {
           const enteredWater = aquaticHuntAllowed
             ? yield* enterWaterTowardAquaticTarget(state, current, target)
             : false;
