@@ -4114,7 +4114,7 @@ describe("beat-game behavior programs", () => {
     expect(driver.activeControlScopes).toBe(0);
   });
 
-  it("retries portal casting supports after a partial build", async () => {
+  it("scaffolds an isolated portal casting support from solid terrain", async () => {
     const driver = new FakeBeatGameDriver();
     const origin = {
       x: 0,
@@ -4136,6 +4136,26 @@ describe("beat-game behavior programs", () => {
       y: origin.y + 1,
       z: origin.z - 2,
     };
+    const castingStandSupport = {
+      ...castingStand,
+      y: castingStand.y - 1,
+    };
+    const scaffoldBase = {
+      ...castingStandSupport,
+      y: castingStandSupport.y - 1,
+    };
+    const scaffoldAnchor = {
+      ...scaffoldBase,
+      y: scaffoldBase.y - 1,
+    };
+    const safeStand = {
+      ...scaffoldBase,
+      x: scaffoldBase.x + 1,
+    };
+    const safeStandHead = { ...safeStand, y: safeStand.y + 1 };
+    const safeStandSupport = { ...safeStand, y: safeStand.y - 1 };
+    const targetSupport = { ...target, y: target.y - 1 };
+    const waterSupport = { ...water, y: water.y - 1 };
     const key = (position: BeatGameBlockPosition) =>
       `${position.dimension}:${position.x}:${position.y}:${position.z}`;
     const blocks = new Map(frame.blocks.map((position) => [
@@ -4143,6 +4163,29 @@ describe("beat-game behavior programs", () => {
       blockObservation(position, { blockId: "minecraft:obsidian" }),
     ]));
     blocks.delete(key(target));
+    for (const position of [
+      castingStandSupport,
+      scaffoldBase,
+      safeStand,
+      safeStandHead,
+    ]) {
+      blocks.set(key(position), blockObservation(position, {
+        blockId: "minecraft:air",
+        diggable: false,
+        replaceable: true,
+        solid: false,
+      }));
+    }
+    for (const position of [
+      scaffoldAnchor,
+      safeStandSupport,
+      targetSupport,
+      waterSupport,
+    ]) {
+      blocks.set(key(position), blockObservation(position, {
+        blockId: "minecraft:cobblestone",
+      }));
+    }
     driver.currentObservation = observation({
       counts: {
         "minecraft:bucket": 1,
@@ -4150,9 +4193,14 @@ describe("beat-game behavior programs", () => {
         "minecraft:lava_bucket": 1,
         "minecraft:water_bucket": 1,
       },
-      position: origin,
+      position: {
+        x: scaffoldBase.x + 0.5,
+        y: scaffoldBase.y,
+        z: scaffoldBase.z + 0.5,
+        dimension: scaffoldBase.dimension,
+      },
     });
-    driver.blockQueryResolver = ({ center, selector }) => {
+    driver.blockQueryResolver = ({ center, radius, selector }) => {
       if (selector.blockIds?.includes("minecraft:lava") === true) {
         return [];
       }
@@ -4160,6 +4208,9 @@ describe("beat-game behavior programs", () => {
         return [...blocks.values()].filter(({ blockId }) =>
           blockId === "minecraft:obsidian"
         );
+      }
+      if (radius > 1) {
+        return [...blocks.values()];
       }
       const position = {
         x: Math.floor(center.x),
@@ -4172,22 +4223,31 @@ describe("beat-game behavior programs", () => {
         replaceable: true,
       })];
     };
-    let buildAttempt = 0;
     driver.taskObserver = (task) => {
       if (task.type !== "build") {
         return;
       }
-      buildAttempt += 1;
-      task.blocks.forEach((block, index) => {
-        if (buildAttempt === 1 && index === 0) {
-          return;
-        }
+      task.blocks.forEach((block) => {
         const position = {
           x: task.origin.x + block.offset.x,
           y: task.origin.y + block.offset.y,
           z: task.origin.z + block.offset.z,
           dimension: task.origin.dimension,
         };
+        const supported = [
+          { ...position, y: position.y - 1 },
+          { ...position, y: position.y + 1 },
+          { ...position, x: position.x - 1 },
+          { ...position, x: position.x + 1 },
+          { ...position, z: position.z - 1 },
+          { ...position, z: position.z + 1 },
+        ].some((neighbor) => {
+          const observed = blocks.get(key(neighbor));
+          return observed !== undefined && !observed.replaceable;
+        });
+        if (!supported) {
+          return;
+        }
         blocks.set(key(position), blockObservation(position, {
           blockId: block.blockId,
         }));
@@ -4245,9 +4305,29 @@ describe("beat-game behavior programs", () => {
     }));
 
     const builds = driver.tasks.filter((task) => task.type === "build");
-    expect(builds).toHaveLength(3);
-    expect(builds[0]?.blocks).toEqual(builds[1]?.blocks);
-    expect(builds[1]?.blocks).toHaveLength(1);
+    expect(builds).toHaveLength(2);
+    expect(builds[0]?.blocks).toHaveLength(1);
+    expect(builds[1]?.blocks.map(({ offset }) => ({
+      x: origin.x + offset.x,
+      y: origin.y + offset.y,
+      z: origin.z + offset.z,
+      dimension: origin.dimension,
+    }))).toEqual([scaffoldBase, castingStandSupport]);
+    expect(driver.paths).toContainEqual({
+      position: {
+        x: safeStand.x + 0.5,
+        y: safeStand.y,
+        z: safeStand.z + 0.5,
+        dimension: safeStand.dimension,
+      },
+      radius: 0.75,
+      policy: expect.objectContaining({
+        allowMining: false,
+        allowPlacing: false,
+        avoidFluids: true,
+        maxFallDistance: 1,
+      }),
+    });
     expect(blocks.get(key(target))?.blockId).toBe("minecraft:obsidian");
   });
 

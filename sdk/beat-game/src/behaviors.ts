@@ -55,6 +55,8 @@ const SUBMERGED_DROP_PICKUP_MINIMUM_AIR_RATIO = 0.35;
 const PORTAL_CASTING_LAVA_SIGHT_CLEARING_BLOCKS = 4;
 const PORTAL_CASTING_LAVA_COLLECTION_POLLS = 10;
 const PORTAL_CASTING_WATER_RECOVERY_ATTEMPTS = 3;
+const PORTAL_CASTING_SUPPORT_SCAFFOLD_RADIUS = 4.9;
+const PORTAL_CASTING_SUPPORT_SCAFFOLD_MAXIMUM_RESULTS = 1_000;
 const STAIRCASE_INITIAL_LANDING_ATTEMPTS = 4;
 const STAIRCASE_COLLAPSE_RECOVERY_ATTEMPTS = 16;
 const AVOIDED_FLUID_BLOCK_IDS = [
@@ -5092,13 +5094,13 @@ function buildTemporaryPortalCastingSupports(
         missing.push(support);
       }
     }
-    yield* ensurePortalCastingSupports(
+    const scaffold = yield* ensurePortalCastingSupports(
       driver,
       frame,
       missing,
       path,
     );
-    return missing;
+    return uniquePositions([...missing, ...scaffold]);
   });
 }
 
@@ -5107,13 +5109,33 @@ function ensurePortalCastingSupports(
   frame: PortalFrame,
   supports: readonly BeatGameBlockPosition[],
   path?: Partial<BeatGamePathPolicy>,
-): Effect.Effect<void, BeatGameDriverError> {
+): Effect.Effect<readonly BeatGameBlockPosition[], BeatGameDriverError> {
   return Effect.gen(function* () {
     let missing = [...supports];
+    const scaffold: BeatGameBlockPosition[] = [];
     for (let attempt = 0; attempt < 3 && missing.length > 0; attempt += 1) {
+      const placements = attempt === 0
+        ? missing
+        : uniquePositions((yield* Effect.forEach(
+          missing,
+          (support) => planPortalCastingSupportScaffold(
+            driver,
+            frame,
+            support,
+          ),
+          { concurrency: 1 },
+        )).flat());
+      if (attempt > 0) {
+        scaffold.push(...placements);
+      }
+      yield* leavePortalCastingScaffoldCells(
+        driver,
+        placements,
+        path,
+      );
       yield* buildStructure(driver, {
         origin: frame.origin,
-        blocks: missing.map((position) => ({
+        blocks: placements.map((position) => ({
           offset: {
             x: position.x - frame.origin.x,
             y: position.y - frame.origin.y,
@@ -5139,6 +5161,176 @@ function ensurePortalCastingSupports(
         `Portal casting support is missing at ${positionKey(firstMissing)}`,
       ));
     }
+    return uniquePositions(scaffold);
+  });
+}
+
+function planPortalCastingSupportScaffold(
+  driver: BeatGameDriver,
+  frame: PortalFrame,
+  target: BeatGameBlockPosition,
+): Effect.Effect<readonly BeatGameBlockPosition[], BeatGameDriverError> {
+  return driver.queryBlocks({
+    center: blockCenter(target),
+    radius: PORTAL_CASTING_SUPPORT_SCAFFOLD_RADIUS,
+    selector: {},
+    maximumResults: PORTAL_CASTING_SUPPORT_SCAFFOLD_MAXIMUM_RESULTS,
+  }).pipe(
+    Effect.map((blocks) => {
+      const observed = new Map(blocks.map((block) => [
+        positionKey(block.position),
+        block,
+      ]));
+      const forbidden = new Set([
+        ...frame.blocks,
+        ...frame.interior,
+      ].map(positionKey));
+      forbidden.delete(positionKey(target));
+      const queued = new Set([positionKey(target)]);
+      const parents = new Map<string, BeatGameBlockPosition | undefined>([
+        [positionKey(target), undefined],
+      ]);
+      const queue: BeatGameBlockPosition[] = [target];
+      for (let index = 0; index < queue.length; index += 1) {
+        const current = queue[index]!;
+        for (const adjacent of portalCastingScaffoldNeighbors(current)) {
+          const block = observed.get(positionKey(adjacent));
+          if (
+            isReliablePortalCastingSupport(block)
+            && !isAvoidedFluidBlockId(block.blockId)
+          ) {
+            const scaffold: BeatGameBlockPosition[] = [];
+            let step: BeatGameBlockPosition | undefined = current;
+            while (step !== undefined) {
+              scaffold.push(step);
+              step = parents.get(positionKey(step));
+            }
+            return scaffold;
+          }
+          const key = positionKey(adjacent);
+          if (
+            queued.has(key)
+            || forbidden.has(key)
+            || !portalCastingScaffoldPositionWithinBounds(target, adjacent)
+            || block?.replaceable !== true
+            || isAvoidedFluidBlockId(block.blockId)
+          ) {
+            continue;
+          }
+          queued.add(key);
+          parents.set(key, current);
+          queue.push(adjacent);
+        }
+      }
+      return [target];
+    }),
+  );
+}
+
+function portalCastingScaffoldNeighbors(
+  position: BeatGameBlockPosition,
+): readonly BeatGameBlockPosition[] {
+  return [
+    { ...position, y: position.y - 1 },
+    { ...position, x: position.x - 1 },
+    { ...position, x: position.x + 1 },
+    { ...position, z: position.z - 1 },
+    { ...position, z: position.z + 1 },
+    { ...position, y: position.y + 1 },
+  ];
+}
+
+function portalCastingScaffoldPositionWithinBounds(
+  origin: BeatGameBlockPosition,
+  candidate: BeatGameBlockPosition,
+): boolean {
+  const radius = Math.floor(PORTAL_CASTING_SUPPORT_SCAFFOLD_RADIUS);
+  return candidate.dimension === origin.dimension
+    && Math.abs(candidate.x - origin.x) <= radius
+    && Math.abs(candidate.y - origin.y) <= radius
+    && Math.abs(candidate.z - origin.z) <= radius;
+}
+
+function leavePortalCastingScaffoldCells(
+  driver: BeatGameDriver,
+  scaffold: readonly BeatGameBlockPosition[],
+  path?: Partial<BeatGamePathPolicy>,
+): Effect.Effect<void, BeatGameDriverError> {
+  return Effect.gen(function* () {
+    const observation = yield* driver.observe;
+    const playerFeet = {
+      x: Math.floor(observation.player.position.x),
+      y: Math.floor(observation.player.position.y),
+      z: Math.floor(observation.player.position.z),
+      dimension: observation.player.position.dimension,
+    } satisfies BeatGameBlockPosition;
+    const playerHead = { ...playerFeet, y: playerFeet.y + 1 };
+    if (!scaffold.some((position) =>
+      samePosition(position, playerFeet)
+      || samePosition(position, playerHead)
+    )) {
+      return;
+    }
+    const center = scaffold[0];
+    if (center === undefined) {
+      return;
+    }
+    const blocks = yield* driver.queryBlocks({
+      center: blockCenter(center),
+      radius: PORTAL_CASTING_SUPPORT_SCAFFOLD_RADIUS,
+      selector: {},
+      maximumResults: PORTAL_CASTING_SUPPORT_SCAFFOLD_MAXIMUM_RESULTS,
+    });
+    const observed = new Map(blocks.map((block) => [
+      positionKey(block.position),
+      block,
+    ]));
+    const scaffoldKeys = new Set(scaffold.map(positionKey));
+    const candidates = blocks
+      .filter((feet) => {
+        const head = observed.get(positionKey({
+          ...feet.position,
+          y: feet.position.y + 1,
+        }));
+        const support = observed.get(positionKey({
+          ...feet.position,
+          y: feet.position.y - 1,
+        }));
+        return feet.replaceable
+          && !isAvoidedFluidBlockId(feet.blockId)
+          && head?.replaceable === true
+          && !isAvoidedFluidBlockId(head.blockId)
+          && isReliablePortalCastingSupport(support)
+          && !scaffoldKeys.has(positionKey(feet.position))
+          && !scaffoldKeys.has(positionKey(head.position));
+      })
+      .map(({ position }) => ({
+        x: position.x + 0.5,
+        y: position.y,
+        z: position.z + 0.5,
+        dimension: position.dimension,
+      }))
+      .sort((left, right) =>
+        distanceSquared(left, observation.player.position)
+          - distanceSquared(right, observation.player.position)
+      )
+      .slice(0, 16);
+    for (const candidate of candidates) {
+      const reached = yield* driver.pathfind(candidate, 0.75, {
+        ...mergePathPolicy(path),
+        allowMining: false,
+        allowPlacing: false,
+        avoidFluids: true,
+        maxFallDistance: 1,
+      }).pipe(Effect.either);
+      if (reached._tag === "Right") {
+        return;
+      }
+    }
+    return yield* Effect.fail(behaviorError(
+      driver,
+      "Could not leave the temporary portal casting scaffold cells",
+    ));
   });
 }
 
