@@ -9486,22 +9486,22 @@ function ensureInventorySpace(
 ): Effect.Effect<void, BeatGameDriverError> {
   return Effect.gen(function* () {
     let current = observation;
+    const discardPath = (allowMining: boolean) => ({
+      ...state.strategy.path,
+      allowMining,
+      allowPlacing: false,
+      avoidFluids: true,
+      maxSearchTimeMs: Math.min(
+        state.strategy.path.maxSearchTimeMs,
+        INVENTORY_DISCARD_ESCAPE_MAX_SEARCH_TIME_MS,
+      ),
+    });
     const tryRelativeDiscardPath = (
       origin: BeatGameObservation,
       distance: number,
       allowMining: boolean,
     ) =>
       Effect.gen(function* () {
-        const path = {
-          ...state.strategy.path,
-          allowMining,
-          allowPlacing: false,
-          avoidFluids: true,
-          maxSearchTimeMs: Math.min(
-            state.strategy.path.maxSearchTimeMs,
-            INVENTORY_DISCARD_ESCAPE_MAX_SEARCH_TIME_MS,
-          ),
-        };
         for (const yawOffset of [0, 90, -90, 180]) {
           const yawRadians = (origin.player.rotation.yaw + yawOffset)
             * Math.PI / 180;
@@ -9510,7 +9510,7 @@ function ensureInventorySpace(
             y: origin.player.position.y,
             z: origin.player.position.z + Math.cos(yawRadians) * distance,
             dimension: origin.player.position.dimension,
-          }, 0.75, path).pipe(Effect.either);
+          }, 0.75, discardPath(allowMining)).pipe(Effect.either);
           if (escaped._tag === "Right") {
             return true;
           }
@@ -9521,6 +9521,7 @@ function ensureInventorySpace(
       current.inventory.emptyPlayerSlots !== undefined
       && current.inventory.emptyPlayerSlots < minimumEmptySlots
     ) {
+      const discardSiteOrigin = current.player.position;
       const relocated = yield* tryRelativeDiscardPath(
         current,
         INVENTORY_DISCARD_SITE_DISTANCE,
@@ -9532,6 +9533,27 @@ function ensureInventorySpace(
       if (current.inventory.emptyPlayerSlots === undefined) {
         return;
       }
+      const discardSiteDeltaX = current.player.position.x
+        - discardSiteOrigin.x;
+      const discardSiteDeltaZ = current.player.position.z
+        - discardSiteOrigin.z;
+      const discardSiteDistance = Math.hypot(
+        discardSiteDeltaX,
+        discardSiteDeltaZ,
+      );
+      const discardRetreatTarget = relocated
+          && discardSiteDistance > INVENTORY_DISCARD_ESCAPE_DISTANCE
+        ? {
+          x: current.player.position.x
+            - discardSiteDeltaX / discardSiteDistance
+              * INVENTORY_DISCARD_ESCAPE_DISTANCE,
+          y: current.player.position.y,
+          z: current.player.position.z
+            - discardSiteDeltaZ / discardSiteDistance
+              * INVENTORY_DISCARD_ESCAPE_DISTANCE,
+          dimension: current.player.position.dimension,
+        }
+        : undefined;
       const discardItemId = INVENTORY_DISCARD_PRIORITY.find((itemId) =>
         (current.inventory.counts[itemId] ?? 0) > 0
       );
@@ -9564,7 +9586,12 @@ function ensureInventorySpace(
       const emptySlotsBefore = current.inventory.emptyPlayerSlots;
       yield* state.driver.act({
         type: "look",
-        yaw: wrappedDegrees(current.player.rotation.yaw + 180),
+        yaw: discardRetreatTarget === undefined
+          ? wrappedDegrees(current.player.rotation.yaw + 180)
+          : wrappedDegrees(
+            Math.atan2(-discardSiteDeltaX, discardSiteDeltaZ)
+              * 180 / Math.PI,
+          ),
         pitch: -30,
       });
       yield* state.driver.act({
@@ -9572,11 +9599,20 @@ function ensureInventorySpace(
         selector: { itemIds: [itemId] },
         count,
       });
-      const escapedWithoutMining = yield* tryRelativeDiscardPath(
-        current,
-        INVENTORY_DISCARD_ESCAPE_DISTANCE,
-        false,
-      );
+      let escapedWithoutMining = discardRetreatTarget === undefined
+        ? false
+        : (yield* state.driver.pathfind(
+          discardRetreatTarget,
+          0.75,
+          discardPath(false),
+        ).pipe(Effect.either))._tag === "Right";
+      if (!escapedWithoutMining) {
+        escapedWithoutMining = yield* tryRelativeDiscardPath(
+          current,
+          INVENTORY_DISCARD_ESCAPE_DISTANCE,
+          false,
+        );
+      }
       if (!escapedWithoutMining) {
         yield* tryRelativeDiscardPath(
           current,

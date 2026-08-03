@@ -16468,15 +16468,26 @@ describe("beat-game run lifecycle", () => {
       resolvePath(position, radius, policy).pipe(
         Effect.tap(() =>
           Effect.sync(() => {
+            const relocated = radius === 0.75
+              && policy.allowMining === true
+              && Math.abs(position.x) < 0.001
+              && Math.abs(position.z - 6) < 0.001;
             driver.currentObservation = observation({
               counts: driver.currentObservation.inventory.counts,
               emptyPlayerSlots: 0,
+              position: relocated
+                ? position
+                : driver.currentObservation.player.position,
             });
           })
         ),
         Effect.flatMap(() =>
           radius === 0.75
             && policy.allowMining === false
+            && !(
+              Math.abs(position.x) < 0.001
+              && Math.abs(position.z - 3) < 0.001
+            )
             ? Effect.fail(new BeatGameDriverError({
               operation: "pathfind",
               retryable: false,
@@ -16601,38 +16612,6 @@ describe("beat-game run lifecycle", () => {
       && Math.abs(position.x) < 0.001
       && Math.abs(position.z - 3) < 0.001
       && policy.allowMining === false
-      && policy.allowPlacing === false
-      && policy.avoidFluids === true
-    )).toHaveLength(2);
-    expect(driver.paths.filter(({ position, radius, policy }) =>
-      radius === 0.75
-      && Math.abs(position.x + 3) < 0.001
-      && Math.abs(position.z) < 0.001
-      && policy.allowMining === false
-      && policy.allowPlacing === false
-      && policy.avoidFluids === true
-    )).toHaveLength(2);
-    expect(driver.paths.filter(({ position, radius, policy }) =>
-      radius === 0.75
-      && Math.abs(position.x - 3) < 0.001
-      && Math.abs(position.z) < 0.001
-      && policy.allowMining === false
-      && policy.allowPlacing === false
-      && policy.avoidFluids === true
-    )).toHaveLength(2);
-    expect(driver.paths.filter(({ position, radius, policy }) =>
-      radius === 0.75
-      && Math.abs(position.x) < 0.001
-      && Math.abs(position.z + 3) < 0.001
-      && policy.allowMining === false
-      && policy.allowPlacing === false
-      && policy.avoidFluids === true
-    )).toHaveLength(2);
-    expect(driver.paths.filter(({ position, radius, policy }) =>
-      radius === 0.75
-      && Math.abs(position.x) < 0.001
-      && Math.abs(position.z - 3) < 0.001
-      && policy.allowMining === true
       && policy.allowPlacing === false
       && policy.avoidFluids === true
     )).toHaveLength(2);
