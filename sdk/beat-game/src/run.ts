@@ -3683,6 +3683,7 @@ function recoverFromFluid(
         state,
         60,
         observation.player.position.y,
+        observation.player.air,
       )),
       Effect.ensuring(
         state.driver.act({ type: "reset-movement" }).pipe(Effect.ignore),
@@ -3747,6 +3748,7 @@ function waitForAirRecovery(
   state: RunState,
   attemptsRemaining: number,
   highestY: number,
+  highestAir: number,
   stagnantObservations = 0,
 ): Effect.Effect<boolean, BeatGameDriverError> {
   return Effect.sleep(100).pipe(
@@ -3761,7 +3763,8 @@ function waitForAirRecovery(
       }
       const nextY = observation.player.position.y;
       const madeProgress = nextY
-        > highestY + AIR_ESCAPE_ASCENT_PROGRESS_EPSILON;
+          > highestY + AIR_ESCAPE_ASCENT_PROGRESS_EPSILON
+        || observation.player.air > highestAir;
       const nextStagnantObservations = madeProgress
         ? 0
         : stagnantObservations + 1;
@@ -3776,6 +3779,7 @@ function waitForAirRecovery(
         state,
         attemptsRemaining - 1,
         Math.max(highestY, nextY),
+        Math.max(highestAir, observation.player.air),
         nextStagnantObservations,
       );
     }),

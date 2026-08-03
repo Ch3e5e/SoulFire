@@ -14108,6 +14108,7 @@ describe("beat-game run lifecycle", () => {
     } as const;
     driver.entityResults = [salmon];
     let attacks = 0;
+    let ascending = false;
     driver.blockQueryResolver = () =>
       driver.currentObservation.player.air < 120
         ? [blockObservation(
@@ -14122,16 +14123,28 @@ describe("beat-game run lifecycle", () => {
         : [];
     driver.actionResolver = (action) =>
       Effect.sync(() => {
-        if (action.type !== "set-movement") {
-          return {};
+        if (action.type === "set-movement") {
+          ascending = true;
         }
-        driver.currentObservation = observation({
-          health: 20,
-          food: 6,
-          air: 300,
-          counts: driver.currentObservation.inventory.counts,
-        });
         return {};
+      });
+    driver.observationResolver = () =>
+      Effect.sync(() => {
+        if (
+          ascending
+          && driver.currentObservation.player.air < 300
+        ) {
+          driver.currentObservation = observation({
+            health: 20,
+            food: 6,
+            air: Math.min(
+              300,
+              driver.currentObservation.player.air + 20,
+            ),
+            counts: driver.currentObservation.inventory.counts,
+          });
+        }
+        return driver.currentObservation;
       });
     driver.taskResolver = (task) =>
       Effect.suspend(() => {
