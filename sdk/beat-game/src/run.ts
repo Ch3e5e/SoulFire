@@ -142,6 +142,8 @@ const DRY_SURFACE_APPROACH_RADIUS = 0.75;
 const FURNACE_RECOVERY_RADIUS = 12;
 const NEARBY_REQUIREMENT_DROP_RADIUS = 12;
 const NEARBY_REQUIREMENT_DROP_MAXIMUM_VERTICAL_DISTANCE = 6;
+const URGENT_FOOD_DROP_MAXIMUM_VERTICAL_DISTANCE =
+  NEARBY_REQUIREMENT_DROP_RADIUS;
 const RESOURCE_COLLECTION_RESERVED_SLOTS = 3;
 const REQUIREMENT_NO_PROGRESS_REPLAN_DELAY_MS = 1_000;
 const LOCAL_NAVIGATION_RECOVERY_MINIMUM_DISTANCE = 3;
@@ -5185,8 +5187,10 @@ function recoverNearbyRequirementDrops(
   requirement: BeatGameItemRequirement,
   observation: BeatGameObservation,
 ): Effect.Effect<boolean, BeatGameDriverError> {
+  const foodRequirement = requirement.key === "food"
+    || requirement.key === "food-supply";
   const shouldCrossFluids = (
-    requirement.key === "food" || requirement.key === "food-supply"
+    foodRequirement
   ) && (
     observation.player.health >= state.strategy.minimumHealth
     || (
@@ -5194,6 +5198,10 @@ function recoverNearbyRequirementDrops(
       && observation.player.health > LETHAL_MELEE_DISENGAGE_HEALTH
     )
   );
+  const maximumVerticalDistance = foodRequirement
+      && observation.player.food <= URGENT_HUNGER_FOOD_LEVEL
+    ? URGENT_FOOD_DROP_MAXIMUM_VERTICAL_DISTANCE
+    : NEARBY_REQUIREMENT_DROP_MAXIMUM_VERTICAL_DISTANCE;
   const itemIds = [...new Set(
     requirement.key === "food"
       ? [
@@ -5227,16 +5235,15 @@ function recoverNearbyRequirementDrops(
           entity.itemId !== undefined
           && itemIdSet.has(entity.itemId)
           && Math.abs(
-              entity.position.y - observation.player.position.y,
-            ) <= NEARBY_REQUIREMENT_DROP_MAXIMUM_VERTICAL_DISTANCE
+            entity.position.y - observation.player.position.y,
+          ) <= maximumVerticalDistance
         )
         ? collectNearbyDrops(state.driver, {
           itemIds,
           radius: NEARBY_REQUIREMENT_DROP_RADIUS,
           maximumDrops: 32,
           settleDelayMs: 0,
-          maximumVerticalDistance:
-            NEARBY_REQUIREMENT_DROP_MAXIMUM_VERTICAL_DISTANCE,
+          maximumVerticalDistance,
           path: {
             ...state.strategy.path,
             allowPlacing: false,

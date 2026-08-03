@@ -14941,7 +14941,7 @@ describe("beat-game run lifecycle", () => {
     });
   });
 
-  it("recovers a submerged food drop after surfacing for air", async () => {
+  it("recovers an urgent food drop from a nearby deep staircase", async () => {
     const driver = new FakeBeatGameDriver();
     const salmon = {
       connectionEpoch: "epoch-1",
@@ -14950,7 +14950,7 @@ describe("beat-game run lifecycle", () => {
       itemId: "minecraft:salmon",
       position: {
         x: 3,
-        y: 58,
+        y: 55,
         z: 0,
         dimension: "minecraft:overworld",
       },
@@ -14970,7 +14970,7 @@ describe("beat-game run lifecycle", () => {
       query.selector.blockIds?.includes("minecraft:water") === true
         ? [blockObservation({
           x: 3,
-          y: 58,
+          y: 55,
           z: 0,
           dimension: "minecraft:overworld",
         }, {
