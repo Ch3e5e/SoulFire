@@ -12155,6 +12155,158 @@ describe("beat-game run lifecycle", () => {
     });
   });
 
+  it("continues descending when visible deep lava has no reachable stand", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const start = {
+      x: 4.5,
+      y: -34,
+      z: 0.5,
+      dimension: "minecraft:overworld",
+    } as const;
+    const source = blockObservation({
+      x: 0,
+      y: -60,
+      z: 0,
+      dimension: "minecraft:overworld",
+    }, {
+      blockId: "minecraft:lava",
+      properties: { level: "0" },
+      replaceable: true,
+    });
+    const dryStand = {
+      x: 2,
+      y: -58,
+      z: 0,
+      dimension: "minecraft:overworld",
+    } as const;
+    driver.currentObservation = observation({
+      position: start,
+      counts: {
+        "minecraft:bucket": 1,
+        "minecraft:cobblestone": 120,
+        "minecraft:cooked_beef": 8,
+        "minecraft:flint_and_steel": 1,
+        "minecraft:iron_ingot": 7,
+        "minecraft:iron_pickaxe": 1,
+        "minecraft:oak_log": 8,
+        "minecraft:shield": 1,
+        "minecraft:stone_sword": 1,
+        "minecraft:water_bucket": 1,
+      },
+    });
+    const dugBlocks = new Set<string>();
+    let resolveDescentStarted!: () => void;
+    const descentStarted = new Promise<void>((resolve) => {
+      resolveDescentStarted = resolve;
+    });
+    driver.actionResolver = (action) =>
+      Effect.sync(() => {
+        if (action.type === "dig-block") {
+          dugBlocks.add(
+            `${action.position.x}:${action.position.y}:${action.position.z}`,
+          );
+          resolveDescentStarted();
+        }
+        return {};
+      });
+    driver.blockQueryResolver = ({ center, radius, selector }) => {
+      if (
+        selector.blockIds?.includes("minecraft:lava") === true
+        && selector.properties?.level === "0"
+      ) {
+        return [source];
+      }
+      if (radius === 4.9 && Object.keys(selector).length === 0) {
+        return [
+          blockObservation(dryStand, {
+            blockId: "minecraft:air",
+            replaceable: true,
+          }),
+          blockObservation({ ...dryStand, y: dryStand.y + 1 }, {
+            blockId: "minecraft:air",
+            replaceable: true,
+          }),
+          blockObservation({ ...dryStand, y: dryStand.y - 1 }),
+        ];
+      }
+      if (
+        (radius === 0.25 || radius === 0.5)
+        && Object.keys(selector).length === 0
+      ) {
+        const position = {
+          x: Math.floor(center.x),
+          y: Math.floor(center.y),
+          z: Math.floor(center.z),
+          dimension: center.dimension,
+        };
+        const dug = dugBlocks.has(
+          `${position.x}:${position.y}:${position.z}`,
+        );
+        return [blockObservation(position, dug
+          ? {
+            blockId: "minecraft:air",
+            diggable: false,
+            replaceable: true,
+          }
+          : { blockId: "minecraft:stone" })];
+      }
+      return [];
+    };
+    driver.pathResolver = (position, radius, policy) => {
+      driver.paths.push({ position, radius, policy });
+      return radius === 0.75
+        ? Effect.fail(new BeatGameDriverError({
+          operation: "pathfind",
+          code: "unreachable",
+          retryable: true,
+          message: "The visible lava ledge is not connected yet",
+        }))
+        : Effect.void;
+    };
+    installStaircaseMovementSimulation(driver, {
+      x: Math.floor(start.x),
+      y: start.y,
+      z: Math.floor(start.z),
+      dimension: start.dimension,
+    });
+    await Effect.runPromise(store.save(checkpoint(
+      BeatGamePhase.ENTER_NETHER,
+      {
+        runId: "visible-deep-lava-run",
+        teamId: "visible-deep-lava-team",
+      },
+    ), undefined));
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        runId: "visible-deep-lava-run",
+        team: { teamId: "visible-deep-lava-team" },
+        checkpointStore: store,
+        strategy: {
+          observationPollMs: 1,
+          portalStrategy: "CAST",
+        },
+      });
+      yield* Effect.promise(() => descentStarted).pipe(
+        Effect.timeout("5 seconds"),
+      );
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    expect(driver.paths).toContainEqual(expect.objectContaining({
+      radius: 0.75,
+      policy: expect.objectContaining({
+        allowMining: false,
+        avoidFluids: true,
+      }),
+    }));
+    expect(driver.actions).toContainEqual(expect.objectContaining({
+      type: "dig-block",
+    }));
+  }, 15_000);
+
   it("returns to dry surface before retrying lava search from an aquifer", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();

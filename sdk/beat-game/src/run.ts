@@ -6783,11 +6783,36 @@ function fillLiquidBucket(
     yield* ensureApproachPickaxe(current);
     current = yield* state.driver.observe;
     if (liquid === "lava") {
-      source = yield* approachLavaSourceFromSide(
+      const approach = yield* approachLavaSourceFromSide(
         state,
         current,
         sources,
-      );
+      ).pipe(Effect.either);
+      if (approach._tag === "Left") {
+        const visibleSourceIsBelow = sources.some(({ position }) =>
+          position.dimension === current.player.position.dimension
+          && position.y < current.player.position.y - 4
+        );
+        if (
+          approach.left.operation === "approach-lava-source"
+          && visibleSourceIsBelow
+          && current.player.position.dimension === "minecraft:overworld"
+          && current.player.position.y > DEEP_LAVA_SEARCH_MAX_Y
+        ) {
+          const targetY = Math.max(
+            DEEP_LAVA_SEARCH_Y,
+            Math.floor(current.player.position.y) - DEEP_LAVA_DESCENT_STEP,
+          );
+          yield* excavateResourceSearchStaircase(
+            state,
+            current.player.position,
+            targetY,
+          );
+          return;
+        }
+        return yield* Effect.fail(approach.left);
+      }
+      source = approach.right;
     } else {
       yield* state.driver.pathfind(
         source.position,
