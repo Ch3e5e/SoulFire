@@ -427,7 +427,10 @@ public final class SimpleMovement extends GraphAction implements Cloneable {
     public MinecraftGraph.SubscriptionSingleResult processBlock(MinecraftGraph graph, SFVec3i key, SimpleMovement simpleMovement,
       BlockState blockState, SFVec3i absoluteKey) {
       var swimmableWater = SFBlockHelpers.isSwimmableWaterBlock(blockState);
-      if (SFBlockHelpers.isBodyPassableBlock(blockState) || swimmableWater) {
+      if (
+        !SFBlockHelpers.isHurtOnTouchSide(blockState)
+          && (SFBlockHelpers.isBodyPassableBlock(blockState) || swimmableWater)
+      ) {
         if (simpleMovement.allowBlockActions) {
           simpleMovement.noNeedToBreak[blockArrayIndex] = true;
         }

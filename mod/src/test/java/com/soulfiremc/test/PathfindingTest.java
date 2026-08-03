@@ -1116,6 +1116,40 @@ final class PathfindingTest {
     }
   }
 
+  @Test
+  void pathfindingExtinguishesFireBeforeEnteringTheTargetBlock() {
+    var accessor = new TestBlockAccessorBuilder();
+    accessor.setBlockAt(0, 0, 0, Blocks.STONE);
+    accessor.setBlockAt(1, 0, 0, Blocks.STONE);
+    accessor.setBlockAt(1, 1, 0, Blocks.FIRE);
+
+    var inventory = new ProjectedInventory(
+      List.of(),
+      TestMiningCostCalculator.INSTANCE,
+      TestPathConstraint.INSTANCE
+    );
+    var routeFinder = new RouteFinder(
+      new MinecraftGraph(
+        accessor.build(),
+        inventory,
+        TestPathConstraint.INSTANCE
+      ),
+      new PosGoal(1, 1, 0)
+    );
+
+    var route = routeFinder.findRouteFuture(
+      NodeState.forInfo(new SFVec3i(0, 1, 0), inventory)
+    ).join();
+    var foundRoute = assertInstanceOf(
+      RouteFinder.FoundRouteResult.class,
+      route
+    );
+
+    assertEquals(2, foundRoute.actions().size());
+    assertInstanceOf(BlockBreakAction.class, foundRoute.actions().getFirst());
+    assertInstanceOf(MovementAction.class, foundRoute.actions().getLast());
+  }
+
   @ParameterizedTest
   @ValueSource(ints = {1, 2, 3, 4})
   void pathfindingDigBelowUnsafe(int level) {

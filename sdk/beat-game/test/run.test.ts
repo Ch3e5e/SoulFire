@@ -745,6 +745,94 @@ describe("beat-game run lifecycle", () => {
     );
   });
 
+  it("interrupts corpse travel after unexplained environmental damage", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const deathPosition = {
+      x: 48,
+      y: 32,
+      z: -24,
+      dimension: "minecraft:overworld",
+    };
+    const observedAt = new Date(Date.now() - 15 * 60 * 1_000).toISOString();
+    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
+      runId: "environmental-damage-recovery-run",
+      teamId: "environmental-damage-recovery-team",
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        deathPositions: [{
+          key: `death:${observedAt}`,
+          value: {
+            ...deathPosition,
+            inventoryCounts: {
+              "minecraft:iron_pickaxe": 1,
+              "minecraft:cobblestone": 32,
+            },
+          },
+          observedAt,
+          confidence: 1,
+        }],
+      },
+    }, undefined));
+    const replacementInventory = {
+      "minecraft:cooked_beef": 4,
+      "minecraft:dirt": 16,
+      "minecraft:wooden_pickaxe": 1,
+      "minecraft:wooden_sword": 1,
+    };
+    driver.currentObservation = observation({
+      health: 20,
+      food: 20,
+      counts: replacementInventory,
+    });
+    let corpsePathInterrupted = false;
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+      }).pipe(
+        Effect.zipRight(Effect.never),
+        Effect.onInterrupt(() =>
+          Effect.sync(() => {
+            corpsePathInterrupted = true;
+          })
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        runId: "environmental-damage-recovery-run",
+        team: { teamId: "environmental-damage-recovery-team" },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (driver.paths.length === 0) {
+              yield* Effect.sleep(1);
+            }
+            driver.currentObservation = observation({
+              health: 16,
+              food: 20,
+              counts: replacementInventory,
+            });
+            let attempts = 2_000;
+            while (!corpsePathInterrupted && attempts > 0) {
+              attempts -= 1;
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(corpsePathInterrupted).toBe(true);
+  });
+
   it("does not restart an in-progress corpse recovery meal", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
