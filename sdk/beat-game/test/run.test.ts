@@ -4342,6 +4342,93 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("re-sprints along a group-safe route when creepers close during flee planning", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.surfaceColumns = Array.from({ length: 37 * 37 }, (_, index) => {
+      const x = index % 37 - 18;
+      const z = Math.floor(index / 37) - 18;
+      return {
+        x,
+        z,
+        loaded: true,
+        surfaceY: 63,
+        blockId: "minecraft:grass_block",
+        biomeId: "minecraft:plains",
+        skyLight: 15,
+        blockLight: 0,
+      };
+    });
+    const eastCreeper = {
+      connectionEpoch: "epoch-1",
+      networkId: 41,
+      entityType: "minecraft:creeper",
+      position: {
+        x: 6,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:01.000Z",
+    } as const;
+    const westCreeper = {
+      ...eastCreeper,
+      networkId: 42,
+      position: { ...eastCreeper.position, x: -6 },
+    } as const;
+    driver.entityResults = [eastCreeper, westCreeper];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(
+        Effect.zipRight(
+          task.type === "collect-blocks" || task.type === "flee"
+            ? Effect.never
+            : Effect.void,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (
+              driver.actions.filter((action) =>
+                action.type === "set-movement"
+                && action.forward === true
+                && action.jump === true
+                && action.sprint === true
+              ).length < 2
+            ) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    const sprintLooks = driver.actions.filter((action) =>
+      action.type === "look" && action.pitch === 0
+    );
+    expect(sprintLooks).toHaveLength(2);
+    for (const look of sprintLooks) {
+      if (look.type !== "look") {
+        continue;
+      }
+      expect(Math.abs(Math.abs(look.yaw) - 90)).toBeGreaterThan(45);
+    }
+    expect(driver.tasks.filter((task) => task.type === "flee")).toHaveLength(
+      1,
+    );
+    expect(driver.currentObservation.player.health).toBe(20);
+  }, 10_000);
+
   it("allows a submerged escape route to reach dry land", async () => {
     const driver = new FakeBeatGameDriver();
     driver.entityResults = [{

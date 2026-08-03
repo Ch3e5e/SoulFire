@@ -585,6 +585,7 @@ const ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES = new Set([
 ]);
 const PROACTIVE_ESCAPE_ONLY_EVASION_RADIUS = 12;
 const CREEPER_PROACTIVE_EVASION_RADIUS = 8;
+const CREEPER_EMERGENCY_REEVASION_RADIUS = 6;
 const PROACTIVE_RANGED_ENGAGEMENT_RADIUS = 16;
 const PROACTIVE_THREAT_MAXIMUM_VERTICAL_DISTANCE = 6;
 const RANGED_THREAT_ESCAPE_TRIGGER_RADIUS = 24;
@@ -2618,13 +2619,18 @@ function escapeFromTarget(
     if (observation.player.dead) {
       return;
     }
+    let directEscapeSucceeded = false;
     if (
       target.entityType === "minecraft:creeper"
       || PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
       || PROACTIVE_MELEE_HOSTILE_ENTITY_TYPES.has(target.entityType)
       || shouldDisengageFromThreat(state, observation, target)
     ) {
-      yield* knockBackAndSprintAway(state, observation, target);
+      directEscapeSucceeded = yield* knockBackAndSprintAway(
+        state,
+        observation,
+        target,
+      );
     }
     const latest = yield* state.driver.observe;
     if (latest.player.dead) {
@@ -2770,6 +2776,7 @@ function escapeFromTarget(
         target,
         latest,
         options.continueEscapingWhenHit ?? false,
+        directEscapeSucceeded,
       ),
     );
     if (outcome.type === "unsafe-air") {
@@ -2800,6 +2807,7 @@ function monitorEscapeSafety(
   target: BeatGameEntityObservation,
   previousObservation: BeatGameObservation,
   continueEscapingWhenHit: boolean,
+  directEscapeSucceeded: boolean,
 ): Effect.Effect<
   | { readonly type: "dead" | "safe" | "unsafe-air" }
   | {
@@ -2813,7 +2821,8 @@ function monitorEscapeSafety(
   )
     ? RANGED_THREAT_ESCAPE_SAFE_DISTANCE
     : THREAT_ESCAPE_SAFE_DISTANCE;
-  const pollInterval = FAST_MELEE_PURSUER_ENTITY_TYPES.has(target.entityType)
+  const pollInterval = target.entityType === "minecraft:creeper"
+      || FAST_MELEE_PURSUER_ENTITY_TYPES.has(target.entityType)
     ? MINIMUM_RECOVERY_POLL_MS
     : Math.max(
       MINIMUM_RECOVERY_POLL_MS,
@@ -2838,6 +2847,29 @@ function monitorEscapeSafety(
       }).pipe(
         Effect.zip(findImmediateThreat(state, observation)),
         Effect.flatMap(([[currentTarget], immediateThreat]) => {
+          const urgentCreeper = immediateThreat?.response === "flee"
+              && immediateThreat.target.entityType === "minecraft:creeper"
+              && distanceSquared(
+                  observation.player.position,
+                  immediateThreat.target.position,
+                ) <= CREEPER_EMERGENCY_REEVASION_RADIUS ** 2
+            ? immediateThreat.target
+            : currentTarget?.entityType === "minecraft:creeper"
+                && distanceSquared(
+                    observation.player.position,
+                    currentTarget.position,
+                  ) <= CREEPER_EMERGENCY_REEVASION_RADIUS ** 2
+            ? currentTarget
+            : undefined;
+          if (
+            directEscapeSucceeded
+            && urgentCreeper !== undefined
+          ) {
+            return Effect.succeed({
+              type: "escape",
+              target: urgentCreeper,
+            } as const);
+          }
           if (
             immediateThreat !== undefined
             && immediateThreat.response === "flee"
@@ -2884,6 +2916,7 @@ function monitorEscapeSafety(
                 : currentTarget,
               observation,
               continueEscapingWhenHit,
+              directEscapeSucceeded,
             );
           }
           return findNearbyAttackThreat(state, observation).pipe(
@@ -2894,6 +2927,7 @@ function monitorEscapeSafety(
                   currentTarget,
                   observation,
                   continueEscapingWhenHit,
+                  directEscapeSucceeded,
                 );
               }
               if (
@@ -2905,6 +2939,7 @@ function monitorEscapeSafety(
                   target,
                   observation,
                   continueEscapingWhenHit,
+                  directEscapeSucceeded,
                 );
               }
               const caughtByCloseMeleePursuer =
@@ -2945,6 +2980,7 @@ function monitorEscapeSafety(
                   currentTarget,
                   observation,
                   continueEscapingWhenHit,
+                  directEscapeSucceeded,
                 );
               }
               return Effect.succeed({
@@ -2987,17 +3023,12 @@ function knockBackAndSprintAway(
   state: RunState,
   observation: BeatGameObservation,
   threat: BeatGameEntityObservation,
-): Effect.Effect<void, BeatGameDriverError> {
+): Effect.Effect<boolean, BeatGameDriverError> {
   const playerPosition = observation.player.position;
   const distance = Math.sqrt(distanceSquared(
     playerPosition,
     threat.position,
   ));
-  const away = surfaceEscapeTarget(playerPosition, threat.position);
-  const rotation = rotationToward(playerPosition, {
-    ...away,
-    y: playerPosition.y,
-  });
   return Effect.gen(function* () {
     const nearbyLava = yield* state.driver.queryBlocks({
       center: playerPosition,
@@ -3005,21 +3036,6 @@ function knockBackAndSprintAway(
       selector: { blockIds: ["minecraft:lava"] },
       maximumResults: 1,
     });
-    const directionX = away.x - playerPosition.x;
-    const directionZ = away.z - playerPosition.z;
-    const directionLength = Math.hypot(directionX, directionZ);
-    const projectedPosition = {
-      x: playerPosition.x
-        + directionX / directionLength
-          * EMERGENCY_ESCAPE_FLUID_PROJECTION_DISTANCE,
-      y: playerPosition.y,
-      z: playerPosition.z
-        + directionZ / directionLength
-          * EMERGENCY_ESCAPE_FLUID_PROJECTION_DISTANCE,
-      dimension: playerPosition.dimension,
-    };
-    const projectedIntoFluid = threat.entityType !== "minecraft:creeper"
-      && (yield* isPlayerInFluid(state.driver, projectedPosition));
     const currentlyInFluid = yield* isPlayerInFluid(
       state.driver,
       playerPosition,
@@ -3034,15 +3050,49 @@ function knockBackAndSprintAway(
       directSprintDistance,
       1,
     );
-    const safeDirectSprint = hasSafeDirectEscapeCorridor(
+    const preferredTarget = surfaceEscapeTarget(
+      playerPosition,
+      threat.position,
+    );
+    const preferredDirection = {
+      x: preferredTarget.x - playerPosition.x,
+      z: preferredTarget.z - playerPosition.z,
+    };
+    const nearbyThreats = threat.entityType === "minecraft:creeper"
+      ? yield* state.driver.queryEntities({
+        origin: playerPosition,
+        radius: THREAT_ESCAPE_SAFE_DISTANCE,
+        selector: { categories: [2], alive: true },
+        maximumResults: 32,
+      })
+      : [threat];
+    const escapeThreats = deduplicateEntityTargets([
+      threat,
+      ...nearbyThreats,
+    ]).filter((candidate) =>
+      candidate.position.dimension === playerPosition.dimension
+    );
+    const direction = selectSafeDirectEscapeDirection(
       escapeSurface,
       playerPosition,
-      directionX / directionLength,
-      directionZ / directionLength,
+      preferredDirection,
+      escapeThreats,
       directSprintDistance,
       PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(threat.entityType) ? 2 : 0,
     );
-    yield* state.driver.withControl(Effect.gen(function* () {
+    const projectedPosition = direction === undefined
+      ? playerPosition
+      : {
+        x: playerPosition.x
+          + direction.x * EMERGENCY_ESCAPE_FLUID_PROJECTION_DISTANCE,
+        y: playerPosition.y,
+        z: playerPosition.z
+          + direction.z * EMERGENCY_ESCAPE_FLUID_PROJECTION_DISTANCE,
+        dimension: playerPosition.dimension,
+      };
+    const projectedIntoFluid = threat.entityType !== "minecraft:creeper"
+      && (yield* isPlayerInFluid(state.driver, projectedPosition));
+    return yield* state.driver.withControl(Effect.gen(function* () {
       if (distance <= EMERGENCY_KNOCKBACK_RANGE) {
         if (hasMeleeWeapon(observation)) {
           yield* state.driver.act({
@@ -3066,10 +3116,18 @@ function knockBackAndSprintAway(
       if (
         nearbyLava.length > 0
         || (projectedIntoFluid && !directAquaticEvasion)
-        || (!safeDirectSprint && !directAquaticEvasion)
+        || (direction === undefined && !directAquaticEvasion)
       ) {
-        return;
+        return false;
       }
+      const escapeDirection = direction ?? normalizeHorizontalDirection(
+        preferredDirection,
+      );
+      const rotation = rotationToward(playerPosition, {
+        x: playerPosition.x + escapeDirection.x,
+        y: playerPosition.y,
+        z: playerPosition.z + escapeDirection.z,
+      });
       yield* state.driver.act({
         type: "look",
         yaw: rotation.yaw,
@@ -3098,12 +3156,100 @@ function knockBackAndSprintAway(
       } else {
         yield* Effect.sleep(sprintDuration);
       }
+      return true;
     }).pipe(
       Effect.ensuring(
         state.driver.act({ type: "reset-movement" }).pipe(Effect.ignore),
       ),
     ));
   });
+}
+
+function deduplicateEntityTargets(
+  entities: readonly BeatGameEntityObservation[],
+): readonly BeatGameEntityObservation[] {
+  return [...new Map(entities.map((entity) => [
+    `${entity.connectionEpoch}:${entity.networkId}`,
+    entity,
+  ])).values()];
+}
+
+function selectSafeDirectEscapeDirection(
+  columns: readonly BeatGameSurfaceColumn[],
+  player: BeatGamePosition,
+  preferredDirection: Readonly<{ x: number; z: number }>,
+  threats: readonly BeatGameEntityObservation[],
+  distance: number,
+  lateralHalfWidth: number,
+): Readonly<{ x: number; z: number }> | undefined {
+  const preferred = normalizeHorizontalDirection(preferredDirection);
+  const directions = [
+    preferred,
+    ...Array.from({ length: 32 }, (_, index) => {
+      const angle = index / 32 * Math.PI * 2;
+      return { x: Math.cos(angle), z: Math.sin(angle) };
+    }),
+  ];
+  let best:
+    | {
+      readonly direction: Readonly<{ x: number; z: number }>;
+      readonly minimumThreatDistanceSquared: number;
+      readonly preferredAlignment: number;
+    }
+    | undefined;
+  for (const direction of directions) {
+    if (
+      !hasSafeDirectEscapeCorridor(
+        columns,
+        player,
+        direction.x,
+        direction.z,
+        distance,
+        lateralHalfWidth,
+      )
+    ) {
+      continue;
+    }
+    const endpoint = {
+      ...player,
+      x: player.x + direction.x * distance,
+      z: player.z + direction.z * distance,
+    };
+    const minimumThreatDistanceSquared = threats.length === 0
+      ? Number.POSITIVE_INFINITY
+      : Math.min(...threats.map((candidate) =>
+        distanceSquared(endpoint, candidate.position)
+      ));
+    const preferredAlignment = direction.x * preferred.x
+      + direction.z * preferred.z;
+    if (
+      best === undefined
+      || minimumThreatDistanceSquared
+          > best.minimumThreatDistanceSquared + 0.001
+      || (
+        Math.abs(
+          minimumThreatDistanceSquared - best.minimumThreatDistanceSquared,
+        ) <= 0.001
+        && preferredAlignment > best.preferredAlignment
+      )
+    ) {
+      best = {
+        direction,
+        minimumThreatDistanceSquared,
+        preferredAlignment,
+      };
+    }
+  }
+  return best?.direction;
+}
+
+function normalizeHorizontalDirection(
+  direction: Readonly<{ x: number; z: number }>,
+): Readonly<{ x: number; z: number }> {
+  const length = Math.hypot(direction.x, direction.z);
+  return length > 0.001
+    ? { x: direction.x / length, z: direction.z / length }
+    : { x: 1, z: 0 };
 }
 
 function findDryThreatEscapeTarget(
