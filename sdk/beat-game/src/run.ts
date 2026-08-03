@@ -9541,6 +9541,7 @@ function ensureInventorySpace(
         discardSiteDeltaX,
         discardSiteDeltaZ,
       );
+      let discardPocketReady = false;
       const discardRetreatTarget = relocated
           && discardSiteDistance > INVENTORY_DISCARD_ESCAPE_DISTANCE
         ? {
@@ -9554,6 +9555,20 @@ function ensureInventorySpace(
           dimension: current.player.position.dimension,
         }
         : undefined;
+      if (discardRetreatTarget !== undefined) {
+        const retreated = yield* state.driver.pathfind(
+          discardRetreatTarget,
+          0.75,
+          discardPath(false),
+        ).pipe(Effect.either);
+        if (retreated._tag === "Right") {
+          current = yield* state.driver.observe;
+          discardPocketReady = true;
+        }
+      }
+      if (current.inventory.emptyPlayerSlots === undefined) {
+        return;
+      }
       const discardItemId = INVENTORY_DISCARD_PRIORITY.find((itemId) =>
         (current.inventory.counts[itemId] ?? 0) > 0
       );
@@ -9584,10 +9599,10 @@ function ensureInventorySpace(
         ? Math.min(64, cobblestoneCount)
         : current.inventory.counts[itemId] ?? 0;
       const emptySlotsBefore = current.inventory.emptyPlayerSlots;
-      const discardYaw = discardRetreatTarget === undefined
+      const discardYaw = !discardPocketReady
         ? wrappedDegrees(current.player.rotation.yaw + 180)
         : wrappedDegrees(
-          Math.atan2(discardSiteDeltaX, -discardSiteDeltaZ)
+          Math.atan2(-discardSiteDeltaX, discardSiteDeltaZ)
             * 180 / Math.PI,
         );
       yield* state.driver.act({
@@ -9606,7 +9621,7 @@ function ensureInventorySpace(
         selector: { itemIds: [itemId] },
         count,
       });
-      let safelySeparated = discardRetreatTarget !== undefined;
+      let safelySeparated = discardPocketReady;
       if (!safelySeparated) {
         safelySeparated = yield* tryRelativeDiscardPath(
           current,

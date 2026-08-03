@@ -16468,16 +16468,10 @@ describe("beat-game run lifecycle", () => {
       resolvePath(position, radius, policy).pipe(
         Effect.tap(() =>
           Effect.sync(() => {
-            const relocated = radius === 0.75
-              && policy.allowMining === true
-              && Math.abs(position.x) < 0.001
-              && Math.abs(position.z - 6) < 0.001;
             driver.currentObservation = observation({
               counts: driver.currentObservation.inventory.counts,
               emptyPlayerSlots: 0,
-              position: relocated
-                ? position
-                : driver.currentObservation.player.position,
+              position,
             });
           })
         ),
@@ -16618,8 +16612,8 @@ describe("beat-game run lifecycle", () => {
     )).toHaveLength(2);
     expect(driver.actions.filter((action) =>
       action.type === "look"
-      && Math.abs(Math.abs(action.yaw) - 180) < 0.001
-    )).toHaveLength(2);
+      && Math.abs(action.yaw) < 0.001
+    )).toHaveLength(1);
     expect(driver.paths.filter(({ position, radius, policy }) =>
       radius === 0.75
       && Math.abs(position.x) < 0.001
@@ -16627,7 +16621,15 @@ describe("beat-game run lifecycle", () => {
       && policy.allowMining === true
       && policy.allowPlacing === false
       && policy.avoidFluids === true
-    )).toHaveLength(2);
+    )).toHaveLength(1);
+    expect(driver.paths.filter(({ position, radius, policy }) =>
+      radius === 0.75
+      && Math.abs(position.x) < 0.001
+      && Math.abs(position.z - 3) < 0.001
+      && policy.allowMining === false
+      && policy.allowPlacing === false
+      && policy.avoidFluids === true
+    )).toHaveLength(1);
   });
 
   it("stops an in-flight collection once external inventory gains meet its buffered target", async () => {
