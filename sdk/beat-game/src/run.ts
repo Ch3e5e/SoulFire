@@ -1706,10 +1706,13 @@ function executeDecision(
               ).pipe(
                 Effect.flatMap((ready) =>
                   ready
-                    ? resolvePortalBuildOrigin(
-                      state.driver,
-                      observation,
-                    ).pipe(
+                    ? state.driver.observe.pipe(
+                      Effect.flatMap((current) =>
+                        resolvePortalBuildOrigin(
+                          state.driver,
+                          current,
+                        )
+                      ),
                       Effect.flatMap((origin) =>
                         useCastPortal
                           ? castNetherPortal(state.driver, {
@@ -7061,6 +7064,11 @@ function preparePortalCastingLavaPool(
       maximumResults: PORTAL_CASTING_ADDITIONAL_LAVA_SOURCE_COUNT,
     });
     if (sources.length >= PORTAL_CASTING_ADDITIONAL_LAVA_SOURCE_COUNT) {
+      yield* approachLavaSourceFromSide(
+        state,
+        observation,
+        sources,
+      );
       return true;
     }
 

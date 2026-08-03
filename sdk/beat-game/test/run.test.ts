@@ -12398,6 +12398,140 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("builds a cast portal beside a discovered lava pool", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const start = {
+      x: 4.5,
+      y: 70,
+      z: 0.5,
+      dimension: "minecraft:overworld",
+    } as const;
+    const source = blockObservation({
+      x: 0,
+      y: 38,
+      z: 0,
+      dimension: "minecraft:overworld",
+    }, {
+      blockId: "minecraft:lava",
+      properties: { level: "0" },
+      replaceable: true,
+    });
+    const safeStand = {
+      x: 2.5,
+      y: 40,
+      z: 0.5,
+      dimension: "minecraft:overworld",
+    } as const;
+    driver.currentObservation = observation({
+      position: start,
+      counts: {
+        "minecraft:bucket": 1,
+        "minecraft:cobblestone": 20,
+        "minecraft:cooked_beef": 8,
+        "minecraft:flint_and_steel": 1,
+        "minecraft:iron_ingot": 7,
+        "minecraft:iron_pickaxe": 1,
+        "minecraft:lava_bucket": 1,
+        "minecraft:oak_log": 4,
+        "minecraft:shield": 1,
+        "minecraft:stone_sword": 1,
+        "minecraft:water_bucket": 1,
+      },
+    });
+    const floorQueryYs: number[] = [];
+    let resolvePortalFloorQueried!: () => void;
+    const portalFloorQueried = new Promise<void>((resolve) => {
+      resolvePortalFloorQueried = resolve;
+    });
+    driver.blockQueryResolver = ({ center, radius, selector }) => {
+      if (
+        selector.blockIds?.includes("minecraft:lava") === true
+        && selector.properties?.level === "0"
+      ) {
+        return Array.from({ length: 9 }, () => source);
+      }
+      if (radius === 4.9 && Object.keys(selector).length === 0) {
+        return [
+          blockObservation({
+            x: 2,
+            y: 40,
+            z: 0,
+            dimension: safeStand.dimension,
+          }, { blockId: "minecraft:air", replaceable: true }),
+          blockObservation({
+            x: 2,
+            y: 41,
+            z: 0,
+            dimension: safeStand.dimension,
+          }, { blockId: "minecraft:air", replaceable: true }),
+          blockObservation({
+            x: 2,
+            y: 39,
+            z: 0,
+            dimension: safeStand.dimension,
+          }),
+        ];
+      }
+      if (radius === 0.25 && selector.replaceable === false) {
+        floorQueryYs.push(center.y);
+        resolvePortalFloorQueried();
+        return [blockObservation({
+          x: Math.floor(center.x),
+          y: Math.floor(center.y),
+          z: Math.floor(center.z),
+          dimension: center.dimension,
+        })];
+      }
+      return [];
+    };
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+        if (radius === 0.75) {
+          driver.currentObservation = observation({
+            position,
+            counts: driver.currentObservation.inventory.counts,
+          });
+        }
+      });
+    await Effect.runPromise(store.save(checkpoint(
+      BeatGamePhase.ENTER_NETHER,
+      {
+        runId: "portal-beside-lava-run",
+        teamId: "portal-beside-lava-team",
+      },
+    ), undefined));
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        runId: "portal-beside-lava-run",
+        team: { teamId: "portal-beside-lava-team" },
+        checkpointStore: store,
+        strategy: {
+          observationPollMs: 1,
+          portalStrategy: "CAST",
+        },
+      });
+      yield* Effect.promise(() => portalFloorQueried).pipe(
+        Effect.timeout("5 seconds"),
+      );
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    expect(driver.paths).toContainEqual({
+      position: safeStand,
+      radius: 0.75,
+      policy: expect.objectContaining({
+        avoidFluids: true,
+        maxFallDistance: 1,
+      }),
+    });
+    expect(floorQueryYs.length).toBeGreaterThan(0);
+    expect(new Set(floorQueryYs)).toEqual(new Set([40.5]));
+  });
+
   it("replaces a worn pickaxe before descending for portal lava", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
