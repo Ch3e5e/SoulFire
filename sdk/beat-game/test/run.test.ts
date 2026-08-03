@@ -7076,6 +7076,76 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
   }, 10_000);
 
+  it("engages an armed close pursuer despite an unshielded melee group", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      health: 14,
+      food: 6,
+      counts: { "minecraft:wooden_sword": 1 },
+    });
+    const zombie = {
+      connectionEpoch: "epoch-1",
+      networkId: 20,
+      entityType: "minecraft:zombie",
+      position: {
+        x: 2,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.entityResults = [
+      zombie,
+      {
+        ...zombie,
+        networkId: 21,
+        position: { ...zombie.position, x: 7 },
+      },
+    ];
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2) ? driver.entityResults : [];
+    driver.taskObserver = (task) => {
+      if (task.type === "attack-entity") {
+        driver.entityResults = [];
+      }
+    };
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            let attempts = 3_000;
+            while (
+              !driver.tasks.some((task) => task.type === "attack-entity")
+              && attempts > 0
+            ) {
+              attempts -= 1;
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+      target: expect.objectContaining({
+        connectionEpoch: zombie.connectionEpoch,
+        networkId: zombie.networkId,
+      }),
+      selectBestWeapon: true,
+    }));
+    expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
+  }, 10_000);
+
   it("flees an unshielded ranged ambush before taking a hit", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({

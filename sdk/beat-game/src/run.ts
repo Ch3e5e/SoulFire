@@ -2363,13 +2363,13 @@ function findImmediateThreat(
         );
         const unshieldedAmbush = nearbyThreats.length > 1
           && (observation.inventory.counts["minecraft:shield"] ?? 0) === 0;
-        const armedFastPursuer = shouldCommitToFastMeleePursuerFight(
+        const armedClosePursuer = shouldCommitToCaughtMeleePursuerFight(
           observation,
           melee.target,
         );
         const shouldFleeMelee = (
           unshieldedAmbush
-          && !armedFastPursuer
+          && !armedClosePursuer
         ) || shouldDisengageFromThreat(
           state,
           observation,
@@ -2570,6 +2570,17 @@ function shouldCommitToFastMeleePursuerFight(
     );
 }
 
+function shouldCommitToCaughtMeleePursuerFight(
+  observation: BeatGameObservation,
+  target: BeatGameEntityObservation,
+): boolean {
+  return COMMITTABLE_CLOSE_MELEE_ENTITY_TYPES.has(target.entityType)
+    && hasMeleeWeapon(observation)
+    && observation.player.health > LETHAL_MELEE_DISENGAGE_HEALTH
+    && distanceSquared(observation.player.position, target.position)
+      <= EMERGENCY_KNOCKBACK_RANGE ** 2;
+}
+
 function isReadyForBarehandedDefense(
   observation: BeatGameObservation,
 ): boolean {
@@ -2583,7 +2594,8 @@ function shouldCommitToMeleeFight(
 ): boolean {
   return shouldCommitToCloseMeleeFight(observation, target)
     || shouldCommitToUndergroundMeleeFight(observation, target)
-    || shouldCommitToFastMeleePursuerFight(observation, target);
+    || shouldCommitToFastMeleePursuerFight(observation, target)
+    || shouldCommitToCaughtMeleePursuerFight(observation, target);
 }
 
 function escapeFromTarget(
@@ -2892,14 +2904,13 @@ function monitorEscapeSafety(
                 caughtByCloseMeleePursuer
                 && isSameEntityTarget(target, threat.target)
               ) {
-                const shouldFightCaughtFastPursuer = hasMeleeWeapon(
-                  observation,
-                ) && shouldCommitToFastMeleePursuerFight(
-                  observation,
-                  threat.target,
-                );
+                const shouldFightCaughtPursuer =
+                  shouldCommitToCaughtMeleePursuerFight(
+                    observation,
+                    threat.target,
+                  );
                 return Effect.succeed({
-                  type: shouldFightCaughtFastPursuer
+                  type: shouldFightCaughtPursuer
                     ? "defend"
                     : "escape",
                   target: threat.target,
@@ -4348,7 +4359,8 @@ function defendAgainstTarget(
         }))
         : Effect.void;
       const commitThroughWound =
-        shouldCommitToUnshieldedRangedFight(observation, target);
+        shouldCommitToUnshieldedRangedFight(observation, target)
+        || shouldCommitToCaughtMeleePursuerFight(observation, target);
       const commitThroughLethalWound =
         shouldCommitToCloseRangedFight(observation, target)
         || shouldCommitToFastMeleePursuerFight(observation, target);
@@ -4365,6 +4377,7 @@ function defendAgainstTarget(
             )
             || shouldCommitToCloseRangedFight(observation, target)
             || shouldCommitToFastMeleePursuerFight(observation, target)
+            || shouldCommitToCaughtMeleePursuerFight(observation, target)
           ),
           {
             commitThroughWound,
