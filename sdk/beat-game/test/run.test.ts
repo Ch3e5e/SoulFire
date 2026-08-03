@@ -3730,7 +3730,13 @@ describe("beat-game run lifecycle", () => {
     driver.pathResolver = (position, radius, policy) =>
       Effect.sync(() => {
         driver.paths.push({ position, radius, policy });
-      });
+      }).pipe(
+        Effect.zipRight(Effect.fail(new BeatGameDriverError({
+          operation: "pathfind",
+          retryable: true,
+          message: "The exploration waypoint was unreachable",
+        }))),
+      );
 
     const equipmentSearches = await Effect.runPromise(Effect.scoped(
       Effect.gen(function* () {

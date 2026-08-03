@@ -6981,7 +6981,14 @@ function collectBlocksOrExplore(
             frontierPath,
             preferSurfaceExploration,
             false,
-          ));
+          )).pipe(
+            Effect.catchTag("BeatGameDriverError", (error) =>
+              error.operation === "pathfind"
+                  || error.operation === "pathfindXZ"
+                ? Effect.void
+                : Effect.fail(error)
+            ),
+          );
         return;
       }
     }
