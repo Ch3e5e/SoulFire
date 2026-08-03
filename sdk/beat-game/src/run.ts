@@ -2354,9 +2354,16 @@ function findImmediateThreat(
         return distanceSquared <= 4 * 4;
       });
       if (melee !== undefined) {
+        const nearbyThreats = candidates.filter(({ distanceSquared }) =>
+          distanceSquared
+            <= PROACTIVE_RANGED_ENGAGEMENT_RADIUS
+              * PROACTIVE_RANGED_ENGAGEMENT_RADIUS
+        );
+        const unshieldedAmbush = nearbyThreats.length > 1
+          && (observation.inventory.counts["minecraft:shield"] ?? 0) === 0;
         return {
           target: melee.target,
-          response: shouldDisengageFromThreat(
+          response: unshieldedAmbush || shouldDisengageFromThreat(
               state,
               observation,
               melee.target,
@@ -2544,7 +2551,10 @@ function shouldCommitToFastMeleePursuerFight(
 ): boolean {
   return FAST_MELEE_PURSUER_ENTITY_TYPES.has(target.entityType)
     && (
-      hasMeleeWeapon(observation)
+      (
+        hasMeleeWeapon(observation)
+        && observation.player.health > LETHAL_MELEE_DISENGAGE_HEALTH
+      )
       || (
         observation.player.health >= BAREHANDED_DEFENSE_MINIMUM_HEALTH
         && observation.player.food >= 18
@@ -2589,30 +2599,9 @@ function escapeFromTarget(
       return;
     }
     if (
-      shouldCommitToCloseRangedFight(observation, target)
-      || shouldCommitToCloseMeleeFight(observation, target)
-    ) {
-      yield* defendAgainstTarget(state, target).pipe(
-        Effect.catchTag(
-          "BeatGameDriverError",
-          (error) =>
-            error.operation === "task.attack-entity"
-                || error.operation === "task.attack-nearest"
-                || error.code === "not_found"
-                || error.code === "unreachable"
-              ? knockBackAndSprintAway(state, observation, target)
-              : Effect.fail(error),
-        ),
-      );
-      return;
-    }
-    if (
       target.entityType === "minecraft:creeper"
       || PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
-      || (
-        PROACTIVE_MELEE_HOSTILE_ENTITY_TYPES.has(target.entityType)
-        && !shouldCommitToMeleeFight(observation, target)
-      )
+      || PROACTIVE_MELEE_HOSTILE_ENTITY_TYPES.has(target.entityType)
       || shouldDisengageFromThreat(state, observation, target)
     ) {
       yield* knockBackAndSprintAway(state, observation, target);
@@ -2842,6 +2831,7 @@ function monitorEscapeSafety(
           if (
             shouldCommitToCloseMeleeFight(observation, currentTarget)
             && hasMeleeWeapon(observation)
+            && immediateThreat?.response !== "flee"
           ) {
             return Effect.succeed({
               type: "defend",
@@ -4129,8 +4119,17 @@ function findNearbyAttackThreat(
       if (nearest === undefined) {
         return undefined;
       }
+      const nearbyThreats = candidates.filter((candidate) =>
+        distanceSquared(
+          observation.player.position,
+          candidate.position,
+        ) <= PROACTIVE_RANGED_ENGAGEMENT_RADIUS ** 2
+      );
+      const unshieldedAmbush = nearbyThreats.length > 1
+        && (observation.inventory.counts["minecraft:shield"] ?? 0) === 0;
       const shouldEscape =
         ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(nearest.entityType)
+        || unshieldedAmbush
         || shouldDisengageFromThreat(state, observation, nearest);
       return {
         target: nearest,

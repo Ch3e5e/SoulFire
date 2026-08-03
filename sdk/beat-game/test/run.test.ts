@@ -6924,7 +6924,7 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
-  it("fights the nearest hostile while healthy", async () => {
+  it("flees an unshielded melee group while healthy", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
       health: 20,
@@ -6967,7 +6967,7 @@ describe("beat-game run lifecycle", () => {
     driver.entityQueryResolver = (query) =>
       query.selector.categories?.includes(2) ? driver.entityResults : [];
     driver.taskObserver = (task) => {
-      if (task.type === "attack-entity") {
+      if (task.type === "flee") {
         driver.entityResults = [];
       }
     };
@@ -6979,7 +6979,7 @@ describe("beat-game run lifecycle", () => {
         Effect.flatMap((run) =>
           Effect.gen(function* () {
             while (
-              !driver.tasks.some((task) => task.type === "attack-entity")
+              !driver.tasks.some((task) => task.type === "flee")
             ) {
               yield* Effect.sleep(1);
             }
@@ -6991,14 +6991,14 @@ describe("beat-game run lifecycle", () => {
     ));
 
     expect(driver.tasks).toContainEqual(expect.objectContaining({
-      type: "attack-entity",
-      target: expect.objectContaining({
-        networkId: 16,
-        entityType: "minecraft:zombie",
-      }),
-      selectBestWeapon: true,
+      type: "flee",
+      selector: {
+        categories: [2],
+        alive: true,
+      },
     }));
-    expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
+    expect(driver.tasks.some((task) => task.type === "attack-entity"))
+      .toBe(false);
   });
 
   it("flees an unshielded ranged ambush before taking a hit", async () => {
@@ -7334,7 +7334,7 @@ describe("beat-game run lifecycle", () => {
     }));
   }, 10_000);
 
-  it("finishes a close spider fight at lethal health when armed", async () => {
+  it("knocks back and flees a close spider at lethal health", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
       health: 2,
@@ -7381,9 +7381,7 @@ describe("beat-game run lifecycle", () => {
         Effect.flatMap((run) =>
           Effect.gen(function* () {
             while (
-              !driver.tasks.some((task) =>
-                task.type === "attack-nearest" || task.type === "attack-entity"
-              )
+              !driver.tasks.some((task) => task.type === "flee")
             ) {
               yield* Effect.sleep(1);
             }
@@ -7394,10 +7392,18 @@ describe("beat-game run lifecycle", () => {
       ),
     ));
 
+    expect(driver.actions).toContainEqual({
+      type: "attack-entity",
+      connectionEpoch: "epoch-1",
+      networkId: 18,
+      sprinting: true,
+    });
     expect(driver.tasks).toContainEqual(expect.objectContaining({
-      selectBestWeapon: true,
+      type: "flee",
+      selector: { categories: [2], alive: true },
     }));
-    expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
+    expect(driver.tasks.some((task) => task.type === "attack-entity"))
+      .toBe(false);
   });
 
   it("keeps fighting a close spider after taking a lethal wound", async () => {
