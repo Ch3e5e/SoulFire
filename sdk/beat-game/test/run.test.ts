@@ -14308,6 +14308,7 @@ describe("beat-game run lifecycle", () => {
 
   it("surfaces and resumes the same aquatic target when air runs low", async () => {
     const driver = new FakeBeatGameDriver();
+    const foodProvisioningFailures: string[] = [];
     driver.currentObservation = observation({
       health: 20,
       food: 6,
@@ -14399,6 +14400,17 @@ describe("beat-game run lifecycle", () => {
       const run = yield* beatGameWithDriver(driver, {
         strategy: { observationPollMs: 1 },
       });
+      yield* run.events.pipe(
+        Stream.runForEach((event) =>
+          event.type === "action-failed"
+              && event.action === "satisfy:food-supply"
+            ? Effect.sync(() => {
+              foodProvisioningFailures.push(event.detail ?? "");
+            })
+            : Effect.void
+        ),
+        Effect.forkScoped,
+      );
       while (
         driver.tasks.filter((task) => task.type === "attack-entity").length < 1
       ) {
@@ -14433,6 +14445,9 @@ describe("beat-game run lifecycle", () => {
     expect(driver.surfaceQueries).not.toHaveLength(0);
     expect(driver.surfaceQueries.every(({ radius }) => radius === 4)).toBe(
       true,
+    );
+    expect(foodProvisioningFailures).not.toContain(
+      "Interrupted for replanning: air fell below the safety threshold",
     );
   }, 10_000);
 

@@ -343,6 +343,7 @@ const URGENT_AQUATIC_HUNT_MAXIMUM_HORIZONTAL_DISTANCE = 64;
 const URGENT_AQUATIC_HUNT_MAXIMUM_VERTICAL_DISTANCE = 4;
 const AQUATIC_HUNT_CHASE_TIMEOUT_MS = 30_000;
 const AQUATIC_HUNT_MINIMUM_AIR_TICKS = 120;
+const AQUATIC_HUNT_EMERGENCY_AIR_TICKS = 60;
 const AQUATIC_HUNT_MAXIMUM_CHASE_ATTEMPTS = 3;
 const AQUATIC_WATER_ENTRY_SEARCH_RADIUS = 3;
 const AQUATIC_WATER_ENTRY_ATTEMPTS = 12;
@@ -3570,8 +3571,8 @@ function hasUnsafeAirDuringAction(
   return observation.player.maxAir > 0
     && observation.player.air
       <= Math.min(
-        AQUATIC_HUNT_MINIMUM_AIR_TICKS,
-        observation.player.maxAir * 2 / 5,
+        AQUATIC_HUNT_EMERGENCY_AIR_TICKS,
+        observation.player.maxAir / 5,
       );
 }
 
