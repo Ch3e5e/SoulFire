@@ -864,6 +864,72 @@ const program = Effect.scoped(Effect.gen(function* () {
     const debugOperations: SmokeDebugOperation[] = [
       {
         method: "GET",
+        path: "/overview",
+        description:
+          "Return a compact live overview of decisions, paths, nearby blocks, and nearby entities",
+        execute: () =>
+          Effect.gen(function* () {
+            const [snapshot, observation] = yield* Effect.all([
+              run.snapshot,
+              driver.observe,
+            ], { concurrency: "unbounded" });
+            const [solidBlocks, entities] = yield* Effect.all([
+              driver.queryBlocks({
+                center: observation.player.position,
+                radius: 16,
+                selector: { solid: true },
+                maximumResults: 256,
+              }),
+              driver.queryEntities({
+                origin: observation.player.position,
+                radius: 48,
+                selector: {},
+                maximumResults: 128,
+              }),
+            ], { concurrency: "unbounded" });
+            const planner = snapshot.checkpoint.planner;
+            return {
+              run: {
+                runId: snapshot.checkpoint.runId,
+                phase: planner.phase,
+                status: planner.status,
+                objective: planner.objective,
+                currentAction: planner.currentAction,
+                currentActionId: planner.currentActionId,
+                retryCount: planner.retryCount,
+                pendingRequirements: planner.requirements.filter(
+                  (requirement) => !requirement.satisfied,
+                ),
+                lastStableAction: snapshot.checkpoint.lastStableAction,
+              },
+              player: observation.player,
+              inventory: observation.inventory,
+              nearby: {
+                solidBlockRadius: 16,
+                solidBlocks,
+                entityRadius: 48,
+                entities,
+              },
+              pathActivity: queryDebugTimeline({
+                kind: [
+                  "pathfind-started",
+                  "pathfind-completed",
+                  "pathfind-failed",
+                  "pathfind-xz-started",
+                  "pathfind-xz-completed",
+                  "pathfind-xz-failed",
+                ].join(","),
+                limit: 50,
+              }),
+              decisionActivity: queryDebugTimeline({
+                kind: "beat-game-event,task-started,task-completed,task-failed,primitive-started,primitive-failed",
+                limit: 100,
+              }),
+            };
+          }),
+      },
+      {
+        method: "GET",
         path: "/state",
         description:
           "Return the live beat-game snapshot, raw player state, and inventory",
