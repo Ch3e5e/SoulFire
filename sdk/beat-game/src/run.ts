@@ -2545,20 +2545,16 @@ function escapeThreatSelector(
   target: BeatGameEntityObservation,
   includeHostileGroup = false,
 ): BeatGameEntitySelector {
-  if (target.entityType === "minecraft:creeper") {
+  if (
+    target.entityType === "minecraft:creeper"
+    || !includeHostileGroup
+  ) {
     return { networkId: target.networkId, alive: true };
   }
-  const escapeFromHostileGroup = FAST_MELEE_PURSUER_ENTITY_TYPES.has(
-    target.entityType,
-  )
-    || (
-      includeHostileGroup
-      && (
-        ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(target.entityType)
-        || PROACTIVE_MELEE_HOSTILE_ENTITY_TYPES.has(target.entityType)
-        || PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
-      )
-    );
+  const escapeFromHostileGroup =
+    ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(target.entityType)
+    || PROACTIVE_MELEE_HOSTILE_ENTITY_TYPES.has(target.entityType)
+    || PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType);
   return escapeFromHostileGroup
     ? { categories: [2], alive: true }
     : { networkId: target.networkId, alive: true };
@@ -2674,6 +2670,18 @@ function shouldCommitToCaughtMeleePursuerFight(
       <= EMERGENCY_KNOCKBACK_RANGE ** 2;
 }
 
+function shouldCommitToBarehandedCaughtFastPursuerFight(
+  observation: BeatGameObservation,
+  target: BeatGameEntityObservation,
+): boolean {
+  return FAST_MELEE_PURSUER_ENTITY_TYPES.has(target.entityType)
+    && !hasMeleeWeapon(observation)
+    && observation.player.health > LETHAL_MELEE_DISENGAGE_HEALTH
+    && observation.player.food > CRITICAL_HUNGER_FOOD_LEVEL
+    && distanceSquared(observation.player.position, target.position)
+      <= EMERGENCY_KNOCKBACK_RANGE ** 2;
+}
+
 function isReadyForBarehandedDefense(
   observation: BeatGameObservation,
 ): boolean {
@@ -2688,7 +2696,8 @@ function shouldCommitToMeleeFight(
   return shouldCommitToCloseMeleeFight(observation, target)
     || shouldCommitToUndergroundMeleeFight(observation, target)
     || shouldCommitToFastMeleePursuerFight(observation, target)
-    || shouldCommitToCaughtMeleePursuerFight(observation, target);
+    || shouldCommitToCaughtMeleePursuerFight(observation, target)
+    || shouldCommitToBarehandedCaughtFastPursuerFight(observation, target);
 }
 
 function escapeFromTarget(
@@ -3020,8 +3029,18 @@ function monitorEscapeSafety(
                 currentTarget.position,
               ) <= EMERGENCY_KNOCKBACK_RANGE ** 2
           ) {
+            const shouldFightCaughtPursuer = shouldCommitToMeleeFight(
+              observation,
+              currentTarget,
+            ) && (
+              hasMeleeWeapon(observation)
+              || observation.player.health
+                < previousObservation.player.health
+            );
             return Effect.succeed({
-              type: "escape",
+              type: shouldFightCaughtPursuer
+                ? "defend"
+                : "escape",
               target: currentTarget,
             } as const);
           }
@@ -3112,7 +3131,7 @@ function monitorEscapeSafety(
                 && isSameEntityTarget(target, threat.target)
               ) {
                 const shouldFightCaughtPursuer =
-                  shouldCommitToCaughtMeleePursuerFight(
+                  shouldCommitToMeleeFight(
                     observation,
                     threat.target,
                   );
@@ -3236,14 +3255,14 @@ function knockBackAndSprintAway(
       x: preferredTarget.x - playerPosition.x,
       z: preferredTarget.z - playerPosition.z,
     };
-    const nearbyThreats = threat.entityType === "minecraft:creeper"
-      ? yield* state.driver.queryEntities({
-        origin: playerPosition,
-        radius: THREAT_ESCAPE_SAFE_DISTANCE,
-        selector: { categories: [2], alive: true },
-        maximumResults: 32,
-      })
-      : [threat];
+    const nearbyThreats = yield* state.driver.queryEntities({
+      origin: playerPosition,
+      radius: PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(threat.entityType)
+        ? RANGED_THREAT_ESCAPE_SAFE_DISTANCE
+        : THREAT_ESCAPE_SAFE_DISTANCE,
+      selector: { categories: [2], alive: true },
+      maximumResults: 32,
+    });
     const escapeThreats = deduplicateEntityTargets([
       threat,
       ...nearbyThreats,
@@ -4881,7 +4900,11 @@ function defendAgainstTarget(
           PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
           && isReadyForBarehandedDefense(observation)
         )
-        || shouldCommitToCaughtMeleePursuerFight(observation, target);
+        || shouldCommitToCaughtMeleePursuerFight(observation, target)
+        || shouldCommitToBarehandedCaughtFastPursuerFight(
+          observation,
+          target,
+        );
       const commitThroughLethalWound =
         shouldCommitToCloseRangedFight(observation, target)
         || shouldCommitToCaughtRangedFight(observation, target)

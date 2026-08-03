@@ -8375,7 +8375,7 @@ describe("beat-game run lifecycle", () => {
       .toBe(false);
   }, 10_000);
 
-  it("knocks back a fast pursuer that catches an active escape", async () => {
+  it("turns on a bare-handed fast pursuer after it wounds an active escape", async () => {
     const driver = new FakeBeatGameDriver();
     const distantSpider = {
       connectionEpoch: "epoch-1",
@@ -8432,8 +8432,8 @@ describe("beat-game run lifecycle", () => {
               ...distantSpider,
               position: { ...distantSpider.position, x: 2 },
             }];
-            while (!driver.actions.some((action) =>
-              action.type === "attack-entity"
+            while (!driver.tasks.some((task) =>
+              task.type === "attack-entity"
             )) {
               yield* Effect.sleep(1);
             }
@@ -8446,14 +8446,108 @@ describe("beat-game run lifecycle", () => {
 
     expect(driver.tasks.filter((task) => task.type === "flee").length)
       .toBeGreaterThanOrEqual(1);
-    expect(driver.actions).toContainEqual({
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
       type: "attack-entity",
-      connectionEpoch: distantSpider.connectionEpoch,
-      networkId: distantSpider.networkId,
-      sprinting: true,
-    });
-    expect(driver.tasks.some((task) => task.type === "attack-entity"))
-      .toBe(false);
+      target: expect.objectContaining({
+        connectionEpoch: distantSpider.connectionEpoch,
+        networkId: distantSpider.networkId,
+      }),
+      selectBestWeapon: true,
+    }));
+  }, 10_000);
+
+  it("turns on a bare-handed spider that catches an ambush escape", async () => {
+    const driver = new FakeBeatGameDriver();
+    const spider = {
+      connectionEpoch: "epoch-1",
+      networkId: 531,
+      entityType: "minecraft:spider",
+      position: {
+        x: 8,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 16,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    const skeleton = {
+      ...spider,
+      networkId: 532,
+      entityType: "minecraft:skeleton",
+      position: { ...spider.position, x: 12 },
+      health: 20,
+    } as const;
+    driver.entityQueryResolver = (query) => {
+      if (query.selector.networkId !== undefined) {
+        return driver.entityResults.filter((entity) =>
+          entity.networkId === query.selector.networkId
+        );
+      }
+      return query.selector.categories?.includes(2)
+        ? driver.entityResults
+        : [];
+    };
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(
+        Effect.zipRight(
+          task.type === "collect-blocks"
+              || task.type === "flee"
+              || task.type === "attack-entity"
+            ? Effect.never
+            : Effect.void,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (!driver.tasks.some((task) =>
+              task.type === "collect-blocks"
+            )) {
+              yield* Effect.sleep(1);
+            }
+            driver.currentObservation = observation({ health: 18, food: 8 });
+            driver.entityResults = [spider, skeleton];
+            while (!driver.tasks.some((task) => task.type === "flee")) {
+              yield* Effect.sleep(1);
+            }
+            driver.currentObservation = observation({ health: 15, food: 8 });
+            driver.entityResults = [{
+              ...spider,
+              position: { ...spider.position, x: 2 },
+            }, skeleton];
+            while (!driver.tasks.some((task) =>
+              task.type === "attack-entity"
+            )) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "flee",
+      selector: { categories: [2], alive: true },
+    }));
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+      target: expect.objectContaining({
+        connectionEpoch: spider.connectionEpoch,
+        networkId: spider.networkId,
+      }),
+      selectBestWeapon: true,
+    }));
   }, 10_000);
 
   it("knocks back a fast pursuer before it lands another hit", async () => {
