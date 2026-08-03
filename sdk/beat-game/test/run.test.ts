@@ -18119,6 +18119,91 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("recovers surfaced food drops before choosing new prey", async () => {
+    const driver = new FakeBeatGameDriver();
+    const preparedItems = {
+      "minecraft:oak_log": 8,
+      "minecraft:cobblestone": 20,
+      "minecraft:stone_sword": 1,
+      "minecraft:iron_ingot": 7,
+      "minecraft:iron_pickaxe": 1,
+      "minecraft:water_bucket": 1,
+      "minecraft:flint_and_steel": 1,
+      "minecraft:shield": 1,
+    };
+    const surfacedSalmon = {
+      connectionEpoch: "epoch-1",
+      networkId: 7,
+      entityType: "minecraft:item",
+      itemId: "minecraft:salmon",
+      itemCount: 1,
+      position: {
+        x: 24,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      observedAt: "2026-01-01T00:00:01.000Z",
+    } as const;
+    const cow = {
+      connectionEpoch: "epoch-1",
+      networkId: 8,
+      entityType: "minecraft:cow",
+      position: {
+        x: 1,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 10,
+      observedAt: "2026-01-01T00:00:01.000Z",
+    } as const;
+    driver.currentObservation = observation({ counts: preparedItems });
+    driver.entityQueryResolver = (query) =>
+      query.selector.entityTypes?.includes("minecraft:item") === true
+        ? [surfacedSalmon]
+        : query.selector.entityTypes?.includes("minecraft:cow") === true
+        ? [cow]
+        : [];
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (!driver.paths.some(({ position }) =>
+              position.x === surfacedSalmon.position.x
+              && position.z === surfacedSalmon.position.z
+            )) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.paths).toContainEqual(expect.objectContaining({
+      position: surfacedSalmon.position,
+      policy: expect.objectContaining({
+        allowPlacing: false,
+        avoidFluids: false,
+      }),
+    }));
+    expect(driver.tasks.some((task) => task.type === "attack-entity"))
+      .toBe(false);
+  });
+
   it("refreshes a distant animal between bounded approach segments", async () => {
     const driver = new FakeBeatGameDriver();
     const preparedItems = {

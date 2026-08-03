@@ -348,6 +348,8 @@ const URGENT_AQUATIC_HUNT_MAXIMUM_HORIZONTAL_DISTANCE = 64;
 const URGENT_AQUATIC_HUNT_MAXIMUM_VERTICAL_DISTANCE = 4;
 const AQUATIC_HUNT_CHASE_TIMEOUT_MS = 30_000;
 const AQUATIC_HUNT_MINIMUM_AIR_TICKS = 120;
+const HUNT_DROP_RECOVERY_RADIUS = 48;
+const HUNT_DROP_RECOVERY_MAXIMUM_VERTICAL_DISTANCE = 4;
 const AQUATIC_HUNT_EMERGENCY_AIR_TICKS = 60;
 const AQUATIC_HUNT_MAXIMUM_CHASE_ATTEMPTS = 3;
 const WOUNDED_AQUATIC_FALLBACK_FOOD_LEVEL = 16;
@@ -8367,6 +8369,10 @@ function huntOrExplore(
         (total, itemId) => total + (value.inventory.counts[itemId] ?? 0),
         0,
       );
+    const expectedFoodDrops = expectedDropItemIds.some((itemId) =>
+      EDIBLE_FOOD_ITEM_IDS.includes(itemId)
+      || EMERGENCY_FOOD_ITEM_IDS.some((foodItemId) => foodItemId === itemId)
+    );
     const initialExpectedDropCount = expectedDropCount(observation);
     const maximumExplorationHops = Math.max(
       0,
@@ -8441,6 +8447,30 @@ function huntOrExplore(
           continue;
         }
         return;
+      }
+      if (expectedDropItemIds.length > 0) {
+        yield* collectNearbyDrops(state.driver, {
+          itemIds: expectedDropItemIds,
+          radius: Math.min(
+            HUNT_DROP_RECOVERY_RADIUS,
+            state.strategy.entitySearchRadius,
+          ),
+          maximumDrops: Math.min(32, Math.max(16, maximumTargets)),
+          settleDelayMs: 0,
+          maximumVerticalDistance:
+            HUNT_DROP_RECOVERY_MAXIMUM_VERTICAL_DISTANCE,
+          path: expectedFoodDrops
+              && current.player.position.dimension === "minecraft:overworld"
+            ? { ...huntingPath, avoidFluids: false }
+            : huntingPath,
+        });
+        current = yield* state.driver.observe;
+        if (
+          expectedDropCount(current) - initialExpectedDropCount
+            >= maximumTargets
+        ) {
+          return;
+        }
       }
       const now = Date.now();
       const rememberedUnreachableTargets = new Map(
@@ -8935,14 +8965,8 @@ function huntOrExplore(
       if (!defeated) {
         continue;
       }
-      const shouldCrossFluidsForFoodDrops =
-        current.player.position.dimension === "minecraft:overworld"
-        && expectedDropItemIds.some((itemId) =>
-          EDIBLE_FOOD_ITEM_IDS.includes(itemId)
-          || EMERGENCY_FOOD_ITEM_IDS.some((foodItemId) =>
-            foodItemId === itemId
-          )
-        );
+      const shouldCrossFluidsForFoodDrops = expectedFoodDrops
+        && current.player.position.dimension === "minecraft:overworld";
       yield* collectNearbyDrops(state.driver, {
         ...(expectedDropItemIds.length === 0
           ? {}
