@@ -14108,6 +14108,31 @@ describe("beat-game run lifecycle", () => {
     } as const;
     driver.entityResults = [salmon];
     let attacks = 0;
+    driver.blockQueryResolver = () =>
+      driver.currentObservation.player.air < 120
+        ? [blockObservation(
+          {
+            x: 0,
+            y: 64,
+            z: 0,
+            dimension: "minecraft:overworld",
+          },
+          { blockId: "minecraft:water", replaceable: true },
+        )]
+        : [];
+    driver.actionResolver = (action) =>
+      Effect.sync(() => {
+        if (action.type !== "set-movement") {
+          return {};
+        }
+        driver.currentObservation = observation({
+          health: 20,
+          food: 6,
+          air: 300,
+          counts: driver.currentObservation.inventory.counts,
+        });
+        return {};
+      });
     driver.taskResolver = (task) =>
       Effect.suspend(() => {
         driver.tasks.push(task);
@@ -14163,6 +14188,10 @@ describe("beat-game run lifecycle", () => {
           ? task.target.networkId
           : undefined),
     ).toEqual([salmon.networkId, salmon.networkId]);
+    expect(driver.surfaceQueries).not.toHaveLength(0);
+    expect(driver.surfaceQueries.every(({ radius }) => radius === 4)).toBe(
+      true,
+    );
   }, 10_000);
 
   it("searches on land instead of chasing fish above critical hunger", async () => {

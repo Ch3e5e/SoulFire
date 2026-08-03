@@ -8582,6 +8582,7 @@ function huntOrExplore(
                       emergencyAirAscent(
                         state,
                         observation.player.position,
+                        { seekDrySurfaceAfterRecovery: false },
                       )
                     ),
                   )
