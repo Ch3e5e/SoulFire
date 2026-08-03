@@ -186,7 +186,6 @@ describe("beat-game requirements", () => {
       "diamond-pickaxe",
       "melee-weapon",
       "food",
-      "iron",
       "shield",
       "obsidian",
       "water-bucket",
@@ -244,5 +243,6 @@ describe("beat-game requirements", () => {
     expect(
       requirements.filter(({ key }) => key === "ignition"),
     ).toHaveLength(1);
+    expect(requirements.map(({ key }) => key)).not.toContain("iron");
   });
 });

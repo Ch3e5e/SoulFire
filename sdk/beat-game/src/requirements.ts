@@ -323,10 +323,16 @@ function portalRequirements(
   inventory: BeatGameInventory,
   strategy: BeatGameStrategy,
 ): readonly BeatGameRequirementDefinition[] {
+  // Iron-gated portal equipment satisfies its own requirement. Replenishing
+  // an optional ingot reserve must not block portal construction.
   const survivalRequirements = REQUIREMENTS[
     BeatGamePhase.PREPARE_OVERWORLD
   ]
-    .filter(({ key }) => key !== "water-bucket" && key !== "ignition")
+    .filter(({ key }) =>
+      key !== "iron"
+      && key !== "water-bucket"
+      && key !== "ignition"
+    )
     .map((definition) => {
       if (definition.key === "logs") {
         return {
