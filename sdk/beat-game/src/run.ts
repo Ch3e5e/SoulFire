@@ -2251,6 +2251,12 @@ function monitorObservedSafety(
     return findNearbyAttackThreat(state, observation).pipe(
       Effect.flatMap((threat) => {
         if (threat === undefined) {
+          if (decision.type === "recover-death") {
+            return Effect.succeed({
+              replanReason:
+                "environmental damage was observed without a nearby attacker",
+            } satisfies ActionResult);
+          }
           return Effect.suspend(() => monitor(observation));
         }
         const response = threat.response;
@@ -2283,7 +2289,8 @@ function monitorObservedSafety(
     return Effect.succeed({});
   }
   if (
-    decision.type !== "retreat"
+    decision.type !== "recover-death"
+    && decision.type !== "retreat"
     && decision.type !== "eat"
     && observation.player.health < state.strategy.minimumHealth
     && !(
