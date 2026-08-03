@@ -4631,7 +4631,11 @@ function castNetherPortalFromLavaPool(
             type: "select-item",
             selector: { itemIds: ["minecraft:lava_bucket"] },
           });
-          yield* placeBucketOnTopOf(driver, below(target));
+          yield* placeBucketOnTopOf(
+            driver,
+            below(target),
+            ["minecraft:lava_bucket"],
+          );
           yield* waitForExactBlockState(
             driver,
             target,
@@ -4663,7 +4667,11 @@ function castNetherPortalFromLavaPool(
                 : Effect.fail(cause)
             ),
           );
-          yield* placeBucketOnTopOf(driver, below(water));
+          yield* placeBucketOnTopOf(
+            driver,
+            below(water),
+            ["minecraft:water_bucket"],
+          );
         }));
         yield* waitForExactBlockState(
           driver,
@@ -5056,27 +5064,111 @@ function useBucketToward(
 function placeBucketOnTopOf(
   driver: BeatGameDriver,
   support: BeatGameBlockPosition,
+  itemIds: readonly string[],
 ): Effect.Effect<void, BeatGameDriverError> {
   return Effect.gen(function* () {
-    const observation = yield* driver.observe;
-    const eyePosition = {
-      ...observation.player.position,
-      y: observation.player.position.y + 1.62,
-    };
-    const rotation = rotationToward(eyePosition, topFaceCenter(support));
+    yield* exposePortalBucketSupport(driver, support);
     yield* driver.act({
-      type: "look",
-      yaw: rotation.yaw,
-      pitch: rotation.pitch,
+      type: "select-item",
+      selector: { itemIds },
     });
-    yield* waitForRotation(
-      driver,
-      rotation.yaw,
-      rotation.pitch,
-      40,
-      50,
-    );
     yield* driver.act({ type: "use-item", hand: "main" });
+  });
+}
+
+function exposePortalBucketSupport(
+  driver: BeatGameDriver,
+  support: BeatGameBlockPosition,
+): Effect.Effect<void, BeatGameDriverError> {
+  return Effect.gen(function* () {
+    for (
+      let clearedBlocks = 0;
+      clearedBlocks <= PORTAL_CASTING_LAVA_SIGHT_CLEARING_BLOCKS;
+      clearedBlocks += 1
+    ) {
+      const observation = yield* driver.observe;
+      const eyePosition = {
+        ...observation.player.position,
+        y: observation.player.position.y + 1.62,
+      };
+      const supportTop = topFaceCenter(support);
+      const direction = {
+        x: supportTop.x - eyePosition.x,
+        y: supportTop.y - eyePosition.y,
+        z: supportTop.z - eyePosition.z,
+      };
+      const distance = Math.sqrt(
+        direction.x * direction.x
+          + direction.y * direction.y
+          + direction.z * direction.z,
+      );
+      const rotation = rotationToward(eyePosition, supportTop);
+      yield* driver.act({
+        type: "look",
+        yaw: rotation.yaw,
+        pitch: rotation.pitch,
+      });
+      yield* waitForRotation(
+        driver,
+        rotation.yaw,
+        rotation.pitch,
+        40,
+        50,
+      );
+      const obstruction = (yield* driver.raycast({
+        direction,
+        maximumDistance: distance + 0.05,
+        includeFluids: false,
+      })).block;
+      if (
+        obstruction === undefined
+        || samePosition(obstruction.position, support)
+      ) {
+        return;
+      }
+      if (
+        !obstruction.diggable
+        || obstruction.blockId === "minecraft:obsidian"
+        || isPortalCastingPlayerStabilityBlock(
+          observation.player.position,
+          obstruction.position,
+        )
+        || clearedBlocks === PORTAL_CASTING_LAVA_SIGHT_CLEARING_BLOCKS
+      ) {
+        return yield* Effect.fail(behaviorError(
+          driver,
+          `Could not expose portal bucket support through ${
+            obstruction.blockId
+          } at ${positionKey(obstruction.position)}`,
+        ));
+      }
+      const tool = preferredPortalDigTool(observation);
+      if (tool !== undefined) {
+        yield* driver.act({
+          type: "select-item",
+          selector: { itemIds: [tool] },
+        });
+      }
+      yield* driver.act({
+        type: "dig-block",
+        position: obstruction.position,
+      });
+      const cleared = yield* waitForExactBlockState(
+        driver,
+        obstruction.position,
+        (block) => block === undefined || block.replaceable,
+        10,
+        50,
+      );
+      if (cleared !== undefined && !cleared.replaceable) {
+        return yield* Effect.fail(behaviorError(
+          driver,
+          `Could not clear portal bucket sightline at ${
+            positionKey(obstruction.position)
+          }`,
+        ));
+      }
+    }
   });
 }
 

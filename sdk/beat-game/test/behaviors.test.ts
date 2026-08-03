@@ -3333,6 +3333,18 @@ describe("beat-game behavior programs", () => {
       key(interior),
       blockObservation(interior, { blockId: "minecraft:deepslate" }),
     );
+    const liquidSightObstruction = {
+      ...origin,
+      x: origin.x + 1,
+      y: origin.y + 1,
+      z: origin.z - 1,
+    };
+    blocks.set(
+      key(liquidSightObstruction),
+      blockObservation(liquidSightObstruction, {
+        blockId: "minecraft:deepslate",
+      }),
+    );
     blocks.set(
       key(replaceableInterior),
       blockObservation(replaceableInterior, {
@@ -3392,6 +3404,13 @@ describe("beat-game behavior programs", () => {
     };
     let selectedItemId = "";
     let pendingLavaTarget: typeof target | undefined;
+    driver.raycastResolver = () =>
+      blocks.has(key(liquidSightObstruction))
+        ? {
+          block: blocks.get(key(liquidSightObstruction))!,
+          distance: 1,
+        }
+        : { distance: 2 };
     driver.actionObserver = (action) => {
       if (action.type === "select-item") {
         selectedItemId = action.selector.itemIds?.[0] ?? "";
@@ -3468,6 +3487,10 @@ describe("beat-game behavior programs", () => {
       type: "dig-block",
       position: interior,
     });
+    expect(driver.actions).toContainEqual({
+      type: "dig-block",
+      position: liquidSightObstruction,
+    });
     expect(driver.actions).not.toContainEqual({
       type: "dig-block",
       position: replaceableInterior,
@@ -3476,12 +3499,18 @@ describe("beat-game behavior programs", () => {
       action.type === "dig-block"
       && key(action.position) === key(interior)
     );
+    const sightlineDigIndex = driver.actions.findIndex((action) =>
+      action.type === "dig-block"
+      && key(action.position) === key(liquidSightObstruction)
+    );
     const interiorToolSelectionIndex = driver.actions.findIndex((action) =>
       action.type === "select-item"
       && action.selector.itemIds?.includes("minecraft:iron_pickaxe") === true
     );
     expect(interiorToolSelectionIndex).toBeGreaterThanOrEqual(0);
     expect(interiorToolSelectionIndex).toBeLessThan(interiorDigIndex);
+    expect(sightlineDigIndex).toBeGreaterThanOrEqual(0);
+    expect(sightlineDigIndex).toBeLessThan(liquidPlacementIndex);
     expect(driver.actions.findIndex((action) =>
       action.type === "dig-block"
       && (
