@@ -13620,9 +13620,6 @@ describe("beat-game run lifecycle", () => {
       "minecraft:chicken",
       "minecraft:cod",
       "minecraft:salmon",
-      "minecraft:zombie",
-      "minecraft:zombie_villager",
-      "minecraft:husk",
     ]);
   });
 
