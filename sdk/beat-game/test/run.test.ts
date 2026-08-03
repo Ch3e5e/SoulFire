@@ -16463,7 +16463,7 @@ describe("beat-game run lifecycle", () => {
         }, { blockId: "minecraft:crafting_table" })]
         : [];
     driver.raycastResolver = ({ direction, maximumDistance }) => ({
-      distance: direction.x < -0.9 ? maximumDistance : 1,
+      distance: direction.z < -0.9 ? maximumDistance : 1,
     });
     const discardTimeline: string[] = [];
     const resolvePath = driver.pathResolver;
@@ -16476,7 +16476,16 @@ describe("beat-game run lifecycle", () => {
                 position.x < -5.9
                 && Math.abs(position.z) < 0.01
               ) {
-                discardTimeline.push("path:discard-site");
+                discardTimeline.push(
+                  policy.allowMining
+                    ? "path:discard-site"
+                    : "path:pocket-return",
+                );
+              } else if (
+                position.x < -5.9
+                && position.z < -2.9
+              ) {
+                discardTimeline.push("path:side-pocket");
               } else if (
                 Math.abs(position.x) < 0.01
                 && Math.abs(position.z) < 0.01
@@ -16511,6 +16520,10 @@ describe("beat-game run lifecycle", () => {
             && policy.allowMining === false
             && !(
               Math.abs(position.x) < 0.001
+              && Math.abs(position.z) < 0.001
+            )
+            && !(
+              Math.abs(position.x + 6) < 0.001
               && Math.abs(position.z) < 0.001
             )
             ? Effect.fail(new BeatGameDriverError({
@@ -16648,10 +16661,12 @@ describe("beat-game run lifecycle", () => {
     )).toHaveLength(2);
     expect(driver.actions.filter((action) =>
       action.type === "look"
-      && Math.abs(action.yaw - 90) < 0.001
+      && Math.abs(Math.abs(action.yaw) - 180) < 0.001
     )).toHaveLength(2);
-    expect(discardTimeline.slice(0, 4)).toEqual([
+    expect(discardTimeline.slice(0, 6)).toEqual([
       "path:discard-site",
+      "path:side-pocket",
+      "path:pocket-return",
       "toss:minecraft:raw_copper",
       "toss:minecraft:cobblestone",
       "path:return",
@@ -16673,7 +16688,7 @@ describe("beat-game run lifecycle", () => {
       && policy.avoidFluids === true
     )).toHaveLength(1);
     expect(driver.raycasts.some(({ direction, maximumDistance }) =>
-      direction.x < -0.9
+      direction.z < -0.9
       && maximumDistance === 3
     )).toBe(true);
   });

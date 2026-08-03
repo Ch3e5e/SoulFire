@@ -9502,11 +9502,11 @@ function ensureInventorySpace(
       distance: number,
       allowMining: boolean,
       yawOffsets: readonly number[] = [0, 90, -90, 180],
+      baseYaw = origin.player.rotation.yaw,
     ) =>
       Effect.gen(function* () {
         for (const yawOffset of yawOffsets) {
-          const yawRadians = (origin.player.rotation.yaw + yawOffset)
-            * Math.PI / 180;
+          const yawRadians = (baseYaw + yawOffset) * Math.PI / 180;
           const escaped = yield* state.driver.pathfind({
             x: origin.player.position.x - Math.sin(yawRadians) * distance,
             y: origin.player.position.y,
@@ -9595,23 +9595,39 @@ function ensureInventorySpace(
           current.player.position.x - discardSiteOrigin.x,
           current.player.position.z - discardSiteOrigin.z,
         );
-        const discardPocketPosition = current.player.position;
+        const discardSitePosition = current.player.position;
         if (
           relocated
           && discardSiteDistance > INVENTORY_DISCARD_ESCAPE_DISTANCE
         ) {
           discardReturnTarget = discardSiteOrigin;
-          discardPocketYaw = yield* findDiscardPocketYaw(
-            discardPocketPosition,
-            {
-              x: discardPocketPosition.x
-                + (discardPocketPosition.x - discardSiteOrigin.x),
-              y: discardPocketPosition.y,
-              z: discardPocketPosition.z
-                + (discardPocketPosition.z - discardSiteOrigin.z),
-              dimension: discardPocketPosition.dimension,
-            },
+          const corridorYaw = Math.atan2(
+            -(discardSitePosition.x - discardSiteOrigin.x),
+            discardSitePosition.z - discardSiteOrigin.z,
+          ) * 180 / Math.PI;
+          const excavatedPocket = yield* tryRelativeDiscardPath(
+            current,
+            INVENTORY_DISCARD_ESCAPE_DISTANCE,
+            true,
+            [90, -90],
+            corridorYaw,
           );
+          if (excavatedPocket) {
+            const discardPocketPosition = (yield* state.driver.observe)
+              .player.position;
+            const returnedToDiscardSite = yield* state.driver.pathfind(
+              discardSitePosition,
+              0.75,
+              discardPath(false),
+            ).pipe(Effect.either);
+            if (returnedToDiscardSite._tag === "Right") {
+              current = yield* state.driver.observe;
+              discardPocketYaw = yield* findDiscardPocketYaw(
+                current.player.position,
+                discardPocketPosition,
+              );
+            }
+          }
         }
       }
       if (current.inventory.emptyPlayerSlots === undefined) {
