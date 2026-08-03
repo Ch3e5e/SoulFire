@@ -12353,7 +12353,7 @@ describe("beat-game run lifecycle", () => {
     });
   });
 
-  it("upgrades its pickaxe and descends before searching for lava", async () => {
+  it("upgrades its pickaxe and rescans for lava after descending", async () => {
     const driver = new FakeBeatGameDriver();
     const counts = {
       "minecraft:bucket": 1,
@@ -12382,7 +12382,19 @@ describe("beat-game run lifecycle", () => {
       dimension: "minecraft:overworld",
     }, { blockId: "minecraft:crafting_table" });
     let deepTablePlaced = false;
+    let resolveDeepLavaRescan!: () => void;
+    const deepLavaRescanned = new Promise<void>((resolve) => {
+      resolveDeepLavaRescan = resolve;
+    });
     driver.blockQueryResolver = ({ center, selector }) => {
+      if (
+        selector.blockIds?.includes("minecraft:lava") === true
+        && selector.properties?.level === "0"
+        && center.y <= 52
+      ) {
+        resolveDeepLavaRescan();
+        return [];
+      }
       if (selector.blockIds?.includes("minecraft:crafting_table") === true) {
         return deepTablePlaced ? [surfaceTable, deepTable] : [surfaceTable];
       }
@@ -12434,10 +12446,6 @@ describe("beat-game run lifecycle", () => {
         : { requiredStation: "minecraft:crafting_table" }),
       missing: [],
     });
-    let resolveDescent!: () => void;
-    const descentCompleted = new Promise<void>((resolve) => {
-      resolveDescent = resolve;
-    });
     driver.taskResolver = (task) =>
       Effect.sync(() => {
         driver.tasks.push(task);
@@ -12468,9 +12476,6 @@ describe("beat-game run lifecycle", () => {
           counts: driver.currentObservation.inventory.counts,
           position,
         });
-        if (position.y === 52) {
-          resolveDescent();
-        }
         return Effect.void;
       }
       return Effect.void;
@@ -12491,7 +12496,7 @@ describe("beat-game run lifecycle", () => {
         checkpointStore: store,
         strategy: { observationPollMs: 1 },
       });
-      yield* Effect.promise(() => descentCompleted).pipe(
+      yield* Effect.promise(() => deepLavaRescanned).pipe(
         Effect.timeout("5 seconds"),
       );
       yield* run.stop;
@@ -12511,6 +12516,14 @@ describe("beat-game run lifecycle", () => {
       avoidFluids: true,
       maxFallDistance: 1,
     });
+    expect(driver.blockQueries).toContainEqual(expect.objectContaining({
+      center: expect.objectContaining({ y: 52 }),
+      selector: {
+        blockIds: ["minecraft:lava"],
+        properties: { level: "0" },
+      },
+      maximumResults: 32,
+    }));
   });
 
   it("continues descending when visible deep lava has no reachable stand", async () => {

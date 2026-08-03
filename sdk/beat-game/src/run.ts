@@ -6961,7 +6961,7 @@ function fillLiquidBucket(
       );
       current = yield* state.driver.observe;
     }
-    const liquidSources = yield* state.driver.queryBlocks({
+    let liquidSources = yield* state.driver.queryBlocks({
       center: current.player.position,
       radius: state.strategy.blockSearchRadius,
       selector: {
@@ -6978,7 +6978,10 @@ function fillLiquidBucket(
         maximumResults: 8,
       })
       : [];
-    const sources = [...liquidSources, ...waterloggedSources];
+    let sources: readonly BeatGameBlockObservation[] = [
+      ...liquidSources,
+      ...waterloggedSources,
+    ];
     let source = sources[0];
     if (source === undefined) {
       if (liquid === "lava") {
@@ -7024,43 +7027,61 @@ function fillLiquidBucket(
                 }`,
               }));
             }
+            liquidSources = yield* state.driver.queryBlocks({
+              center: current.player.position,
+              radius: state.strategy.blockSearchRadius,
+              selector: {
+                blockIds: ["minecraft:lava"],
+                properties: { level: "0" },
+              },
+              maximumResults: 32,
+            });
+            if (liquidSources.length > 0) {
+              sources = liquidSources;
+              source = liquidSources[0];
+              break;
+            }
           }
         }
-        const canCraftReplacementIronPickaxe =
-          (current.inventory.counts["minecraft:iron_ingot"] ?? 0) >= 3;
-        yield* ensureMiningPickaxe(
-          state,
-          current,
-          canCraftReplacementIronPickaxe
-            ? "minecraft:iron_pickaxe"
-            : "minecraft:stone_pickaxe",
-          canCraftReplacementIronPickaxe
-            ? DURABLE_MINING_PICKAXE_ITEM_IDS
-            : MINING_PICKAXE_ITEM_IDS,
-        );
-        current = yield* state.driver.observe;
-        return yield* advanceExplorationFrontier(
-          state,
-          current.player.position,
-          "find-deep-lava",
-          state.strategy.blockSearchRadius,
-          state.strategy.path,
-          false,
-        );
+        if (source === undefined) {
+          const canCraftReplacementIronPickaxe =
+            (current.inventory.counts["minecraft:iron_ingot"] ?? 0) >= 3;
+          yield* ensureMiningPickaxe(
+            state,
+            current,
+            canCraftReplacementIronPickaxe
+              ? "minecraft:iron_pickaxe"
+              : "minecraft:stone_pickaxe",
+            canCraftReplacementIronPickaxe
+              ? DURABLE_MINING_PICKAXE_ITEM_IDS
+              : MINING_PICKAXE_ITEM_IDS,
+          );
+          current = yield* state.driver.observe;
+          return yield* advanceExplorationFrontier(
+            state,
+            current.player.position,
+            "find-deep-lava",
+            state.strategy.blockSearchRadius,
+            state.strategy.path,
+            false,
+          );
+        }
       }
-      return yield* explore(state.driver, {
-        origin: current.player.position,
-        radius: discoveryHopRadius(
-          state,
-          state.strategy.blockSearchRadius,
-        ),
-        maximumWaypoints: 1,
-        purpose: explorationPurpose(
-          `find-${liquid}`,
-          observation.player.position,
-        ),
-        path: state.strategy.path,
-      });
+      if (source === undefined) {
+        return yield* explore(state.driver, {
+          origin: current.player.position,
+          radius: discoveryHopRadius(
+            state,
+            state.strategy.blockSearchRadius,
+          ),
+          maximumWaypoints: 1,
+          purpose: explorationPurpose(
+            `find-${liquid}`,
+            observation.player.position,
+          ),
+          path: state.strategy.path,
+        });
+      }
     }
     const approachOrigin = current.player.position;
     const ensureApproachPickaxe = (
