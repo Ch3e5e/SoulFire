@@ -7785,15 +7785,25 @@ function approachLavaSourceFromSide(
       nearbySources,
       (source) =>
         queryLavaInteractionVolume(state.driver, source.position).pipe(
-          Effect.map((blocks) => ({
-            source,
-            blocks,
-            candidates: lavaInteractionStandCandidates(source.position)
-              .sort((left, right) =>
-                distanceSquared(observation.player.position, left)
+          Effect.map((blocks) => {
+            const candidates = lavaInteractionStandCandidates(
+              source.position,
+            ).sort((left, right) =>
+              lavaSightlineObstructionCount(
+                blocks,
+                left,
+                source.position,
+              )
+                - lavaSightlineObstructionCount(
+                  blocks,
+                  right,
+                  source.position,
+                )
+              || distanceSquared(observation.player.position, left)
                 - distanceSquared(observation.player.position, right)
-              ),
-          })),
+            );
+            return { source, blocks, candidates };
+          }),
         ),
       { concurrency: 1 },
     );
@@ -7987,6 +7997,45 @@ function lavaInteractionStandCandidates(
     }
   }
   return candidates;
+}
+
+function lavaSightlineObstructionCount(
+  blocks: ReadonlyMap<string, BeatGameBlockObservation>,
+  candidate: BeatGamePosition,
+  source: BeatGameBlockPosition,
+): number {
+  const eye = { ...candidate, y: candidate.y + 1.62 };
+  const target = blockCenter(source);
+  const length = Math.sqrt(distanceSquared(eye, target));
+  const samples = Math.max(1, Math.ceil(length * 5));
+  const visited = new Set<string>();
+  let obstructions = 0;
+  for (let sample = 1; sample < samples; sample += 1) {
+    const progress = sample / samples;
+    const position = {
+      x: Math.floor(eye.x + (target.x - eye.x) * progress),
+      y: Math.floor(eye.y + (target.y - eye.y) * progress),
+      z: Math.floor(eye.z + (target.z - eye.z) * progress),
+      dimension: source.dimension,
+    } satisfies BeatGameBlockPosition;
+    if (sameBlockPosition(position, source)) {
+      continue;
+    }
+    const key = positionKey(position);
+    if (visited.has(key)) {
+      continue;
+    }
+    visited.add(key);
+    const block = blocks.get(key);
+    if (
+      block !== undefined
+      && !block.replaceable
+      && !isPlayerFluidBlock(block.blockId)
+    ) {
+      obstructions += 1;
+    }
+  }
+  return obstructions;
 }
 
 function isSafeLavaInteractionStand(

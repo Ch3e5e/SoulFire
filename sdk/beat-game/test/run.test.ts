@@ -12323,6 +12323,148 @@ describe("beat-game run lifecycle", () => {
     expect(useItemInterrupted).toBe(true);
   });
 
+  it("prefers a clear lava sightline over a closer blocked stand", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const source = {
+      x: 0,
+      y: -52,
+      z: 0,
+      dimension: "minecraft:overworld",
+    } as const;
+    const blockedStand = {
+      x: 2,
+      y: -50,
+      z: 0,
+      dimension: source.dimension,
+    } as const;
+    const clearStand = {
+      x: -2,
+      y: -50,
+      z: 0,
+      dimension: source.dimension,
+    } as const;
+    const standVolume = (stand: BeatGameBlockPosition) => [
+      blockObservation(stand, {
+        blockId: "minecraft:air",
+        replaceable: true,
+      }),
+      blockObservation({ ...stand, y: stand.y + 1 }, {
+        blockId: "minecraft:air",
+        replaceable: true,
+      }),
+      blockObservation({ ...stand, y: stand.y - 1 }),
+    ];
+    const sightlineWall = Array.from({ length: 5 }, (_, index) =>
+      blockObservation({
+        x: 1,
+        y: -52 + index,
+        z: 0,
+        dimension: source.dimension,
+      })
+    );
+    driver.currentObservation = observation({
+      position: {
+        x: 4.5,
+        y: -50,
+        z: 0.5,
+        dimension: source.dimension,
+      },
+      counts: {
+        "minecraft:bucket": 1,
+        "minecraft:cobblestone": 20,
+        "minecraft:cooked_beef": 8,
+        "minecraft:flint_and_steel": 1,
+        "minecraft:iron_ingot": 7,
+        "minecraft:iron_pickaxe": 1,
+        "minecraft:oak_log": 8,
+        "minecraft:shield": 1,
+        "minecraft:stone_sword": 1,
+        "minecraft:water_bucket": 1,
+      },
+    });
+    driver.blockQueryResolver = ({ radius, selector }) => {
+      if (
+        selector.blockIds?.includes("minecraft:lava") === true
+        && selector.properties?.level === "0"
+      ) {
+        return [blockObservation(source, {
+          blockId: "minecraft:lava",
+          properties: { level: "0" },
+          replaceable: true,
+        })];
+      }
+      return radius === 4.9 && Object.keys(selector).length === 0
+        ? [
+          ...standVolume(blockedStand),
+          ...standVolume(clearStand),
+          ...sightlineWall,
+        ]
+        : [];
+    };
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+        if (radius === 0.75) {
+          driver.currentObservation = observation({
+            position,
+            counts: driver.currentObservation.inventory.counts,
+          });
+        }
+      });
+    driver.raycastResolver = () => ({ distance: 3 });
+    driver.actionResolver = (action) => {
+      if (action.type === "look") {
+        driver.currentObservation = observation({
+          position: driver.currentObservation.player.position,
+          counts: driver.currentObservation.inventory.counts,
+          rotation: { yaw: action.yaw, pitch: action.pitch },
+        });
+      }
+      return action.type === "use-item" ? Effect.never : Effect.succeed({});
+    };
+    await Effect.runPromise(store.save(checkpoint(
+      BeatGamePhase.ENTER_NETHER,
+      {
+        runId: "clear-lava-sightline-run",
+        teamId: "clear-lava-sightline-team",
+      },
+    ), undefined));
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        runId: "clear-lava-sightline-run",
+        team: { teamId: "clear-lava-sightline-team" },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.actions.some((action) => action.type === "use-item")) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    }).pipe(Effect.timeout("5 seconds"))));
+
+    expect(driver.paths.find(({ radius }) => radius === 0.75)).toEqual(
+      expect.objectContaining({
+        position: {
+          x: clearStand.x + 0.5,
+          y: clearStand.y,
+          z: clearStand.z + 0.5,
+          dimension: clearStand.dimension,
+        },
+      }),
+    );
+    expect(driver.paths).not.toContainEqual(expect.objectContaining({
+      position: {
+        x: blockedStand.x + 0.5,
+        y: blockedStand.y,
+        z: blockedStand.z + 0.5,
+        dimension: blockedStand.dimension,
+      },
+    }));
+  });
+
   it("skips lava sources that require unsafe sightline mining", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
