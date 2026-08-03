@@ -2321,10 +2321,6 @@ describe("beat-game run lifecycle", () => {
           dimension: "minecraft:overworld",
         }, { blockId: "minecraft:crafting_table" })]
         : [];
-    driver.raycastResolver = ({ direction, maximumDistance }) => ({
-      distance: direction.x < -0.9 ? maximumDistance : 1,
-    });
-
     await Effect.runPromise(Effect.scoped(
       beatGameWithDriver(driver, {
         runId: "partial-active-corpse-run",
@@ -16466,6 +16462,9 @@ describe("beat-game run lifecycle", () => {
           dimension: "minecraft:overworld",
         }, { blockId: "minecraft:crafting_table" })]
         : [];
+    driver.raycastResolver = ({ direction, maximumDistance }) => ({
+      distance: direction.x < -0.9 ? maximumDistance : 1,
+    });
     const resolvePath = driver.pathResolver;
     driver.pathResolver = (position, radius, policy) =>
       resolvePath(position, radius, policy).pipe(
@@ -16473,6 +16472,8 @@ describe("beat-game run lifecycle", () => {
           Effect.sync(() => {
             const currentPosition =
               driver.currentObservation.player.position;
+            const emptyPlayerSlots =
+              driver.currentObservation.inventory.emptyPlayerSlots;
             const deltaX = position.x - currentPosition.x;
             const deltaZ = position.z - currentPosition.z;
             const yaw = Math.hypot(deltaX, deltaZ) < 0.001
@@ -16480,7 +16481,9 @@ describe("beat-game run lifecycle", () => {
               : Math.atan2(-deltaX, deltaZ) * 180 / Math.PI;
             driver.currentObservation = observation({
               counts: driver.currentObservation.inventory.counts,
-              emptyPlayerSlots: 0,
+              ...(emptyPlayerSlots === undefined
+                ? {}
+                : { emptyPlayerSlots }),
               position,
               rotation: {
                 yaw,
@@ -16542,6 +16545,7 @@ describe("beat-game run lifecycle", () => {
       return Effect.void;
     };
     let pendingInventoryObservations = 0;
+    let tossActions = 0;
     driver.observationResolver = () =>
       Effect.sync(() => {
         if (pendingInventoryObservations > 0) {
@@ -16549,7 +16553,7 @@ describe("beat-game run lifecycle", () => {
           if (pendingInventoryObservations === 0) {
             driver.currentObservation = observation({
               counts: driver.currentObservation.inventory.counts,
-              emptyPlayerSlots: 3,
+              emptyPlayerSlots: tossActions === 1 ? 1 : 3,
             });
           }
         }
@@ -16573,6 +16577,7 @@ describe("beat-game run lifecycle", () => {
           });
         }
         if (action.type === "toss-items") {
+          tossActions += 1;
           const itemId = action.selector.itemIds?.[0];
           if (itemId !== undefined) {
             const counts = {
@@ -16627,7 +16632,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.actions.filter((action) =>
       action.type === "look"
       && Math.abs(action.yaw - 90) < 0.001
-    )).toHaveLength(1);
+    )).toHaveLength(2);
     expect(driver.paths.filter(({ position, radius, policy }) =>
       radius === 0.75
       && Math.abs(position.x + 6) < 0.001

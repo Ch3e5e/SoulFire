@@ -290,6 +290,7 @@ const INVENTORY_DISCARD_PRIORITY = [
   "minecraft:tuff",
 ] as const;
 const INVENTORY_BUILDING_BLOCK_RESERVE = 64;
+const INVENTORY_EMPTY_SLOT_BUFFER = 2;
 const INVENTORY_EMPTY_SLOT_STABILITY_OBSERVATIONS = 12;
 const INVENTORY_DISCARD_ESCAPE_DISTANCE = 3;
 const INVENTORY_DISCARD_SITE_DISTANCE = 6;
@@ -9565,51 +9566,50 @@ function ensureInventorySpace(
         }
         return undefined;
       });
+    const targetEmptySlots = Math.min(
+      36,
+      minimumEmptySlots + INVENTORY_EMPTY_SLOT_BUFFER,
+    );
+    let discardPocketYaw: number | undefined;
     while (
       current.inventory.emptyPlayerSlots !== undefined
-      && current.inventory.emptyPlayerSlots < minimumEmptySlots
+      && current.inventory.emptyPlayerSlots < targetEmptySlots
     ) {
-      const discardSiteOrigin = current.player.position;
-      const relocated = yield* tryRelativeDiscardPath(
-        current,
-        INVENTORY_DISCARD_SITE_DISTANCE,
-        true,
-        [90, -90, 180, 0],
-      );
-      if (relocated) {
-        current = yield* state.driver.observe;
-      }
-      if (current.inventory.emptyPlayerSlots === undefined) {
-        return;
-      }
-      const discardSiteDeltaX = current.player.position.x
-        - discardSiteOrigin.x;
-      const discardSiteDeltaZ = current.player.position.z
-        - discardSiteOrigin.z;
-      const discardSiteDistance = Math.hypot(
-        discardSiteDeltaX,
-        discardSiteDeltaZ,
-      );
-      let discardPocketReady = false;
-      let discardPocketYaw: number | undefined;
-      const discardPocketPosition = current.player.position;
-      const discardRetreatTarget = relocated
-          && discardSiteDistance > INVENTORY_DISCARD_ESCAPE_DISTANCE
-        ? discardSiteOrigin
-        : undefined;
-      if (discardRetreatTarget !== undefined) {
-        const retreated = yield* state.driver.pathfind(
-          discardRetreatTarget,
-          0.75,
-          discardPath(false),
-        ).pipe(Effect.either);
-        if (retreated._tag === "Right") {
+      if (discardPocketYaw === undefined) {
+        const discardSiteOrigin = current.player.position;
+        const relocated = yield* tryRelativeDiscardPath(
+          current,
+          INVENTORY_DISCARD_SITE_DISTANCE,
+          true,
+          [90, -90, 180, 0],
+        );
+        if (relocated) {
           current = yield* state.driver.observe;
-          discardPocketYaw = yield* findDiscardPocketYaw(
-            current.player.position,
-            discardPocketPosition,
-          );
-          discardPocketReady = discardPocketYaw !== undefined;
+        }
+        if (current.inventory.emptyPlayerSlots === undefined) {
+          return;
+        }
+        const discardSiteDistance = Math.hypot(
+          current.player.position.x - discardSiteOrigin.x,
+          current.player.position.z - discardSiteOrigin.z,
+        );
+        const discardPocketPosition = current.player.position;
+        if (
+          relocated
+          && discardSiteDistance > INVENTORY_DISCARD_ESCAPE_DISTANCE
+        ) {
+          const retreated = yield* state.driver.pathfind(
+            discardSiteOrigin,
+            0.75,
+            discardPath(false),
+          ).pipe(Effect.either);
+          if (retreated._tag === "Right") {
+            current = yield* state.driver.observe;
+            discardPocketYaw = yield* findDiscardPocketYaw(
+              current.player.position,
+              discardPocketPosition,
+            );
+          }
         }
       }
       if (current.inventory.emptyPlayerSlots === undefined) {
@@ -9631,6 +9631,9 @@ function ensureInventorySpace(
           ? "minecraft:cobblestone"
           : undefined);
       if (itemId === undefined) {
+        if (current.inventory.emptyPlayerSlots >= minimumEmptySlots) {
+          return;
+        }
         return yield* Effect.fail(new BeatGameDriverError({
           operation: "ensure-inventory-space",
           code: "resource-exhausted",
@@ -9664,7 +9667,7 @@ function ensureInventorySpace(
         selector: { itemIds: [itemId] },
         count,
       });
-      let safelySeparated = discardPocketReady;
+      let safelySeparated = discardPocketYaw !== undefined;
       if (!safelySeparated) {
         safelySeparated = yield* tryRelativeDiscardPath(
           current,
