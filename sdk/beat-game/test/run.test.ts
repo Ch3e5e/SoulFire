@@ -7050,6 +7050,101 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("escapes a drowned toward dry ground instead of staying submerged", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      health: 5,
+      food: 17,
+      position: {
+        x: 0,
+        y: 58,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      counts: { "minecraft:wooden_sword": 1 },
+    });
+    const drowned: BeatGameEntityObservation = {
+      connectionEpoch: "epoch-1",
+      networkId: 24,
+      entityType: "minecraft:drowned",
+      position: {
+        x: 3,
+        y: 60,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    };
+    driver.entityResults = [drowned];
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2) === true
+          || query.selector.networkId === drowned.networkId
+        ? driver.entityResults
+        : [];
+    driver.blockQueryResolver = (query) =>
+      query.selector.blockIds?.includes("minecraft:water") === true
+        ? [blockObservation({
+          x: Math.floor(query.center.x),
+          y: Math.floor(query.center.y),
+          z: Math.floor(query.center.z),
+          dimension: query.center.dimension,
+        }, {
+          blockId: "minecraft:water",
+          replaceable: true,
+        })]
+        : [];
+    driver.surfaceColumns = [-8, -7, -6].flatMap((x) =>
+      [-1, 0, 1].map((z) => ({
+        x,
+        z,
+        loaded: true,
+        surfaceY: 63,
+        blockId: "minecraft:grass_block",
+        skyLight: 15,
+        blockLight: 0,
+      }))
+    );
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (driver.paths.length === 0) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.paths[0]).toMatchObject({
+      position: {
+        y: 64,
+        dimension: "minecraft:overworld",
+      },
+      radius: 1.5,
+      policy: {
+        allowMining: false,
+        allowPlacing: false,
+        avoidFluids: false,
+        sprint: true,
+      },
+    });
+    expect(driver.paths[0]?.position.x).toBeLessThan(0);
+    expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
+  });
+
   it("uses bounded dynamic pathfinding instead of sprinting off a cliff", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({

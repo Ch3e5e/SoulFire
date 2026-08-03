@@ -2715,20 +2715,23 @@ function escapeFromTarget(
       state,
       latest.player.position,
     );
+    const currentlyInFluid = yield* isPlayerInFluid(
+      state.driver,
+      latest.player.position,
+    );
     const dryEscapeTarget = target.entityType === "minecraft:creeper"
       ? undefined
       : yield* findDryThreatEscapeTarget(
         state,
         latest.player.position,
         target.position,
+        currentlyInFluid
+          ? AIR_ESCAPE_SURFACE_SEARCH_RADIUS
+          : MAXIMUM_DAMAGE_FREE_FALL_DISTANCE,
       );
     const escapeTarget = dryEscapeTarget ?? surfaceEscapeTarget(
       latest.player.position,
       target.position,
-    );
-    const currentlyInFluid = yield* isPlayerInFluid(
-      state.driver,
-      latest.player.position,
     );
     const rangedThreat = PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(
       target.entityType,
@@ -2759,9 +2762,9 @@ function escapeFromTarget(
     )
       || rangedThreat
       || PROACTIVE_MELEE_HOSTILE_ENTITY_TYPES.has(target.entityType);
-    const navigation = requiresDynamicEscape
-      ? dynamicEscape
-      : dryEscapeTarget !== undefined
+    const shouldPreferDryEscape = dryEscapeTarget !== undefined
+      && (currentlyInFluid || !requiresDynamicEscape);
+    const navigation = shouldPreferDryEscape
       ? state.driver.pathfind(
         dryEscapeTarget,
         1.5,
@@ -2776,6 +2779,8 @@ function escapeFromTarget(
           ),
         },
       )
+      : requiresDynamicEscape
+      ? dynamicEscape
       : needsRecovery
       ? state.driver.pathfind(
         escapeTarget,
@@ -3414,6 +3419,7 @@ function findDryThreatEscapeTarget(
   state: RunState,
   player: BeatGamePosition,
   threat: BeatGamePosition,
+  maximumVerticalDistance = MAXIMUM_DAMAGE_FREE_FALL_DISTANCE,
 ): Effect.Effect<BeatGamePosition | undefined, BeatGameDriverError> {
   if (
     player.dimension !== "minecraft:overworld"
@@ -3427,7 +3433,12 @@ function findDryThreatEscapeTarget(
     1,
   ).pipe(
     Effect.map((columns) =>
-      selectStableThreatEscapeColumn(columns, player, threat)
+      selectStableThreatEscapeColumn(
+        columns,
+        player,
+        threat,
+        maximumVerticalDistance,
+      )
     ),
     Effect.map((surface) =>
       surface === undefined
@@ -9659,6 +9670,7 @@ function selectStableThreatEscapeColumn(
   columns: readonly BeatGameSurfaceColumn[],
   player: BeatGamePosition,
   threat: BeatGamePosition,
+  maximumVerticalDistance = MAXIMUM_DAMAGE_FREE_FALL_DISTANCE,
 ): {
   readonly x: number;
   readonly z: number;
@@ -9690,8 +9702,7 @@ function selectStableThreatEscapeColumn(
     );
     return movementDistance >= 3
         && alignment >= 0.25
-        && Math.abs(candidateY - player.y)
-          <= MAXIMUM_DAMAGE_FREE_FALL_DISTANCE
+        && Math.abs(candidateY - player.y) <= maximumVerticalDistance
         && threatDistanceSquared > currentThreatDistanceSquared + 4
       ? [{
         ...candidate,
