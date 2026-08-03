@@ -14068,6 +14068,79 @@ describe("beat-game run lifecycle", () => {
     }));
   }, 10_000);
 
+  it("surfaces and resumes the same aquatic target when air runs low", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      health: 20,
+      food: 6,
+      counts: {
+        "minecraft:cobblestone": 20,
+        "minecraft:iron_ingot": 7,
+        "minecraft:oak_log": 8,
+        "minecraft:shield": 1,
+        "minecraft:stone_pickaxe": 1,
+        "minecraft:stone_sword": 1,
+      },
+    });
+    const salmon = {
+      connectionEpoch: "epoch-1",
+      networkId: 52,
+      entityType: "minecraft:salmon",
+      position: {
+        x: 2,
+        y: 63,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 3,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.entityResults = [salmon];
+    let attacks = 0;
+    driver.taskResolver = (task) =>
+      Effect.suspend(() => {
+        driver.tasks.push(task);
+        if (task.type !== "attack-entity") {
+          return Effect.void;
+        }
+        attacks += 1;
+        if (attacks === 1) {
+          driver.currentObservation = observation({
+            health: 20,
+            food: 6,
+            air: 100,
+            counts: driver.currentObservation.inventory.counts,
+          });
+          return Effect.never;
+        }
+        driver.entityResults = [];
+        return Effect.void;
+      });
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (
+        driver.tasks.filter((task) => task.type === "attack-entity").length < 2
+      ) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    })));
+
+    expect(
+      driver.tasks
+        .filter((task) => task.type === "attack-entity")
+        .slice(0, 2)
+        .map((task) => task.type === "attack-entity"
+          ? task.target.networkId
+          : undefined),
+    ).toEqual([salmon.networkId, salmon.networkId]);
+  }, 10_000);
+
   it("searches on land instead of chasing fish above critical hunger", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({

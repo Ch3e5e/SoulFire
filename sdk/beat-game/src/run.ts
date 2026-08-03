@@ -339,7 +339,8 @@ const DIRECTED_HUNT_MAXIMUM_DETOUR = 32;
 const DIRECTED_HUNT_DESTINATION_REACHED_RADIUS = 3;
 const URGENT_AQUATIC_HUNT_MAXIMUM_HORIZONTAL_DISTANCE = 64;
 const URGENT_AQUATIC_HUNT_MAXIMUM_VERTICAL_DISTANCE = 4;
-const AQUATIC_HUNT_CHASE_TIMEOUT_MS = 8_000;
+const AQUATIC_HUNT_CHASE_TIMEOUT_MS = 30_000;
+const AQUATIC_HUNT_MINIMUM_AIR_TICKS = 120;
 const AQUATIC_HUNT_MAXIMUM_CHASE_ATTEMPTS = 3;
 const AQUATIC_WATER_ENTRY_SEARCH_RADIUS = 3;
 const AQUATIC_WATER_ENTRY_ATTEMPTS = 12;
@@ -8488,22 +8489,26 @@ function huntOrExplore(
         path: targetHuntingPath,
       });
       const boundedAttack = aquaticTarget
-        ? attack.pipe(
-          Effect.timeoutFail({
-            duration: AQUATIC_HUNT_CHASE_TIMEOUT_MS,
-            onTimeout: () => new BeatGameDriverError({
-              operation: "task.attack-entity",
-              code: "aquatic_chase_timeout",
-              retryable: true,
-              message:
-                `Stopped chasing moving aquatic target ${target.networkId}`,
+        ? Effect.raceFirst(
+          attack.pipe(
+            Effect.timeoutFail({
+              duration: AQUATIC_HUNT_CHASE_TIMEOUT_MS,
+              onTimeout: () => new BeatGameDriverError({
+                operation: "task.attack-entity",
+                code: "aquatic_chase_timeout",
+                retryable: true,
+                message:
+                  `Stopped chasing moving aquatic target ${target.networkId}`,
+              }),
             }),
-          }),
+          ),
+          waitForUnsafeAquaticHunt(state),
         )
         : attack;
       const defeated = yield* boundedAttack.pipe(
         Effect.tapError((cause) =>
           cause.code === "aquatic_chase_timeout"
+              || cause.code === "aquatic_air_low"
             ? Effect.void
             : persist(state, (current) => ({
             ...current,
@@ -8524,14 +8529,28 @@ function huntOrExplore(
         ),
         Effect.as(true),
         Effect.catchTag("BeatGameDriverError", (cause) => {
-          if (cause.code === "aquatic_chase_timeout") {
+          if (
+            cause.code === "aquatic_chase_timeout"
+            || cause.code === "aquatic_air_low"
+          ) {
             const attempts = (aquaticChaseAttempts.get(targetId) ?? 0) + 1;
             aquaticChaseAttempts.set(targetId, attempts);
             if (attempts < AQUATIC_HUNT_MAXIMUM_CHASE_ATTEMPTS) {
-              return Effect.sync(() => {
+              const retry = Effect.sync(() => {
                 attemptedTargets.delete(targetId);
                 aquaticRetryTargetId = targetId;
-              }).pipe(Effect.as(false));
+              });
+              return (cause.code === "aquatic_air_low"
+                  ? retry.pipe(
+                    Effect.zipRight(state.driver.observe),
+                    Effect.flatMap((observation) =>
+                      emergencyAirAscent(
+                        state,
+                        observation.player.position,
+                      )
+                    ),
+                  )
+                  : retry).pipe(Effect.as(false));
             }
           }
           return cause.code === "not_found"
@@ -8579,6 +8598,42 @@ function huntOrExplore(
       attacked += 1;
     }
   });
+}
+
+function waitForUnsafeAquaticHunt(
+  state: RunState,
+): Effect.Effect<never, BeatGameDriverError> {
+  const poll = (): Effect.Effect<never, BeatGameDriverError> =>
+    Effect.sleep(Math.max(100, state.strategy.observationPollMs)).pipe(
+      Effect.zipRight(state.driver.observe),
+      Effect.flatMap((observation) => {
+        if (observation.player.dead) {
+          return Effect.fail(new BeatGameDriverError({
+            operation: "task.attack-entity",
+            code: "bot-dead",
+            retryable: true,
+            message: "The bot died while hunting an aquatic target",
+          }));
+        }
+        if (
+          observation.player.maxAir > 0
+          && observation.player.air
+            <= Math.min(
+              AQUATIC_HUNT_MINIMUM_AIR_TICKS,
+              observation.player.maxAir * 2 / 5,
+            )
+        ) {
+          return Effect.fail(new BeatGameDriverError({
+            operation: "task.attack-entity",
+            code: "aquatic_air_low",
+            retryable: true,
+            message: "Surfacing before continuing the aquatic hunt",
+          }));
+        }
+        return Effect.suspend(poll);
+      }),
+    );
+  return Effect.suspend(poll);
 }
 
 function enterWaterTowardAquaticTarget(
