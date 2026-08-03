@@ -11476,7 +11476,6 @@ function prepareForDistantDeathRecovery(
           path: foodSearchPath,
           explorationTarget: pendingDeath.position,
           allowCriticalAquaticTargets: true,
-          maximumSafeAquaticFoodLevel: state.strategy.eatBelowFood,
           allowFluidFallback: true,
           fallbackToLocalExploration: true,
         },

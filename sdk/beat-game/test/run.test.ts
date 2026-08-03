@@ -2924,6 +2924,95 @@ describe("beat-game run lifecycle", () => {
     expect(driver.paths).toHaveLength(0);
   });
 
+  it("ignores fish above critical hunger while searching for corpse food", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const deathPosition = {
+      x: 700,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    const observedAt = new Date().toISOString();
+    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
+      runId: "dry-moderate-corpse-food-run",
+      teamId: "dry-moderate-corpse-food-team",
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        deathPositions: [{
+          key: `death:${observedAt}`,
+          value: {
+            ...deathPosition,
+            inventoryCounts: { "minecraft:iron_ingot": 7 },
+          },
+          observedAt,
+          confidence: 1,
+        }],
+      },
+    }, undefined));
+    driver.currentObservation = observation({
+      food: 10,
+      health: 18,
+      counts: {
+        "minecraft:dirt": 16,
+        "minecraft:oak_log": 12,
+        "minecraft:wooden_sword": 1,
+      },
+    });
+    driver.entityResults = [{
+      connectionEpoch: "epoch-1",
+      networkId: 43,
+      entityType: "minecraft:salmon",
+      position: {
+        x: 3,
+        y: 62,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 3,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    }];
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        runId: "dry-moderate-corpse-food-run",
+        team: { teamId: "dry-moderate-corpse-food-team" },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (driver.xzPaths.length === 0) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.tasks.some((task) => task.type === "attack-entity"))
+      .toBe(false);
+    expect(driver.xzPaths[0]).toMatchObject({
+      dimension: deathPosition.dimension,
+      policy: {
+        allowMining: false,
+        allowPlacing: false,
+        sprint: false,
+      },
+    });
+  });
+
   it("crosses water directly while critically searching for corpse recovery food", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
