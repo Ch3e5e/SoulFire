@@ -1195,6 +1195,95 @@ describe("beat-game behavior programs", () => {
     expect(driver.actions.at(-1)).toEqual({ type: "reset-movement" });
   });
 
+  it("reopens a staircase tread that collapses during traversal", async () => {
+    const driver = new FakeBeatGameDriver();
+    const from = {
+      x: 0,
+      y: 3,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    const to = {
+      x: 1,
+      y: 2,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    let treadDigs = 0;
+    let collapsed = false;
+    driver.blockQueryResolver = ({ center }) => {
+      const position = queriedBlockPosition(center);
+      if (
+        collapsed
+        && position.x === to.x
+        && position.y === to.y
+        && position.z === to.z
+      ) {
+        return [blockObservation(position, {
+          blockId: "minecraft:gravel",
+        })];
+      }
+      return [blockObservation(position)];
+    };
+    driver.actionObserver = (action) => {
+      if (
+        action.type !== "dig-block"
+        || action.position.x !== to.x
+        || action.position.y !== to.y
+        || action.position.z !== to.z
+      ) {
+        return;
+      }
+      treadDigs += 1;
+      if (treadDigs === 1) {
+        collapsed = true;
+        return;
+      }
+      collapsed = false;
+      driver.currentObservation = {
+        ...driver.currentObservation,
+        player: {
+          ...driver.currentObservation.player,
+          position: feetCenter(to),
+        },
+      };
+    };
+
+    installStaircaseMovementSimulation(driver, from);
+    const resolvePath = driver.pathResolver;
+    let pathCount = 0;
+    driver.pathResolver = (position, radius, policy) =>
+      resolvePath(position, radius, policy).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            pathCount += 1;
+            if (pathCount !== 2) {
+              return;
+            }
+            driver.currentObservation = {
+              ...driver.currentObservation,
+              player: {
+                ...driver.currentObservation.player,
+                position: {
+                  ...feetCenter(to),
+                  y: from.y,
+                },
+              },
+            };
+          })
+        ),
+      );
+
+    await Effect.runPromise(excavateStaircase(driver, { from, to }));
+
+    expect(treadDigs).toBe(2);
+    expect(driver.currentObservation.player.position).toMatchObject({
+      x: 1.5,
+      y: 2,
+      z: 0.5,
+    });
+  });
+
   it("absorbs an adjacent staging result into the staircase endpoint", async () => {
     const driver = new FakeBeatGameDriver();
     driver.blockQueryResolver = ({ center }) => [

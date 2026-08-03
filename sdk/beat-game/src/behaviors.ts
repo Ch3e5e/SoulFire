@@ -55,6 +55,8 @@ const SUBMERGED_DROP_PICKUP_MINIMUM_AIR_RATIO = 0.35;
 const PORTAL_CASTING_LAVA_SIGHT_CLEARING_BLOCKS = 4;
 const PORTAL_CASTING_LAVA_COLLECTION_POLLS = 10;
 const PORTAL_CASTING_WATER_RECOVERY_ATTEMPTS = 3;
+const STAIRCASE_INITIAL_LANDING_ATTEMPTS = 4;
+const STAIRCASE_COLLAPSE_RECOVERY_ATTEMPTS = 16;
 const AVOIDED_FLUID_BLOCK_IDS = [
   "minecraft:water",
   "minecraft:bubble_column",
@@ -4048,9 +4050,7 @@ function refuseFloodedStaircaseStep(
     Effect.flatMap((blocks) => {
       const fluid = blocks.find((block) =>
         block !== undefined
-        && AVOIDED_FLUID_BLOCK_IDS.includes(
-          block.blockId as (typeof AVOIDED_FLUID_BLOCK_IDS)[number],
-        )
+        && isAvoidedFluidBlockId(block.blockId)
       );
       return fluid === undefined
         ? Effect.void
@@ -4095,7 +4095,7 @@ function walkStaircaseStep(
       yield* walkPreparedStaircaseStepDirectly(driver, target);
     }
     yield* Effect.sleep(150);
-    yield* waitForStaircaseLanding(driver, target, 40, 50);
+    yield* settleOnStaircaseTread(driver, target);
     yield* driver.act({ type: "reset-movement" });
   }).pipe(
     Effect.ensuring(driver.act({ type: "reset-movement" }).pipe(
@@ -4141,11 +4141,93 @@ function walkPreparedStaircaseStepDirectly(
       sprint: false,
       sneak: false,
     });
-    yield* waitForStaircaseLanding(driver, target, 40, 50);
+    yield* settleOnStaircaseTread(driver, target);
   }).pipe(
     Effect.ensuring(driver.act({ type: "reset-movement" }).pipe(
       Effect.ignore,
     )),
+  );
+}
+
+function settleOnStaircaseTread(
+  driver: BeatGameDriver,
+  target: BeatGameBlockPosition,
+): Effect.Effect<void, BeatGameDriverError> {
+  return waitForStaircaseLanding(
+    driver,
+    target,
+    STAIRCASE_INITIAL_LANDING_ATTEMPTS,
+    50,
+  ).pipe(
+    Effect.either,
+    Effect.flatMap((landing) =>
+      landing._tag === "Right"
+        ? Effect.void
+        : clearBlockedStaircaseTreadFromAbove(driver, target).pipe(
+          Effect.flatMap((recovered) =>
+            recovered
+              ? Effect.void
+              : waitForStaircaseLanding(driver, target, 40, 50)
+          ),
+        )
+    ),
+  );
+}
+
+/**
+ * Sand and gravel above a freshly carved staircase can fall into its tread
+ * while the player moves forward. SoulFire may then finish the short path on
+ * top of that block instead of one level lower. Re-open the already-supported
+ * tread until the player drops onto it.
+ */
+function clearBlockedStaircaseTreadFromAbove(
+  driver: BeatGameDriver,
+  target: BeatGameBlockPosition,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  return Effect.gen(function* () {
+    for (
+      let attempt = 0;
+      attempt < STAIRCASE_COLLAPSE_RECOVERY_ATTEMPTS;
+      attempt += 1
+    ) {
+      const observation = yield* driver.observe;
+      const position = observation.player.position;
+      if (isPlayerOnStaircaseTread(position, target)) {
+        return true;
+      }
+      const playerBlock = {
+        x: Math.floor(position.x),
+        y: Math.floor(position.y + 0.01),
+        z: Math.floor(position.z),
+      };
+      if (
+        position.dimension !== target.dimension
+        || playerBlock.x !== target.x
+        || playerBlock.y !== target.y + 1
+        || playerBlock.z !== target.z
+      ) {
+        return false;
+      }
+      const tread = yield* queryExactBlock(driver, target);
+      if (
+        tread === undefined
+        || isAvoidedFluidBlockId(tread.blockId)
+        || (!tread.replaceable && !tread.diggable)
+      ) {
+        return false;
+      }
+      if (!tread.replaceable) {
+        yield* driver.act({ type: "dig-block", position: target });
+      }
+      yield* Effect.sleep(100);
+    }
+    return false;
+  });
+}
+
+function isAvoidedFluidBlockId(blockId: string): boolean {
+  return AVOIDED_FLUID_BLOCK_IDS.includes(
+    blockId as (typeof AVOIDED_FLUID_BLOCK_IDS)[number],
   );
 }
 
@@ -4158,13 +4240,7 @@ function waitForStaircaseLanding(
   return driver.observe.pipe(
     Effect.flatMap((observation) => {
       const position = observation.player.position;
-      if (
-        position.dimension === target.dimension
-        && Math.floor(position.x) === target.x
-        && Math.floor(position.z) === target.z
-        && position.y >= target.y - 0.15
-        && position.y <= target.y + 0.75
-      ) {
+      if (isPlayerOnStaircaseTread(position, target)) {
         return Effect.void;
       }
       if (
@@ -4192,6 +4268,17 @@ function waitForStaircaseLanding(
       );
     }),
   );
+}
+
+function isPlayerOnStaircaseTread(
+  position: BeatGamePosition,
+  target: BeatGameBlockPosition,
+): boolean {
+  return position.dimension === target.dimension
+    && Math.floor(position.x) === target.x
+    && Math.floor(position.z) === target.z
+    && position.y >= target.y - 0.15
+    && position.y <= target.y + 0.75;
 }
 
 function waitForVerticalSettlement(
