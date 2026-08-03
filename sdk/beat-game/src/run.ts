@@ -372,6 +372,8 @@ const LAVA_EMERGENCY_SPRINT_MS = 1_500;
 const IRON_SEARCH_Y = 16;
 const IRON_SEARCH_MAX_Y = 24;
 const IRON_SEARCH_DESCENT_STEP = 12;
+const RESOURCE_SEARCH_PICKAXE_DURABILITY_RESERVE = 64;
+const RESOURCE_DESCENT_PICKAXE_DURABILITY_RESERVE = 48;
 const DEEP_LAVA_SEARCH_Y = -52;
 const DEEP_LAVA_SEARCH_MAX_Y = -48;
 const DEEP_LAVA_DESCENT_STEP = 12;
@@ -6022,10 +6024,18 @@ function ensureMiningPickaxe(
     | "minecraft:stone_pickaxe"
     | "minecraft:iron_pickaxe",
   usableItemIds: readonly string[],
+  minimumRemainingDurability = 1,
 ): Effect.Effect<void, BeatGameDriverError> {
-  return usableItemIds.some((itemId) =>
-      (observation.inventory.counts[itemId] ?? 0) > 0
-    )
+  const availableItemIds = usableItemIds.filter((itemId) =>
+    (observation.inventory.counts[itemId] ?? 0) > 0
+  );
+  const reportedDurability = observation.inventory.remainingDurability;
+  const hasDurabilityReserve = reportedDurability === undefined
+    || availableItemIds.reduce(
+        (total, itemId) => total + (reportedDurability[itemId] ?? 0),
+        0,
+      ) >= minimumRemainingDurability;
+  return availableItemIds.length > 0 && hasDurabilityReserve
     ? Effect.void
     : craftWithTable(state, observation, resultItemId, 1);
 }
@@ -6207,14 +6217,22 @@ function collectBlocksOrExplore(
         ) {
           return;
         }
+        const frontierPath = preferSurfaceExploration
+          ? explorationPath
+          : baseCollectionPath;
+        if (
+          frontierPath.allowMining !== false
+          && options.prepareAttempt !== undefined
+        ) {
+          yield* options.prepareAttempt(current);
+          current = yield* state.driver.observe;
+        }
         yield* advanceExplorationFrontier(
           state,
           current.player.position,
           options.purpose,
           state.strategy.blockSearchRadius,
-          preferSurfaceExploration
-            ? explorationPath
-            : baseCollectionPath,
+          frontierPath,
           preferSurfaceExploration,
         );
         return;
@@ -6604,6 +6622,7 @@ function satisfyIronRequirement(
         observation,
         "minecraft:stone_pickaxe",
         STONE_OR_BETTER_MINING_PICKAXE_ITEM_IDS,
+        RESOURCE_DESCENT_PICKAXE_DURABILITY_RESERVE,
       );
       const current = yield* state.driver.observe;
       if (
@@ -6640,6 +6659,7 @@ function satisfyIronRequirement(
         current,
         "minecraft:stone_pickaxe",
         STONE_OR_BETTER_MINING_PICKAXE_ITEM_IDS,
+        RESOURCE_SEARCH_PICKAXE_DURABILITY_RESERVE,
       ),
   });
 }

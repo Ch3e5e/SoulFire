@@ -580,6 +580,7 @@ export function makeSoulFireBeatGameDriver(
       const velocity = required(player.velocity, "player.velocity");
       const rotation = required(player.rotation, "player.rotation");
       const counts: Record<string, number> = {};
+      const remainingDurability: Record<string, number> = {};
       const hotbar: Record<number, string> = {};
       let occupiedPlayerSlots = 0;
       const equipment = Object.fromEntries(
@@ -602,6 +603,12 @@ export function makeSoulFireBeatGameDriver(
         }
         counts[slot.item.itemId] =
           (counts[slot.item.itemId] ?? 0) + slot.item.count;
+        if (slot.item.maxDamage > 0) {
+          remainingDurability[slot.item.itemId] =
+            (remainingDurability[slot.item.itemId] ?? 0)
+            + Math.max(0, slot.item.maxDamage - slot.item.damage)
+              * slot.item.count;
+        }
         if (
           slot.area === InventoryArea.MAIN
           || slot.area === InventoryArea.HOTBAR
@@ -637,6 +644,7 @@ export function makeSoulFireBeatGameDriver(
           selectedHotbarSlot: inventory.selectedHotbarSlot,
           emptyPlayerSlots: Math.max(0, 36 - occupiedPlayerSlots),
           counts,
+          remainingDurability,
           hotbar,
         },
       };

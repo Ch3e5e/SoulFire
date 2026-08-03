@@ -16721,7 +16721,30 @@ describe("beat-game run lifecycle", () => {
         "minecraft:stone_pickaxe": 1,
         "minecraft:water_bucket": 1,
       },
+      remainingDurability: { "minecraft:stone_pickaxe": 131 },
     });
+    driver.recipeResolver = (resultItemId) => [{
+      recipeId: resultItemId,
+      recipeType: "minecraft:crafting",
+      resultItemId,
+      resultCount: 1,
+      ingredients: [],
+    }];
+    driver.craftabilityResolver = () => ({
+      canCraft: true,
+      maximumCraftCount: 1,
+      requiredStation: "minecraft:crafting_table",
+      missing: [],
+    });
+    driver.blockQueryResolver = ({ selector }) =>
+      selector.blockIds?.includes("minecraft:crafting_table") === true
+        ? [blockObservation({
+          x: 23,
+          y: 16,
+          z: -12,
+          dimension: "minecraft:overworld",
+        }, { blockId: "minecraft:crafting_table" })]
+        : [];
     driver.taskResolver = (task) =>
       Effect.sync(() => {
         driver.tasks.push(task);
@@ -16732,6 +16755,20 @@ describe("beat-game run lifecycle", () => {
           driver.currentObservation = observation({
             position: miningPosition,
             counts: driver.currentObservation.inventory.counts,
+            remainingDurability: { "minecraft:stone_pickaxe": 1 },
+          });
+        }
+        if (
+          task.type === "craft"
+          && task.recipeId === "minecraft:stone_pickaxe"
+        ) {
+          driver.currentObservation = observation({
+            position: miningPosition,
+            counts: {
+              ...driver.currentObservation.inventory.counts,
+              "minecraft:stone_pickaxe": 2,
+            },
+            remainingDurability: { "minecraft:stone_pickaxe": 132 },
           });
         }
       });
@@ -16740,14 +16777,20 @@ describe("beat-game run lifecycle", () => {
       const run = yield* beatGameWithDriver(driver, {
         strategy: { observationPollMs: 1 },
       });
-      while (driver.paths.length === 0) {
+      while (
+        !driver.paths.some(({ radius, policy }) =>
+          radius === 2 && policy.allowMining === true
+        )
+      ) {
         yield* Effect.sleep(1);
       }
       yield* run.stop;
       yield* run.awaitCompletion.pipe(Effect.either);
     })));
 
-    expect(driver.paths[0]).toEqual({
+    expect(driver.paths.find(({ radius, policy }) =>
+      radius === 2 && policy.allowMining === true
+    )).toEqual({
       position: expect.objectContaining({ y: miningPosition.y }),
       radius: 2,
       policy: expect.objectContaining({
@@ -16756,6 +16799,14 @@ describe("beat-game run lifecycle", () => {
       }),
     });
     expect(driver.xzPaths).toHaveLength(0);
+    expect(driver.tasks.map((task) =>
+      task.type === "craft"
+        ? `${task.type}:${task.recipeId}`
+        : task.type
+    )).toEqual([
+      "collect-blocks",
+      "craft:minecraft:stone_pickaxe",
+    ]);
   });
 
   it("keeps collecting cobblestone until the requested buffer is full", async () => {

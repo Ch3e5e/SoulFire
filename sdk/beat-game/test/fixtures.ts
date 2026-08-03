@@ -51,6 +51,7 @@ export function observation(
     readonly dead?: boolean;
     readonly observedAt?: string;
     readonly counts?: Readonly<Record<string, number>>;
+    readonly remainingDurability?: Readonly<Record<string, number>>;
     readonly position?: Partial<BeatGamePosition>;
     readonly rotation?: Partial<BeatGameObservation["player"]["rotation"]>;
     readonly onGround?: boolean;
@@ -100,6 +101,9 @@ export function observation(
         ? {}
         : { emptyPlayerSlots: overrides.emptyPlayerSlots }),
       counts: overrides.counts ?? {},
+      ...(overrides.remainingDurability === undefined
+        ? {}
+        : { remainingDurability: overrides.remainingDurability }),
       hotbar: {},
     },
   };

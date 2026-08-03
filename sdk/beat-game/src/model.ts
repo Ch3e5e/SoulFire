@@ -166,6 +166,7 @@ export interface BeatGameInventory {
   readonly selectedHotbarSlot: number;
   readonly emptyPlayerSlots?: number;
   readonly counts: Readonly<Record<string, number>>;
+  readonly remainingDurability?: Readonly<Record<string, number>>;
   readonly hotbar: Readonly<Record<number, string>>;
 }
 
