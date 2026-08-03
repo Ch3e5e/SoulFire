@@ -5075,6 +5075,67 @@ describe("beat-game run lifecycle", () => {
     });
   });
 
+  it("allows water when no dry creeper escape corridor exists", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.entityResults = [{
+      connectionEpoch: "epoch-1",
+      networkId: 41,
+      entityType: "minecraft:creeper",
+      position: {
+        x: 6,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:01.000Z",
+    }];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (task.type === "flee") {
+          driver.entityResults = [];
+        }
+      }).pipe(
+        Effect.zipRight(
+          task.type === "collect-blocks"
+            ? Effect.never
+            : Effect.void,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (!driver.tasks.some((task) => task.type === "flee")) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    const fleeIndex = driver.tasks.findIndex((task) => task.type === "flee");
+    expect(driver.taskPolicies[fleeIndex]).toMatchObject({
+      allowPlacing: false,
+      avoidFluids: false,
+      maxFallDistance: 3,
+    });
+    expect(driver.actions).not.toContainEqual(expect.objectContaining({
+      type: "set-movement",
+      forward: true,
+      jump: true,
+      sprint: true,
+    }));
+  });
+
   it("uses a fluid-avoiding route instead of blind sprinting beside lava", async () => {
     const driver = new FakeBeatGameDriver();
     driver.entityResults = [{
@@ -5092,8 +5153,9 @@ describe("beat-game run lifecycle", () => {
       health: 20,
       observedAt: "2026-01-01T00:00:01.000Z",
     }];
-    driver.blockQueryResolver = ({ selector }) =>
-      selector.blockIds?.includes("minecraft:lava") === true
+    driver.blockQueryResolver = ({ radius, selector }) =>
+      radius > 1
+          && selector.blockIds?.includes("minecraft:lava") === true
         ? [blockObservation({
           x: 0,
           y: 63,

@@ -2747,6 +2747,14 @@ function escapeFromTarget(
     const rangedThreat = PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(
       target.entityType,
     );
+    const fluidFallbackAllowed = target.entityType === "minecraft:creeper"
+      && !directEscapeSucceeded
+      && (yield* state.driver.queryBlocks({
+        center: latest.player.position,
+        radius: EMERGENCY_ESCAPE_LAVA_CHECK_RADIUS,
+        selector: { blockIds: ["minecraft:lava"] },
+        maximumResults: 1,
+      })).length === 0;
     const dynamicEscape = flee(state.driver, {
       selector: escapeThreatSelector(target, true),
       triggerRadius: rangedThreat
@@ -2761,7 +2769,10 @@ function escapeFromTarget(
         ...escapePath,
         allowMining: needsRecovery && !rangedThreat,
         allowPlacing: false,
-        avoidFluids: !currentlyInFluid,
+        avoidFluids: !(
+          currentlyInFluid
+          || fluidFallbackAllowed
+        ),
         maxFallDistance: Math.min(
           escapePath.maxFallDistance,
           MAXIMUM_DAMAGE_FREE_FALL_DISTANCE,
