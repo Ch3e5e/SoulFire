@@ -16476,12 +16476,11 @@ describe("beat-game run lifecycle", () => {
         ),
         Effect.flatMap(() =>
           radius === 0.75
-            && Math.abs(position.x) < 0.001
-            && Math.abs(position.z - 3) < 0.001
+            && policy.allowMining === false
             ? Effect.fail(new BeatGameDriverError({
               operation: "pathfind",
               retryable: false,
-              message: "The first discard escape direction is blocked",
+              message: "The discard escape direction is blocked",
             }))
             : Effect.void
         ),
@@ -16602,6 +16601,30 @@ describe("beat-game run lifecycle", () => {
       && Math.abs(position.x + 3) < 0.001
       && Math.abs(position.z) < 0.001
       && policy.allowMining === false
+      && policy.allowPlacing === false
+      && policy.avoidFluids === true
+    )).toHaveLength(2);
+    expect(driver.paths.filter(({ position, radius, policy }) =>
+      radius === 0.75
+      && Math.abs(position.x - 3) < 0.001
+      && Math.abs(position.z) < 0.001
+      && policy.allowMining === false
+      && policy.allowPlacing === false
+      && policy.avoidFluids === true
+    )).toHaveLength(2);
+    expect(driver.paths.filter(({ position, radius, policy }) =>
+      radius === 0.75
+      && Math.abs(position.x) < 0.001
+      && Math.abs(position.z + 3) < 0.001
+      && policy.allowMining === false
+      && policy.allowPlacing === false
+      && policy.avoidFluids === true
+    )).toHaveLength(2);
+    expect(driver.paths.filter(({ position, radius, policy }) =>
+      radius === 0.75
+      && Math.abs(position.x) < 0.001
+      && Math.abs(position.z - 3) < 0.001
+      && policy.allowMining === true
       && policy.allowPlacing === false
       && policy.avoidFluids === true
     )).toHaveLength(2);

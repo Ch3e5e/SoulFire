@@ -9539,20 +9539,31 @@ function ensureInventorySpace(
           INVENTORY_DISCARD_ESCAPE_MAX_SEARCH_TIME_MS,
         ),
       };
-      for (const yawOffset of [0, 90, -90, 180]) {
-        const yawRadians = (current.player.rotation.yaw + yawOffset)
-          * Math.PI / 180;
-        const escaped = yield* state.driver.pathfind({
-          x: current.player.position.x
-            - Math.sin(yawRadians) * INVENTORY_DISCARD_ESCAPE_DISTANCE,
-          y: current.player.position.y,
-          z: current.player.position.z
-            + Math.cos(yawRadians) * INVENTORY_DISCARD_ESCAPE_DISTANCE,
-          dimension: current.player.position.dimension,
-        }, 0.75, discardEscapePath).pipe(Effect.either);
-        if (escaped._tag === "Right") {
-          break;
-        }
+      const tryDiscardEscape = (allowMining: boolean) =>
+        Effect.gen(function* () {
+          for (const yawOffset of [0, 90, -90, 180]) {
+            const yawRadians = (current.player.rotation.yaw + yawOffset)
+              * Math.PI / 180;
+            const escaped = yield* state.driver.pathfind({
+              x: current.player.position.x
+                - Math.sin(yawRadians) * INVENTORY_DISCARD_ESCAPE_DISTANCE,
+              y: current.player.position.y,
+              z: current.player.position.z
+                + Math.cos(yawRadians) * INVENTORY_DISCARD_ESCAPE_DISTANCE,
+              dimension: current.player.position.dimension,
+            }, 0.75, {
+              ...discardEscapePath,
+              allowMining,
+            }).pipe(Effect.either);
+            if (escaped._tag === "Right") {
+              return true;
+            }
+          }
+          return false;
+        });
+      const escapedWithoutMining = yield* tryDiscardEscape(false);
+      if (!escapedWithoutMining) {
+        yield* tryDiscardEscape(true);
       }
       let stableObservations = 0;
       for (let attempt = 0; attempt < 20; attempt += 1) {
