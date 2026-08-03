@@ -2813,8 +2813,14 @@ function monitorEscapeSafety(
   )
     ? RANGED_THREAT_ESCAPE_SAFE_DISTANCE
     : THREAT_ESCAPE_SAFE_DISTANCE;
+  const pollInterval = FAST_MELEE_PURSUER_ENTITY_TYPES.has(target.entityType)
+    ? MINIMUM_RECOVERY_POLL_MS
+    : Math.max(
+      MINIMUM_RECOVERY_POLL_MS,
+      state.strategy.observationPollMs,
+    );
   return Effect.sleep(
-    Math.max(MINIMUM_RECOVERY_POLL_MS, state.strategy.observationPollMs),
+    pollInterval,
   ).pipe(
     Effect.zipRight(state.driver.observe),
     Effect.flatMap((observation) => {
@@ -2855,6 +2861,18 @@ function monitorEscapeSafety(
           ) {
             return Effect.succeed({
               type: "defend",
+              target: currentTarget,
+            } as const);
+          }
+          if (
+            FAST_MELEE_PURSUER_ENTITY_TYPES.has(currentTarget.entityType)
+            && distanceSquared(
+                observation.player.position,
+                currentTarget.position,
+              ) <= EMERGENCY_KNOCKBACK_RANGE ** 2
+          ) {
+            return Effect.succeed({
+              type: "escape",
               target: currentTarget,
             } as const);
           }
