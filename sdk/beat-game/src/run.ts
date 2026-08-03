@@ -9529,15 +9529,7 @@ function ensureInventorySpace(
         selector: { itemIds: [itemId] },
         count,
       });
-      const yawRadians = current.player.rotation.yaw * Math.PI / 180;
-      yield* state.driver.pathfind({
-        x: current.player.position.x
-          - Math.sin(yawRadians) * INVENTORY_DISCARD_ESCAPE_DISTANCE,
-        y: current.player.position.y,
-        z: current.player.position.z
-          + Math.cos(yawRadians) * INVENTORY_DISCARD_ESCAPE_DISTANCE,
-        dimension: current.player.position.dimension,
-      }, 0.75, {
+      const discardEscapePath = {
         ...state.strategy.path,
         allowMining: false,
         allowPlacing: false,
@@ -9546,7 +9538,22 @@ function ensureInventorySpace(
           state.strategy.path.maxSearchTimeMs,
           INVENTORY_DISCARD_ESCAPE_MAX_SEARCH_TIME_MS,
         ),
-      }).pipe(Effect.ignore);
+      };
+      for (const yawOffset of [0, 90, -90, 180]) {
+        const yawRadians = (current.player.rotation.yaw + yawOffset)
+          * Math.PI / 180;
+        const escaped = yield* state.driver.pathfind({
+          x: current.player.position.x
+            - Math.sin(yawRadians) * INVENTORY_DISCARD_ESCAPE_DISTANCE,
+          y: current.player.position.y,
+          z: current.player.position.z
+            + Math.cos(yawRadians) * INVENTORY_DISCARD_ESCAPE_DISTANCE,
+          dimension: current.player.position.dimension,
+        }, 0.75, discardEscapePath).pipe(Effect.either);
+        if (escaped._tag === "Right") {
+          break;
+        }
+      }
       let stableObservations = 0;
       for (let attempt = 0; attempt < 20; attempt += 1) {
         current = yield* state.driver.observe;

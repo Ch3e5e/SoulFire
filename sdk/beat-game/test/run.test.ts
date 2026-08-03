@@ -16474,6 +16474,17 @@ describe("beat-game run lifecycle", () => {
             });
           })
         ),
+        Effect.flatMap(() =>
+          radius === 0.75
+            && Math.abs(position.x) < 0.001
+            && Math.abs(position.z - 3) < 0.001
+            ? Effect.fail(new BeatGameDriverError({
+              operation: "pathfind",
+              retryable: false,
+              message: "The first discard escape direction is blocked",
+            }))
+            : Effect.void
+        ),
       );
     let collectionAttempts = 0;
     let resolveReplacementCollection!: () => void;
@@ -16582,6 +16593,14 @@ describe("beat-game run lifecycle", () => {
       radius === 0.75
       && Math.abs(position.x) < 0.001
       && Math.abs(position.z - 3) < 0.001
+      && policy.allowMining === false
+      && policy.allowPlacing === false
+      && policy.avoidFluids === true
+    )).toHaveLength(2);
+    expect(driver.paths.filter(({ position, radius, policy }) =>
+      radius === 0.75
+      && Math.abs(position.x + 3) < 0.001
+      && Math.abs(position.z) < 0.001
       && policy.allowMining === false
       && policy.allowPlacing === false
       && policy.avoidFluids === true
