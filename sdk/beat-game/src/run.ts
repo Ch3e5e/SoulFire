@@ -157,6 +157,8 @@ const DEATH_RECOVERY_PREPARATION_PROGRESS_DISTANCE = 8;
 const DISTANT_DEATH_RECOVERY_BOOTSTRAP_DISTANCE = 128;
 const ACTIVE_CORPSE_RECOVERY_DISTANCE = 512;
 const IMMEDIATE_CORPSE_RECOVERY_DISTANCE = 12;
+const DEEP_CORPSE_EXCAVATION_MINIMUM_DEPTH = 32;
+const DISTANT_CORPSE_EXCAVATION_MINIMUM_HORIZONTAL_DISTANCE = 64;
 const CORPSE_DROP_INSPECTION_DISTANCE = 32;
 const CORPSE_DROP_MATCH_RADIUS = 16;
 const EMERGENCY_ARMAMENT_LOG_COUNT = 2;
@@ -1535,6 +1537,7 @@ function executeDecision(
                   replanReason: preparationPending,
                 } satisfies ActionResult;
               }
+              respawned = yield* observeDriverFresh(state);
               yield* retreatAndRecover(
                 state,
                 POST_DEFENSE_RECOVERY_DURATION_MS,
@@ -12273,8 +12276,22 @@ function prepareForDistantDeathRecovery(
       current.player.position,
       pendingDeath.position,
     );
+    const recoveryRequiresExcavation =
+      pendingDeath.position.y < current.player.position.y - 8;
+    const recoveryRequiresPreparedExcavation = recoveryRequiresExcavation
+      && (
+        pendingDeath.position.y
+          < current.player.position.y
+            - DEEP_CORPSE_EXCAVATION_MINIMUM_DEPTH
+        || horizontalRecoveryDistanceSquared
+          > DISTANT_CORPSE_EXCAVATION_MINIMUM_HORIZONTAL_DISTANCE ** 2
+      );
     const canRaceActiveCorpse =
       current.player.health >= state.strategy.minimumHealth
+      && (
+        !recoveryRequiresPreparedExcavation
+        || hasMiningPickaxe(current)
+      )
       && (
         hasMeleeWeapon(current)
         || !hasMeaningfulRecoveryInventory(current)
@@ -12289,8 +12306,6 @@ function prepareForDistantDeathRecovery(
     ) {
       return undefined;
     }
-    const recoveryRequiresExcavation =
-      pendingDeath.position.y < current.player.position.y - 8;
     const ensureBuildingMaterials = (
       value: BeatGameObservation,
     ): Effect.Effect<
@@ -12376,8 +12391,11 @@ function prepareForDistantDeathRecovery(
       let additionalLogs = additionalLogsForWoodenPickaxe(current);
       if (
         additionalLogs > 0
-        && recoveryDistanceSquared
-          > DISTANT_DEATH_RECOVERY_BOOTSTRAP_DISTANCE ** 2
+        && (
+          recoveryRequiresPreparedExcavation
+          || recoveryDistanceSquared
+            > DISTANT_DEATH_RECOVERY_BOOTSTRAP_DISTANCE ** 2
+        )
       ) {
         yield* collectBlocksOrExplore(state, current, {
           blockIds: LOG_ITEM_IDS,
@@ -12407,7 +12425,9 @@ function prepareForDistantDeathRecovery(
       recoveryDistanceSquared
         <= DISTANT_DEATH_RECOVERY_BOOTSTRAP_DISTANCE ** 2
     ) {
-      return undefined;
+      return !recoveryRequiresPreparedExcavation || hasMiningPickaxe(current)
+        ? undefined
+        : "still gathering enough wood to craft a deep corpse recovery pickaxe";
     }
     const bufferedLogs = logCount(current);
     if (bufferedLogs < DEATH_RECOVERY_BOOTSTRAP_LOG_COUNT) {

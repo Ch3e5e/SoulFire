@@ -4206,7 +4206,24 @@ describe("beat-game run lifecycle", () => {
         : [];
     const resolveTask = driver.taskResolver;
     driver.taskResolver = (task, execution) =>
-      resolveTask(task, execution).pipe(Effect.zipRight(Effect.sleep(1)));
+      resolveTask(task, execution).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            if (
+              task.type === "craft"
+              && task.recipeId === "wooden-pickaxe"
+            ) {
+              driver.currentObservation = observation({
+                counts: {
+                  ...driver.currentObservation.inventory.counts,
+                  "minecraft:wooden_pickaxe": 1,
+                },
+              });
+            }
+          })
+        ),
+        Effect.zipRight(Effect.sleep(1)),
+      );
 
     await Effect.runPromise(Effect.scoped(
       beatGameWithDriver(driver, {
@@ -4218,9 +4235,10 @@ describe("beat-game run lifecycle", () => {
         Effect.flatMap((run) =>
           Effect.gen(function* () {
             while (
-              !driver.tasks.some((task) =>
-                task.type === "craft"
-                && task.recipeId === "wooden-pickaxe"
+              !driver.paths.some(({ position }) =>
+                position.x === deathPosition.x
+                && position.y === deathPosition.y
+                && position.z === deathPosition.z
               )
             ) {
               yield* Effect.sleep(1);
@@ -4234,6 +4252,11 @@ describe("beat-game run lifecycle", () => {
 
     expect(driver.paths).not.toContainEqual(expect.objectContaining({
       position: deathPosition,
+      policy: expect.objectContaining({ allowMining: false }),
+    }));
+    expect(driver.paths).toContainEqual(expect.objectContaining({
+      position: deathPosition,
+      policy: expect.objectContaining({ allowMining: true }),
     }));
   });
 
