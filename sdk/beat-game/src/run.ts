@@ -8726,10 +8726,14 @@ function advanceExplorationFrontier(
           );
         const totalAdvances = existing?.totalAdvances
           ?? Math.max(0, (existing?.nextIndex ?? 1) - 1);
+        const nextIndex = Math.max(
+          existing?.nextIndex ?? 1,
+          totalAdvances + 1,
+        );
         const frontier = existing?.origin.dimension === position.dimension
             && !shouldReanchor
-          ? { ...existing, totalAdvances }
-          : { origin: position, nextIndex: 1, totalAdvances };
+          ? { ...existing, nextIndex, totalAdvances }
+          : { origin: position, nextIndex, totalAdvances };
         const offset = squareSpiralOffset(frontier.nextIndex);
         const target = {
           x: frontier.origin.x + offset.x * hop,

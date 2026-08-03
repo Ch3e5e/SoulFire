@@ -13582,7 +13582,7 @@ describe("beat-game run lifecycle", () => {
     });
   }, 10_000);
 
-  it("reanchors durable exploration after an unrelated displacement", async () => {
+  it("preserves durable exploration expansion after an unrelated displacement", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const runId = "displaced-exploration-run";
@@ -13617,7 +13617,10 @@ describe("beat-game run lifecycle", () => {
       teamId,
     });
 
-    expect(path).toMatchObject({ x: 24, z: 0 });
+    expect(path).toMatchObject({
+      x: 22.62741699796952,
+      z: -22.62741699796952,
+    });
     const stored = await Effect.runPromise(store.load(runId));
     expect(
       stored?.memory.explorationFrontiers?.[
@@ -13626,7 +13629,7 @@ describe("beat-game run lifecycle", () => {
     ).toBe(8);
   }, 10_000);
 
-  it("reanchors resource exploration after a defensive escape", async () => {
+  it("reanchors resource exploration without resetting it after a defensive escape", async () => {
     const driver = new FakeBeatGameDriver();
     const creeper = {
       connectionEpoch: "epoch-1",
@@ -13650,13 +13653,15 @@ describe("beat-game run lifecycle", () => {
           driver.entityResults = [creeper];
         }
       }).pipe(Effect.zipRight(Effect.never));
-    driver.pathResolver = (position, radius, policy) =>
+    driver.taskResolver = (task) =>
       Effect.sync(() => {
-        driver.paths.push({ position, radius, policy });
+        driver.tasks.push(task);
+        if (task.type === "flee") {
           driver.entityResults = [];
           driver.currentObservation = observation({
             position: { x: 100, y: 64, z: 0 },
           });
+        }
       });
 
     await Effect.runPromise(Effect.scoped(
@@ -13677,7 +13682,7 @@ describe("beat-game run lifecycle", () => {
 
     expect(driver.xzPaths.slice(0, 2).map(({ x, z }) => ({ x, z }))).toEqual([
       { x: 24, z: 0 },
-      { x: 124, z: 0 },
+      { x: 122.62741699796952, z: 22.62741699796952 },
     ]);
   });
 
