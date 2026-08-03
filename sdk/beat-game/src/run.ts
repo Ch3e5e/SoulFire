@@ -1396,6 +1396,22 @@ function executeDecision(
               );
               respawned = yield* observeDriverFresh(state);
             }
+            if (
+              respawned.player.food <= state.strategy.eatBelowFood
+              && hasUsableFood(respawned)
+            ) {
+              yield* eatWhenNeeded(state.driver, {
+                foodItemIds: preferredUsableFoodItemIds(respawned),
+                foodLevel: Math.min(
+                  20,
+                  Math.max(18, state.strategy.eatBelowFood + 2),
+                ),
+                maximumMeals: 1,
+                completeWhenNoFood: true,
+                path: state.strategy.path,
+              });
+              respawned = yield* observeDriverFresh(state);
+            }
             recoveryAttempted = pendingDeath.recoverItems
               && shouldAttemptDeathRecovery(
                 pendingDeath,
@@ -2289,6 +2305,10 @@ function monitorObservedSafety(
     decision.type === "recover-death"
     && observation.player.food <= state.strategy.eatBelowFood
     && hasUsableFood(observation)
+    && (
+      previousObservation.player.food > state.strategy.eatBelowFood
+      || !hasUsableFood(previousObservation)
+    )
   ) {
     return Effect.succeed({
       replanReason: "paused corpse recovery for a travel meal",

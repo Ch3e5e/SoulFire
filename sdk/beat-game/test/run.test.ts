@@ -602,6 +602,7 @@ describe("beat-game run lifecycle", () => {
       counts: {
         "minecraft:beef": 4,
         "minecraft:dirt": 16,
+        "minecraft:wooden_sword": 1,
       },
     });
     const timeline: string[] = [];
@@ -616,6 +617,7 @@ describe("beat-game run lifecycle", () => {
             counts: {
               "minecraft:beef": 3,
               "minecraft:dirt": 16,
+              "minecraft:wooden_sword": 1,
             },
           });
         }
@@ -662,6 +664,69 @@ describe("beat-game run lifecycle", () => {
     expect(timeline.indexOf("auto-eat")).toBeLessThan(
       timeline.indexOf("corpse-path"),
     );
+  });
+
+  it("does not restart an in-progress corpse recovery meal", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const deathPosition = {
+      x: 96,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    const observedAt = new Date().toISOString();
+    const runId = "single-corpse-meal-run";
+    const teamId = "single-corpse-meal-team";
+    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
+      runId,
+      teamId,
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        deathPositions: [{
+          key: `death:${observedAt}`,
+          value: {
+            ...deathPosition,
+            inventoryCounts: { "minecraft:stone_sword": 1 },
+          },
+          observedAt,
+          confidence: 1,
+        }],
+      },
+    }, undefined));
+    driver.currentObservation = observation({
+      health: 14,
+      food: 11,
+      counts: {
+        "minecraft:cod": 1,
+        "minecraft:wooden_sword": 1,
+      },
+    });
+    driver.taskResolver = (task) => {
+      driver.tasks.push(task);
+      return task.type === "auto-eat" ? Effect.never : Effect.void;
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        runId,
+        team: { teamId },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some((task) => task.type === "auto-eat")) {
+        yield* Effect.sleep(1);
+      }
+      yield* Effect.sleep(250);
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    expect(driver.tasks.filter((task) => task.type === "auto-eat"))
+      .toHaveLength(1);
   });
 
   it("recovers a lifecycle death even after an immediate respawn", async () => {
@@ -924,7 +989,7 @@ describe("beat-game run lifecycle", () => {
     )).toBe(false);
   });
 
-  it("pauses a long corpse route to eat before hunger disables sprinting", async () => {
+  it("eats before a long corpse route when hunger would disable sprinting", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const deathPosition = {
@@ -1017,8 +1082,8 @@ describe("beat-game run lifecycle", () => {
       maximumMeals: 1,
       completeWhenNoFood: true,
     }));
-    expect(timeline.indexOf("path")).toBeLessThan(
-      timeline.indexOf("auto-eat"),
+    expect(timeline.indexOf("auto-eat")).toBeLessThan(
+      timeline.indexOf("path"),
     );
   });
 
