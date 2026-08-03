@@ -3481,6 +3481,7 @@ describe("beat-game behavior programs", () => {
     };
     let selectedItemId = "";
     let pendingLavaTarget: typeof target | undefined;
+    let rejectedLavaPlacement = false;
     let rejectedWaterPickup = false;
     const updateInventory = (
       update: (counts: Record<string, number>) => void,
@@ -3572,6 +3573,19 @@ describe("beat-game behavior programs", () => {
       }
     };
     driver.actionResolver = (action) => {
+      if (
+        action.type === "use-item"
+        && selectedItemId === "minecraft:lava_bucket"
+        && !rejectedLavaPlacement
+      ) {
+        rejectedLavaPlacement = true;
+        return Effect.fail(new BeatGameDriverError({
+          operation: "act",
+          code: "failed_precondition",
+          retryable: false,
+          message: "The held item could not be used",
+        }));
+      }
       if (
         action.type === "use-item"
         && selectedItemId === "minecraft:bucket"
@@ -3675,7 +3689,8 @@ describe("beat-game behavior programs", () => {
     expect(blocks.get(key(target))?.blockId).toBe("minecraft:obsidian");
     expect(conversionQueries).toBe(3);
     expect(driver.actions.filter(({ type }) => type === "use-item"))
-      .toHaveLength(4);
+      .toHaveLength(5);
+    expect(rejectedLavaPlacement).toBe(true);
     expect(rejectedWaterPickup).toBe(true);
     expect(driver.actions.some(({ type }) => type === "interact-block"))
       .toBe(false);

@@ -5122,8 +5122,13 @@ function placeBucketOnTopOf(
   driver: BeatGameDriver,
   support: BeatGameBlockPosition,
   itemIds: readonly string[],
+  attemptsRemaining = 3,
 ): Effect.Effect<void, BeatGameDriverError> {
-  return Effect.gen(function* () {
+  const target = { ...support, y: support.y + 1 };
+  const expectedBlockId = itemIds.includes("minecraft:lava_bucket")
+    ? "minecraft:lava"
+    : "minecraft:water";
+  const attempt = Effect.gen(function* () {
     yield* exposePortalBucketSupport(driver, support);
     yield* driver.act({
       type: "select-item",
@@ -5131,6 +5136,30 @@ function placeBucketOnTopOf(
     });
     yield* driver.act({ type: "use-item", hand: "main" });
   });
+  return attempt.pipe(
+    Effect.catchAll((cause) =>
+      observeExactBlock(driver, target).pipe(
+        Effect.flatMap((block) =>
+          block?.blockId === expectedBlockId
+            || (
+              expectedBlockId === "minecraft:water"
+              && block?.properties.waterlogged === "true"
+            )
+            ? Effect.void
+            : cause.code === "failed_precondition" && attemptsRemaining > 1
+            ? Effect.sleep(100).pipe(
+              Effect.zipRight(placeBucketOnTopOf(
+                driver,
+                support,
+                itemIds,
+                attemptsRemaining - 1,
+              )),
+            )
+            : Effect.fail(cause)
+        ),
+      )
+    ),
+  );
 }
 
 function exposePortalBucketSupport(

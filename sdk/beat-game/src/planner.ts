@@ -18,6 +18,7 @@ import {
 } from "./requirements.js";
 
 const FOOD_RESERVE_REFILL_TOLERANCE = 2;
+const DEEP_WORK_MINIMUM_FOOD_RESERVE = 3;
 const PRACTICAL_OVERWORLD_FOOD_REFILL_MINIMUM_Y = 50;
 
 const COOKABLE_RAW_FOOD_ITEM_IDS = new Set(
@@ -276,15 +277,15 @@ function shouldDeferFoodReserveRefill(
   observation: BeatGameObservation,
   strategy: BeatGameStrategy,
 ): boolean {
+  const minimumReserve = shouldRefillDeferredFoodReserve(observation)
+    ? Math.max(1, requirement.targetCount - FOOD_RESERVE_REFILL_TOLERANCE)
+    : DEEP_WORK_MINIMUM_FOOD_RESERVE;
   return observation.player.food > strategy.eatBelowFood
     && (
       requirement.key === "food-supply"
       || requirement.key === "food"
     )
-    && requirement.currentCount >= Math.max(
-      1,
-      requirement.targetCount - FOOD_RESERVE_REFILL_TOLERANCE,
-    );
+    && requirement.currentCount >= minimumReserve;
 }
 
 function shouldRefillDeferredFoodReserve(

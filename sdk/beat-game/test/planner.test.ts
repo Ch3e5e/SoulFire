@@ -197,6 +197,34 @@ describe("beat-game planner", () => {
     });
   });
 
+  it("keeps a useful deep-work food reserve without abandoning the portal", () => {
+    const decision = decideBeatGameAction({
+      checkpoint: checkpoint(BeatGamePhase.ENTER_NETHER),
+      observation: observation({
+        counts: {
+          "minecraft:cooked_cod": 4,
+          "minecraft:oak_log": 8,
+          "minecraft:cobblestone": 20,
+          "minecraft:stone_sword": 1,
+          "minecraft:iron_ingot": 7,
+          "minecraft:shield": 1,
+          "minecraft:iron_pickaxe": 1,
+          "minecraft:lava_bucket": 1,
+          "minecraft:water_bucket": 1,
+          "minecraft:flint_and_steel": 1,
+        },
+        food: 20,
+        position: { y: -53 },
+      }),
+      strategy: defaultBeatGameStrategy,
+    });
+
+    expect(decision).toMatchObject({
+      type: "build-and-enter-nether",
+      action: "build-and-enter-nether",
+    });
+  });
+
   it("recovers in place when current hunger or emergency food can heal", () => {
     const base = checkpoint(BeatGamePhase.PREPARE_OVERWORLD);
 
