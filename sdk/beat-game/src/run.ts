@@ -9592,12 +9592,9 @@ function ensureInventorySpace(
         ? Math.min(64, cobblestoneCount)
         : current.inventory.counts[itemId] ?? 0;
       const emptySlotsBefore = current.inventory.emptyPlayerSlots;
-      const discardYaw = !discardPocketReady
-        ? wrappedDegrees(current.player.rotation.yaw + 180)
-        : wrappedDegrees(
-          Math.atan2(-discardSiteDeltaX, discardSiteDeltaZ)
-            * 180 / Math.PI,
-        );
+      const discardYaw = wrappedDegrees(
+        current.player.rotation.yaw + 180,
+      );
       yield* state.driver.act({
         type: "look",
         yaw: discardYaw,

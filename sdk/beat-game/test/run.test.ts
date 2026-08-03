@@ -16468,10 +16468,21 @@ describe("beat-game run lifecycle", () => {
       resolvePath(position, radius, policy).pipe(
         Effect.tap(() =>
           Effect.sync(() => {
+            const currentPosition =
+              driver.currentObservation.player.position;
+            const deltaX = position.x - currentPosition.x;
+            const deltaZ = position.z - currentPosition.z;
+            const yaw = Math.hypot(deltaX, deltaZ) < 0.001
+              ? driver.currentObservation.player.rotation.yaw
+              : Math.atan2(-deltaX, deltaZ) * 180 / Math.PI;
             driver.currentObservation = observation({
               counts: driver.currentObservation.inventory.counts,
               emptyPlayerSlots: 0,
               position,
+              rotation: {
+                yaw,
+                pitch: driver.currentObservation.player.rotation.pitch,
+              },
             });
           })
         ),
