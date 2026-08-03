@@ -21459,21 +21459,21 @@ describe("beat-game run lifecycle", () => {
     ]);
   });
 
-  it("mines a visible coal vein before falling back to charcoal", async () => {
+  it("mines nearby coal before burning wood for a small batch", async () => {
     const driver = new FakeBeatGameDriver();
     const initialCounts = {
       "minecraft:oak_log": 4,
       "minecraft:oak_planks": 3,
       "minecraft:cobblestone": 20,
       "minecraft:stone_sword": 1,
-      "minecraft:beef": 8,
+      "minecraft:cod": 1,
       "minecraft:iron_ingot": 7,
       "minecraft:iron_pickaxe": 1,
       "minecraft:water_bucket": 1,
       "minecraft:flint_and_steel": 1,
       "minecraft:shield": 1,
     };
-    driver.currentObservation = observation({ counts: initialCounts });
+    driver.currentObservation = observation({ food: 14, counts: initialCounts });
     driver.blockQueryResolver = ({ selector }) => {
       if (selector.blockIds?.includes("minecraft:furnace") === true) {
         return [blockObservation({
@@ -21509,7 +21509,7 @@ describe("beat-game run lifecycle", () => {
       }
       if (
         task.type === "smelt"
-        && task.input.itemIds?.includes("minecraft:beef")
+        && task.input.itemIds?.includes("minecraft:cod")
       ) {
         resolveFoodSmelt();
         return Effect.never;
@@ -21536,7 +21536,6 @@ describe("beat-game run lifecycle", () => {
           "minecraft:deepslate_coal_ore",
         ],
         diggable: true,
-        requireLineOfSight: true,
       },
       maximumResults: 3,
     });
@@ -21551,8 +21550,11 @@ describe("beat-game run lifecycle", () => {
     }));
     expect(driver.tasks.filter((task) => task.type === "smelt")).toEqual([
       expect.objectContaining({
-        input: { itemIds: ["minecraft:beef"] },
-        count: 8,
+        input: { itemIds: ["minecraft:cod"] },
+        count: 1,
+        fuel: {
+          itemIds: ["minecraft:coal", "minecraft:charcoal"],
+        },
       }),
     ]);
   });

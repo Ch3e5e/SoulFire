@@ -6105,38 +6105,41 @@ function cookRawFoodBatch(
               if (currentBatchCount === 0) {
                 return Effect.void;
               }
-              const directWoodFuel = directWoodFurnaceFuelItemIds(
-                current,
-                currentBatchCount,
-              );
-              if (directWoodFuel !== undefined) {
-                return smelt(state.driver, {
-                  input: { itemIds: [batch.rawItemId] },
-                  count: currentBatchCount,
-                  fuel: { itemIds: directWoodFuel },
-                  station: workstation.position,
-                  path: state.strategy.path,
-                });
-              }
-              return ensureEfficientFurnaceFuel(
+              return preferDirectWoodFurnaceFuel(
                 state,
                 current,
-                workstation,
                 currentBatchCount,
               ).pipe(
-                Effect.tap((currentWorkstation) =>
-                  Ref.set(activeWorkstation, currentWorkstation)
-                ),
-                Effect.flatMap((currentWorkstation) =>
-                  smelt(state.driver, {
-                    input: { itemIds: [batch.rawItemId] },
-                    count: currentBatchCount,
-                    fuel: {
-                      itemIds: ["minecraft:coal", "minecraft:charcoal"],
-                    },
-                    station: currentWorkstation.position,
-                    path: state.strategy.path,
-                  })
+                Effect.flatMap((directWoodFuel) =>
+                  directWoodFuel !== undefined
+                    ? smelt(state.driver, {
+                      input: { itemIds: [batch.rawItemId] },
+                      count: currentBatchCount,
+                      fuel: { itemIds: directWoodFuel },
+                      station: workstation.position,
+                      path: state.strategy.path,
+                    })
+                    : ensureEfficientFurnaceFuel(
+                      state,
+                      current,
+                      workstation,
+                      currentBatchCount,
+                    ).pipe(
+                      Effect.tap((currentWorkstation) =>
+                        Ref.set(activeWorkstation, currentWorkstation)
+                      ),
+                      Effect.flatMap((currentWorkstation) =>
+                        smelt(state.driver, {
+                          input: { itemIds: [batch.rawItemId] },
+                          count: currentBatchCount,
+                          fuel: {
+                            itemIds: ["minecraft:coal", "minecraft:charcoal"],
+                          },
+                          station: currentWorkstation.position,
+                          path: state.strategy.path,
+                        })
+                      ),
+                    )
                 ),
               );
             }),
@@ -6178,6 +6181,41 @@ function directWoodFurnaceFuelItemIds(
   return countItems(LOG_ITEM_IDS) >= requiredWoodFuel
     ? LOG_ITEM_IDS
     : undefined;
+}
+
+function preferDirectWoodFurnaceFuel(
+  state: RunState,
+  observation: BeatGameObservation,
+  outputCount: number,
+): Effect.Effect<readonly string[] | undefined, BeatGameDriverError> {
+  const directWoodFuel = directWoodFurnaceFuelItemIds(
+    observation,
+    outputCount,
+  );
+  return directWoodFuel === undefined
+    ? Effect.succeed(undefined)
+    : queryNearbyCoal(state, observation, 1).pipe(
+      Effect.map((coal) => coal.length === 0 ? directWoodFuel : undefined),
+    );
+}
+
+function queryNearbyCoal(
+  state: RunState,
+  observation: BeatGameObservation,
+  maximumResults: number,
+): Effect.Effect<readonly BeatGameBlockObservation[], BeatGameDriverError> {
+  return state.driver.queryBlocks({
+    center: observation.player.position,
+    radius: Math.min(
+      FURNACE_FUEL_SEARCH_RADIUS,
+      state.strategy.blockSearchRadius,
+    ),
+    selector: {
+      blockIds: COAL_ORE_BLOCK_IDS,
+      diggable: true,
+    },
+    maximumResults,
+  });
 }
 
 function ensureFurnaceForCooking(
@@ -6299,20 +6337,12 @@ function ensureEfficientFurnaceFuel(
       return activeWorkstation;
     }
 
-    const visibleCoal = yield* state.driver.queryBlocks({
-      center: currentObservation.player.position,
-      radius: Math.min(
-        FURNACE_FUEL_SEARCH_RADIUS,
-        state.strategy.blockSearchRadius,
-      ),
-      selector: {
-        blockIds: COAL_ORE_BLOCK_IDS,
-        diggable: true,
-        requireLineOfSight: true,
-      },
-      maximumResults: bufferedCollectionCount("fuel", missingFuel),
-    });
-    if (visibleCoal.length > 0) {
+    const nearbyCoal = yield* queryNearbyCoal(
+      state,
+      currentObservation,
+      bufferedCollectionCount("fuel", missingFuel),
+    );
+    if (nearbyCoal.length > 0) {
       yield* collectBlocks(state.driver, {
         blockIds: COAL_ORE_BLOCK_IDS,
         count: bufferedCollectionCount("fuel", missingFuel),
