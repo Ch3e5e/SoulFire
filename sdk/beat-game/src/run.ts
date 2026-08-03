@@ -9643,6 +9643,7 @@ function ensureInventorySpace(
         : itemId === "minecraft:cobblestone"
         ? Math.min(64, cobblestoneCount)
         : current.inventory.counts[itemId] ?? 0;
+      const itemCountBefore = current.inventory.counts[itemId] ?? 0;
       const emptySlotsBefore = current.inventory.emptyPlayerSlots;
       if (!discardViewConfirmed) {
         yield* state.driver.act({
@@ -9665,11 +9666,20 @@ function ensureInventorySpace(
       });
       discardedItems = true;
       let observedProgress = false;
+      let itemCountReduced = false;
       for (let attempt = 0; attempt < 8; attempt += 1) {
         current = yield* state.driver.observe;
+        itemCountReduced = itemCountReduced
+          || (current.inventory.counts[itemId] ?? 0) < itemCountBefore;
         if (
           current.inventory.emptyPlayerSlots === undefined
-          || current.inventory.emptyPlayerSlots > emptySlotsBefore
+          || (
+            itemCountReduced
+            && (
+              current.inventory.emptyPlayerSlots > emptySlotsBefore
+              || attempt >= 2
+            )
+          )
         ) {
           observedProgress = true;
           break;
@@ -9683,7 +9693,7 @@ function ensureInventorySpace(
           operation: "ensure-inventory-space",
           code: "resource-exhausted",
           retryable: true,
-          message: `Tossing ${itemId} did not free an inventory slot`,
+          message: `Tossing ${itemId} did not reduce its inventory count`,
         });
         break;
       }
