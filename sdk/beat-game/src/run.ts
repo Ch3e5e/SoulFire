@@ -9500,9 +9500,10 @@ function ensureInventorySpace(
       origin: BeatGameObservation,
       distance: number,
       allowMining: boolean,
+      yawOffsets: readonly number[] = [0, 90, -90, 180],
     ) =>
       Effect.gen(function* () {
-        for (const yawOffset of [0, 90, -90, 180]) {
+        for (const yawOffset of yawOffsets) {
           const yawRadians = (origin.player.rotation.yaw + yawOffset)
             * Math.PI / 180;
           const escaped = yield* state.driver.pathfind({
@@ -9526,6 +9527,7 @@ function ensureInventorySpace(
         current,
         INVENTORY_DISCARD_SITE_DISTANCE,
         true,
+        [90, -90, 180, 0],
       );
       if (relocated) {
         current = yield* state.driver.observe;
