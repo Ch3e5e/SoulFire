@@ -291,6 +291,8 @@ const INVENTORY_DISCARD_PRIORITY = [
 ] as const;
 const INVENTORY_BUILDING_BLOCK_RESERVE = 64;
 const INVENTORY_EMPTY_SLOT_STABILITY_OBSERVATIONS = 6;
+const INVENTORY_DISCARD_ESCAPE_DISTANCE = 3;
+const INVENTORY_DISCARD_ESCAPE_MAX_SEARCH_TIME_MS = 3_000;
 const LOW_VALUE_DEATH_RECOVERY_ITEM_IDS = new Set([
   ...DISPOSABLE_DEATH_RECOVERY_ITEM_IDS,
   "minecraft:acacia_sapling",
@@ -9527,6 +9529,24 @@ function ensureInventorySpace(
         selector: { itemIds: [itemId] },
         count,
       });
+      const yawRadians = current.player.rotation.yaw * Math.PI / 180;
+      yield* state.driver.pathfind({
+        x: current.player.position.x
+          - Math.sin(yawRadians) * INVENTORY_DISCARD_ESCAPE_DISTANCE,
+        y: current.player.position.y,
+        z: current.player.position.z
+          + Math.cos(yawRadians) * INVENTORY_DISCARD_ESCAPE_DISTANCE,
+        dimension: current.player.position.dimension,
+      }, 0.75, {
+        ...state.strategy.path,
+        allowMining: false,
+        allowPlacing: false,
+        avoidFluids: true,
+        maxSearchTimeMs: Math.min(
+          state.strategy.path.maxSearchTimeMs,
+          INVENTORY_DISCARD_ESCAPE_MAX_SEARCH_TIME_MS,
+        ),
+      }).pipe(Effect.ignore);
       let stableObservations = 0;
       for (let attempt = 0; attempt < 20; attempt += 1) {
         current = yield* state.driver.observe;

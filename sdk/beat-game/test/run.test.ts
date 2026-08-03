@@ -16578,6 +16578,14 @@ describe("beat-game run lifecycle", () => {
       action.type === "look"
       && action.pitch === -30
     )).toHaveLength(2);
+    expect(driver.paths.filter(({ position, radius, policy }) =>
+      radius === 0.75
+      && Math.abs(position.x) < 0.001
+      && Math.abs(position.z - 3) < 0.001
+      && policy.allowMining === false
+      && policy.allowPlacing === false
+      && policy.avoidFluids === true
+    )).toHaveLength(2);
   });
 
   it("stops an in-flight collection once external inventory gains meet its buffered target", async () => {
