@@ -9707,7 +9707,7 @@ describe("beat-game run lifecycle", () => {
     )).toBe(false);
   });
 
-  it("fights an attacking Enderman instead of trying to outrun it", async () => {
+  it("escapes an attacking Enderman into nearby water", async () => {
     const driver = new FakeBeatGameDriver();
     const attacker = {
       connectionEpoch: "epoch-1",
@@ -9722,8 +9722,18 @@ describe("beat-game run lifecycle", () => {
       velocity: { x: 0, y: 0, z: 0 },
       alive: true,
       health: 40,
+      target: { connectionEpoch: "epoch-1", networkId: 1 },
       observedAt: "2026-01-01T00:00:01.000Z",
     } as const;
+    driver.blockQueryResolver = (query) =>
+      query.selector.blockIds?.includes("minecraft:water")
+        ? [blockObservation({
+          x: 0,
+          y: 63,
+          z: 3,
+          dimension: "minecraft:overworld",
+        }, { blockId: "minecraft:water" })]
+        : [];
     driver.taskResolver = (task) =>
       Effect.sync(() => {
         driver.tasks.push(task);
@@ -9736,7 +9746,7 @@ describe("beat-game run lifecycle", () => {
         ),
       );
     driver.taskObserver = (task) => {
-      if (task.type === "attack-nearest") {
+      if (task.type === "flee") {
         driver.entityResults = [];
       }
     };
@@ -9754,9 +9764,11 @@ describe("beat-game run lifecycle", () => {
             }
             driver.entityResults = [attacker];
             driver.currentObservation = observation({ health: 18 });
-            while (
-              !driver.tasks.some((task) => task.type === "attack-entity")
-            ) {
+            while (!driver.paths.some(({ position }) =>
+              position.x === 0.5
+              && position.y === 63.5
+              && position.z === 3.5
+            )) {
               yield* Effect.sleep(1);
             }
             yield* run.stop;
@@ -9766,15 +9778,21 @@ describe("beat-game run lifecycle", () => {
       ),
     ));
 
-    expect(driver.tasks).toContainEqual(expect.objectContaining({
-      type: "attack-entity",
-      target: expect.objectContaining({
-        connectionEpoch: attacker.connectionEpoch,
-        networkId: attacker.networkId,
+    expect(driver.paths).toContainEqual(expect.objectContaining({
+      position: {
+        x: 0.5,
+        y: 63.5,
+        z: 3.5,
+        dimension: "minecraft:overworld",
+      },
+      radius: 0.75,
+      policy: expect.objectContaining({
+        allowMining: false,
+        allowPlacing: false,
+        avoidFluids: false,
       }),
-      selectBestWeapon: true,
     }));
-    expect(driver.tasks.some((task) => task.type === "flee"))
+    expect(driver.tasks.some((task) => task.type === "attack-entity"))
       .toBe(false);
   });
 

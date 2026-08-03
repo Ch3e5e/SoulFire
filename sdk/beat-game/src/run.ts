@@ -532,6 +532,7 @@ const SAFE_AQUATIC_FALLBACK_EXPLORATION_LEGS = 12;
 const DANGEROUS_NEUTRAL_ENTITY_TYPES = [
   "minecraft:bee",
   "minecraft:dolphin",
+  "minecraft:enderman",
   "minecraft:goat",
   "minecraft:iron_golem",
   "minecraft:llama",
@@ -612,6 +613,7 @@ const PROACTIVE_RANGED_ENGAGEMENT_RADIUS = 16;
 const PROACTIVE_THREAT_MAXIMUM_VERTICAL_DISTANCE = 6;
 const RANGED_THREAT_ESCAPE_TRIGGER_RADIUS = 24;
 const RANGED_THREAT_ESCAPE_SAFE_DISTANCE = 32;
+const ENDERMAN_WATER_ESCAPE_RADIUS = 16;
 const DEFENSIVE_PURSUIT_MAX_DISTANCE = 12;
 const EMERGENCY_KNOCKBACK_RANGE = 3.5;
 const EMERGENCY_ESCAPE_SPRINT_MS = 1_250;
@@ -2387,10 +2389,27 @@ function findImmediateThreat(
       },
       maximumResults: 8,
     }),
+    state.driver.queryEntities({
+      origin,
+      radius: PROACTIVE_RANGED_ENGAGEMENT_RADIUS,
+      selector: {
+        entityTypes: DANGEROUS_NEUTRAL_ENTITY_TYPES,
+        alive: true,
+      },
+      maximumResults: 8,
+    }),
   ]).pipe(
-    Effect.map(([visibleHostiles, nearbyEscapeOnlyThreats]) => {
+    Effect.map(([
+      visibleHostiles,
+      nearbyEscapeOnlyThreats,
+      nearbyDangerousNeutralMobs,
+    ]) => {
       const hostiles = new Map(
-        [...visibleHostiles, ...nearbyEscapeOnlyThreats].map((entity) => [
+        [
+          ...visibleHostiles,
+          ...nearbyEscapeOnlyThreats,
+          ...nearbyDangerousNeutralMobs.filter(isAggressiveNeutralMob),
+        ].map((entity) => [
           `${entity.connectionEpoch}:${entity.networkId}`,
           entity,
         ]),
@@ -2417,6 +2436,13 @@ function findImmediateThreat(
       );
       if (escapeOnlyThreat !== undefined) {
         return { target: escapeOnlyThreat.target, response: "flee" };
+      }
+      const aggressiveEnderman = candidates.find(({ target }) =>
+        target.entityType === "minecraft:enderman"
+        && isAggressiveNeutralMob(target)
+      );
+      if (aggressiveEnderman !== undefined) {
+        return { target: aggressiveEnderman.target, response: "flee" };
       }
       const melee = candidates.find(({ target, distanceSquared }) => {
         if (
@@ -2495,6 +2521,12 @@ function shouldDisengageFromThreat(
   target: BeatGameEntityObservation,
 ): boolean {
   if (ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(target.entityType)) {
+    return true;
+  }
+  if (
+    target.entityType === "minecraft:enderman"
+    && isAggressiveNeutralMob(target)
+  ) {
     return true;
   }
   if (shouldCommitToCloseRangedFight(observation, target)) {
@@ -2757,6 +2789,13 @@ function escapeFromTarget(
       state.driver,
       latest.player.position,
     );
+    const endermanWaterEscapeTarget = target.entityType
+        === "minecraft:enderman"
+      ? yield* findEndermanWaterEscapeTarget(
+        state,
+        latest.player.position,
+      )
+      : undefined;
     const dryEscapeTarget = target.entityType === "minecraft:creeper"
       ? undefined
       : yield* findDryThreatEscapeTarget(
@@ -2813,7 +2852,22 @@ function escapeFromTarget(
       || PROACTIVE_MELEE_HOSTILE_ENTITY_TYPES.has(target.entityType);
     const shouldPreferDryEscape = dryEscapeTarget !== undefined
       && (currentlyInFluid || !requiresDynamicEscape);
-    const navigation = shouldPreferDryEscape
+    const navigation = endermanWaterEscapeTarget !== undefined
+      ? state.driver.pathfind(
+        endermanWaterEscapeTarget,
+        0.75,
+        {
+          ...escapePath,
+          allowMining: false,
+          allowPlacing: false,
+          avoidFluids: false,
+          maxFallDistance: Math.min(
+            escapePath.maxFallDistance,
+            MAXIMUM_DAMAGE_FREE_FALL_DISTANCE,
+          ),
+        },
+      )
+      : shouldPreferDryEscape
       ? state.driver.pathfind(
         dryEscapeTarget,
         1.5,
@@ -2935,6 +2989,31 @@ function escapeFromTarget(
       yield* escapeFromTarget(state, outcome.target, options);
     }
   });
+}
+
+function findEndermanWaterEscapeTarget(
+  state: RunState,
+  position: BeatGamePosition,
+): Effect.Effect<BeatGamePosition | undefined, BeatGameDriverError> {
+  return state.driver.queryBlocks({
+    center: position,
+    radius: ENDERMAN_WATER_ESCAPE_RADIUS,
+    selector: { blockIds: ["minecraft:water"] },
+    maximumResults: 64,
+  }).pipe(
+    Effect.map((water) =>
+      [...water]
+        .filter((block) =>
+          block.position.dimension === position.dimension
+          && Math.abs(block.position.y - position.y) <= 4
+        )
+        .sort((left, right) =>
+          distanceSquared(left.position, position)
+          - distanceSquared(right.position, position)
+        )
+        .map((block) => blockCenter(block.position))[0]
+    ),
+  );
 }
 
 function monitorEscapeSafety(
