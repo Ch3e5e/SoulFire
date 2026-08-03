@@ -4135,12 +4135,12 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
-  it("crafts a pickaxe before recovering a nearby corpse far below the surface", async () => {
+  it("crafts a pickaxe before recovering a corpse directly below the surface", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const deathPosition = {
-      x: 96,
-      y: 40,
+      x: 0,
+      y: 24,
       z: 0,
       dimension: "minecraft:overworld",
     };

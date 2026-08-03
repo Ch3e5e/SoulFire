@@ -12305,7 +12305,7 @@ function prepareForDistantDeathRecovery(
         || !hasMeaningfulRecoveryInventory(current)
       );
     if (
-      horizontalRecoveryDistanceSquared
+      recoveryDistanceSquared
         <= IMMEDIATE_CORPSE_RECOVERY_DISTANCE ** 2
       || (
         recoveryDistanceSquared <= ACTIVE_CORPSE_RECOVERY_DISTANCE ** 2
