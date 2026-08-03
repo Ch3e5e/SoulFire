@@ -2529,6 +2529,16 @@ function shouldCommitToCloseRangedFight(
     );
 }
 
+function shouldCommitToCaughtRangedFight(
+  observation: BeatGameObservation,
+  target: BeatGameEntityObservation,
+): boolean {
+  return PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
+    && hasMeleeWeapon(observation)
+    && distanceSquared(observation.player.position, target.position)
+      <= EMERGENCY_KNOCKBACK_RANGE ** 2;
+}
+
 function shouldCommitToCloseMeleeFight(
   observation: BeatGameObservation,
   target: BeatGameEntityObservation,
@@ -2887,9 +2897,12 @@ function monitorEscapeSafety(
             return Effect.succeed({ type: "safe" } as const);
           }
           if (
-            shouldCommitToMeleeFight(observation, currentTarget)
-            && hasMeleeWeapon(observation)
-            && immediateThreat?.response !== "flee"
+            shouldCommitToCaughtRangedFight(observation, currentTarget)
+            || (
+              shouldCommitToMeleeFight(observation, currentTarget)
+              && hasMeleeWeapon(observation)
+              && immediateThreat?.response !== "flee"
+            )
           ) {
             return Effect.succeed({
               type: "defend",
@@ -4518,6 +4531,7 @@ function defendAgainstTarget(
         || shouldCommitToCaughtMeleePursuerFight(observation, target);
       const commitThroughLethalWound =
         shouldCommitToCloseRangedFight(observation, target)
+        || shouldCommitToCaughtRangedFight(observation, target)
         || shouldCommitToFastMeleePursuerFight(observation, target);
       const guardedAttack = Effect.raceFirst(
         attack.pipe(Effect.as("defended" as const)),

@@ -6197,6 +6197,89 @@ describe("beat-game run lifecycle", () => {
       .toBe(false);
   });
 
+  it("turns to fight when an armed ranged escape is caught", async () => {
+    const driver = new FakeBeatGameDriver();
+    let skeleton: BeatGameEntityObservation = {
+      connectionEpoch: "epoch-1",
+      networkId: 23,
+      entityType: "minecraft:skeleton",
+      position: {
+        x: 6,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const secondSkeleton: BeatGameEntityObservation = {
+      ...skeleton,
+      networkId: 24,
+      position: { ...skeleton.position, x: 7 },
+    };
+    driver.currentObservation = observation({
+      health: 15,
+      counts: { "minecraft:stone_sword": 1 },
+    });
+    driver.entityResults = [skeleton, secondSkeleton];
+    driver.entityQueryResolver = (query) =>
+      query.selector.networkId === undefined
+        ? driver.entityResults
+        : driver.entityResults.filter((entity) =>
+          entity.networkId === query.selector.networkId
+        );
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (task.type === "flee") {
+          skeleton = {
+            ...skeleton,
+            position: { ...skeleton.position, x: 2 },
+          };
+          driver.entityResults = [skeleton, secondSkeleton];
+          driver.currentObservation = observation({
+            health: 10,
+            counts: { "minecraft:stone_sword": 1 },
+          });
+        }
+      }).pipe(
+        Effect.zipRight(
+          task.type === "flee" || task.type === "attack-entity"
+            ? Effect.never
+            : Effect.void,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (
+              !driver.tasks.some((task) => task.type === "attack-entity")
+            ) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+      target: expect.objectContaining({
+        networkId: skeleton.networkId,
+        entityType: "minecraft:skeleton",
+      }),
+      selectBestWeapon: true,
+    }));
+  });
+
   it("uses fluid-avoiding dynamic escape instead of sprinting into water", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
