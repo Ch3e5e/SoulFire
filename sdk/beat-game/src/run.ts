@@ -622,6 +622,9 @@ const MINIMUM_SAFE_AIR_TICKS = 260;
 const AIR_ESCAPE_ASCENT_STAGNATION_OBSERVATIONS = 10;
 const AIR_ESCAPE_ASCENT_PROGRESS_EPSILON = 0.05;
 const AIR_ESCAPE_OPEN_COLUMN_SEARCH_RADIUS = 4;
+const AIR_ESCAPE_BREATHING_POCKET_SEARCH_RADIUS = 8;
+const AIR_ESCAPE_BREATHING_POCKET_CANDIDATES = 16;
+const AIR_ESCAPE_BREATHING_POCKET_PATH_TIMEOUT_MS = 4_000;
 
 export interface BeatGameRun {
   readonly id: string;
@@ -3691,7 +3694,17 @@ function recoverFromFluid(
     Effect.flatMap((recovered) =>
       recovered && !seekDrySurfaceAfterRecovery
         ? Effect.succeed(true)
-        : swimToNearbyDrySurface(state, !recovered)
+        : swimToNearbyDrySurface(state, !recovered).pipe(
+          Effect.flatMap((reachedDrySurface) =>
+            reachedDrySurface
+              ? Effect.succeed(true)
+              : state.driver.observe.pipe(
+                Effect.flatMap((latest) =>
+                  escapeNearbyBreathingPocket(state, latest)
+                ),
+              )
+          ),
+        )
     ),
     Effect.flatMap((reachedDrySurface) =>
       reachedDrySurface
@@ -3739,6 +3752,133 @@ function recoverFromFluid(
           ),
         )
     ),
+  );
+}
+
+function escapeNearbyBreathingPocket(
+  state: RunState,
+  observation: BeatGameObservation,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  if (
+    observation.player.dead
+    || observation.player.maxAir <= 0
+    || observation.player.air >= observation.player.maxAir
+  ) {
+    return Effect.succeed(
+      !observation.player.dead
+        && observation.player.air >= observation.player.maxAir,
+    );
+  }
+  const origin = observation.player.position;
+  return state.driver.queryBlocks({
+    center: origin,
+    radius: AIR_ESCAPE_BREATHING_POCKET_SEARCH_RADIUS,
+    selector: {
+      blockIds: ["minecraft:air", "minecraft:cave_air", "minecraft:void_air"],
+    },
+    maximumResults: 128,
+  }).pipe(
+    Effect.map((blocks) =>
+      blocks
+        .map((block) => ({
+          target: {
+            x: block.position.x + 0.5,
+            y: block.position.y - 1,
+            z: block.position.z + 0.5,
+            dimension: block.position.dimension,
+          } satisfies BeatGamePosition,
+        }))
+        .filter(({ target }) =>
+          target.dimension === origin.dimension
+          && target.y <= origin.y + AIR_ESCAPE_MAXIMUM_SWIMMABLE_RISE
+        )
+        .sort((left, right) =>
+          distanceSquared(left.target, origin)
+            - distanceSquared(right.target, origin)
+        )
+        .slice(0, AIR_ESCAPE_BREATHING_POCKET_CANDIDATES)
+    ),
+    Effect.flatMap((candidates) =>
+      tryBreathingPocketCandidates(state, candidates, 0)
+    ),
+  );
+}
+
+function tryBreathingPocketCandidates(
+  state: RunState,
+  candidates: readonly Readonly<{
+    target: BeatGamePosition;
+  }>[],
+  index: number,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  const candidate = candidates[index];
+  if (candidate === undefined) {
+    return Effect.succeed(false);
+  }
+  const feet = {
+    x: Math.floor(candidate.target.x),
+    y: Math.floor(candidate.target.y),
+    z: Math.floor(candidate.target.z),
+    dimension: candidate.target.dimension,
+  } satisfies BeatGameBlockPosition;
+  return queryExactBlock(state.driver, feet).pipe(
+    Effect.flatMap((feetBlock) =>
+      feetBlock !== undefined && !feetBlock.replaceable
+        ? Effect.succeed(false)
+        : state.driver.pathfind(
+          candidate.target,
+          0.75,
+          {
+            ...state.strategy.path,
+            allowMining: false,
+            allowPlacing: false,
+            avoidFluids: false,
+            maxSearchTimeMs: Math.min(
+              state.strategy.path.maxSearchTimeMs,
+              AIR_ESCAPE_BREATHING_POCKET_PATH_TIMEOUT_MS,
+            ),
+          },
+        ).pipe(
+          Effect.timeoutFail({
+            duration: AIR_ESCAPE_BREATHING_POCKET_PATH_TIMEOUT_MS,
+            onTimeout: () => new BeatGameDriverError({
+              operation: "pathfind",
+              code: "unreachable",
+              retryable: true,
+              message: `Timed out reaching breathing pocket at ${
+                positionKey(candidate.target)
+              }`,
+            }),
+          }),
+          Effect.zipRight(state.driver.observe),
+          Effect.flatMap((current) =>
+            hasBreathableHeadSpace(
+              state.driver,
+              current.player.position,
+            )
+          ),
+          Effect.catchTag("BeatGameDriverError", () => Effect.succeed(false)),
+        )
+    ),
+    Effect.flatMap((reached) =>
+      reached
+        ? Effect.succeed(true)
+        : tryBreathingPocketCandidates(state, candidates, index + 1)
+    ),
+  );
+}
+
+function hasBreathableHeadSpace(
+  driver: BeatGameDriver,
+  position: BeatGamePosition,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  return queryExactBlock(driver, {
+    x: Math.floor(position.x),
+    y: Math.floor(position.y + 1.62),
+    z: Math.floor(position.z),
+    dimension: position.dimension,
+  }).pipe(
+    Effect.map((block) => block !== undefined && isAirBlock(block.blockId)),
   );
 }
 

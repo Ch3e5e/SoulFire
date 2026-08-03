@@ -10979,6 +10979,112 @@ describe("beat-game run lifecycle", () => {
       .toBe(false);
   });
 
+  it("retreats to a nearby breathing pocket in a submerged cavity", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.surfaceQueryResolver = () => [];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(Effect.zipRight(Effect.never));
+    driver.blockQueryResolver = (query) => {
+      const position = {
+        x: Math.floor(query.center.x),
+        y: Math.floor(query.center.y),
+        z: Math.floor(query.center.z),
+        dimension: query.center.dimension,
+      };
+      if (
+        query.selector.blockIds?.some((blockId) =>
+          blockId === "minecraft:air"
+          || blockId === "minecraft:cave_air"
+          || blockId === "minecraft:void_air"
+        ) === true
+      ) {
+        return [blockObservation({
+          x: 0,
+          y: 29,
+          z: 0,
+          dimension: "minecraft:overworld",
+        }, {
+          blockId: "minecraft:air",
+          diggable: false,
+          replaceable: true,
+        })];
+      }
+      if (query.selector.blockIds?.includes("minecraft:water") === true) {
+        return position.y === 28 || position.y >= 31
+          ? [blockObservation(position, {
+            blockId: "minecraft:water",
+            diggable: false,
+            replaceable: true,
+          })]
+          : [];
+      }
+      if (query.selector.blockIds === undefined) {
+        const blockId = position.y === 29
+          ? "minecraft:air"
+          : "minecraft:water";
+        return [blockObservation(position, {
+          blockId,
+          diggable: false,
+          replaceable: true,
+        })];
+      }
+      return [];
+    };
+    let resolveEscaped!: () => void;
+    const escaped = new Promise<void>((resolve) => {
+      resolveEscaped = resolve;
+    });
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+        if (position.y === 28) {
+          driver.currentObservation = observation({
+            air: 300,
+            position,
+          });
+          resolveEscaped();
+        }
+      });
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some((task) => task.type === "collect-blocks")) {
+        yield* Effect.sleep(1);
+      }
+      driver.currentObservation = observation({
+        air: 100,
+        position: { x: 0.5, y: 31, z: 0.5 },
+      });
+      yield* Effect.promise(() => escaped).pipe(
+        Effect.timeout("5 seconds"),
+      );
+      yield* run.stop;
+    })));
+
+    expect(driver.paths).toContainEqual({
+      position: {
+        x: 0.5,
+        y: 28,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+      radius: 0.75,
+      policy: expect.objectContaining({
+        allowMining: false,
+        allowPlacing: false,
+        avoidFluids: false,
+        maxSearchTimeMs: 4_000,
+      }),
+    });
+    expect(driver.currentObservation.player.air).toBe(300);
+    expect(driver.actions.some((action) => action.type === "dig-block"))
+      .toBe(false);
+  });
+
   it("mines through an overhead obstruction to escape a submerged cavity", async () => {
     const driver = new FakeBeatGameDriver();
     const preparedItems = {
