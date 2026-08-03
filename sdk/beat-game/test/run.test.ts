@@ -16616,19 +16616,15 @@ describe("beat-game run lifecycle", () => {
       action.type === "look"
       && action.pitch === -30
     )).toHaveLength(2);
+    expect(driver.actions.filter((action) =>
+      action.type === "look"
+      && Math.abs(Math.abs(action.yaw) - 180) < 0.001
+    )).toHaveLength(2);
     expect(driver.paths.filter(({ position, radius, policy }) =>
       radius === 0.75
       && Math.abs(position.x) < 0.001
       && Math.abs(position.z - 6) < 0.001
       && policy.allowMining === true
-      && policy.allowPlacing === false
-      && policy.avoidFluids === true
-    )).toHaveLength(2);
-    expect(driver.paths.filter(({ position, radius, policy }) =>
-      radius === 0.75
-      && Math.abs(position.x) < 0.001
-      && Math.abs(position.z - 3) < 0.001
-      && policy.allowMining === false
       && policy.allowPlacing === false
       && policy.avoidFluids === true
     )).toHaveLength(2);

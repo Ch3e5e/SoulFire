@@ -290,7 +290,7 @@ const INVENTORY_DISCARD_PRIORITY = [
   "minecraft:tuff",
 ] as const;
 const INVENTORY_BUILDING_BLOCK_RESERVE = 64;
-const INVENTORY_EMPTY_SLOT_STABILITY_OBSERVATIONS = 6;
+const INVENTORY_EMPTY_SLOT_STABILITY_OBSERVATIONS = 12;
 const INVENTORY_DISCARD_ESCAPE_DISTANCE = 3;
 const INVENTORY_DISCARD_SITE_DISTANCE = 6;
 const INVENTORY_DISCARD_ESCAPE_MAX_SEARCH_TIME_MS = 3_000;
@@ -9587,7 +9587,7 @@ function ensureInventorySpace(
       const discardYaw = discardRetreatTarget === undefined
         ? wrappedDegrees(current.player.rotation.yaw + 180)
         : wrappedDegrees(
-          Math.atan2(-discardSiteDeltaX, discardSiteDeltaZ)
+          Math.atan2(discardSiteDeltaX, -discardSiteDeltaZ)
             * 180 / Math.PI,
         );
       yield* state.driver.act({
@@ -9606,21 +9606,15 @@ function ensureInventorySpace(
         selector: { itemIds: [itemId] },
         count,
       });
-      let escapedWithoutMining = discardRetreatTarget === undefined
-        ? false
-        : (yield* state.driver.pathfind(
-          discardRetreatTarget,
-          0.75,
-          discardPath(false),
-        ).pipe(Effect.either))._tag === "Right";
-      if (!escapedWithoutMining) {
-        escapedWithoutMining = yield* tryRelativeDiscardPath(
+      let safelySeparated = discardRetreatTarget !== undefined;
+      if (!safelySeparated) {
+        safelySeparated = yield* tryRelativeDiscardPath(
           current,
           INVENTORY_DISCARD_ESCAPE_DISTANCE,
           false,
         );
       }
-      if (!escapedWithoutMining) {
+      if (!safelySeparated) {
         yield* tryRelativeDiscardPath(
           current,
           INVENTORY_DISCARD_ESCAPE_DISTANCE,
