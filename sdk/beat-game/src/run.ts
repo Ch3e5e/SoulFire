@@ -9571,6 +9571,8 @@ function ensureInventorySpace(
       minimumEmptySlots + INVENTORY_EMPTY_SLOT_BUFFER,
     );
     let discardPocketYaw: number | undefined;
+    let discardReturnTarget: BeatGamePosition | undefined;
+    let cleanupFailure: BeatGameDriverError | undefined;
     while (
       current.inventory.emptyPlayerSlots !== undefined
       && current.inventory.emptyPlayerSlots < targetEmptySlots
@@ -9598,22 +9600,22 @@ function ensureInventorySpace(
           relocated
           && discardSiteDistance > INVENTORY_DISCARD_ESCAPE_DISTANCE
         ) {
-          const retreated = yield* state.driver.pathfind(
-            discardSiteOrigin,
-            0.75,
-            discardPath(false),
-          ).pipe(Effect.either);
-          if (retreated._tag === "Right") {
-            current = yield* state.driver.observe;
-            discardPocketYaw = yield* findDiscardPocketYaw(
-              current.player.position,
-              discardPocketPosition,
-            );
-          }
+          discardReturnTarget = discardSiteOrigin;
+          discardPocketYaw = yield* findDiscardPocketYaw(
+            discardPocketPosition,
+            {
+              x: discardPocketPosition.x
+                + (discardPocketPosition.x - discardSiteOrigin.x),
+              y: discardPocketPosition.y,
+              z: discardPocketPosition.z
+                + (discardPocketPosition.z - discardSiteOrigin.z),
+              dimension: discardPocketPosition.dimension,
+            },
+          );
         }
       }
       if (current.inventory.emptyPlayerSlots === undefined) {
-        return;
+        break;
       }
       const discardItemId = INVENTORY_DISCARD_PRIORITY.find((itemId) =>
         (current.inventory.counts[itemId] ?? 0) > 0
@@ -9632,15 +9634,16 @@ function ensureInventorySpace(
           : undefined);
       if (itemId === undefined) {
         if (current.inventory.emptyPlayerSlots >= minimumEmptySlots) {
-          return;
+          break;
         }
-        return yield* Effect.fail(new BeatGameDriverError({
+        cleanupFailure = new BeatGameDriverError({
           operation: "ensure-inventory-space",
           code: "resource-exhausted",
           retryable: true,
           message:
             `The player inventory needs ${minimumEmptySlots} empty slots and contains no disposable items`,
-        }));
+        });
+        break;
       }
       const count = itemId === "minecraft:cobbled_deepslate"
         ? excessCobbledDeepslate
@@ -9709,13 +9712,24 @@ function ensureInventorySpace(
         && stableObservations
           < INVENTORY_EMPTY_SLOT_STABILITY_OBSERVATIONS
       ) {
-        return yield* Effect.fail(new BeatGameDriverError({
+        cleanupFailure = new BeatGameDriverError({
           operation: "ensure-inventory-space",
           code: "resource-exhausted",
           retryable: true,
           message: `Tossing ${itemId} did not free an inventory slot`,
-        }));
+        });
+        break;
       }
+    }
+    if (discardReturnTarget !== undefined) {
+      yield* state.driver.pathfind(
+        discardReturnTarget,
+        0.75,
+        discardPath(false),
+      );
+    }
+    if (cleanupFailure !== undefined) {
+      return yield* Effect.fail(cleanupFailure);
     }
   });
 }

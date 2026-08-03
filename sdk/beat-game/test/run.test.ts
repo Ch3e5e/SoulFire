@@ -16465,11 +16465,25 @@ describe("beat-game run lifecycle", () => {
     driver.raycastResolver = ({ direction, maximumDistance }) => ({
       distance: direction.x < -0.9 ? maximumDistance : 1,
     });
+    const discardTimeline: string[] = [];
     const resolvePath = driver.pathResolver;
     driver.pathResolver = (position, radius, policy) =>
       resolvePath(position, radius, policy).pipe(
         Effect.tap(() =>
           Effect.sync(() => {
+            if (radius === 0.75) {
+              if (
+                position.x < -5.9
+                && Math.abs(position.z) < 0.01
+              ) {
+                discardTimeline.push("path:discard-site");
+              } else if (
+                Math.abs(position.x) < 0.01
+                && Math.abs(position.z) < 0.01
+              ) {
+                discardTimeline.push("path:return");
+              }
+            }
             const currentPosition =
               driver.currentObservation.player.position;
             const emptyPlayerSlots =
@@ -16554,6 +16568,8 @@ describe("beat-game run lifecycle", () => {
             driver.currentObservation = observation({
               counts: driver.currentObservation.inventory.counts,
               emptyPlayerSlots: tossActions === 1 ? 1 : 3,
+              position: driver.currentObservation.player.position,
+              rotation: driver.currentObservation.player.rotation,
             });
           }
         }
@@ -16580,6 +16596,7 @@ describe("beat-game run lifecycle", () => {
           tossActions += 1;
           const itemId = action.selector.itemIds?.[0];
           if (itemId !== undefined) {
+            discardTimeline.push(`toss:${itemId}`);
             const counts = {
               ...driver.currentObservation.inventory.counts,
             };
@@ -16633,6 +16650,12 @@ describe("beat-game run lifecycle", () => {
       action.type === "look"
       && Math.abs(action.yaw - 90) < 0.001
     )).toHaveLength(2);
+    expect(discardTimeline.slice(0, 4)).toEqual([
+      "path:discard-site",
+      "toss:minecraft:raw_copper",
+      "toss:minecraft:cobblestone",
+      "path:return",
+    ]);
     expect(driver.paths.filter(({ position, radius, policy }) =>
       radius === 0.75
       && Math.abs(position.x + 6) < 0.001
