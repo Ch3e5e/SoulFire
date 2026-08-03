@@ -8283,6 +8283,72 @@ describe("beat-game run lifecycle", () => {
       .toBe(false);
   }, 10_000);
 
+  it("fights an underground skeleton instead of retreating through a tunnel", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      health: 11,
+      food: 13,
+      position: {
+        x: 0,
+        y: 30,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      counts: { "minecraft:stone_sword": 1 },
+    });
+    const skeleton = {
+      connectionEpoch: "epoch-1",
+      networkId: 163,
+      entityType: "minecraft:skeleton",
+      position: {
+        x: 8,
+        y: 30,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.entityResults = [skeleton];
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2) ? driver.entityResults : [];
+    driver.taskObserver = (task) => {
+      if (task.type === "attack-entity") {
+        driver.entityResults = [];
+      }
+    };
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (!driver.tasks.some((task) =>
+              task.type === "attack-entity"
+            )) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+      target: expect.objectContaining({
+        connectionEpoch: skeleton.connectionEpoch,
+        networkId: skeleton.networkId,
+      }),
+      selectBestWeapon: true,
+    }));
+    expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
+  }, 10_000);
+
   it("knocks back and escapes a close spider when bare-handed and underfed", async () => {
     const driver = new FakeBeatGameDriver();
     const spiders = [

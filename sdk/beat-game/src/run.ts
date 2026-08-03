@@ -2566,6 +2566,7 @@ function shouldEngageRangedFight(
   target: BeatGameEntityObservation,
 ): boolean {
   return shouldCommitToRangedFight(observation, target)
+    || shouldCommitToUndergroundRangedFight(observation, target)
     || isReadyForBarehandedDefense(observation)
     || (
       hasMeleeWeapon(observation)
@@ -2592,6 +2593,17 @@ function shouldCommitToUnshieldedRangedFight(
     && hasMeleeWeapon(observation)
     && observation.player.health >= MELEE_DISENGAGE_HEALTH
     && observation.player.food > URGENT_HUNGER_FOOD_LEVEL;
+}
+
+function shouldCommitToUndergroundRangedFight(
+  observation: BeatGameObservation,
+  target: BeatGameEntityObservation,
+): boolean {
+  return observation.player.position.y <= OVERWORLD_LOW_GROUND_MAX_Y
+    && PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
+    && hasMeleeWeapon(observation)
+    && observation.player.health > LETHAL_MELEE_DISENGAGE_HEALTH
+    && observation.player.food > CRITICAL_HUNGER_FOOD_LEVEL;
 }
 
 function shouldCommitToCloseRangedFight(
@@ -4896,6 +4908,7 @@ function defendAgainstTarget(
         : Effect.void;
       const commitThroughWound =
         shouldCommitToUnshieldedRangedFight(observation, target)
+        || shouldCommitToUndergroundRangedFight(observation, target)
         || (
           PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
           && isReadyForBarehandedDefense(observation)
@@ -4920,6 +4933,7 @@ function defendAgainstTarget(
               canBlockWithShield
               && PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
             )
+            || shouldCommitToUndergroundRangedFight(observation, target)
             || shouldCommitToCloseRangedFight(observation, target)
             || shouldCommitToFastMeleePursuerFight(observation, target)
             || shouldCommitToCaughtMeleePursuerFight(observation, target)
