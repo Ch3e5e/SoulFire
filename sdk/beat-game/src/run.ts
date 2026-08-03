@@ -345,6 +345,7 @@ const AQUATIC_HUNT_CHASE_TIMEOUT_MS = 30_000;
 const AQUATIC_HUNT_MINIMUM_AIR_TICKS = 120;
 const AQUATIC_HUNT_EMERGENCY_AIR_TICKS = 60;
 const AQUATIC_HUNT_MAXIMUM_CHASE_ATTEMPTS = 3;
+const WOUNDED_AQUATIC_FALLBACK_FOOD_LEVEL = 16;
 const AQUATIC_WATER_ENTRY_SEARCH_RADIUS = 3;
 const AQUATIC_WATER_ENTRY_ATTEMPTS = 12;
 const MAXIMUM_DAMAGE_FREE_FALL_DISTANCE = 3;
@@ -5929,7 +5930,10 @@ function huntForFoodRequirement(
       preferredEntityTypes: HIGH_YIELD_FOOD_ANIMAL_TYPES,
       preferredRadius: HIGH_YIELD_FOOD_PREFERENCE_RADIUS,
       allowCriticalAquaticTargets: true,
-      maximumSafeAquaticFoodLevel: state.strategy.eatBelowFood,
+      maximumSafeAquaticFoodLevel: Math.max(
+        state.strategy.eatBelowFood,
+        WOUNDED_AQUATIC_FALLBACK_FOOD_LEVEL,
+      ),
       requireHealthRecoveryForSafeAquaticTargets: true,
       safeAquaticFallbackAfterExplorationLegs:
         SAFE_AQUATIC_FALLBACK_EXPLORATION_LEGS,
