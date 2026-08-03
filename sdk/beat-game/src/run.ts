@@ -6553,13 +6553,16 @@ function collectBlocksOrExplore(
             - SURFACE_RESOURCE_PATH_MINIMUM_Y_MARGIN,
         }
         : fluidAwareCollectionPath;
+      const dropCollectionPath = options.avoidFluids === true
+        ? collectionPath
+        : { ...collectionPath, avoidFluids: false };
       yield* collectNearbyDrops(state.driver, {
         itemIds: options.progressItemIds,
         radius: 12,
         maximumDrops: 32,
         settleDelayMs: 100,
         maximumVerticalDistance: 3,
-        path: collectionPath,
+        path: dropCollectionPath,
       });
       current = yield* state.driver.observe;
       if (countItems(current) >= targetCount) {
@@ -6606,7 +6609,7 @@ function collectBlocksOrExplore(
         maximumDrops: 32,
         settleDelayMs: 500,
         maximumVerticalDistance: 3,
-        path: collectionPath,
+        path: dropCollectionPath,
       });
       current = yield* state.driver.observe;
       for (

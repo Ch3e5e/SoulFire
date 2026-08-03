@@ -15006,6 +15006,83 @@ describe("beat-game run lifecycle", () => {
       .toBe(false);
   });
 
+  it("retrieves log drops from shallow water", async () => {
+    const driver = new FakeBeatGameDriver();
+    let collectionFinished = false;
+    const logDrop = {
+      connectionEpoch: "epoch-1",
+      networkId: 48,
+      entityType: "minecraft:item",
+      itemId: "minecraft:oak_log",
+      position: {
+        x: 8,
+        y: 63,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.currentObservation = observation();
+    driver.entityQueryResolver = (query) =>
+      collectionFinished
+        && query.selector.entityTypes?.includes("minecraft:item") === true
+        ? [logDrop]
+        : [];
+    driver.blockQueryResolver = (query) =>
+      query.selector.blockIds?.includes("minecraft:water") === true
+          && Math.floor(query.center.x) === 8
+          && Math.floor(query.center.y) === 63
+          && Math.floor(query.center.z) === 0
+        ? [blockObservation({
+          x: 8,
+          y: 63,
+          z: 0,
+          dimension: "minecraft:overworld",
+        }, {
+          blockId: "minecraft:water",
+          diggable: false,
+          replaceable: true,
+        })]
+        : [];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (task.type === "collect-blocks") {
+          collectionFinished = true;
+        }
+      });
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (driver.xzPaths.length === 0) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    })));
+
+    expect(driver.xzPaths[0]).toMatchObject({
+      x: Math.floor(logDrop.position.x) + 0.5,
+      z: Math.floor(logDrop.position.z) + 0.5,
+      dimension: logDrop.position.dimension,
+      policy: {
+        allowPlacing: false,
+        avoidFluids: false,
+      },
+    });
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "collect-blocks",
+      avoidSubmergedTargets: true,
+    }));
+  });
+
   it("backs off food searches that make no observable progress", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
