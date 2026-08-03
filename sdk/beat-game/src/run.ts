@@ -2515,9 +2515,11 @@ function shouldCommitToCloseMeleeFight(
   return COMMITTABLE_CLOSE_MELEE_ENTITY_TYPES.has(target.entityType)
     && distanceSquared(observation.player.position, target.position)
       <= EMERGENCY_KNOCKBACK_RANGE ** 2
-    && observation.player.health > LETHAL_MELEE_DISENGAGE_HEALTH
     && (
-      hasMeleeWeapon(observation)
+      (
+        hasMeleeWeapon(observation)
+        && observation.player.health >= MELEE_DISENGAGE_HEALTH
+      )
       || observation.player.health >= BAREHANDED_DEFENSE_MINIMUM_HEALTH
     );
 }
@@ -4177,11 +4179,7 @@ function defendAgainstTarget(
         shouldCommitToUnshieldedRangedFight(observation, target);
       const commitThroughLethalWound =
         shouldCommitToCloseRangedFight(observation, target)
-        || shouldCommitToFastMeleePursuerFight(observation, target)
-        || (
-          hasMeleeWeapon(observation)
-          && shouldCommitToCloseMeleeFight(observation, target)
-        );
+        || shouldCommitToFastMeleePursuerFight(observation, target);
       const guardedAttack = Effect.raceFirst(
         attack.pipe(Effect.as("defended" as const)),
         monitorDefenseHealth(
