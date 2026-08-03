@@ -12708,6 +12708,12 @@ describe("beat-game run lifecycle", () => {
       z: 0,
       dimension: source.dimension,
     } as const;
+    const craftingTable = {
+      x: 4,
+      y: -50,
+      z: 1,
+      dimension: source.dimension,
+    } as const;
     const standVolume = (stand: BeatGameBlockPosition) => [
       blockObservation(stand, {
         blockId: "minecraft:air",
@@ -12746,6 +12752,7 @@ describe("beat-game run lifecycle", () => {
         "minecraft:stone_sword": 1,
         "minecraft:water_bucket": 1,
       },
+      remainingDurability: { "minecraft:iron_pickaxe": 1 },
     });
     driver.blockQueryResolver = ({ radius, selector }) => {
       if (
@@ -12758,6 +12765,13 @@ describe("beat-game run lifecycle", () => {
           replaceable: true,
         })];
       }
+      if (
+        selector.blockIds?.includes("minecraft:crafting_table") === true
+      ) {
+        return [blockObservation(craftingTable, {
+          blockId: "minecraft:crafting_table",
+        })];
+      }
       return radius === 4.9 && Object.keys(selector).length === 0
         ? [
           ...standVolume(blockedStand),
@@ -12766,10 +12780,44 @@ describe("beat-game run lifecycle", () => {
         ]
         : [];
     };
+    driver.recipeResolver = (resultItemId) => [{
+      recipeId: resultItemId,
+      recipeType: "minecraft:crafting",
+      resultItemId,
+      resultCount: 1,
+      ingredients: [],
+    }];
+    driver.craftabilityResolver = () => ({
+      canCraft: true,
+      maximumCraftCount: 1,
+      requiredStation: "minecraft:crafting_table",
+      missing: [],
+    });
+    let replacementCrafted = false;
+    let pathStartedBeforeReplacement = false;
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (
+          task.type === "craft"
+          && task.recipeId === "minecraft:iron_pickaxe"
+        ) {
+          replacementCrafted = true;
+          driver.currentObservation = observation({
+            position: driver.currentObservation.player.position,
+            counts: {
+              ...driver.currentObservation.inventory.counts,
+              "minecraft:iron_pickaxe": 2,
+            },
+            remainingDurability: { "minecraft:iron_pickaxe": 251 },
+          });
+        }
+      });
     driver.pathResolver = (position, radius, policy) =>
       Effect.sync(() => {
         driver.paths.push({ position, radius, policy });
         if (radius === 0.75) {
+          pathStartedBeforeReplacement ||= !replacementCrafted;
           driver.currentObservation = observation({
             position,
             counts: driver.currentObservation.inventory.counts,
@@ -12827,6 +12875,11 @@ describe("beat-game run lifecycle", () => {
         dimension: blockedStand.dimension,
       },
     }));
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "craft",
+      recipeId: "minecraft:iron_pickaxe",
+    }));
+    expect(pathStartedBeforeReplacement).toBe(false);
   });
 
   it("skips lava sources that require unsafe sightline mining", async () => {

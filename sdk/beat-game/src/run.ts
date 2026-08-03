@@ -7319,6 +7319,7 @@ function fillLiquidBucket(
         canCraftDurablePickaxe
           ? DURABLE_MINING_PICKAXE_ITEM_IDS
           : MINING_PICKAXE_ITEM_IDS,
+        liquid === "lava" ? RESOURCE_SEARCH_PICKAXE_DURABILITY_RESERVE : 1,
       );
     };
     yield* ensureApproachPickaxe(current);
