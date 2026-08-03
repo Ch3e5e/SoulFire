@@ -292,6 +292,7 @@ const INVENTORY_DISCARD_PRIORITY = [
 const INVENTORY_BUILDING_BLOCK_RESERVE = 64;
 const INVENTORY_EMPTY_SLOT_STABILITY_OBSERVATIONS = 6;
 const INVENTORY_DISCARD_ESCAPE_DISTANCE = 3;
+const INVENTORY_DISCARD_SITE_DISTANCE = 6;
 const INVENTORY_DISCARD_ESCAPE_MAX_SEARCH_TIME_MS = 3_000;
 const LOW_VALUE_DEATH_RECOVERY_ITEM_IDS = new Set([
   ...DISPOSABLE_DEATH_RECOVERY_ITEM_IDS,
@@ -9485,10 +9486,52 @@ function ensureInventorySpace(
 ): Effect.Effect<void, BeatGameDriverError> {
   return Effect.gen(function* () {
     let current = observation;
+    const tryRelativeDiscardPath = (
+      origin: BeatGameObservation,
+      distance: number,
+      allowMining: boolean,
+    ) =>
+      Effect.gen(function* () {
+        const path = {
+          ...state.strategy.path,
+          allowMining,
+          allowPlacing: false,
+          avoidFluids: true,
+          maxSearchTimeMs: Math.min(
+            state.strategy.path.maxSearchTimeMs,
+            INVENTORY_DISCARD_ESCAPE_MAX_SEARCH_TIME_MS,
+          ),
+        };
+        for (const yawOffset of [0, 90, -90, 180]) {
+          const yawRadians = (origin.player.rotation.yaw + yawOffset)
+            * Math.PI / 180;
+          const escaped = yield* state.driver.pathfind({
+            x: origin.player.position.x - Math.sin(yawRadians) * distance,
+            y: origin.player.position.y,
+            z: origin.player.position.z + Math.cos(yawRadians) * distance,
+            dimension: origin.player.position.dimension,
+          }, 0.75, path).pipe(Effect.either);
+          if (escaped._tag === "Right") {
+            return true;
+          }
+        }
+        return false;
+      });
     while (
       current.inventory.emptyPlayerSlots !== undefined
       && current.inventory.emptyPlayerSlots < minimumEmptySlots
     ) {
+      const relocated = yield* tryRelativeDiscardPath(
+        current,
+        INVENTORY_DISCARD_SITE_DISTANCE,
+        true,
+      );
+      if (relocated) {
+        current = yield* state.driver.observe;
+      }
+      if (current.inventory.emptyPlayerSlots === undefined) {
+        return;
+      }
       const discardItemId = INVENTORY_DISCARD_PRIORITY.find((itemId) =>
         (current.inventory.counts[itemId] ?? 0) > 0
       );
@@ -9529,41 +9572,17 @@ function ensureInventorySpace(
         selector: { itemIds: [itemId] },
         count,
       });
-      const discardEscapePath = {
-        ...state.strategy.path,
-        allowMining: false,
-        allowPlacing: false,
-        avoidFluids: true,
-        maxSearchTimeMs: Math.min(
-          state.strategy.path.maxSearchTimeMs,
-          INVENTORY_DISCARD_ESCAPE_MAX_SEARCH_TIME_MS,
-        ),
-      };
-      const tryDiscardEscape = (allowMining: boolean) =>
-        Effect.gen(function* () {
-          for (const yawOffset of [0, 90, -90, 180]) {
-            const yawRadians = (current.player.rotation.yaw + yawOffset)
-              * Math.PI / 180;
-            const escaped = yield* state.driver.pathfind({
-              x: current.player.position.x
-                - Math.sin(yawRadians) * INVENTORY_DISCARD_ESCAPE_DISTANCE,
-              y: current.player.position.y,
-              z: current.player.position.z
-                + Math.cos(yawRadians) * INVENTORY_DISCARD_ESCAPE_DISTANCE,
-              dimension: current.player.position.dimension,
-            }, 0.75, {
-              ...discardEscapePath,
-              allowMining,
-            }).pipe(Effect.either);
-            if (escaped._tag === "Right") {
-              return true;
-            }
-          }
-          return false;
-        });
-      const escapedWithoutMining = yield* tryDiscardEscape(false);
+      const escapedWithoutMining = yield* tryRelativeDiscardPath(
+        current,
+        INVENTORY_DISCARD_ESCAPE_DISTANCE,
+        false,
+      );
       if (!escapedWithoutMining) {
-        yield* tryDiscardEscape(true);
+        yield* tryRelativeDiscardPath(
+          current,
+          INVENTORY_DISCARD_ESCAPE_DISTANCE,
+          true,
+        );
       }
       let stableObservations = 0;
       for (let attempt = 0; attempt < 20; attempt += 1) {
