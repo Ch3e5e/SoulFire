@@ -1495,11 +1495,11 @@ describe("beat-game run lifecycle", () => {
     expect(saved?.memory.deathPositions).toHaveLength(0);
   });
 
-  it("races barehanded to substantial renewable progress within recovery range", async () => {
+  it("recovers substantial renewable progress across a long spawn return", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const deathPosition = {
-      x: 240,
+      x: 342,
       y: 64,
       z: 0,
       dimension: "minecraft:overworld",
