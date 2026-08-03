@@ -18,6 +18,7 @@ import {
 } from "./requirements.js";
 
 const FOOD_RESERVE_REFILL_TOLERANCE = 2;
+const PRACTICAL_OVERWORLD_FOOD_REFILL_MINIMUM_Y = 50;
 
 const COOKABLE_RAW_FOOD_ITEM_IDS = new Set(
   Object.keys(RAW_FOOD_TO_COOKED),
@@ -157,14 +158,19 @@ export function decideBeatGameAction(
       return requirementDecision(basicWeapon);
     }
   }
-  const firstMissing = requirements.find(({ satisfied }) => !satisfied);
-  const missing = firstMissing !== undefined
-      && shouldDeferFoodReserveRefill(firstMissing, observation, strategy)
-    ? requirements.find((requirement) =>
-      !requirement.satisfied
-      && !shouldDeferFoodReserveRefill(requirement, observation, strategy)
-    ) ?? firstMissing
-    : firstMissing;
+  const missingRequirements = requirements.filter(({ satisfied }) =>
+    !satisfied
+  );
+  const firstMissing = missingRequirements[0];
+  const actionableMissing = missingRequirements.find((requirement) =>
+    !shouldDeferFoodReserveRefill(requirement, observation, strategy)
+  );
+  const missing = actionableMissing ?? (
+      firstMissing !== undefined
+      && shouldRefillDeferredFoodReserve(observation)
+    ? firstMissing
+    : undefined
+  );
   switch (phase) {
     case BeatGamePhase.PREPARE_OVERWORLD:
       if (missing !== undefined) {
@@ -279,6 +285,14 @@ function shouldDeferFoodReserveRefill(
       1,
       requirement.targetCount - FOOD_RESERVE_REFILL_TOLERANCE,
     );
+}
+
+function shouldRefillDeferredFoodReserve(
+  observation: BeatGameObservation,
+): boolean {
+  return observation.player.position.dimension === "minecraft:overworld"
+    && observation.player.position.y
+      >= PRACTICAL_OVERWORLD_FOOD_REFILL_MINIMUM_Y;
 }
 
 function hasFood(
