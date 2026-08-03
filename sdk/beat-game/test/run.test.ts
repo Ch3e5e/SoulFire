@@ -14110,7 +14110,7 @@ describe("beat-game run lifecycle", () => {
           driver.currentObservation = observation({
             health: 20,
             food: 6,
-            air: 100,
+            air: 195,
             counts: driver.currentObservation.inventory.counts,
           });
           return Effect.never;
@@ -14122,6 +14122,21 @@ describe("beat-game run lifecycle", () => {
     await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const run = yield* beatGameWithDriver(driver, {
         strategy: { observationPollMs: 1 },
+      });
+      while (
+        driver.tasks.filter((task) => task.type === "attack-entity").length < 1
+      ) {
+        yield* Effect.sleep(1);
+      }
+      yield* Effect.sleep(10);
+      expect(
+        driver.tasks.filter((task) => task.type === "attack-entity"),
+      ).toHaveLength(1);
+      driver.currentObservation = observation({
+        health: 20,
+        food: 6,
+        air: 100,
+        counts: driver.currentObservation.inventory.counts,
       });
       while (
         driver.tasks.filter((task) => task.type === "attack-entity").length < 2

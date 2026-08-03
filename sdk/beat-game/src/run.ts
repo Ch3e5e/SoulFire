@@ -2133,7 +2133,7 @@ function monitorActionSafety(
                 && decision.type !== "fight-ender-dragon"
                 && !observation.player.dead
               ) {
-                if (hasUnsafeAir(observation)) {
+                if (hasUnsafeAirDuringAction(decision, observation)) {
                   return Effect.succeed({
                     replanReason: "air fell below the safety threshold",
                     airEscapePosition: observation.player.position,
@@ -2207,7 +2207,7 @@ function monitorObservedSafety(
   }
   if (
     !observation.player.dead
-    && hasUnsafeAir(observation)
+    && hasUnsafeAirDuringAction(decision, observation)
   ) {
     return Effect.succeed({
       replanReason: "air fell below the safety threshold",
@@ -3476,6 +3476,29 @@ function hasUnsafeAir(observation: BeatGameObservation): boolean {
   return observation.player.maxAir > 0
     && observation.player.air
       <= Math.min(MINIMUM_SAFE_AIR_TICKS, observation.player.maxAir * 2 / 3);
+}
+
+function hasUnsafeAirDuringAction(
+  decision: Exclude<
+    BeatGamePlannerDecision,
+    { readonly type: "advance-phase" }
+  >,
+  observation: BeatGameObservation,
+): boolean {
+  const provisioningFood = decision.type === "satisfy-requirement"
+    && (
+      decision.requirement.key === "food"
+      || decision.requirement.key === "food-supply"
+    );
+  if (!provisioningFood) {
+    return hasUnsafeAir(observation);
+  }
+  return observation.player.maxAir > 0
+    && observation.player.air
+      <= Math.min(
+        AQUATIC_HUNT_MINIMUM_AIR_TICKS,
+        observation.player.maxAir * 2 / 5,
+      );
 }
 
 function shouldResumeUrgentAquaticFoodHunt(
