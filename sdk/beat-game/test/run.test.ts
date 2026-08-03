@@ -3545,6 +3545,68 @@ describe("beat-game run lifecycle", () => {
     expect(saved?.memory.deathPositions).toHaveLength(0);
   }, 15_000);
 
+  it("searches for corpse recovery supplies along the recovery route", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const deathPosition = {
+      x: 700,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    } as const;
+    const observedAt = new Date().toISOString();
+    const initial = checkpoint(BeatGamePhase.ENTER_NETHER, {
+      runId: "directed-corpse-preparation-run",
+      teamId: "directed-corpse-preparation-team",
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        deathPositions: [{
+          key: `death:${observedAt}`,
+          value: {
+            ...deathPosition,
+            inventoryCounts: { "minecraft:iron_pickaxe": 1 },
+          },
+          observedAt,
+          confidence: 1,
+        }],
+      },
+    }, undefined));
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        runId: "directed-corpse-preparation-run",
+        team: { teamId: "directed-corpse-preparation-team" },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      });
+      while (driver.xzPaths.length === 0) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    }).pipe(Effect.timeout("5 seconds"))));
+
+    const firstLeg = driver.xzPaths[0];
+    expect(firstLeg).toBeDefined();
+    expect(firstLeg?.x).toBeGreaterThan(0.5);
+    expect(Math.abs(firstLeg?.z ?? Number.POSITIVE_INFINITY)).toBeLessThan(1);
+    expect(firstLeg?.policy).toMatchObject({
+      allowMining: false,
+      allowPlacing: false,
+      avoidFluids: true,
+    });
+    expect(
+      Math.abs(deathPosition.x - (firstLeg?.x ?? 0)),
+    ).toBeLessThan(Math.abs(deathPosition.x - 0.5));
+  });
+
   it("preserves a valuable corpse while preparation moves meaningfully closer", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
@@ -11741,7 +11803,7 @@ describe("beat-game run lifecycle", () => {
     expect(useItemInterrupted).toBe(true);
   });
 
-  it("skips lava sources hidden behind undiggable blocks", async () => {
+  it("skips lava sources that require unsafe sightline mining", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const blockedSource = blockObservation({
@@ -11840,8 +11902,8 @@ describe("beat-game run lifecycle", () => {
             z: 0,
             dimension: "minecraft:overworld",
           }, {
-            blockId: "minecraft:bedrock",
-            diggable: false,
+            blockId: "minecraft:deepslate",
+            diggable: true,
           }),
           distance: 1,
         }

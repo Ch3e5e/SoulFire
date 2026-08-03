@@ -4808,124 +4808,96 @@ function collectPortalCastingLavaSource(
       3,
       mergePathPolicy(path),
     );
-    for (
-      let clearedBlocks = 0;
-      clearedBlocks <= PORTAL_CASTING_LAVA_SIGHT_CLEARING_BLOCKS;
-      clearedBlocks += 1
+    const observation = yield* driver.observe;
+    const sourceCenter = blockCenter(source.position);
+    const eyePosition = {
+      ...observation.player.position,
+      y: observation.player.position.y + 1.62,
+    };
+    const direction = {
+      x: sourceCenter.x - eyePosition.x,
+      y: sourceCenter.y - eyePosition.y,
+      z: sourceCenter.z - eyePosition.z,
+    };
+    const distance = Math.sqrt(
+      direction.x * direction.x
+        + direction.y * direction.y
+        + direction.z * direction.z,
+    );
+    const rotation = rotationToward(eyePosition, sourceCenter);
+    yield* driver.act({
+      type: "look",
+      yaw: rotation.yaw,
+      pitch: rotation.pitch,
+    });
+    yield* waitForRotation(driver, rotation.yaw, rotation.pitch, 40, 50);
+    const obstruction = (yield* driver.raycast({
+      direction,
+      maximumDistance: distance + 0.05,
+      includeFluids: false,
+    })).block;
+    if (
+      obstruction !== undefined
+      && !samePosition(obstruction.position, source.position)
     ) {
-      const observation = yield* driver.observe;
-      const sourceCenter = blockCenter(source.position);
-      const eyePosition = {
-        ...observation.player.position,
-        y: observation.player.position.y + 1.62,
-      };
-      const direction = {
-        x: sourceCenter.x - eyePosition.x,
-        y: sourceCenter.y - eyePosition.y,
-        z: sourceCenter.z - eyePosition.z,
-      };
-      const distance = Math.sqrt(
-        direction.x * direction.x
-          + direction.y * direction.y
-          + direction.z * direction.z,
-      );
-      const rotation = rotationToward(eyePosition, sourceCenter);
-      yield* driver.act({
-        type: "look",
-        yaw: rotation.yaw,
-        pitch: rotation.pitch,
-      });
-      yield* waitForRotation(driver, rotation.yaw, rotation.pitch, 40, 50);
-      const obstruction = (yield* driver.raycast({
-        direction,
-        maximumDistance: distance + 0.05,
-        includeFluids: false,
-      })).block;
-      if (
-        obstruction !== undefined
-        && !samePosition(obstruction.position, source.position)
-      ) {
-        if (
-          !obstruction.diggable
-          || obstruction.blockId === "minecraft:obsidian"
-          || isPortalCastingPlayerStabilityBlock(
-            observation.player.position,
-            obstruction.position,
-          )
-          || clearedBlocks === PORTAL_CASTING_LAVA_SIGHT_CLEARING_BLOCKS
-        ) {
-          return yield* Effect.fail(behaviorError(
-            driver,
-            `Could not expose the portal casting lava source through ${
-              obstruction.blockId
-            } at ${positionKey(obstruction.position)}`,
-          ));
-        }
-        const tool = preferredPortalDigTool(observation);
-        if (tool !== undefined) {
-          yield* driver.act({
-            type: "select-item",
-            selector: { itemIds: [tool] },
-          });
-        }
-        yield* driver.act({
-          type: "dig-block",
-          position: obstruction.position,
-        });
-        continue;
-      }
-      const liveSource = yield* driver.queryBlocks({
-        center: sourceCenter,
-        radius: 0.25,
-        selector: {
-          blockIds: ["minecraft:lava"],
-          properties: { level: "0" },
-        },
-        maximumResults: 1,
-      });
-      if (!liveSource.some(({ position }) =>
-        samePosition(position, source.position)
-      )) {
-        return yield* Effect.fail(behaviorError(
-          driver,
-          `The portal casting lava source at ${
-            positionKey(source.position)
-          } changed while the bot approached it`,
-        ));
-      }
-      yield* driver.act({
-        type: "select-item",
-        selector: { itemIds: ["minecraft:bucket"] },
-      });
-      yield* useBucketToward(driver, sourceCenter).pipe(
-        Effect.mapError((cause) =>
-          new BeatGameDriverError({
-            operation: "collect-portal-casting-lava",
-            ...(cause.code === undefined ? {} : { code: cause.code }),
-            retryable: true,
-            message: `Could not collect the portal casting lava source at ${
-              positionKey(source.position)
-            }: ${cause.message}`,
-            cause,
-          })
-        ),
-      );
-      for (
-        let poll = 0;
-        poll < PORTAL_CASTING_LAVA_COLLECTION_POLLS;
-        poll += 1
-      ) {
-        const current = yield* driver.observe;
-        if ((current.inventory.counts["minecraft:lava_bucket"] ?? 0) > 0) {
-          return;
-        }
-        yield* Effect.sleep(50);
-      }
       return yield* Effect.fail(behaviorError(
         driver,
-        `The lava source at ${positionKey(source.position)} was not collected`,
+        `Could not safely collect the portal casting lava source through ${
+          obstruction.blockId
+        } at ${positionKey(obstruction.position)}`,
       ));
     }
+    const liveSource = yield* driver.queryBlocks({
+      center: sourceCenter,
+      radius: 0.25,
+      selector: {
+        blockIds: ["minecraft:lava"],
+        properties: { level: "0" },
+      },
+      maximumResults: 1,
+    });
+    if (!liveSource.some(({ position }) =>
+      samePosition(position, source.position)
+    )) {
+      return yield* Effect.fail(behaviorError(
+        driver,
+        `The portal casting lava source at ${
+          positionKey(source.position)
+        } changed while the bot approached it`,
+      ));
+    }
+    yield* driver.act({
+      type: "select-item",
+      selector: { itemIds: ["minecraft:bucket"] },
+    });
+    yield* useBucketToward(driver, sourceCenter).pipe(
+      Effect.mapError((cause) =>
+        new BeatGameDriverError({
+          operation: "collect-portal-casting-lava",
+          ...(cause.code === undefined ? {} : { code: cause.code }),
+          retryable: true,
+          message: `Could not collect the portal casting lava source at ${
+            positionKey(source.position)
+          }: ${cause.message}`,
+          cause,
+        })
+      ),
+    );
+    for (
+      let poll = 0;
+      poll < PORTAL_CASTING_LAVA_COLLECTION_POLLS;
+      poll += 1
+    ) {
+      const current = yield* driver.observe;
+      if ((current.inventory.counts["minecraft:lava_bucket"] ?? 0) > 0) {
+        return;
+      }
+      yield* Effect.sleep(50);
+    }
+    return yield* Effect.fail(behaviorError(
+      driver,
+      `The lava source at ${positionKey(source.position)} was not collected`,
+    ));
   });
 }
 

@@ -4013,7 +4013,9 @@ describe("beat-game behavior programs", () => {
     await expect(Effect.runPromise(castNetherPortal(driver, {
       origin,
       ignite: false,
-    }))).rejects.toThrow("Could not expose the portal casting lava source");
+    }))).rejects.toThrow(
+      "Could not safely collect the portal casting lava source",
+    );
 
     expect(driver.actions).not.toContainEqual({
       type: "dig-block",

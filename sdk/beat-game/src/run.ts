@@ -6441,6 +6441,7 @@ function collectBlocksOrExplore(
     readonly preferSurfaceExploration?: boolean;
     readonly avoidFluids?: boolean;
     readonly path?: BeatGameStrategy["path"];
+    readonly explorationTarget?: BeatGamePosition;
     readonly prepareAttempt?: (
       observation: BeatGameObservation,
     ) => Effect.Effect<void, BeatGameDriverError>;
@@ -6613,14 +6614,33 @@ function collectBlocksOrExplore(
           yield* options.prepareAttempt(current);
           current = yield* state.driver.observe;
         }
-        yield* advanceExplorationFrontier(
-          state,
-          current.player.position,
-          options.purpose,
-          state.strategy.blockSearchRadius,
-          frontierPath,
-          preferSurfaceExploration,
-        );
+        const directedTarget =
+          options.explorationTarget?.dimension
+              === current.player.position.dimension
+            && horizontalDistanceSquared(
+                options.explorationTarget,
+                current.player.position,
+              ) > DIRECTED_HUNT_DESTINATION_REACHED_RADIUS ** 2
+          ? options.explorationTarget
+          : undefined;
+        yield* (directedTarget === undefined
+          ? advanceExplorationFrontier(
+            state,
+            current.player.position,
+            options.purpose,
+            state.strategy.blockSearchRadius,
+            frontierPath,
+            preferSurfaceExploration,
+          )
+          : pathfindExplorationTarget(
+            state,
+            current.player.position,
+            directedTarget,
+            2,
+            frontierPath,
+            preferSurfaceExploration,
+            false,
+          ));
         return;
       }
     }
@@ -6938,7 +6958,8 @@ function fillLiquidBucket(
           return;
         }
         if (
-          !obstruction.diggable
+          liquid === "lava"
+          || !obstruction.diggable
           || isPlayerStabilityBlock(
             current.player.position,
             obstruction.position,
@@ -7531,12 +7552,7 @@ function isLavaSourceExposableFromCurrentPosition(
       includeFluids: false,
     })).block;
     return obstruction === undefined
-      || sameBlockPosition(obstruction.position, source.position)
-      || obstruction.diggable
-        && !isPlayerStabilityBlock(
-          current.player.position,
-          obstruction.position,
-        );
+      || sameBlockPosition(obstruction.position, source.position);
   });
 }
 
@@ -11701,6 +11717,7 @@ function prepareForDistantDeathRecovery(
         purpose: "prepare-corpse-recovery-blocks",
         avoidSubmergedTargets: true,
         path: protectedRecoveryPath,
+        explorationTarget: pendingDeath.position,
       }).pipe(Effect.zipRight(state.driver.observe));
     };
 
@@ -11728,6 +11745,7 @@ function prepareForDistantDeathRecovery(
           requireLineOfSight: true,
           requireSurfaceTargets: true,
           path: protectedRecoveryPath,
+          explorationTarget: pendingDeath.position,
         });
         current = yield* state.driver.observe;
       }
@@ -11778,6 +11796,7 @@ function prepareForDistantDeathRecovery(
           requireLineOfSight: true,
           requireSurfaceTargets: true,
           path: protectedRecoveryPath,
+          explorationTarget: pendingDeath.position,
         });
         current = yield* state.driver.observe;
         additionalLogs = additionalLogsForWoodenPickaxe(current);
@@ -11809,6 +11828,7 @@ function prepareForDistantDeathRecovery(
         requireLineOfSight: true,
         requireSurfaceTargets: true,
         path: protectedRecoveryPath,
+        explorationTarget: pendingDeath.position,
       });
       current = yield* state.driver.observe;
     }
