@@ -18844,6 +18844,99 @@ describe("beat-game run lifecycle", () => {
     )).toHaveLength(0);
   });
 
+  it("does not treat submerged kelp as staircase footing", async () => {
+    const driver = new FakeBeatGameDriver();
+    const surfacePosition = {
+      x: 0.5,
+      y: 64,
+      z: 0.5,
+      dimension: "minecraft:overworld",
+    } as const;
+    driver.currentObservation = observation({
+      position: surfacePosition,
+      counts: {
+        "minecraft:cooked_beef": 12,
+        "minecraft:oak_log": 8,
+        "minecraft:cobblestone": 30,
+        "minecraft:stone_sword": 1,
+        "minecraft:stone_pickaxe": 1,
+        "minecraft:water_bucket": 1,
+      },
+    });
+    const kelp = blockObservation({
+      x: 1,
+      y: 63,
+      z: 0,
+      dimension: surfacePosition.dimension,
+    }, {
+      blockId: "minecraft:kelp",
+      replaceable: false,
+      solid: false,
+    });
+    const stone = blockObservation({
+      x: 2,
+      y: 63,
+      z: 0,
+      dimension: surfacePosition.dimension,
+    });
+    driver.blockQueryResolver = ({ center, radius, selector }) => {
+      if (radius === 12 && selector.solid === true) {
+        return [kelp, stone];
+      }
+      const position = {
+        x: Math.floor(center.x),
+        y: Math.floor(center.y),
+        z: Math.floor(center.z),
+        dimension: center.dimension,
+      };
+      if (position.x === 0 && position.y === 63 && position.z === 0) {
+        return [blockObservation(position, {
+          blockId: "minecraft:sand",
+          solid: true,
+        })];
+      }
+      if (position.y === 63 && position.z === 0) {
+        return [position.x === 1 ? kelp : stone];
+      }
+      return [blockObservation(position, {
+        blockId: "minecraft:air",
+        diggable: false,
+        replaceable: true,
+        solid: false,
+      })];
+    };
+    let resolveStableApproach!: () => void;
+    const stableApproach = new Promise<void>((resolve) => {
+      resolveStableApproach = resolve;
+    });
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+        if (position.x === 2.5 && radius === 0.75) {
+          resolveStableApproach();
+        }
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      yield* Effect.promise(() => stableApproach).pipe(
+        Effect.timeout("5 seconds"),
+      );
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    expect(driver.paths).toContainEqual(expect.objectContaining({
+      position: expect.objectContaining({ x: 2.5, y: 64, z: 0.5 }),
+      radius: 0.75,
+    }));
+    expect(driver.paths).not.toContainEqual(expect.objectContaining({
+      position: expect.objectContaining({ x: 1.5, y: 64, z: 0.5 }),
+    }));
+  });
+
   it("explores laterally at iron mining depth when candidates are unreachable", async () => {
     const driver = new FakeBeatGameDriver();
     const miningPosition = {

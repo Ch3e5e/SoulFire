@@ -7316,7 +7316,7 @@ function findStableResourceSearchStaircaseOrigin(
     const supports = (yield* state.driver.queryBlocks({
       center: position,
       radius: 12,
-      selector: { replaceable: false },
+      selector: { solid: true },
       maximumResults: 512,
     }))
       .filter((block) =>
@@ -7448,6 +7448,7 @@ function isStableStaircaseAnchor(
   block: BeatGameBlockObservation | undefined,
 ): block is BeatGameBlockObservation {
   return block !== undefined
+    && block.solid === true
     && !block.replaceable
     && !isGravityAffectedBlockId(block.blockId);
 }

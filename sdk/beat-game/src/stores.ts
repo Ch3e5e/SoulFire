@@ -433,6 +433,9 @@ function blockObservation(value: unknown, name: string): void {
   }
   booleanValue(block.diggable, `${name}.diggable`);
   booleanValue(block.replaceable, `${name}.replaceable`);
+  if (block.solid !== undefined) {
+    booleanValue(block.solid, `${name}.solid`);
+  }
   booleanValue(block.interactive, `${name}.interactive`);
   timestamp(block.observedAt, `${name}.observedAt`);
 }

@@ -1490,6 +1490,7 @@ function toBeatGameBlockObservation(
     properties: block.properties,
     diggable: block.diggable,
     replaceable: block.replaceable,
+    solid: block.solid,
     interactive: block.interactive,
     observedAt: new Date().toISOString(),
   };

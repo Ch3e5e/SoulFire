@@ -215,6 +215,7 @@ export interface BeatGameBlockObservation {
   readonly properties: Readonly<Record<string, string>>;
   readonly diggable: boolean;
   readonly replaceable: boolean;
+  readonly solid?: boolean;
   readonly interactive: boolean;
   readonly observedAt: string;
 }
