@@ -17839,10 +17839,6 @@ describe("beat-game run lifecycle", () => {
         Effect.flatMap(() =>
           radius === 0.75
             && policy.allowMining === false
-            && !(
-              Math.abs(position.x) < 0.001
-              && Math.abs(position.z) < 0.001
-            )
             ? Effect.fail(new BeatGameDriverError({
               operation: "pathfind",
               retryable: false,

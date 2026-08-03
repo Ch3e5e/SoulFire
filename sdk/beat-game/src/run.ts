@@ -10131,7 +10131,7 @@ function ensureInventorySpace(
         discardReturnTarget,
         0.75,
         discardPath(false),
-      );
+      ).pipe(Effect.ignore);
     }
     if (discardedItems && cleanupFailure === undefined) {
       let stableObservations = 0;
