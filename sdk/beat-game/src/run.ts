@@ -6787,6 +6787,7 @@ function fillLiquidBucket(
         state,
         current,
         sources,
+        { requireExposableSource: true },
       ).pipe(Effect.either);
       if (approach._tag === "Left") {
         const visibleSourceIsBelow = sources.some(({ position }) =>
@@ -7394,6 +7395,9 @@ function approachLavaSourceFromSide(
   state: RunState,
   observation: BeatGameObservation,
   sources: readonly BeatGameBlockObservation[],
+  options: {
+    readonly requireExposableSource?: boolean;
+  } = {},
 ): Effect.Effect<BeatGameBlockObservation, BeatGameDriverError> {
   return Effect.gen(function* () {
     const nearbySources = [...sources].sort((left, right) =>
@@ -7433,7 +7437,16 @@ function approachLavaSourceFromSide(
           candidate,
           false,
         );
-        if (reached) {
+        if (
+          reached
+          && (
+            options.requireExposableSource !== true
+            || (yield* isLavaSourceExposableFromCurrentPosition(
+              state.driver,
+              prepared.source,
+            ))
+          )
+        ) {
           return prepared.source;
         }
       }
@@ -7459,7 +7472,16 @@ function approachLavaSourceFromSide(
           candidate,
           true,
         );
-        if (reached) {
+        if (
+          reached
+          && (
+            options.requireExposableSource !== true
+            || (yield* isLavaSourceExposableFromCurrentPosition(
+              state.driver,
+              prepared.source,
+            ))
+          )
+        ) {
           return prepared.source;
         }
       }
@@ -7469,10 +7491,52 @@ function approachLavaSourceFromSide(
       code: "unreachable",
       retryable: true,
       message:
-        `Could not reach or excavate a safe side-on stand beside ${
+        `Could not reach, excavate, or expose a safe side-on stand beside ${
           nearbySources.length
         } nearby lava source${nearbySources.length === 1 ? "" : "s"}`,
     }));
+  });
+}
+
+function isLavaSourceExposableFromCurrentPosition(
+  driver: BeatGameDriver,
+  source: BeatGameBlockObservation,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  return Effect.gen(function* () {
+    const current = yield* driver.observe;
+    const eyePosition = {
+      ...current.player.position,
+      y: current.player.position.y + 1.62,
+    };
+    const sourceCenter = blockCenter(source.position);
+    const direction = {
+      x: sourceCenter.x - eyePosition.x,
+      y: sourceCenter.y - eyePosition.y,
+      z: sourceCenter.z - eyePosition.z,
+    };
+    const sourceDistance = Math.sqrt(
+      direction.x * direction.x
+        + direction.y * direction.y
+        + direction.z * direction.z,
+    );
+    if (sourceDistance > LIQUID_INTERACTION_REACH) {
+      return false;
+    }
+    const obstruction = (yield* driver.raycast({
+      direction,
+      maximumDistance: Math.min(
+        LIQUID_INTERACTION_REACH,
+        sourceDistance + 0.05,
+      ),
+      includeFluids: false,
+    })).block;
+    return obstruction === undefined
+      || sameBlockPosition(obstruction.position, source.position)
+      || obstruction.diggable
+        && !isPlayerStabilityBlock(
+          current.player.position,
+          obstruction.position,
+        );
   });
 }
 

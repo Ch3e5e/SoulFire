@@ -11741,6 +11741,172 @@ describe("beat-game run lifecycle", () => {
     expect(useItemInterrupted).toBe(true);
   });
 
+  it("skips lava sources hidden behind undiggable blocks", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const blockedSource = blockObservation({
+      x: 0,
+      y: -52,
+      z: 0,
+      dimension: "minecraft:overworld",
+    }, {
+      blockId: "minecraft:lava",
+      properties: { level: "0" },
+      replaceable: true,
+    });
+    const openSource = blockObservation({
+      x: 8,
+      y: -52,
+      z: 0,
+      dimension: "minecraft:overworld",
+    }, {
+      blockId: "minecraft:lava",
+      properties: { level: "0" },
+      replaceable: true,
+    });
+    const blockedStand = {
+      x: 2,
+      y: -50,
+      z: 0,
+      dimension: "minecraft:overworld",
+    } as const;
+    const openStand = {
+      x: 6,
+      y: -50,
+      z: 0,
+      dimension: "minecraft:overworld",
+    } as const;
+    driver.currentObservation = observation({
+      position: {
+        x: 3.5,
+        y: -50,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+      counts: {
+        "minecraft:bucket": 1,
+        "minecraft:cobblestone": 20,
+        "minecraft:cooked_beef": 8,
+        "minecraft:flint_and_steel": 1,
+        "minecraft:iron_ingot": 7,
+        "minecraft:iron_pickaxe": 1,
+        "minecraft:oak_log": 8,
+        "minecraft:shield": 1,
+        "minecraft:stone_sword": 1,
+        "minecraft:water_bucket": 1,
+      },
+    });
+    const standVolume = (stand: BeatGameBlockPosition) => [
+      blockObservation(stand, {
+        blockId: "minecraft:air",
+        replaceable: true,
+      }),
+      blockObservation({ ...stand, y: stand.y + 1 }, {
+        blockId: "minecraft:air",
+        replaceable: true,
+      }),
+      blockObservation({ ...stand, y: stand.y - 1 }),
+    ];
+    driver.blockQueryResolver = ({ center, radius, selector }) => {
+      if (
+        selector.blockIds?.includes("minecraft:lava") === true
+        && selector.properties?.level === "0"
+      ) {
+        return [blockedSource, openSource];
+      }
+      if (radius === 4.9 && Object.keys(selector).length === 0) {
+        return Math.floor(center.x) === blockedSource.position.x
+          ? standVolume(blockedStand)
+          : standVolume(openStand);
+      }
+      return [];
+    };
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+        if (radius === 0.75) {
+          driver.currentObservation = observation({
+            position,
+            counts: driver.currentObservation.inventory.counts,
+          });
+        }
+      });
+    driver.raycastResolver = ({ direction }) =>
+      direction.x < 0
+        ? {
+          block: blockObservation({
+            x: 1,
+            y: -51,
+            z: 0,
+            dimension: "minecraft:overworld",
+          }, {
+            blockId: "minecraft:bedrock",
+            diggable: false,
+          }),
+          distance: 1,
+        }
+        : { distance: 2 };
+    driver.actionResolver = (action) => {
+      if (action.type === "look") {
+        driver.currentObservation = observation({
+          position: driver.currentObservation.player.position,
+          counts: driver.currentObservation.inventory.counts,
+          rotation: { yaw: action.yaw, pitch: action.pitch },
+        });
+      }
+      return action.type === "use-item"
+        ? Effect.never
+        : Effect.succeed({});
+    };
+    await Effect.runPromise(store.save(checkpoint(
+      BeatGamePhase.ENTER_NETHER,
+      {
+        runId: "blocked-lava-source-run",
+        teamId: "blocked-lava-source-team",
+      },
+    ), undefined));
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        runId: "blocked-lava-source-run",
+        team: { teamId: "blocked-lava-source-team" },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.actions.some((action) => action.type === "use-item")) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    }).pipe(Effect.timeout("5 seconds"))));
+
+    expect(driver.paths).toContainEqual(expect.objectContaining({
+      position: {
+        x: blockedStand.x + 0.5,
+        y: blockedStand.y,
+        z: blockedStand.z + 0.5,
+        dimension: blockedStand.dimension,
+      },
+      radius: 0.75,
+    }));
+    expect(driver.paths).toContainEqual(expect.objectContaining({
+      position: {
+        x: openStand.x + 0.5,
+        y: openStand.y,
+        z: openStand.z + 0.5,
+        dimension: openStand.dimension,
+      },
+      radius: 0.75,
+    }));
+    expect(driver.actions).not.toContainEqual(expect.objectContaining({
+      type: "dig-block",
+    }));
+    expect(driver.actions).toContainEqual({
+      type: "use-item",
+      hand: "main",
+    });
+  });
+
   it("deduplicates shared lava interaction stands", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
