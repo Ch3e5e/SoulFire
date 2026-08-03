@@ -9584,16 +9584,23 @@ function ensureInventorySpace(
         ? Math.min(64, cobblestoneCount)
         : current.inventory.counts[itemId] ?? 0;
       const emptySlotsBefore = current.inventory.emptyPlayerSlots;
+      const discardYaw = discardRetreatTarget === undefined
+        ? wrappedDegrees(current.player.rotation.yaw + 180)
+        : wrappedDegrees(
+          Math.atan2(-discardSiteDeltaX, discardSiteDeltaZ)
+            * 180 / Math.PI,
+        );
       yield* state.driver.act({
         type: "look",
-        yaw: discardRetreatTarget === undefined
-          ? wrappedDegrees(current.player.rotation.yaw + 180)
-          : wrappedDegrees(
-            Math.atan2(-discardSiteDeltaX, discardSiteDeltaZ)
-              * 180 / Math.PI,
-          ),
+        yaw: discardYaw,
         pitch: -30,
       });
+      yield* waitForViewRotation(
+        state.driver,
+        discardYaw,
+        -30,
+        20,
+      );
       yield* state.driver.act({
         type: "toss-items",
         selector: { itemIds: [itemId] },

@@ -16549,6 +16549,21 @@ describe("beat-game run lifecycle", () => {
       });
     driver.actionResolver = (action) =>
       Effect.sync(() => {
+        if (action.type === "look") {
+          const emptyPlayerSlots =
+            driver.currentObservation.inventory.emptyPlayerSlots;
+          driver.currentObservation = observation({
+            counts: driver.currentObservation.inventory.counts,
+            ...(emptyPlayerSlots === undefined
+              ? {}
+              : { emptyPlayerSlots }),
+            position: driver.currentObservation.player.position,
+            rotation: {
+              yaw: action.yaw,
+              pitch: action.pitch,
+            },
+          });
+        }
         if (action.type === "toss-items") {
           const itemId = action.selector.itemIds?.[0];
           if (itemId !== undefined) {
@@ -16559,6 +16574,8 @@ describe("beat-game run lifecycle", () => {
             driver.currentObservation = observation({
               counts,
               emptyPlayerSlots: 0,
+              position: driver.currentObservation.player.position,
+              rotation: driver.currentObservation.player.rotation,
             });
           }
           pendingInventoryObservations = 2;
