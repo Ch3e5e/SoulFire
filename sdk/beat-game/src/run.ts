@@ -4014,6 +4014,7 @@ function waitForAirRecovery(
         observation.player.dead
         || observation.player.maxAir <= 0
         || observation.player.air >= observation.player.maxAir
+        || observation.player.air > highestAir
       ) {
         return Effect.succeed(true);
       }

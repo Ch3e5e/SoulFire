@@ -14911,6 +14911,8 @@ describe("beat-game run lifecycle", () => {
     driver.entityResults = [salmon];
     let attacks = 0;
     let ascending = false;
+    let airAtAscentStart: number | undefined;
+    let airAtAscentRelease: number | undefined;
     driver.blockQueryResolver = () =>
       driver.currentObservation.player.air < 120
         ? [blockObservation(
@@ -14927,6 +14929,11 @@ describe("beat-game run lifecycle", () => {
       Effect.sync(() => {
         if (action.type === "set-movement") {
           ascending = true;
+          airAtAscentStart = driver.currentObservation.player.air;
+        }
+        if (action.type === "reset-movement" && ascending) {
+          ascending = false;
+          airAtAscentRelease = driver.currentObservation.player.air;
         }
         return {};
       });
@@ -15018,6 +15025,8 @@ describe("beat-game run lifecycle", () => {
     expect(driver.surfaceQueries.every(({ radius }) => radius === 4)).toBe(
       true,
     );
+    expect(airAtAscentRelease).toBeGreaterThan(airAtAscentStart ?? 300);
+    expect(airAtAscentRelease).toBeLessThan(300);
     expect(foodProvisioningFailures).not.toContain(
       "Interrupted for replanning: air fell below the safety threshold",
     );
