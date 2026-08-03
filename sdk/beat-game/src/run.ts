@@ -3082,6 +3082,18 @@ function monitorEscapeSafety(
               const shouldKeepEscaping = continueEscapingWhenHit
                 && !shouldCommitToMeleeFight(observation, threat.target);
               if (
+                PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(
+                  threat.target.entityType,
+                )
+                && threat.response === "flee"
+                && isSameEntityTarget(target, threat.target)
+              ) {
+                return Effect.succeed({
+                  type: "escape",
+                  target: threat.target,
+                } as const);
+              }
+              if (
                 (shouldKeepEscaping || threat.response === "flee")
                 && isSameEntityTarget(target, threat.target)
               ) {

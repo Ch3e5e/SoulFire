@@ -5287,7 +5287,7 @@ describe("beat-game run lifecycle", () => {
     }));
   }, 10_000);
 
-  it("keeps the active ranged escape alive after another hit", async () => {
+  it("restarts a stalled ranged escape after another hit", async () => {
     const driver = new FakeBeatGameDriver();
     const skeleton = {
       connectionEpoch: "epoch-1",
@@ -5356,10 +5356,10 @@ describe("beat-game run lifecycle", () => {
     ));
 
     expect(stateBeforeStop).toEqual({
-      interruptedEscapes: 0,
-      fleeTasks: 1,
+      interruptedEscapes: 1,
+      fleeTasks: 2,
     });
-    expect(driver.tasks.filter((task) => task.type === "flee")).toHaveLength(1);
+    expect(driver.tasks.filter((task) => task.type === "flee")).toHaveLength(2);
     expect(driver.tasks).not.toContainEqual(expect.objectContaining({
       type: "attack-entity",
     }));
@@ -6600,7 +6600,7 @@ describe("beat-game run lifecycle", () => {
       ),
     ));
 
-    expect(driver.tasks.filter((task) => task.type === "flee")).toHaveLength(1);
+    expect(driver.tasks.filter((task) => task.type === "flee")).toHaveLength(2);
     expect(driver.tasks.some((task) => task.type === "attack-entity"))
       .toBe(false);
   });
