@@ -4539,6 +4539,12 @@ function clearPortalInterior(
           ) {
             return Effect.void;
           }
+          if (!block.diggable) {
+            return Effect.fail(behaviorError(
+              driver,
+              `Portal interior is not diggable at ${positionKey(position)}`,
+            ));
+          }
           return Effect.gen(function* () {
             yield* driver.pathfind(position, 3, mergePathPolicy(path));
             const observation = yield* driver.observe;

@@ -12439,7 +12439,11 @@ describe("beat-game run lifecycle", () => {
         "minecraft:water_bucket": 1,
       },
     });
-    const floorQueryYs: number[] = [];
+    const floorQueries: Array<Readonly<{
+      x: number;
+      y: number;
+      z: number;
+    }>> = [];
     let resolvePortalFloorQueried!: () => void;
     const portalFloorQueried = new Promise<void>((resolve) => {
       resolvePortalFloorQueried = resolve;
@@ -12474,13 +12478,37 @@ describe("beat-game run lifecycle", () => {
         ];
       }
       if (radius === 0.25 && selector.replaceable === false) {
-        floorQueryYs.push(center.y);
-        resolvePortalFloorQueried();
+        floorQueries.push({ x: center.x, y: center.y, z: center.z });
+        if (center.x === 1.5) {
+          resolvePortalFloorQueried();
+        }
         return [blockObservation({
           x: Math.floor(center.x),
           y: Math.floor(center.y),
           z: Math.floor(center.z),
           dimension: center.dimension,
+        })];
+      }
+      if (radius === 0.25 && Object.keys(selector).length === 0) {
+        const position = {
+          x: Math.floor(center.x),
+          y: Math.floor(center.y),
+          z: Math.floor(center.z),
+          dimension: center.dimension,
+        };
+        return [blockObservation({
+          ...position,
+        }, {
+          ...(position.x === 2 && position.y === 42 && position.z === 2
+            ? {
+              blockId: "minecraft:bedrock",
+              diggable: false,
+              replaceable: false,
+            }
+            : {
+              blockId: "minecraft:air",
+              replaceable: true,
+            }),
         })];
       }
       return [];
@@ -12528,8 +12556,12 @@ describe("beat-game run lifecycle", () => {
         maxFallDistance: 1,
       }),
     });
-    expect(floorQueryYs.length).toBeGreaterThan(0);
-    expect(new Set(floorQueryYs)).toEqual(new Set([40.5]));
+    expect(floorQueries.length).toBeGreaterThan(1);
+    expect(new Set(floorQueries.map(({ y }) => y))).toEqual(new Set([40.5]));
+    expect(floorQueries.slice(0, 2)).toEqual([
+      { x: 2.5, y: 40.5, z: 2.5 },
+      { x: 1.5, y: 40.5, z: 2.5 },
+    ]);
   });
 
   it("replaces a worn pickaxe before descending for portal lava", async () => {

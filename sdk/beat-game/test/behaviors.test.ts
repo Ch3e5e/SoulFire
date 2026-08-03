@@ -3683,6 +3683,62 @@ describe("beat-game behavior programs", () => {
     expect(driver.activeControlScopes).toBe(0);
   });
 
+  it("refuses an undiggable portal interior without starting a dig", async () => {
+    const driver = new FakeBeatGameDriver();
+    const origin = {
+      x: 0,
+      y: -60,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    const frame = createNetherPortalFrame(origin);
+    const target = frame.blocks[0];
+    const interior = frame.interior[0];
+    if (target === undefined || interior === undefined) {
+      throw new Error("Expected portal frame geometry");
+    }
+    const key = (position: BeatGameBlockPosition) =>
+      `${position.dimension}:${position.x}:${position.y}:${position.z}`;
+    const existingFrame = frame.blocks
+      .filter((position) => key(position) !== key(target))
+      .map((position) => blockObservation(position, {
+        blockId: "minecraft:obsidian",
+      }));
+    driver.currentObservation = observation({
+      counts: {
+        "minecraft:lava_bucket": 1,
+        "minecraft:water_bucket": 1,
+      },
+      position: origin,
+    });
+    driver.blockQueryResolver = ({ center, selector }) => {
+      if (selector.blockIds?.includes("minecraft:obsidian") === true) {
+        return existingFrame;
+      }
+      const position = queriedBlockPosition(center);
+      return [key(position) === key(interior)
+        ? blockObservation(position, {
+          blockId: "minecraft:bedrock",
+          diggable: false,
+        })
+        : blockObservation(position, {
+          blockId: "minecraft:air",
+          replaceable: true,
+        })];
+    };
+
+    await expect(Effect.runPromise(castNetherPortal(driver, {
+      origin,
+      ignite: false,
+    }))).rejects.toThrow("Portal interior is not diggable");
+
+    expect(driver.actions).not.toContainEqual({
+      type: "dig-block",
+      position: interior,
+    });
+    expect(driver.activeControlScopes).toBe(0);
+  });
+
   it("refreshes lava sources between portal casting steps", async () => {
     const driver = new FakeBeatGameDriver();
     const origin = {

@@ -57,6 +57,7 @@ import {
   type BeatGameError,
 } from "./errors.js";
 import {
+  createNetherPortalFrame,
   distanceSquared,
   NETHER_PORTAL_FRAME_OBSIDIAN_COUNT,
   rotationToward,
@@ -12496,21 +12497,29 @@ function resolvePortalBuildOrigin(
   observation: BeatGameObservation,
 ): Effect.Effect<BeatGameBlockPosition, BeatGameDriverError> {
   const player = observation.player.position;
-  const x = Math.floor(player.x) - 1;
-  const z = Math.floor(player.z) + 2;
+  const baseX = Math.floor(player.x) - 1;
+  const baseZ = Math.floor(player.z) + 2;
   const highestY = Math.floor(player.y);
   const lowestY = highestY - 12;
+  const offsets = portalBuildSearchOffsets(4);
   const findFloor = (
+    offsetIndex: number,
     y: number,
-  ): Effect.Effect<number, BeatGameDriverError> => {
-    if (y < lowestY) {
+  ): Effect.Effect<BeatGameBlockPosition, BeatGameDriverError> => {
+    const offset = offsets[offsetIndex];
+    if (offset === undefined) {
       return Effect.fail(new BeatGameDriverError({
         operation: "resolvePortalBuildOrigin",
         retryable: true,
         message:
-          `Could not find solid ground below the planned portal at ${x}, ${z}`,
+          `Could not find a clear portal workspace near ${baseX}, ${baseZ}`,
       }));
     }
+    if (y < lowestY) {
+      return findFloor(offsetIndex + 1, highestY);
+    }
+    const x = baseX + offset.x;
+    const z = baseZ + offset.z;
     const candidate: BeatGameBlockPosition = {
       x: x + 1,
       y,
@@ -12528,20 +12537,87 @@ function resolvePortalBuildOrigin(
       selector: { replaceable: false },
       maximumResults: 1,
     }).pipe(
-      Effect.flatMap((blocks) =>
-        blocks.some(({ position }) => samePosition(position, candidate))
-          ? Effect.succeed(y)
-          : findFloor(y - 1)
-      ),
+      Effect.flatMap((blocks) => {
+        if (!blocks.some(({ position }) => samePosition(position, candidate))) {
+          return findFloor(offsetIndex, y - 1);
+        }
+        const origin = {
+          x,
+          y: y + 1,
+          z,
+          dimension: player.dimension,
+        };
+        return portalBuildWorkspaceIsClearable(driver, origin).pipe(
+          Effect.flatMap((clearable) =>
+            clearable
+              ? Effect.succeed(origin)
+              : findFloor(offsetIndex + 1, highestY)
+          ),
+        );
+      }),
     );
   };
 
-  return findFloor(highestY).pipe(
-    Effect.map((y) => ({
-      x,
-      y,
-      z,
-      dimension: player.dimension,
+  return findFloor(0, highestY);
+}
+
+function portalBuildSearchOffsets(
+  radius: number,
+): readonly Readonly<{ x: number; z: number }>[] {
+  const offsets: Array<Readonly<{ x: number; z: number }>> = [];
+  for (let x = -radius; x <= radius; x += 1) {
+    for (let z = -radius; z <= radius; z += 1) {
+      offsets.push({ x, z });
+    }
+  }
+  return offsets.sort((left, right) =>
+    left.x * left.x + left.z * left.z
+      - (right.x * right.x + right.z * right.z)
+    || Math.abs(left.x) + Math.abs(left.z)
+      - (Math.abs(right.x) + Math.abs(right.z))
+    || left.x - right.x
+    || left.z - right.z
+  );
+}
+
+function portalBuildWorkspaceIsClearable(
+  driver: BeatGameDriver,
+  origin: BeatGameBlockPosition,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  const frame = createNetherPortalFrame(origin);
+  const frameKeys = new Set(frame.blocks.map(positionKey));
+  const castingStand = {
+    x: origin.x + 1,
+    y: origin.y + 1,
+    z: origin.z - 2,
+    dimension: origin.dimension,
+  };
+  const positions = [...new Map([
+    ...frame.blocks,
+    ...frame.interior,
+    ...frame.blocks.map((position) => ({ ...position, z: position.z - 1 })),
+    castingStand,
+    { ...castingStand, y: castingStand.y + 1 },
+  ].map((position) => [positionKey(position), position])).values()];
+  return Effect.forEach(
+    positions,
+    (position) => queryExactBlockAt(driver, position),
+    { concurrency: 16 },
+  ).pipe(
+    Effect.map((blocks) => blocks.every((block, index) => {
+      if (block === undefined || isPlayerFluidBlock(block.blockId)) {
+        return false;
+      }
+      if (block.replaceable) {
+        return true;
+      }
+      const position = positions[index];
+      return block.diggable
+        || (
+          position !== undefined
+          && frameKeys.has(positionKey(position))
+          && block.blockId === "minecraft:obsidian"
+        );
     })),
   );
 }
