@@ -2843,6 +2843,16 @@ function escapeFromTarget(
       yield* defendAndRecover(state, outcome.target);
       return;
     }
+    if (outcome.type === "knockback") {
+      const current = yield* state.driver.observe;
+      if (!current.player.dead) {
+        yield* state.driver.withControl(
+          performKnockbackStrike(state, current, outcome.target),
+        );
+        yield* escapeFromTarget(state, target, options);
+      }
+      return;
+    }
     if (outcome.type === "escape") {
       yield* escapeFromTarget(state, outcome.target, options);
     }
@@ -2858,7 +2868,7 @@ function monitorEscapeSafety(
 ): Effect.Effect<
   | { readonly type: "dead" | "safe" | "unsafe-air" }
   | {
-    readonly type: "defend" | "escape";
+    readonly type: "defend" | "escape" | "knockback";
     readonly target: BeatGameEntityObservation;
   },
   BeatGameDriverError
@@ -2958,6 +2968,27 @@ function monitorEscapeSafety(
               target: currentTarget,
             } as const);
           }
+          const secondaryMeleeAttacker = immediateThreat?.target;
+          if (
+            ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(target.entityType)
+            && secondaryMeleeAttacker !== undefined
+            && !isSameEntityTarget(target, secondaryMeleeAttacker)
+            && PROACTIVE_MELEE_HOSTILE_ENTITY_TYPES.has(
+              secondaryMeleeAttacker.entityType,
+            )
+            && !PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(
+              secondaryMeleeAttacker.entityType,
+            )
+            && distanceSquared(
+                observation.player.position,
+                secondaryMeleeAttacker.position,
+              ) <= EMERGENCY_KNOCKBACK_RANGE ** 2
+          ) {
+            return Effect.succeed({
+              type: "knockback",
+              target: secondaryMeleeAttacker,
+            } as const);
+          }
           if (observation.player.health >= previousObservation.player.health) {
             return monitorEscapeSafety(
               state,
@@ -2982,15 +3013,31 @@ function monitorEscapeSafety(
               }
               if (
                 ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(target.entityType)
-                && threat.target.networkId !== target.networkId
+                && !isSameEntityTarget(target, threat.target)
               ) {
-                return monitorEscapeSafety(
-                  state,
-                  target,
-                  observation,
-                  continueEscapingWhenHit,
-                  directEscapeSucceeded,
-                );
+                const closeMeleeAttacker =
+                  PROACTIVE_MELEE_HOSTILE_ENTITY_TYPES.has(
+                    threat.target.entityType,
+                  )
+                  && !PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(
+                    threat.target.entityType,
+                  )
+                  && distanceSquared(
+                      observation.player.position,
+                      threat.target.position,
+                    ) <= EMERGENCY_KNOCKBACK_RANGE ** 2;
+                return closeMeleeAttacker
+                  ? Effect.succeed({
+                    type: "knockback",
+                    target: threat.target,
+                  } as const)
+                  : monitorEscapeSafety(
+                    state,
+                    target,
+                    observation,
+                    continueEscapingWhenHit,
+                    directEscapeSucceeded,
+                  );
               }
               const caughtByCloseMeleePursuer =
                 PROACTIVE_MELEE_HOSTILE_ENTITY_TYPES.has(
@@ -3156,24 +3203,7 @@ function knockBackAndSprintAway(
       && (yield* isPlayerInFluid(state.driver, projectedPosition));
     return yield* state.driver.withControl(Effect.gen(function* () {
       if (distance <= EMERGENCY_KNOCKBACK_RANGE) {
-        if (hasMeleeWeapon(observation)) {
-          yield* state.driver.act({
-            type: "select-item",
-            selector: { itemIds: MELEE_WEAPON_ITEM_IDS },
-          });
-        }
-        const toward = rotationToward(playerPosition, threat.position);
-        yield* state.driver.act({
-          type: "look",
-          yaw: toward.yaw,
-          pitch: toward.pitch,
-        });
-        yield* state.driver.act({
-          type: "attack-entity",
-          connectionEpoch: threat.connectionEpoch,
-          networkId: threat.networkId,
-          sprinting: true,
-        });
+        yield* performKnockbackStrike(state, observation, threat);
       }
       if (
         nearbyLava.length > 0
@@ -3224,6 +3254,36 @@ function knockBackAndSprintAway(
         state.driver.act({ type: "reset-movement" }).pipe(Effect.ignore),
       ),
     ));
+  });
+}
+
+function performKnockbackStrike(
+  state: RunState,
+  observation: BeatGameObservation,
+  threat: BeatGameEntityObservation,
+): Effect.Effect<void, BeatGameDriverError> {
+  return Effect.gen(function* () {
+    if (hasMeleeWeapon(observation)) {
+      yield* state.driver.act({
+        type: "select-item",
+        selector: { itemIds: MELEE_WEAPON_ITEM_IDS },
+      });
+    }
+    const toward = rotationToward(
+      observation.player.position,
+      threat.position,
+    );
+    yield* state.driver.act({
+      type: "look",
+      yaw: toward.yaw,
+      pitch: toward.pitch,
+    });
+    yield* state.driver.act({
+      type: "attack-entity",
+      connectionEpoch: threat.connectionEpoch,
+      networkId: threat.networkId,
+      sprinting: true,
+    });
   });
 }
 

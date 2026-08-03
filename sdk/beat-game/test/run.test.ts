@@ -5117,7 +5117,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks.filter((task) => task.type === "flee")).toHaveLength(1);
   }, 10_000);
 
-  it("keeps group-aware creeper evasion active when a spider catches up", async () => {
+  it("knocks back a secondary pursuer and resumes group-aware creeper evasion", async () => {
     const driver = new FakeBeatGameDriver();
     const creeper = {
       connectionEpoch: "epoch-1",
@@ -5166,19 +5166,31 @@ describe("beat-game run lifecycle", () => {
       while (!driver.tasks.some((task) => task.type === "flee")) {
         yield* Effect.sleep(1);
       }
-      yield* Effect.sleep(250);
+      while (
+        driver.tasks.filter((task) => task.type === "flee").length < 2
+      ) {
+        yield* Effect.sleep(1);
+      }
       yield* run.stop;
     })));
 
-    expect(driver.tasks.filter((task) => task.type === "flee")).toHaveLength(1);
-    expect(driver.tasks).toContainEqual(expect.objectContaining({
-      type: "flee",
-      selector: { categories: [2], alive: true },
-    }));
+    expect(driver.actions).toContainEqual({
+      type: "attack-entity",
+      connectionEpoch: spider.connectionEpoch,
+      networkId: spider.networkId,
+      sprinting: true,
+    });
+    const escapes = driver.tasks.filter((task) => task.type === "flee");
+    expect(escapes).toHaveLength(2);
+    expect(escapes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        selector: { categories: [2], alive: true },
+      }),
+    ]));
     expect(driver.tasks).not.toContainEqual(expect.objectContaining({
       type: "attack-entity",
     }));
-  });
+  }, 10_000);
 
   it("keeps the active ranged escape alive after another hit", async () => {
     const driver = new FakeBeatGameDriver();
