@@ -2362,15 +2362,21 @@ function findImmediateThreat(
         );
         const unshieldedAmbush = nearbyThreats.length > 1
           && (observation.inventory.counts["minecraft:shield"] ?? 0) === 0;
+        const armedFastPursuer = shouldCommitToFastMeleePursuerFight(
+          observation,
+          melee.target,
+        );
+        const shouldFleeMelee = (
+          unshieldedAmbush
+          && !armedFastPursuer
+        ) || shouldDisengageFromThreat(
+          state,
+          observation,
+          melee.target,
+        );
         return {
           target: melee.target,
-          response: unshieldedAmbush || shouldDisengageFromThreat(
-              state,
-              observation,
-              melee.target,
-            )
-            ? "flee"
-            : "attack",
+          response: shouldFleeMelee ? "flee" : "attack",
         };
       }
       const ranged = candidates.find(({ target, distanceSquared }) =>
@@ -2830,7 +2836,7 @@ function monitorEscapeSafety(
             return Effect.succeed({ type: "safe" } as const);
           }
           if (
-            shouldCommitToCloseMeleeFight(observation, currentTarget)
+            shouldCommitToMeleeFight(observation, currentTarget)
             && hasMeleeWeapon(observation)
             && immediateThreat?.response !== "flee"
           ) {
@@ -2885,8 +2891,16 @@ function monitorEscapeSafety(
                 caughtByCloseMeleePursuer
                 && isSameEntityTarget(target, threat.target)
               ) {
+                const shouldFightCaughtFastPursuer = hasMeleeWeapon(
+                  observation,
+                ) && shouldCommitToFastMeleePursuerFight(
+                  observation,
+                  threat.target,
+                );
                 return Effect.succeed({
-                  type: "escape",
+                  type: shouldFightCaughtFastPursuer
+                    ? "defend"
+                    : "escape",
                   target: threat.target,
                 } as const);
               }
