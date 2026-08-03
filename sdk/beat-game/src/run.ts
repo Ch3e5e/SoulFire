@@ -552,6 +552,7 @@ const PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES = new Set([
   "minecraft:pillager",
   "minecraft:skeleton",
   "minecraft:stray",
+  "minecraft:witch",
 ]);
 const COMMITTABLE_CLOSE_MELEE_ENTITY_TYPES = new Set([
   "minecraft:cave_spider",

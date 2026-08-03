@@ -7664,14 +7664,14 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
-  it("evades a witch bare-handed even at full health", async () => {
+  it("evades a visible witch before entering potion range", async () => {
     const driver = new FakeBeatGameDriver();
     driver.entityResults = [{
       connectionEpoch: "epoch-1",
       networkId: 14,
       entityType: "minecraft:witch",
       position: {
-        x: 6,
+        x: 15,
         y: 64,
         z: 0,
         dimension: "minecraft:overworld",
@@ -7714,11 +7714,11 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks[fleeIndex]).toEqual(expect.objectContaining({
       type: "flee",
       selector: { categories: [2], alive: true },
-      triggerRadius: 12,
-      safeDistance: 24,
+      triggerRadius: 24,
+      safeDistance: 32,
     }));
     expect(driver.taskPolicies[fleeIndex]).toMatchObject({
-      allowMining: true,
+      allowMining: false,
       allowPlacing: false,
       avoidFluids: true,
       maxFallDistance: 3,
