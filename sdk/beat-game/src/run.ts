@@ -7035,6 +7035,23 @@ function fillLiquidBucket(
       ...liquidSources,
       ...waterloggedSources,
     ];
+    const useCastPortal = state.strategy.portalStrategy === PortalStrategy.CAST
+      || (
+        state.strategy.portalStrategy === PortalStrategy.AUTO
+        && (current.inventory.counts["minecraft:obsidian"] ?? 0)
+          < state.strategy.targetObsidianCount
+      );
+    if (
+      liquid === "lava"
+      && useCastPortal
+      && sources.length > 0
+      && sources.length < PORTAL_CASTING_ADDITIONAL_LAVA_SOURCE_COUNT
+      && current.player.position.dimension === "minecraft:overworld"
+      && current.player.position.y > DEEP_LAVA_SEARCH_MAX_Y
+    ) {
+      yield* preparePortalCastingLavaPool(state, current);
+      return;
+    }
     let source = sources[0];
     if (source === undefined) {
       if (liquid === "lava") {
@@ -7475,13 +7492,17 @@ function preparePortalCastingLavaPool(
       return true;
     }
 
+    const canCraftDurablePickaxe =
+      (observation.inventory.counts["minecraft:iron_ingot"] ?? 0) >= 3;
     yield* ensureMiningPickaxe(
       state,
       observation,
-      (observation.inventory.counts["minecraft:iron_ingot"] ?? 0) >= 3
+      canCraftDurablePickaxe
         ? "minecraft:iron_pickaxe"
         : "minecraft:stone_pickaxe",
-      MINING_PICKAXE_ITEM_IDS,
+      canCraftDurablePickaxe
+        ? DURABLE_MINING_PICKAXE_ITEM_IDS
+        : MINING_PICKAXE_ITEM_IDS,
       RESOURCE_DESCENT_PICKAXE_DURABILITY_RESERVE,
     );
     const current = yield* state.driver.observe;

@@ -12885,6 +12885,111 @@ describe("beat-game run lifecycle", () => {
     });
   });
 
+  it("descends past sparse shallow lava when preparing a cast portal", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    driver.currentObservation = observation({
+      counts: {
+        "minecraft:bucket": 1,
+        "minecraft:cobblestone": 120,
+        "minecraft:cooked_beef": 12,
+        "minecraft:flint_and_steel": 1,
+        "minecraft:iron_ingot": 7,
+        "minecraft:iron_pickaxe": 1,
+        "minecraft:oak_log": 8,
+        "minecraft:shield": 1,
+        "minecraft:stone_sword": 1,
+        "minecraft:water_bucket": 1,
+      },
+    });
+    driver.blockQueryResolver = ({ center, selector }) => {
+      if (
+        selector.blockIds?.includes("minecraft:lava") === true
+        && selector.properties?.level === "0"
+      ) {
+        return [blockObservation({
+          x: 4,
+          y: 62,
+          z: 0,
+          dimension: "minecraft:overworld",
+        }, {
+          blockId: "minecraft:lava",
+          properties: { level: "0" },
+          replaceable: true,
+        })];
+      }
+      if (
+        selector.blockIds === undefined
+        && selector.replaceable === undefined
+      ) {
+        return [blockObservation({
+          x: Math.floor(center.x),
+          y: Math.floor(center.y),
+          z: Math.floor(center.z),
+          dimension: center.dimension,
+        })];
+      }
+      if (selector.replaceable === false) {
+        return [blockObservation({
+          x: 1,
+          y: Math.floor(center.y) - 1,
+          z: 0,
+          dimension: center.dimension,
+        })];
+      }
+      return selector.replaceable === true
+        ? [blockObservation({
+          x: Math.floor(center.x),
+          y: Math.floor(center.y),
+          z: Math.floor(center.z),
+          dimension: center.dimension,
+        }, {
+          blockId: "minecraft:air",
+          diggable: false,
+          replaceable: true,
+        })]
+        : [];
+    };
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+      }).pipe(
+        Effect.zipRight(position.y < 64 ? Effect.never : Effect.void),
+      );
+    await Effect.runPromise(store.save(checkpoint(
+      BeatGamePhase.ENTER_NETHER,
+      {
+        runId: "sparse-shallow-lava-run",
+        teamId: "sparse-shallow-lava-team",
+      },
+    ), undefined));
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        runId: "sparse-shallow-lava-run",
+        team: { teamId: "sparse-shallow-lava-team" },
+        checkpointStore: store,
+        strategy: {
+          observationPollMs: 1,
+          portalStrategy: "CAST",
+        },
+      });
+      while (!driver.paths.some(({ position }) => position.y < 64)) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    expect(driver.paths).toContainEqual(expect.objectContaining({
+      position: expect.objectContaining({ y: 63 }),
+    }));
+    expect(driver.paths.some(({ radius }) => radius === 0.75)).toBe(false);
+    expect(driver.actions.some((action) => action.type === "use-item")).toBe(
+      false,
+    );
+  });
+
   it("upgrades its pickaxe and rescans for lava after descending", async () => {
     const driver = new FakeBeatGameDriver();
     const counts = {
