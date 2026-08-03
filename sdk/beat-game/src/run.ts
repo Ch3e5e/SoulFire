@@ -7383,11 +7383,17 @@ function approachLavaSourceFromSide(
       { concurrency: 1 },
     );
 
+    const attemptedDryStands = new Set<string>();
     for (const prepared of preparedSources) {
       for (const candidate of prepared.candidates) {
-        if (!isSafeLavaInteractionStand(prepared.blocks, candidate)) {
+        const key = positionKey(candidate);
+        if (
+          attemptedDryStands.has(key)
+          || !isSafeLavaInteractionStand(prepared.blocks, candidate)
+        ) {
           continue;
         }
+        attemptedDryStands.add(key);
         const reached = yield* pathfindToLavaInteractionStand(
           state,
           candidate,
@@ -7399,10 +7405,13 @@ function approachLavaSourceFromSide(
       }
     }
 
+    const attemptedExcavationStands = new Set<string>();
     for (const prepared of preparedSources) {
       for (const candidate of prepared.candidates) {
+        const key = positionKey(candidate);
         if (
-          !isExcavatableLavaInteractionStand(
+          attemptedExcavationStands.has(key)
+          || !isExcavatableLavaInteractionStand(
             prepared.source.position,
             prepared.blocks,
             candidate,
@@ -7410,6 +7419,7 @@ function approachLavaSourceFromSide(
         ) {
           continue;
         }
+        attemptedExcavationStands.add(key);
         const reached = yield* pathfindToLavaInteractionStand(
           state,
           candidate,

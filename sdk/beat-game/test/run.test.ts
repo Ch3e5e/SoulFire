@@ -11741,6 +11741,131 @@ describe("beat-game run lifecycle", () => {
     expect(useItemInterrupted).toBe(true);
   });
 
+  it("deduplicates shared lava interaction stands", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const source = blockObservation({
+      x: 0,
+      y: -52,
+      z: 0,
+      dimension: "minecraft:overworld",
+    }, {
+      blockId: "minecraft:lava",
+      properties: { level: "0" },
+      replaceable: true,
+    });
+    const stand = {
+      x: 2.5,
+      y: -50,
+      z: 0.5,
+      dimension: "minecraft:overworld",
+    } as const;
+    const standBlocks = [
+      blockObservation({
+        x: 2,
+        y: -50,
+        z: 0,
+        dimension: stand.dimension,
+      }, { blockId: "minecraft:air", replaceable: true }),
+      blockObservation({
+        x: 2,
+        y: -49,
+        z: 0,
+        dimension: stand.dimension,
+      }, { blockId: "minecraft:air", replaceable: true }),
+      blockObservation({
+        x: 2,
+        y: -51,
+        z: 0,
+        dimension: stand.dimension,
+      }),
+    ];
+    driver.currentObservation = observation({
+      position: {
+        x: 4.5,
+        y: -50,
+        z: 0.5,
+        dimension: stand.dimension,
+      },
+      counts: {
+        "minecraft:bucket": 1,
+        "minecraft:cobblestone": 20,
+        "minecraft:cooked_beef": 8,
+        "minecraft:flint_and_steel": 1,
+        "minecraft:iron_ingot": 7,
+        "minecraft:iron_pickaxe": 1,
+        "minecraft:oak_log": 4,
+        "minecraft:shield": 1,
+        "minecraft:stone_sword": 1,
+        "minecraft:water_bucket": 1,
+      },
+    });
+    driver.blockQueryResolver = ({ radius, selector }) => {
+      if (
+        selector.blockIds?.includes("minecraft:lava") === true
+        && selector.properties?.level === "0"
+      ) {
+        return [source, source];
+      }
+      return radius === 4.9 && Object.keys(selector).length === 0
+        ? standBlocks
+        : [];
+    };
+    let resolveExcavationAttempted!: () => void;
+    const excavationAttempted = new Promise<void>((resolve) => {
+      resolveExcavationAttempted = resolve;
+    });
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+        if (policy.allowMining === true) {
+          resolveExcavationAttempted();
+        }
+      }).pipe(
+        Effect.zipRight(
+          policy.allowMining === true
+            ? Effect.never
+            : Effect.fail(new BeatGameDriverError({
+              operation: "pathfind",
+              code: "unreachable",
+              retryable: true,
+              message: "No route found to the goal",
+            })),
+        ),
+      );
+    await Effect.runPromise(store.save(checkpoint(
+      BeatGamePhase.ENTER_NETHER,
+      {
+        runId: "deduplicate-lava-stand-run",
+        teamId: "deduplicate-lava-stand-team",
+      },
+    ), undefined));
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        runId: "deduplicate-lava-stand-run",
+        team: { teamId: "deduplicate-lava-stand-team" },
+        checkpointStore: store,
+        strategy: {
+          observationPollMs: 1,
+          portalStrategy: "CAST",
+        },
+      });
+      yield* Effect.promise(() => excavationAttempted).pipe(
+        Effect.timeout("5 seconds"),
+      );
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    expect(driver.paths.filter(({ policy }) =>
+      policy.allowMining === false
+    )).toEqual([expect.objectContaining({ position: stand })]);
+    expect(driver.paths.filter(({ policy }) =>
+      policy.allowMining === true
+    )).toEqual([expect.objectContaining({ position: stand })]);
+  });
+
   it("excavates a dry side stand when lava has no open ledge", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
