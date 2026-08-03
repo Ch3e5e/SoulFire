@@ -9220,9 +9220,12 @@ function shouldAllowAquaticHunt(
     && completedDryExplorationLegs
       >= targetPreference.safeAquaticFallbackAfterExplorationLegs;
   if (exhaustedDrySearch) {
+    const maximumFallbackFoodLevel =
+      targetPreference.maximumSafeAquaticFoodLevel
+        ?? URGENT_HUNGER_FOOD_LEVEL;
     return observation.player.health >= minimumHealth
       || (
-        observation.player.food <= URGENT_HUNGER_FOOD_LEVEL
+        observation.player.food <= maximumFallbackFoodLevel
         && observation.player.health > LETHAL_MELEE_DISENGAGE_HEALTH
       );
   }
@@ -12024,6 +12027,15 @@ function prepareForDistantDeathRecovery(
           path: foodSearchPath,
           explorationTarget: pendingDeath.position,
           allowCriticalAquaticTargets: true,
+          ...(value.player.health < state.strategy.minimumHealth
+            ? {
+              maximumSafeAquaticFoodLevel: Math.max(
+                state.strategy.eatBelowFood,
+                URGENT_HUNGER_FOOD_LEVEL,
+              ),
+              safeAquaticFallbackAfterExplorationLegs: 0,
+            }
+            : {}),
           allowFluidFallback: true,
           fallbackToLocalExploration: true,
         },
