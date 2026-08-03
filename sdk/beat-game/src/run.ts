@@ -8885,6 +8885,7 @@ function huntOrExplore(
         target,
         targetUnavailableTimeoutSeconds: 3,
         selectBestWeapon: true,
+        sprinting: true,
         path: targetHuntingPath,
       });
       const boundedAttack = aquaticTarget

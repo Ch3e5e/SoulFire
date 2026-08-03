@@ -14128,6 +14128,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.xzPaths[0]?.policy.maxFallDistance).toBe(3);
     expect(driver.tasks).toContainEqual(expect.objectContaining({
       type: "attack-entity",
+      sprinting: true,
       target: expect.objectContaining({
         connectionEpoch: salmon.connectionEpoch,
         networkId: salmon.networkId,
