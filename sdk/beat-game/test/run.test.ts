@@ -2321,6 +2321,9 @@ describe("beat-game run lifecycle", () => {
           dimension: "minecraft:overworld",
         }, { blockId: "minecraft:crafting_table" })]
         : [];
+    driver.raycastResolver = ({ direction, maximumDistance }) => ({
+      distance: direction.x < -0.9 ? maximumDistance : 1,
+    });
 
     await Effect.runPromise(Effect.scoped(
       beatGameWithDriver(driver, {
@@ -16619,7 +16622,7 @@ describe("beat-game run lifecycle", () => {
     )).toHaveLength(1);
     expect(driver.actions.filter((action) =>
       action.type === "look"
-      && action.pitch === -30
+      && action.pitch === 0
     )).toHaveLength(2);
     expect(driver.actions.filter((action) =>
       action.type === "look"
@@ -16641,6 +16644,10 @@ describe("beat-game run lifecycle", () => {
       && policy.allowPlacing === false
       && policy.avoidFluids === true
     )).toHaveLength(1);
+    expect(driver.raycasts.some(({ direction, maximumDistance }) =>
+      direction.x < -0.9
+      && maximumDistance === 3
+    )).toBe(true);
   });
 
   it("stops an in-flight collection once external inventory gains meet its buffered target", async () => {

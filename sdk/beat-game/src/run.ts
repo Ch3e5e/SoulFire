@@ -9518,6 +9518,53 @@ function ensureInventorySpace(
         }
         return false;
       });
+    const findDiscardPocketYaw = (
+      origin: BeatGamePosition,
+      pocket: BeatGamePosition,
+    ) =>
+      Effect.gen(function* () {
+        const idealYaw = Math.atan2(
+          -(pocket.x - origin.x),
+          pocket.z - origin.z,
+        ) * 180 / Math.PI;
+        for (
+          const offset of [
+            0,
+            -15,
+            15,
+            -30,
+            30,
+            -45,
+            45,
+            -60,
+            60,
+            -75,
+            75,
+            -90,
+            90,
+          ]
+        ) {
+          const yaw = wrappedDegrees(idealYaw + offset);
+          const yawRadians = yaw * Math.PI / 180;
+          const clearance = yield* state.driver.raycast({
+            direction: {
+              x: -Math.sin(yawRadians),
+              y: 0,
+              z: Math.cos(yawRadians),
+            },
+            maximumDistance: INVENTORY_DISCARD_ESCAPE_DISTANCE,
+            includeFluids: false,
+          }).pipe(Effect.either);
+          if (
+            clearance._tag === "Right"
+            && clearance.right.distance
+              >= INVENTORY_DISCARD_ESCAPE_DISTANCE - 0.25
+          ) {
+            return yaw;
+          }
+        }
+        return undefined;
+      });
     while (
       current.inventory.emptyPlayerSlots !== undefined
       && current.inventory.emptyPlayerSlots < minimumEmptySlots
@@ -9544,6 +9591,8 @@ function ensureInventorySpace(
         discardSiteDeltaZ,
       );
       let discardPocketReady = false;
+      let discardPocketYaw: number | undefined;
+      const discardPocketPosition = current.player.position;
       const discardRetreatTarget = relocated
           && discardSiteDistance > INVENTORY_DISCARD_ESCAPE_DISTANCE
         ? discardSiteOrigin
@@ -9556,7 +9605,11 @@ function ensureInventorySpace(
         ).pipe(Effect.either);
         if (retreated._tag === "Right") {
           current = yield* state.driver.observe;
-          discardPocketReady = true;
+          discardPocketYaw = yield* findDiscardPocketYaw(
+            current.player.position,
+            discardPocketPosition,
+          );
+          discardPocketReady = discardPocketYaw !== undefined;
         }
       }
       if (current.inventory.emptyPlayerSlots === undefined) {
@@ -9592,18 +9645,18 @@ function ensureInventorySpace(
         ? Math.min(64, cobblestoneCount)
         : current.inventory.counts[itemId] ?? 0;
       const emptySlotsBefore = current.inventory.emptyPlayerSlots;
-      const discardYaw = wrappedDegrees(
+      const discardYaw = discardPocketYaw ?? wrappedDegrees(
         current.player.rotation.yaw + 180,
       );
       yield* state.driver.act({
         type: "look",
         yaw: discardYaw,
-        pitch: -30,
+        pitch: 0,
       });
       yield* waitForViewRotation(
         state.driver,
         discardYaw,
-        -30,
+        0,
         20,
       );
       yield* state.driver.act({
