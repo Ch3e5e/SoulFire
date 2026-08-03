@@ -396,7 +396,7 @@ const AIR_ESCAPE_STAGNANT_OBSERVATIONS = 30;
 const AIR_ESCAPE_MAXIMUM_RECOVERY_ATTEMPTS = 3;
 const AIR_ESCAPE_DIRECTION_SECTORS = 8;
 const AIR_ESCAPE_MAXIMUM_SWIMMABLE_RISE = 2;
-const AIR_ESCAPE_MAXIMUM_SHAFT_BLOCKS = 16;
+const AIR_ESCAPE_MAXIMUM_SHAFT_BLOCKS = 64;
 const AIR_ESCAPE_VERTICAL_PROGRESS_ATTEMPTS = 20;
 const AIR_ESCAPE_VERTICAL_PROGRESS = 0.75;
 const OVERWORLD_LOW_GROUND_MAX_Y = 62;
@@ -3847,15 +3847,6 @@ function excavateAirEscapeShaft(
       const observation = yield* state.driver.observe;
       if (observation.player.dead) {
         return;
-      }
-      if (!hasUnsafeAir(observation)) {
-        const routed = yield* returnToOverworldSurface(
-          state,
-          observation.player.position,
-        ).pipe(Effect.either);
-        if (routed._tag === "Right") {
-          return;
-        }
       }
       const surface = yield* nearestAirEscapeSurface(
         state,

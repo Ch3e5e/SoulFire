@@ -10795,6 +10795,135 @@ describe("beat-game run lifecycle", () => {
     expect(driver.currentObservation.player.position.y).toBe(63);
   });
 
+  it("keeps climbing a deep aquifer after surface pathfinding fails", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.surfaceColumns = [{
+      x: 0,
+      z: 0,
+      loaded: true,
+      surfaceY: 63,
+      blockId: "minecraft:grass_block",
+      biomeId: "minecraft:plains",
+      skyLight: 15,
+      blockLight: 0,
+    }];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(Effect.zipRight(Effect.never));
+    driver.blockQueryResolver = (query) => {
+      const position = {
+        x: Math.floor(query.center.x),
+        y: Math.floor(query.center.y),
+        z: Math.floor(query.center.z),
+        dimension: query.center.dimension,
+      };
+      const submerged = driver.currentObservation.player.position.y < 64;
+      if (query.selector.blockIds?.includes("minecraft:water") === true) {
+        return submerged
+          ? [blockObservation(position, {
+            blockId: "minecraft:water",
+            diggable: false,
+            replaceable: true,
+          })]
+          : [];
+      }
+      if (query.selector.blockIds === undefined) {
+        return [blockObservation(position, {
+          blockId: submerged ? "minecraft:water" : "minecraft:air",
+          diggable: false,
+          replaceable: true,
+        })];
+      }
+      return [];
+    };
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+      }).pipe(Effect.zipRight(Effect.fail(new BeatGameDriverError({
+        operation: "pathfind",
+        code: "unreachable",
+        retryable: true,
+        message: "The deep aquifer has no navigable route to its surface",
+      }))));
+    let ascending = false;
+    let resolveEscaped!: () => void;
+    const escaped = new Promise<void>((resolve) => {
+      resolveEscaped = resolve;
+    });
+    driver.actionObserver = (action) => {
+      const current = driver.currentObservation;
+      if (action.type === "look") {
+        driver.currentObservation = {
+          ...current,
+          player: {
+            ...current.player,
+            rotation: { yaw: action.yaw, pitch: action.pitch },
+          },
+        };
+        return;
+      }
+      if (action.type === "set-movement" && action.jump === true) {
+        if (action.forward === true) {
+          driver.currentObservation = {
+            ...current,
+            player: {
+              ...current.player,
+              air: 300,
+              position: { ...current.player.position, y: 30 },
+            },
+          };
+          return;
+        }
+        ascending = true;
+        return;
+      }
+      if (action.type === "reset-movement") {
+        ascending = false;
+      }
+    };
+    driver.observationResolver = () =>
+      Effect.sync(() => {
+        if (!ascending) {
+          return driver.currentObservation;
+        }
+        const current = driver.currentObservation;
+        const y = Math.min(64, current.player.position.y + 1);
+        driver.currentObservation = {
+          ...current,
+          player: {
+            ...current.player,
+            air: 300,
+            position: { ...current.player.position, y },
+          },
+        };
+        if (y >= 64) {
+          resolveEscaped();
+        }
+        return driver.currentObservation;
+      });
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some((task) => task.type === "collect-blocks")) {
+        yield* Effect.sleep(1);
+      }
+      driver.currentObservation = observation({
+        air: 100,
+        position: { x: 0.5, y: 28, z: 0.5 },
+      });
+      yield* Effect.promise(() => escaped).pipe(
+        Effect.timeout("10 seconds"),
+      );
+      yield* run.stop;
+    })));
+
+    expect(driver.paths).toHaveLength(1);
+    expect(driver.currentObservation.player.position.y).toBe(64);
+  }, 15_000);
+
   it("mines iron before crafting a missing portal bucket", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
