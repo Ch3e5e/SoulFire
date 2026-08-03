@@ -16429,6 +16429,140 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks.some((task) => task.type === "explore")).toBe(false);
   });
 
+  it("crafts a durable pickaxe before mining a long route to the surface", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    await Effect.runPromise(store.save(checkpoint(
+      BeatGamePhase.ENTER_NETHER,
+      {
+        runId: "surface-escape-pickaxe-run",
+        teamId: "surface-escape-pickaxe-team",
+      },
+    ), undefined));
+    driver.surfaceColumns = [{
+      x: 12,
+      z: -8,
+      loaded: true,
+      surfaceY: 86,
+      blockId: "minecraft:grass_block",
+      biomeId: "minecraft:plains",
+      skyLight: 15,
+      blockLight: 0,
+    }];
+    driver.currentObservation = observation({
+      position: {
+        x: 12,
+        y: 20,
+        z: -8,
+        dimension: "minecraft:overworld",
+      },
+      counts: {
+        "minecraft:crafting_table": 1,
+        "minecraft:cobblestone": 20,
+        "minecraft:oak_log": 3,
+        "minecraft:stick": 2,
+        "minecraft:stone_sword": 1,
+        "minecraft:cooked_beef": 8,
+        "minecraft:iron_ingot": 9,
+        "minecraft:water_bucket": 1,
+        "minecraft:flint_and_steel": 1,
+        "minecraft:shield": 1,
+      },
+    });
+    driver.recipeResolver = (resultItemId) => [{
+      recipeId: resultItemId,
+      recipeType: "minecraft:crafting",
+      resultItemId,
+      resultCount: 1,
+      ingredients: [],
+    }];
+    driver.craftabilityResolver = () => ({
+      canCraft: true,
+      maximumCraftCount: 1,
+      requiredStation: "minecraft:crafting_table",
+      missing: [],
+    });
+    driver.blockQueryResolver = ({ selector }) =>
+      selector.blockIds?.includes("minecraft:crafting_table") === true
+        ? [blockObservation({
+          x: 13,
+          y: 20,
+          z: -8,
+          dimension: "minecraft:overworld",
+        }, { blockId: "minecraft:crafting_table" })]
+        : [];
+    const resolveTask = driver.taskResolver;
+    driver.taskResolver = (task, execution) =>
+      resolveTask(task, execution).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            if (
+              task.type === "craft"
+              && task.recipeId === "minecraft:iron_pickaxe"
+            ) {
+              driver.currentObservation = observation({
+                position: driver.currentObservation.player.position,
+                counts: {
+                  ...driver.currentObservation.inventory.counts,
+                  "minecraft:iron_pickaxe": 1,
+                },
+                remainingDurability: {
+                  "minecraft:iron_pickaxe": 250,
+                },
+              });
+            }
+          })
+        ),
+      );
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+      }).pipe(
+        Effect.zipRight(position.y === 87 ? Effect.never : Effect.void),
+      );
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        runId: "surface-escape-pickaxe-run",
+        team: { teamId: "surface-escape-pickaxe-team" },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            yield* Effect.gen(function* () {
+              while (!driver.paths.some(({ position }) => position.y === 87)) {
+                yield* Effect.sleep(1);
+              }
+            }).pipe(Effect.timeoutFail({
+              duration: "2 seconds",
+              onTimeout: () => new Error(
+                `Surface path did not start; tasks: ${JSON.stringify(driver.tasks)}`,
+              ),
+            }));
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "craft",
+      recipeId: "minecraft:iron_pickaxe",
+    }));
+    expect(driver.paths).toContainEqual(expect.objectContaining({
+      position: {
+        x: 12.5,
+        y: 87,
+        z: -7.5,
+        dimension: "minecraft:overworld",
+      },
+      radius: 1.5,
+      policy: expect.objectContaining({ allowMining: true }),
+    }));
+  });
+
   it("does not mistake an adjacent hillside for overhead terrain", async () => {
     const driver = new FakeBeatGameDriver();
     const preparedItems = {
@@ -16536,7 +16670,13 @@ describe("beat-game run lifecycle", () => {
     driver.pathResolver = (position, radius, policy) =>
       Effect.sync(() => {
         driver.paths.push({ position, radius, policy });
-      }).pipe(Effect.zipRight(Effect.never));
+        if (position.y === 90) {
+          driver.currentObservation = observation({
+            position,
+            counts: driver.currentObservation.inventory.counts,
+          });
+        }
+      });
 
     await Effect.runPromise(Effect.scoped(
       beatGameWithDriver(driver, {
@@ -16544,7 +16684,9 @@ describe("beat-game run lifecycle", () => {
       }).pipe(
         Effect.flatMap((run) =>
           Effect.gen(function* () {
-            while (driver.paths.length === 0) {
+            while (
+              !driver.tasks.some((task) => task.type === "collect-blocks")
+            ) {
               yield* Effect.sleep(1);
             }
             yield* run.stop;

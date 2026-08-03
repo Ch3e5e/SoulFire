@@ -394,6 +394,9 @@ const IRON_SEARCH_MAX_Y = 24;
 const IRON_SEARCH_DESCENT_STEP = 12;
 const RESOURCE_SEARCH_PICKAXE_DURABILITY_RESERVE = 64;
 const RESOURCE_DESCENT_PICKAXE_DURABILITY_RESERVE = 48;
+const SURFACE_ESCAPE_PICKAXE_DURABILITY_PER_LEVEL = 3;
+const STONE_PICKAXE_MAXIMUM_DURABILITY = 131;
+const IRON_PICKAXE_MAXIMUM_DURABILITY = 250;
 const DEEP_LAVA_SEARCH_Y = -52;
 const DEEP_LAVA_SEARCH_MAX_Y = -48;
 const DEEP_LAVA_DESCENT_STEP = 12;
@@ -9404,7 +9407,56 @@ function returnToOverworldSurface(
       z: surface.z + 0.5,
       dimension: position.dimension,
     }));
+    yield* prepareSurfaceEscapePickaxe(state, position, targets);
     yield* pathfindToFirstReachableSurface(state, targets);
+  });
+}
+
+function prepareSurfaceEscapePickaxe(
+  state: RunState,
+  position: BeatGamePosition,
+  targets: readonly BeatGamePosition[],
+): Effect.Effect<void, BeatGameDriverError> {
+  return Effect.gen(function* () {
+    const verticalRise = targets.reduce(
+      (maximum, target) => Math.max(maximum, target.y - position.y),
+      0,
+    );
+    if (verticalRise <= 2) {
+      return;
+    }
+
+    const observation = yield* state.driver.observe;
+    if (
+      observation.player.dead
+      || (yield* isPlayerInFluid(state.driver, observation.player.position))
+    ) {
+      return;
+    }
+
+    const useIronPickaxe =
+      (observation.inventory.counts["minecraft:iron_ingot"] ?? 0) >= 3;
+    const maximumDurability = useIronPickaxe
+      ? IRON_PICKAXE_MAXIMUM_DURABILITY
+      : STONE_PICKAXE_MAXIMUM_DURABILITY;
+    yield* ensureMiningPickaxe(
+      state,
+      observation,
+      useIronPickaxe
+        ? "minecraft:iron_pickaxe"
+        : "minecraft:stone_pickaxe",
+      useIronPickaxe
+        ? DURABLE_MINING_PICKAXE_ITEM_IDS
+        : STONE_OR_BETTER_MINING_PICKAXE_ITEM_IDS,
+      Math.min(
+        maximumDurability,
+        Math.ceil(
+          verticalRise * SURFACE_ESCAPE_PICKAXE_DURABILITY_PER_LEVEL,
+        ),
+      ),
+    ).pipe(
+      Effect.catchTag("BeatGameDriverError", () => Effect.void),
+    );
   });
 }
 
