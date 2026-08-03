@@ -1950,7 +1950,7 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
-  it("hunts nearby fish for distant corpse supplies with enough health", async () => {
+  it("falls back to nearby fish after a bounded dry corpse food search", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const deathPosition = {
@@ -1968,6 +1968,13 @@ describe("beat-game run lifecycle", () => {
       ...initial,
       memory: {
         ...initial.memory,
+        explorationFrontiers: {
+          "minecraft:overworld:prepare-corpse-recovery-food": {
+            origin: driver.currentObservation.player.position,
+            nextIndex: 3,
+            lastPosition: driver.currentObservation.player.position,
+          },
+        },
         deathPositions: [{
           key: `death:${observedAt}`,
           value: {
@@ -1995,8 +2002,8 @@ describe("beat-game run lifecycle", () => {
       observedAt: "2026-01-01T00:00:00.000Z",
     } as const;
     driver.currentObservation = observation({
-      health: 17,
-      food: 14,
+      health: 18,
+      food: 10,
       counts: {
         "minecraft:dirt": 16,
         "minecraft:oak_log": 12,
@@ -2019,8 +2026,8 @@ describe("beat-game run lifecycle", () => {
               && position.z === salmon.position.z
             ) {
               driver.currentObservation = observation({
-                health: 17,
-                food: 14,
+                health: 18,
+                food: 10,
                 position: { x: 28 },
                 counts: {
                   "minecraft:dirt": 16,
