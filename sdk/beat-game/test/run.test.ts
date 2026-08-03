@@ -18935,6 +18935,13 @@ describe("beat-game run lifecycle", () => {
     expect(driver.paths).not.toContainEqual(expect.objectContaining({
       position: expect.objectContaining({ x: 1.5, y: 64, z: 0.5 }),
     }));
+    expect(driver.blockQueries).toContainEqual(expect.objectContaining({
+      radius: 12,
+      selector: expect.objectContaining({
+        solid: true,
+        requireLineOfSight: true,
+      }),
+    }));
   });
 
   it("explores laterally at iron mining depth when candidates are unreachable", async () => {

@@ -7316,7 +7316,7 @@ function findStableResourceSearchStaircaseOrigin(
     const supports = (yield* state.driver.queryBlocks({
       center: position,
       radius: 12,
-      selector: { solid: true },
+      selector: { solid: true, requireLineOfSight: true },
       maximumResults: 512,
     }))
       .filter((block) =>
