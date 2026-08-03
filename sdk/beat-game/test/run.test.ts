@@ -382,6 +382,85 @@ describe("beat-game run lifecycle", () => {
     expect(interruptedDuringCooldown).toBe(false);
   });
 
+  it("does not delay respawn for chained trivial corpses", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const firstObservedAt = new Date(Date.now() - 60_000).toISOString();
+    const secondObservedAt = new Date().toISOString();
+    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
+      runId: "trivial-chained-death-run",
+      teamId: "trivial-chained-death-team",
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        deathPositions: [
+          {
+            key: `death:${firstObservedAt}`,
+            value: {
+              x: 40,
+              y: 64,
+              z: 0,
+              dimension: "minecraft:overworld",
+              inventoryCounts: { "minecraft:bone": 1 },
+            },
+            observedAt: firstObservedAt,
+            confidence: 1,
+          },
+          {
+            key: `death:${secondObservedAt}`,
+            value: {
+              x: 48,
+              y: 64,
+              z: 0,
+              dimension: "minecraft:overworld",
+              inventoryCounts: { "minecraft:sand": 4 },
+            },
+            observedAt: secondObservedAt,
+            confidence: 1,
+          },
+        ],
+      },
+    }, undefined));
+    driver.currentObservation = observation({ dead: true, health: 0 });
+    driver.taskObserver = (task) => {
+      if (task.type === "auto-respawn") {
+        driver.currentObservation = observation();
+      }
+    };
+
+    const respawnStarted = await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        runId: "trivial-chained-death-run",
+        team: { teamId: "trivial-chained-death-team" },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            const started = yield* Effect.race(
+              Effect.gen(function* () {
+                while (!driver.tasks.some((task) =>
+                  task.type === "auto-respawn"
+                )) {
+                  yield* Effect.sleep(1);
+                }
+                return true;
+              }),
+              Effect.sleep(250).pipe(Effect.as(false)),
+            );
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+            return started;
+          })
+        ),
+      ),
+    ));
+
+    expect(respawnStarted).toBe(true);
+  });
+
   it("preserves meaningful inventory when death packets clear it first", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
@@ -1222,6 +1301,74 @@ describe("beat-game run lifecycle", () => {
     expect(driver.paths).not.toContainEqual(expect.objectContaining({
       position: deathPosition,
     }));
+  });
+
+  it("skips a stored corpse containing only trivial mob drops", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const deathPosition = {
+      x: 24,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    const observedAt = new Date().toISOString();
+    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
+      runId: "trivial-corpse-run",
+      teamId: "trivial-corpse-team",
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        deathPositions: [{
+          key: `death:${observedAt}`,
+          value: {
+            ...deathPosition,
+            inventoryCounts: {
+              "minecraft:arrow": 1,
+              "minecraft:bone": 1,
+              "minecraft:ink_sac": 2,
+              "minecraft:sand": 4,
+            },
+          },
+          observedAt,
+          confidence: 1,
+        }],
+      },
+    }, undefined));
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        runId: "trivial-corpse-run",
+        team: { teamId: "trivial-corpse-team" },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            yield* run.events.pipe(
+              Stream.filter((candidate) =>
+                candidate.type === "action-succeeded"
+                && candidate.action === "recover-death"
+              ),
+              Stream.runHead,
+            );
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.paths).not.toContainEqual(expect.objectContaining({
+      position: deathPosition,
+    }));
+    expect(driver.entityQueries.some((query) =>
+      query.selector.categories?.includes(6)
+    )).toBe(false);
+    const saved = await Effect.runPromise(store.load("trivial-corpse-run"));
+    expect(saved?.memory.deathPositions).toEqual([]);
   });
 
   it("abandons a distant renewable corpse and clears its checkpoint", async () => {

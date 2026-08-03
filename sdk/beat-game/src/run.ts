@@ -210,6 +210,7 @@ const RENEWABLE_DEATH_RECOVERY_ITEM_IDS = new Set([
   "minecraft:gravel",
   "minecraft:green_wool",
   "minecraft:gunpowder",
+  "minecraft:ink_sac",
   "minecraft:jungle_sapling",
   "minecraft:leaf_litter",
   "minecraft:leather",
@@ -303,13 +304,16 @@ const INVENTORY_DISCARD_ESCAPE_MAX_SEARCH_TIME_MS = 3_000;
 const LOW_VALUE_DEATH_RECOVERY_ITEM_IDS = new Set([
   ...DISPOSABLE_DEATH_RECOVERY_ITEM_IDS,
   "minecraft:acacia_sapling",
+  "minecraft:arrow",
   "minecraft:birch_sapling",
   "minecraft:beetroot_seeds",
+  "minecraft:bone",
   "minecraft:cherry_sapling",
   "minecraft:dark_oak_sapling",
   "minecraft:egg",
   "minecraft:feather",
   "minecraft:jungle_sapling",
+  "minecraft:ink_sac",
   "minecraft:leaf_litter",
   "minecraft:mangrove_propagule",
   "minecraft:melon_seeds",
@@ -317,6 +321,7 @@ const LOW_VALUE_DEATH_RECOVERY_ITEM_IDS = new Set([
   "minecraft:pale_oak_sapling",
   "minecraft:pitcher_pod",
   "minecraft:pumpkin_seeds",
+  "minecraft:sand",
   "minecraft:spruce_sapling",
   "minecraft:torchflower_seeds",
   "minecraft:wheat_seeds",
@@ -1375,7 +1380,13 @@ function executeDecision(
           } else {
             const beforeRespawn = yield* observeDriverFresh(state);
             const recoverableDeaths = (yield* Ref.get(state.pendingDeaths))
-              .filter(isPendingDeathRecoverable);
+              .filter((candidate) =>
+                isPendingDeathRecoverable(candidate)
+                && candidate.recoverItems
+                && classifyDeathRecoveryInventory(
+                  candidate.inventoryCounts,
+                ) !== "trivial"
+              );
             if (
               beforeRespawn.player.dead
               && recoverableDeaths.length > 1
@@ -11397,10 +11408,8 @@ function observeFresh(
 function hasMeaningfulRecoveryInventory(
   observation: BeatGameObservation,
 ): boolean {
-  return Object.entries(observation.inventory.counts).some(
-    ([itemId, count]) =>
-      count > 0 && !DISPOSABLE_DEATH_RECOVERY_ITEM_IDS.has(itemId),
-  );
+  return classifyDeathRecoveryInventory(observation.inventory.counts)
+    !== "trivial";
 }
 
 function hasMeleeWeapon(observation: BeatGameObservation): boolean {
@@ -11962,6 +11971,10 @@ function shouldAttemptDeathRecovery(
   if (recoveryClass === "valuable") {
     return true;
   }
+  if (recoveryClass === "trivial") {
+    return distanceSquared(pendingDeath.position, currentPosition)
+      <= IMMEDIATE_CORPSE_RECOVERY_DISTANCE ** 2;
+  }
   const maximumDistance = recoveryClass === "substantial"
     ? SUBSTANTIAL_RENEWABLE_DEATH_RECOVERY_MAX_DISTANCE
     : recoveryClass === "renewable"
@@ -12285,7 +12298,7 @@ function prepareForDistantDeathRecovery(
 
 function classifyDeathRecoveryInventory(
   counts: Readonly<Record<string, number>> | undefined,
-): "renewable" | "substantial" | "unknown" | "valuable" {
+): "renewable" | "substantial" | "trivial" | "unknown" | "valuable" {
   if (counts === undefined) {
     return "unknown";
   }
@@ -12304,6 +12317,9 @@ function classifyDeathRecoveryInventory(
         : total + count,
     0,
   );
+  if (usefulRenewableItems === 0) {
+    return "trivial";
+  }
   return usefulRenewableItems
       >= SUBSTANTIAL_RENEWABLE_DEATH_RECOVERY_ITEM_COUNT
     ? "substantial"
