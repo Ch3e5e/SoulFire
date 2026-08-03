@@ -2535,8 +2535,12 @@ function escapeThreatSelector(
   target: BeatGameEntityObservation,
   includeHostileGroup = false,
 ): BeatGameEntitySelector {
-  const escapeFromHostileGroup = target.entityType === "minecraft:creeper"
-    || FAST_MELEE_PURSUER_ENTITY_TYPES.has(target.entityType)
+  if (target.entityType === "minecraft:creeper") {
+    return { networkId: target.networkId, alive: true };
+  }
+  const escapeFromHostileGroup = FAST_MELEE_PURSUER_ENTITY_TYPES.has(
+    target.entityType,
+  )
     || (
       includeHostileGroup
       && (

@@ -4800,7 +4800,7 @@ describe("beat-game run lifecycle", () => {
     ).toHaveLength(2);
   });
 
-  it("sprints and dynamically flees a creeper across surface terrain", async () => {
+  it("sprints and dynamically flees the selected creeper", async () => {
     const driver = new FakeBeatGameDriver();
     driver.surfaceColumns = Array.from({ length: 18 }, (_, index) => ({
       x: -(index + 1),
@@ -4860,7 +4860,7 @@ describe("beat-game run lifecycle", () => {
     const fleeIndex = driver.tasks.findIndex((task) => task.type === "flee");
     expect(driver.tasks[fleeIndex]).toEqual(expect.objectContaining({
       type: "flee",
-      selector: { categories: [2], alive: true },
+      selector: { networkId: 41, alive: true },
       triggerRadius: 12,
       safeDistance: 24,
     }));
