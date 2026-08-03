@@ -290,6 +290,25 @@ public final class CollectBlocksTaskProvider
       || lineOfSight.getAsBoolean();
   }
 
+  static Set<GoalScorer> collectionGoals(
+    BlockGetter level,
+    Vec3 eyePosition,
+    List<SFVec3i> candidates,
+    Map<SFVec3i, Set<SFVec3i>> rejectedAdjacentPositions
+  ) {
+    return candidates.stream()
+      .<GoalScorer>mapMulti((candidate, goals) -> {
+        goals.accept(new BreakBlockPosGoal(candidate));
+        if (hasLineOfSight(level, eyePosition, candidate.toBlockPos())) {
+          goals.accept(new WithinBlockReachGoal(
+            candidate,
+            rejectedAdjacentPositions.getOrDefault(candidate, Set.of())
+          ));
+        }
+      })
+      .collect(Collectors.toUnmodifiableSet());
+  }
+
   private static final class CollectBlocksControl implements ControlTask {
     private final BotTaskContext context;
     private final Set<String> blockIds;
@@ -389,22 +408,23 @@ public final class CollectBlocksTaskProvider
         );
       }
       activeTargets = Set.copyOf(candidates);
+      var level = context.bot().minecraft().level;
+      var player = context.bot().minecraft().player;
+      if (level == null || player == null) {
+        complete(
+          CollectBlocksCompletionReason
+            .COLLECT_BLOCKS_COMPLETION_REASON_NO_REACHABLE_BLOCKS
+        );
+        return;
+      }
       activePath = PathExecutor.createPathfinding(
         context.bot(),
-        new CompositeGoal(candidates.stream()
-          .<GoalScorer>mapMulti(
-            (candidate, goals) -> {
-              goals.accept(new BreakBlockPosGoal(candidate));
-              goals.accept(new WithinBlockReachGoal(
-                candidate,
-                rejectedAdjacentPositions.getOrDefault(
-                  candidate,
-                  Set.of()
-                )
-              ));
-            }
-          )
-          .collect(Collectors.toUnmodifiableSet())),
+        new CompositeGoal(collectionGoals(
+          level,
+          player.getEyePosition(),
+          candidates,
+          rejectedAdjacentPositions
+        )),
         constraint
       );
       activePath.onStarted();

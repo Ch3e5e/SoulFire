@@ -19,6 +19,8 @@ package com.soulfiremc.server.task;
 
 import com.soulfiremc.grpc.generated.IntRange;
 import com.soulfiremc.server.pathfinding.SFVec3i;
+import com.soulfiremc.server.pathfinding.goals.BreakBlockPosGoal;
+import com.soulfiremc.server.pathfinding.goals.WithinBlockReachGoal;
 import com.soulfiremc.server.pathfinding.graph.BlockFace;
 import com.soulfiremc.test.utils.TestBlockAccessorBuilder;
 import net.minecraft.core.BlockPos;
@@ -32,7 +34,9 @@ import org.junit.jupiter.api.Test;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -138,6 +142,41 @@ final class CollectBlocksTaskProviderTest {
       new Vec3(0.5D, 64.5D, 0.5D),
       target
     ));
+  }
+
+  @Test
+  void onlyUsesReachGoalsForCurrentlyVisibleTargets() {
+    var blocks = new TestBlockAccessorBuilder();
+    var eyePosition = new Vec3(0.5D, 65.62D, 0.5D);
+    var visibleTarget = new SFVec3i(4, 64, 0);
+    var buriedTarget = new SFVec3i(0, 63, 2);
+    blocks.setBlockAt(4, 64, 0, Blocks.OAK_LOG);
+    blocks.setBlockAt(0, 63, 2, Blocks.STONE);
+    blocks.setBlockAt(0, 64, 2, Blocks.DIRT);
+    blocks.setBlockAt(0, 62, 2, Blocks.DIRT);
+    blocks.setBlockAt(-1, 63, 2, Blocks.DIRT);
+    blocks.setBlockAt(1, 63, 2, Blocks.DIRT);
+    blocks.setBlockAt(0, 63, 1, Blocks.DIRT);
+    blocks.setBlockAt(0, 63, 3, Blocks.DIRT);
+
+    var goals = CollectBlocksTaskProvider.collectionGoals(
+      blocks.build(),
+      eyePosition,
+      List.of(visibleTarget, buriedTarget),
+      Map.of()
+    );
+
+    assertEquals(2, goals.stream()
+      .filter(BreakBlockPosGoal.class::isInstance)
+      .count());
+    assertEquals(
+      Set.of(visibleTarget),
+      goals.stream()
+        .filter(WithinBlockReachGoal.class::isInstance)
+        .map(WithinBlockReachGoal.class::cast)
+        .map(WithinBlockReachGoal::block)
+        .collect(Collectors.toSet())
+    );
   }
 
   @Test
