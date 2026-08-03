@@ -75,7 +75,7 @@ describe("beat-game requirements", () => {
         counts: {
           "minecraft:oak_log": 8,
           "minecraft:wooden_sword": 1,
-          "minecraft:beef": 8,
+          "minecraft:beef": 4,
         },
       }).inventory,
       defaultBeatGameStrategy,
@@ -83,8 +83,8 @@ describe("beat-game requirements", () => {
 
     expect(requirements.find(({ key }) => key === "food-supply"))
       .toMatchObject({
-        currentCount: 8,
-        targetCount: 8,
+        currentCount: 4,
+        targetCount: 4,
         satisfied: true,
       });
     expect(requirements.find(({ key }) => key === "food")).toMatchObject({
@@ -113,7 +113,7 @@ describe("beat-game requirements", () => {
     expect(requirements.find(({ key }) => key === "food-supply"))
       .toMatchObject({
         currentCount: 8,
-        targetCount: 8,
+        targetCount: 4,
         satisfied: true,
       });
     expect(requirements.find(({ key }) => key === "food")).toMatchObject({

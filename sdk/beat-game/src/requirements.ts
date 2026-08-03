@@ -119,7 +119,7 @@ const REQUIREMENTS: Readonly<
     itemRequirement(
       "food-supply",
       EDIBLE_FOOD_ITEM_IDS,
-      ({ targetFoodCount }) => Math.min(targetFoodCount, 8),
+      ({ targetFoodCount }) => Math.min(targetFoodCount, 4),
       112,
     ),
     itemRequirement(
@@ -327,15 +327,23 @@ function portalRequirements(
     BeatGamePhase.PREPARE_OVERWORLD
   ]
     .filter(({ key }) => key !== "water-bucket" && key !== "ignition")
-    .map((definition) =>
-      definition.key === "logs"
-        ? {
+    .map((definition) => {
+      if (definition.key === "logs") {
+        return {
           ...definition,
           target: ({ targetLogCount }: BeatGameStrategy) =>
             Math.min(targetLogCount, PORTAL_LOG_RESERVE),
-        }
-        : definition
-    );
+        };
+      }
+      if (definition.key === "food-supply") {
+        return {
+          ...definition,
+          target: ({ targetFoodCount }: BeatGameStrategy) =>
+            Math.min(targetFoodCount, 8),
+        };
+      }
+      return definition;
+    });
   const hasCompleteObsidianFrame =
     (inventory.counts["minecraft:obsidian"] ?? 0)
       >= strategy.targetObsidianCount;
