@@ -614,6 +614,7 @@ const MINIMUM_RECOVERY_POLL_MS = 100;
 const MINIMUM_SAFE_AIR_TICKS = 260;
 const AIR_ESCAPE_ASCENT_STAGNATION_OBSERVATIONS = 10;
 const AIR_ESCAPE_ASCENT_PROGRESS_EPSILON = 0.05;
+const AIR_ESCAPE_OPEN_COLUMN_SEARCH_RADIUS = 4;
 
 export interface BeatGameRun {
   readonly id: string;
@@ -3426,7 +3427,11 @@ function recoverFromFluid(
         : state.driver.observe.pipe(
           Effect.flatMap((latest) =>
             hasUnsafeAir(latest)
-              ? excavateAirEscapeShaft(state)
+              ? escapeNearbyOpenAirColumn(state, latest).pipe(
+                Effect.flatMap((escaped) =>
+                  escaped ? Effect.void : excavateAirEscapeShaft(state)
+                ),
+              )
               : escapeToOverworldSurface(state, originalPosition)
           ),
           Effect.either,
@@ -3771,6 +3776,151 @@ function nearestAirEscapeSurface(
   ).pipe(
     Effect.map((columns) => selectSurfaceColumn(columns, position)),
   );
+}
+
+function escapeNearbyOpenAirColumn(
+  state: RunState,
+  observation: BeatGameObservation,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  return Effect.gen(function* () {
+    const origin = observation.player.position;
+    const blockX = Math.floor(origin.x);
+    const blockY = Math.floor(origin.y);
+    const blockZ = Math.floor(origin.z);
+    const directions = [
+      { x: 1, z: 0 },
+      { x: -1, z: 0 },
+      { x: 0, z: 1 },
+      { x: 0, z: -1 },
+    ] as const;
+    for (
+      let distance = 1;
+      distance <= AIR_ESCAPE_OPEN_COLUMN_SEARCH_RADIUS;
+      distance += 1
+    ) {
+      for (const direction of directions) {
+        let corridorOpen = true;
+        for (let step = 1; step <= distance; step += 1) {
+          for (const y of [blockY, blockY + 1]) {
+            const block = yield* queryExactBlock(state.driver, {
+              x: blockX + direction.x * step,
+              y,
+              z: blockZ + direction.z * step,
+              dimension: origin.dimension,
+            });
+            if (block !== undefined && !block.replaceable) {
+              corridorOpen = false;
+              break;
+            }
+          }
+          if (!corridorOpen) {
+            break;
+          }
+        }
+        if (!corridorOpen) {
+          continue;
+        }
+        const openAir = yield* queryExactBlock(state.driver, {
+          x: blockX + direction.x * distance,
+          y: blockY + 2,
+          z: blockZ + direction.z * distance,
+          dimension: origin.dimension,
+        });
+        if (openAir === undefined || !isAirBlock(openAir.blockId)) {
+          continue;
+        }
+        return yield* swimTowardOpenAirColumn(state, observation, {
+          x: openAir.position.x + 0.5,
+          y: origin.y,
+          z: openAir.position.z + 0.5,
+          dimension: origin.dimension,
+        });
+      }
+    }
+    return false;
+  });
+}
+
+function swimTowardOpenAirColumn(
+  state: RunState,
+  observation: BeatGameObservation,
+  target: BeatGamePosition,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  const rotation = rotationToward(observation.player.position, target);
+  return state.driver.withControl(
+    state.driver.act({
+      type: "look",
+      yaw: rotation.yaw,
+      pitch: -20,
+    }).pipe(
+      Effect.zipRight(state.driver.act({
+        type: "set-movement",
+        forward: true,
+        jump: true,
+        sprint: observation.player.food > CRITICAL_HUNGER_FOOD_LEVEL,
+      })),
+      Effect.zipRight(waitForOpenAirColumn(
+        state,
+        target,
+        30,
+      )),
+      Effect.ensuring(
+        state.driver.act({ type: "reset-movement" }).pipe(Effect.ignore),
+      ),
+    ),
+  );
+}
+
+function waitForOpenAirColumn(
+  state: RunState,
+  target: BeatGamePosition,
+  attemptsRemaining: number,
+  previousDistanceSquared?: number,
+  stagnantObservations = 0,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  return Effect.sleep(100).pipe(
+    Effect.zipRight(state.driver.observe),
+    Effect.flatMap((observation) => {
+      if (observation.player.dead) {
+        return Effect.succeed(false);
+      }
+      if (
+        observation.player.maxAir <= 0
+        || observation.player.air >= observation.player.maxAir
+      ) {
+        return Effect.succeed(true);
+      }
+      const distance = horizontalDistanceSquared(
+        observation.player.position,
+        target,
+      );
+      const madeProgress = previousDistanceSquared === undefined
+        || distance < previousDistanceSquared - 0.01;
+      const nextStagnantObservations = madeProgress
+        ? 0
+        : stagnantObservations + 1;
+      if (
+        attemptsRemaining <= 1
+        || nextStagnantObservations
+          >= AIR_ESCAPE_ASCENT_STAGNATION_OBSERVATIONS
+      ) {
+        return Effect.succeed(false);
+      }
+      return waitForOpenAirColumn(
+        state,
+        target,
+        attemptsRemaining - 1,
+        distance,
+        nextStagnantObservations,
+      );
+    }),
+  );
+}
+
+function isAirBlock(blockId: string): boolean {
+  return blockId === "minecraft:air"
+    || blockId === "minecraft:cave_air"
+    || blockId === "minecraft:void_air";
 }
 
 function overheadEscapeBlock(

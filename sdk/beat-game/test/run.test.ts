@@ -10176,6 +10176,119 @@ describe("beat-game run lifecycle", () => {
     });
   });
 
+  it("swims out from under a shoreline block before trying to mine it", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.surfaceQueryResolver = () => [];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(Effect.zipRight(Effect.never));
+    driver.blockQueryResolver = (query) => {
+      const position = {
+        x: Math.floor(query.center.x),
+        y: Math.floor(query.center.y),
+        z: Math.floor(query.center.z),
+        dimension: query.center.dimension,
+      };
+      if (query.selector.blockIds?.includes("minecraft:water") === true) {
+        return driver.currentObservation.player.position.x < 1
+          ? [blockObservation(position, {
+            blockId: "minecraft:water",
+            diggable: false,
+            replaceable: true,
+          })]
+          : [];
+      }
+      if (query.selector.blockIds !== undefined) {
+        return [];
+      }
+      const blockId = position.y === 63 && position.x === 1
+        ? "minecraft:air"
+        : position.y <= 62 && position.x === 1
+        ? "minecraft:water"
+        : position.y === 63
+        ? "minecraft:dirt"
+        : "minecraft:water";
+      return [blockObservation(position, {
+        blockId,
+        diggable: blockId === "minecraft:dirt",
+        replaceable: blockId !== "minecraft:dirt",
+      })];
+    };
+    let swimmingTowardAir = false;
+    let resolveEscaped!: () => void;
+    const escaped = new Promise<void>((resolve) => {
+      resolveEscaped = resolve;
+    });
+    driver.actionObserver = (action) => {
+      const current = driver.currentObservation;
+      if (action.type === "look") {
+        driver.currentObservation = {
+          ...current,
+          player: {
+            ...current.player,
+            rotation: { yaw: action.yaw, pitch: action.pitch },
+          },
+        };
+        return;
+      }
+      if (
+        action.type === "set-movement"
+        && action.forward === true
+        && current.player.rotation.pitch === -20
+      ) {
+        swimmingTowardAir = true;
+        return;
+      }
+      if (action.type === "reset-movement") {
+        swimmingTowardAir = false;
+      }
+    };
+    driver.observationResolver = () =>
+      Effect.sync(() => {
+        if (!swimmingTowardAir) {
+          return driver.currentObservation;
+        }
+        const current = driver.currentObservation;
+        driver.currentObservation = {
+          ...current,
+          player: {
+            ...current.player,
+            air: 300,
+            position: {
+              ...current.player.position,
+              x: 1.5,
+            },
+          },
+        };
+        resolveEscaped();
+        return driver.currentObservation;
+      });
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some((task) => task.type === "collect-blocks")) {
+        yield* Effect.sleep(1);
+      }
+      driver.currentObservation = observation({
+        air: 100,
+        food: 12,
+        position: { x: 0.5, y: 61, z: 0.5 },
+      });
+      yield* Effect.promise(() => escaped).pipe(
+        Effect.timeout("5 seconds"),
+      );
+      yield* run.stop;
+    })));
+
+    expect(driver.currentObservation.player.position.x).toBe(1.5);
+    expect(driver.currentObservation.player.air).toBe(300);
+    expect(driver.actions.some((action) => action.type === "dig-block"))
+      .toBe(false);
+  });
+
   it("mines through an overhead obstruction to escape a submerged cavity", async () => {
     const driver = new FakeBeatGameDriver();
     const preparedItems = {
