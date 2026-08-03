@@ -16462,9 +16462,18 @@ describe("beat-game run lifecycle", () => {
           dimension: "minecraft:overworld",
         }, { blockId: "minecraft:crafting_table" })]
         : [];
-    driver.raycastResolver = ({ direction, maximumDistance }) => ({
-      distance: direction.z < -0.9 ? maximumDistance : 1,
-    });
+    driver.raycastResolver = ({ direction }) =>
+      direction.z < -0.9
+        ? { distance: 0 }
+        : {
+          distance: 1,
+          block: blockObservation({
+            x: -6,
+            y: 64,
+            z: 1,
+            dimension: "minecraft:overworld",
+          }),
+        };
     const discardTimeline: string[] = [];
     const resolvePath = driver.pathResolver;
     driver.pathResolver = (position, radius, policy) =>

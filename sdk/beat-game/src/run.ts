@@ -9558,8 +9558,11 @@ function ensureInventorySpace(
           }).pipe(Effect.either);
           if (
             clearance._tag === "Right"
-            && clearance.right.distance
-              >= INVENTORY_DISCARD_ESCAPE_DISTANCE - 0.25
+            && (
+              clearance.right.block === undefined
+              || clearance.right.distance
+                >= INVENTORY_DISCARD_ESCAPE_DISTANCE - 0.25
+            )
           ) {
             return yaw;
           }
