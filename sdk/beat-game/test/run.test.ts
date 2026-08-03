@@ -14658,6 +14658,92 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("forages mature berries before hunting while wounded", async () => {
+    const driver = new FakeBeatGameDriver();
+    const preparedCounts = {
+      "minecraft:oak_log": 8,
+      "minecraft:cobblestone": 20,
+      "minecraft:stone_sword": 1,
+    };
+    const berryBush = blockObservation({
+      x: 3,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    }, {
+      blockId: "minecraft:sweet_berry_bush",
+      properties: { age: "3" },
+      diggable: true,
+      interactive: true,
+    });
+    driver.currentObservation = observation({
+      health: 8,
+      food: 6,
+      counts: preparedCounts,
+    });
+    driver.blockQueryResolver = (query) =>
+      query.selector.blockIds?.includes("minecraft:sweet_berry_bush") === true
+        ? [berryBush]
+        : [];
+    driver.actionResolver = (action) =>
+      Effect.sync(() => {
+        if (
+          action.type === "interact-block"
+          && action.position.x === berryBush.position.x
+          && action.position.y === berryBush.position.y
+          && action.position.z === berryBush.position.z
+        ) {
+          driver.currentObservation = observation({
+            health: 8,
+            food: 6,
+            counts: {
+              ...preparedCounts,
+              "minecraft:sweet_berries": 2,
+            },
+          });
+        }
+        return {};
+      });
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (!driver.actions.some((action) =>
+              action.type === "interact-block"
+              && action.position.x === berryBush.position.x
+              && action.position.y === berryBush.position.y
+              && action.position.z === berryBush.position.z
+            )) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.paths).toContainEqual(expect.objectContaining({
+      position: berryBush.position,
+      radius: 3,
+      policy: expect.objectContaining({
+        allowPlacing: false,
+        avoidFluids: true,
+      }),
+    }));
+    expect(driver.actions).toContainEqual({
+      type: "interact-block",
+      position: berryBush.position,
+      face: "up",
+    });
+    expect(driver.tasks).not.toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+    }));
+  });
+
   it("picks up nearby emergency food before hunting while wounded", async () => {
     const driver = new FakeBeatGameDriver();
     const preparedCounts = {

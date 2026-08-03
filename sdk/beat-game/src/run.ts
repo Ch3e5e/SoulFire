@@ -5037,19 +5037,120 @@ function satisfyFoodSupplyRequirement(
       if (missing === 0) {
         return Effect.void;
       }
-      return tryFishForFood(state, current).pipe(
-        Effect.flatMap((fished) =>
-          fished
+      return tryForageNearbyFood(state, current).pipe(
+        Effect.flatMap((foraged) =>
+          foraged
             ? Effect.void
-            : huntForFoodRequirement(
-              state,
-              current,
-              bufferedCollectionCount("food", missing),
+            : tryFishForFood(state, current).pipe(
+              Effect.flatMap((fished) =>
+                fished
+                  ? Effect.void
+                  : huntForFoodRequirement(
+                    state,
+                    current,
+                    bufferedCollectionCount("food", missing),
+                  )
+              ),
             )
         ),
       );
     }),
   );
+}
+
+const FORAGEABLE_FOOD_BLOCK_IDS = [
+  "minecraft:beetroots",
+  "minecraft:carrots",
+  "minecraft:cave_vines",
+  "minecraft:cave_vines_plant",
+  "minecraft:melon",
+  "minecraft:potatoes",
+  "minecraft:sweet_berry_bush",
+] as const;
+
+function tryForageNearbyFood(
+  state: RunState,
+  observation: BeatGameObservation,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  const foodCount = (current: BeatGameObservation): number =>
+    EDIBLE_FOOD_ITEM_IDS.reduce(
+      (total, itemId) => total + (current.inventory.counts[itemId] ?? 0),
+      0,
+    );
+  const before = foodCount(observation);
+  return state.driver.queryBlocks({
+    center: observation.player.position,
+    radius: state.strategy.blockSearchRadius,
+    selector: {
+      blockIds: FORAGEABLE_FOOD_BLOCK_IDS,
+      requireLineOfSight: true,
+    },
+    maximumResults: 64,
+  }).pipe(
+    Effect.map((blocks) =>
+      blocks.filter(isReadyForageBlock).sort((left, right) =>
+        distanceSquared(left.position, observation.player.position)
+          - distanceSquared(right.position, observation.player.position)
+      )[0]
+    ),
+    Effect.flatMap((block) => {
+      if (block === undefined) {
+        return Effect.succeed(false);
+      }
+      const path = {
+        ...survivalPathPolicy(
+          state.strategy.path,
+          observation.player.health,
+          state.strategy.minimumHealth,
+        ),
+        allowPlacing: false,
+        avoidFluids: true,
+      };
+      const harvest = block.blockId === "minecraft:sweet_berry_bush"
+          || block.blockId === "minecraft:cave_vines"
+          || block.blockId === "minecraft:cave_vines_plant"
+        ? state.driver.act({
+          type: "interact-block",
+          position: block.position,
+          face: "up",
+        })
+        : state.driver.act({
+          type: "dig-block",
+          position: block.position,
+        });
+      return state.driver.pathfind(block.position, 3, path).pipe(
+        Effect.zipRight(harvest),
+        Effect.zipRight(collectNearbyDrops(state.driver, {
+          itemIds: EDIBLE_FOOD_ITEM_IDS,
+          radius: 8,
+          maximumDrops: 16,
+          settleDelayMs: 250,
+          path,
+        })),
+        Effect.zipRight(state.driver.observe),
+        Effect.map((current) => foodCount(current) > before),
+      );
+    }),
+  );
+}
+
+function isReadyForageBlock(block: BeatGameBlockObservation): boolean {
+  switch (block.blockId) {
+    case "minecraft:beetroots":
+      return block.properties.age === "3";
+    case "minecraft:carrots":
+    case "minecraft:potatoes":
+      return block.properties.age === "7";
+    case "minecraft:cave_vines":
+    case "minecraft:cave_vines_plant":
+      return block.properties.berries === "true";
+    case "minecraft:melon":
+      return block.diggable;
+    case "minecraft:sweet_berry_bush":
+      return Number(block.properties.age) >= 2;
+    default:
+      return false;
+  }
 }
 
 function satisfyFoodRequirement(
