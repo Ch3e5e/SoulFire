@@ -150,6 +150,7 @@ const EXPLORATION_MAXIMUM_LEG_DISTANCE = 32;
 const EXPLORATION_MAXIMUM_SURFACE_ELEVATION_CHANGE = 12;
 const MAX_SAFE_DEATH_RECOVERY_FAILURES = 3;
 const MAX_VALUABLE_DEATH_RECOVERY_PREPARATION_FAILURES = 8;
+const DEATH_RECOVERY_PREPARATION_PROGRESS_DISTANCE = 8;
 const DISTANT_DEATH_RECOVERY_BOOTSTRAP_DISTANCE = 128;
 const ACTIVE_CORPSE_RECOVERY_DISTANCE = 512;
 const IMMEDIATE_CORPSE_RECOVERY_DISTANCE = 12;
@@ -1430,12 +1431,23 @@ function executeDecision(
                 )
                 : undefined;
               if (preparationPending !== undefined) {
+                const current = yield* state.driver.observe;
                 const preparationFailures =
-                  yield* recordDeathRecoveryFailure(
-                    state,
-                    pendingDeath.observedAt,
-                    "preparation",
-                  );
+                  madeMeaningfulDeathRecoveryApproach(
+                      pendingDeath.position,
+                      respawned.player.position,
+                      current.player.position,
+                    )
+                    ? yield* clearDeathRecoveryFailure(
+                      state,
+                      pendingDeath.observedAt,
+                      "preparation",
+                    ).pipe(Effect.as(0))
+                    : yield* recordDeathRecoveryFailure(
+                      state,
+                      pendingDeath.observedAt,
+                      "preparation",
+                    );
                 const recoveryClass = classifyDeathRecoveryInventory(
                   pendingDeath.inventoryCounts,
                 );
@@ -1444,7 +1456,6 @@ function executeDecision(
                     >= MAX_SAFE_DEATH_RECOVERY_FAILURES
                   && recoveryClass !== "valuable"
                 ) {
-                  const current = yield* state.driver.observe;
                   return yield* abandonPendingDeath(
                     state,
                     pendingDeath,
@@ -1460,7 +1471,6 @@ function executeDecision(
                     preparationFailures
                       >= MAX_VALUABLE_DEATH_RECOVERY_PREPARATION_FAILURES
                   ) {
-                    const current = yield* state.driver.observe;
                     return yield* abandonPendingDeath(
                       state,
                       pendingDeath,
@@ -11247,6 +11257,39 @@ function recordDeathRecoveryFailure(
     updatedFailures.set(key, nextFailureCount);
     return [nextFailureCount, updatedFailures] as const;
   });
+}
+
+function clearDeathRecoveryFailure(
+  state: RunState,
+  observedAt: string,
+  stage: "pickup" | "preparation",
+): Effect.Effect<void> {
+  return Ref.update(state.deathRecoveryFailures, (failures) => {
+    const key = `${observedAt}:${stage}`;
+    if (!failures.has(key)) {
+      return failures;
+    }
+    const updatedFailures = new Map(failures);
+    updatedFailures.delete(key);
+    return updatedFailures;
+  });
+}
+
+function madeMeaningfulDeathRecoveryApproach(
+  deathPosition: BeatGamePosition,
+  before: BeatGamePosition,
+  after: BeatGamePosition,
+): boolean {
+  if (
+    before.dimension !== deathPosition.dimension
+    || after.dimension !== deathPosition.dimension
+  ) {
+    return false;
+  }
+  const beforeDistance = Math.sqrt(distanceSquared(before, deathPosition));
+  const afterDistance = Math.sqrt(distanceSquared(after, deathPosition));
+  return beforeDistance - afterDistance
+    >= DEATH_RECOVERY_PREPARATION_PROGRESS_DISTANCE;
 }
 
 function completePendingDeath(

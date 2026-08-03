@@ -3480,6 +3480,80 @@ describe("beat-game run lifecycle", () => {
     expect(saved?.memory.deathPositions).toHaveLength(0);
   }, 15_000);
 
+  it("preserves a valuable corpse while preparation moves meaningfully closer", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const deathPosition = {
+      x: 700,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    const observedAt = new Date().toISOString();
+    const runId = "progressing-corpse-equipment-run";
+    const teamId = "progressing-corpse-equipment-team";
+    const initial = checkpoint(BeatGamePhase.ENTER_NETHER, {
+      runId,
+      teamId,
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        deathPositions: [{
+          key: `death:${observedAt}`,
+          value: {
+            ...deathPosition,
+            inventoryCounts: { "minecraft:iron_pickaxe": 1 },
+          },
+          observedAt,
+          confidence: 1,
+        }],
+      },
+    }, undefined));
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (task.type === "collect-blocks") {
+          const current = driver.currentObservation;
+          driver.currentObservation = observation({
+            position: {
+              ...current.player.position,
+              x: current.player.position.x + 16,
+            },
+            health: current.player.health,
+            food: current.player.food,
+            counts: current.inventory.counts,
+          });
+        }
+      });
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        runId,
+        team: { teamId },
+        checkpointStore: store,
+        strategy: {
+          maximumActionRetries: 1,
+          observationPollMs: 1,
+        },
+      });
+      while (
+        driver.tasks.filter((task) => task.type === "collect-blocks").length
+          < 9
+      ) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    const saved = await Effect.runPromise(store.load(runId));
+    expect(saved?.memory.deathPositions).toContainEqual(expect.objectContaining({
+      observedAt,
+    }));
+  }, 15_000);
+
   it("does not count preparation misses as corpse pickup failures", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
