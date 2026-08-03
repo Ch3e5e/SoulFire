@@ -591,6 +591,8 @@ const ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES = new Set([
   "minecraft:witch",
 ]);
 const PROACTIVE_ESCAPE_ONLY_EVASION_RADIUS = 12;
+const PROACTIVE_MELEE_DISENGAGEMENT_RADIUS = 12;
+const MELEE_ENGAGEMENT_RADIUS = 4;
 const CREEPER_PROACTIVE_EVASION_RADIUS = 8;
 const CREEPER_EMERGENCY_REEVASION_RADIUS = 6;
 const PROACTIVE_RANGED_ENGAGEMENT_RADIUS = 16;
@@ -2397,7 +2399,14 @@ function findImmediateThreat(
         ) {
           return false;
         }
-        return distanceSquared <= 4 * 4;
+        const responseRadius = shouldDisengageFromThreat(
+          state,
+          observation,
+          target,
+        )
+          ? PROACTIVE_MELEE_DISENGAGEMENT_RADIUS
+          : MELEE_ENGAGEMENT_RADIUS;
+        return distanceSquared <= responseRadius ** 2;
       });
       if (melee !== undefined) {
         const nearbyThreats = candidates.filter(({ distanceSquared }) =>
