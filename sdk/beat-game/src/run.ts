@@ -9576,6 +9576,8 @@ function ensureInventorySpace(
     let discardPocketYaw: number | undefined;
     let discardReturnTarget: BeatGamePosition | undefined;
     let cleanupFailure: BeatGameDriverError | undefined;
+    let discardViewConfirmed = false;
+    let discardedItems = false;
     while (
       current.inventory.emptyPlayerSlots !== undefined
       && current.inventory.emptyPlayerSlots < targetEmptySlots
@@ -9636,6 +9638,15 @@ function ensureInventorySpace(
       if (current.inventory.emptyPlayerSlots === undefined) {
         break;
       }
+      if (discardPocketYaw === undefined) {
+        cleanupFailure = new BeatGameDriverError({
+          operation: "ensure-inventory-space",
+          code: "unreachable",
+          retryable: true,
+          message: "Could not excavate an isolated inventory discard pocket",
+        });
+        break;
+      }
       const discardItemId = INVENTORY_DISCARD_PRIORITY.find((itemId) =>
         (current.inventory.counts[itemId] ?? 0) > 0
       );
@@ -9670,40 +9681,58 @@ function ensureInventorySpace(
         ? Math.min(64, cobblestoneCount)
         : current.inventory.counts[itemId] ?? 0;
       const emptySlotsBefore = current.inventory.emptyPlayerSlots;
-      const discardYaw = discardPocketYaw ?? wrappedDegrees(
-        current.player.rotation.yaw + 180,
-      );
-      yield* state.driver.act({
-        type: "look",
-        yaw: discardYaw,
-        pitch: 0,
-      });
-      yield* waitForViewRotation(
-        state.driver,
-        discardYaw,
-        0,
-        20,
-      );
+      if (!discardViewConfirmed) {
+        yield* state.driver.act({
+          type: "look",
+          yaw: discardPocketYaw,
+          pitch: 0,
+        });
+        yield* waitForViewRotation(
+          state.driver,
+          discardPocketYaw,
+          0,
+          20,
+        );
+        discardViewConfirmed = true;
+      }
       yield* state.driver.act({
         type: "toss-items",
         selector: { itemIds: [itemId] },
         count,
       });
-      let safelySeparated = discardPocketYaw !== undefined;
-      if (!safelySeparated) {
-        safelySeparated = yield* tryRelativeDiscardPath(
-          current,
-          INVENTORY_DISCARD_ESCAPE_DISTANCE,
-          false,
+      discardedItems = true;
+      let observedProgress = false;
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        current = yield* state.driver.observe;
+        if (
+          current.inventory.emptyPlayerSlots === undefined
+          || current.inventory.emptyPlayerSlots > emptySlotsBefore
+        ) {
+          observedProgress = true;
+          break;
+        }
+        yield* Effect.sleep(
+          Math.max(50, state.strategy.observationPollMs),
         );
       }
-      if (!safelySeparated) {
-        yield* tryRelativeDiscardPath(
-          current,
-          INVENTORY_DISCARD_ESCAPE_DISTANCE,
-          true,
-        );
+      if (!observedProgress) {
+        cleanupFailure = new BeatGameDriverError({
+          operation: "ensure-inventory-space",
+          code: "resource-exhausted",
+          retryable: true,
+          message: `Tossing ${itemId} did not free an inventory slot`,
+        });
+        break;
       }
+    }
+    if (discardReturnTarget !== undefined) {
+      yield* state.driver.pathfind(
+        discardReturnTarget,
+        0.75,
+        discardPath(false),
+      );
+    }
+    if (discardedItems && cleanupFailure === undefined) {
       let stableObservations = 0;
       for (let attempt = 0; attempt < 20; attempt += 1) {
         current = yield* state.driver.observe;
@@ -9711,7 +9740,7 @@ function ensureInventorySpace(
           stableObservations = INVENTORY_EMPTY_SLOT_STABILITY_OBSERVATIONS;
           break;
         }
-        if (current.inventory.emptyPlayerSlots > emptySlotsBefore) {
+        if (current.inventory.emptyPlayerSlots >= minimumEmptySlots) {
           stableObservations += 1;
         } else {
           stableObservations = 0;
@@ -9735,17 +9764,9 @@ function ensureInventorySpace(
           operation: "ensure-inventory-space",
           code: "resource-exhausted",
           retryable: true,
-          message: `Tossing ${itemId} did not free an inventory slot`,
+          message: "Discarded items were picked up again after cleanup",
         });
-        break;
       }
-    }
-    if (discardReturnTarget !== undefined) {
-      yield* state.driver.pathfind(
-        discardReturnTarget,
-        0.75,
-        discardPath(false),
-      );
     }
     if (cleanupFailure !== undefined) {
       return yield* Effect.fail(cleanupFailure);

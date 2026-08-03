@@ -16667,11 +16667,11 @@ describe("beat-game run lifecycle", () => {
     expect(driver.actions.filter((action) =>
       action.type === "look"
       && action.pitch === 0
-    )).toHaveLength(2);
+    )).toHaveLength(1);
     expect(driver.actions.filter((action) =>
       action.type === "look"
       && Math.abs(Math.abs(action.yaw) - 180) < 0.001
-    )).toHaveLength(2);
+    )).toHaveLength(1);
     expect(discardTimeline.slice(0, 6)).toEqual([
       "path:discard-site",
       "path:side-pocket",
