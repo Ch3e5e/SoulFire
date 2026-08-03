@@ -3010,6 +3010,18 @@ function monitorEscapeSafety(
                     observation,
                     threat.target,
                   );
+                if (
+                  !shouldFightCaughtPursuer
+                  && continueEscapingWhenHit
+                ) {
+                  return monitorEscapeSafety(
+                    state,
+                    currentTarget,
+                    observation,
+                    continueEscapingWhenHit,
+                    directEscapeSucceeded,
+                  );
+                }
                 return Effect.succeed({
                   type: shouldFightCaughtPursuer
                     ? "defend"

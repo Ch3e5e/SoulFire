@@ -4388,7 +4388,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks.filter((task) => task.type === "flee")).toHaveLength(1);
   });
 
-  it("reorients a corpse recovery escape when the bot is hit again", async () => {
+  it("keeps a corpse recovery flee route alive when a zombie hits again", async () => {
     const driver = new FakeBeatGameDriver();
     const deathPosition = {
       x: 24,
@@ -4398,7 +4398,7 @@ describe("beat-game run lifecycle", () => {
     };
     const zombie = {
       connectionEpoch: "epoch-1",
-      networkId: 31,
+      networkId: 34,
       entityType: "minecraft:zombie",
       position: {
         x: 2,
@@ -4415,58 +4415,67 @@ describe("beat-game run lifecycle", () => {
       dead: true,
       health: 0,
       position: deathPosition,
+      counts: { "minecraft:iron_ingot": 7 },
     });
-    driver.entityResults = [zombie];
     driver.entityQueryResolver = (query) =>
       query.selector.categories?.includes(2)
-        || query.selector.networkId === zombie.networkId
-        ? driver.entityResults
+          || query.selector.networkId === zombie.networkId
+        ? [zombie]
         : [];
-    let interruptedEscapePaths = 0;
-    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+    let interruptedEscapes = 0;
+    driver.taskResolver = (task) =>
       Effect.sync(() => {
-        driver.xzPaths.push({ x, z, dimension, radius, policy });
+        driver.tasks.push(task);
+        if (task.type === "flee") {
+          driver.currentObservation = observation({ health: 3 });
+        }
       }).pipe(
-        Effect.zipRight(Effect.never),
+        Effect.zipRight(
+          task.type === "flee" ? Effect.never : Effect.void,
+        ),
         Effect.onInterrupt(() =>
           Effect.sync(() => {
-            interruptedEscapePaths += 1;
+            if (task.type === "flee") {
+              interruptedEscapes += 1;
+            }
           })
         ),
       );
 
-    let activePathsBeforeStop = 0;
-    let interruptionsBeforeStop = 0;
-    await Effect.runPromise(Effect.scoped(
+    const stateBeforeStop = await Effect.runPromise(Effect.scoped(
       beatGameWithDriver(driver, {
         strategy: { observationPollMs: 1 },
         hooks: {
           recoverDeath: () =>
             Effect.sync(() => {
               driver.currentObservation = observation({ health: 6 });
+              driver.entityResults = [zombie];
             }).pipe(Effect.zipRight(Effect.never)),
         },
       }).pipe(
         Effect.flatMap((run) =>
           Effect.gen(function* () {
-            while (driver.xzPaths.length === 0) {
+            while (!driver.tasks.some((task) => task.type === "flee")) {
               yield* Effect.sleep(1);
             }
-            driver.currentObservation = observation({ health: 3 });
-            while (driver.xzPaths.length < 2) {
-              yield* Effect.sleep(1);
-            }
-            activePathsBeforeStop = driver.xzPaths.length;
-            interruptionsBeforeStop = interruptedEscapePaths;
+            yield* Effect.sleep(250);
+            const result = {
+              interruptedEscapes,
+              fleeTasks: driver.tasks.filter((task) => task.type === "flee")
+                .length,
+            };
             yield* run.stop;
             yield* run.awaitCompletion.pipe(Effect.either);
+            return result;
           })
         ),
       ),
     ));
 
-    expect(activePathsBeforeStop).toBeGreaterThanOrEqual(2);
-    expect(interruptionsBeforeStop).toBeGreaterThanOrEqual(1);
+    expect(stateBeforeStop).toEqual({
+      interruptedEscapes: 0,
+      fleeTasks: 1,
+    });
   }, 10_000);
 
   it("keeps monitoring for new attackers after resuming item recovery", async () => {
