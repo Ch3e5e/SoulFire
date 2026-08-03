@@ -14283,6 +14283,81 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("buffers shallow fish after a healthy dry land search is exhausted", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const runId = "healthy-aquatic-buffer-run";
+    const teamId = "healthy-aquatic-buffer-team";
+    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
+      runId,
+      teamId,
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        explorationFrontiers: {
+          "minecraft:overworld:find-food-animals": {
+            origin: {
+              x: 0,
+              y: 64,
+              z: 0,
+              dimension: "minecraft:overworld",
+            },
+            nextIndex: 13,
+            totalAdvances: 12,
+          },
+        },
+      },
+    }, undefined));
+    driver.currentObservation = observation({
+      health: 20,
+      food: 18,
+      counts: {
+        "minecraft:oak_log": 8,
+        "minecraft:wooden_sword": 1,
+      },
+    });
+    const salmon = {
+      connectionEpoch: "epoch-1",
+      networkId: 53,
+      entityType: "minecraft:salmon",
+      position: {
+        x: 3,
+        y: 63,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 3,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.entityResults = [salmon];
+    driver.taskResolver = (task) => {
+      driver.tasks.push(task);
+      return task.type === "attack-entity" ? Effect.never : Effect.void;
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        runId,
+        team: { teamId },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some((task) => task.type === "attack-entity")) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    })));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+      target: expect.objectContaining({ networkId: salmon.networkId }),
+    }));
+  });
+
   it("hunts passive food barehanded when injured", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({

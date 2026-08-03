@@ -8916,11 +8916,12 @@ function shouldAllowAquaticHunt(
     targetPreference.safeAquaticFallbackAfterExplorationLegs !== undefined
     && completedDryExplorationLegs
       >= targetPreference.safeAquaticFallbackAfterExplorationLegs;
-  if (
-    exhaustedDrySearch
-    && observation.player.food <= URGENT_HUNGER_FOOD_LEVEL
-  ) {
-    return observation.player.health > LETHAL_MELEE_DISENGAGE_HEALTH;
+  if (exhaustedDrySearch) {
+    return observation.player.health >= minimumHealth
+      || (
+        observation.player.food <= URGENT_HUNGER_FOOD_LEVEL
+        && observation.player.health > LETHAL_MELEE_DISENGAGE_HEALTH
+      );
   }
   return observation.player.health >= minimumSafeHealth
     && (
