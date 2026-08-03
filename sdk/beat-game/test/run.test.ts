@@ -6996,7 +6996,7 @@ describe("beat-game run lifecycle", () => {
             ) {
               yield* Effect.sleep(1);
             }
-            yield* Effect.sleep(20);
+            yield* Effect.sleep(400);
             yield* run.stop;
             yield* run.awaitCompletion.pipe(Effect.either);
           })

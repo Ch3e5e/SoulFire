@@ -4598,6 +4598,10 @@ function defendAgainstTarget(
         : Effect.void;
       const commitThroughWound =
         shouldCommitToUnshieldedRangedFight(observation, target)
+        || (
+          PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
+          && isReadyForBarehandedDefense(observation)
+        )
         || shouldCommitToCaughtMeleePursuerFight(observation, target);
       const commitThroughLethalWound =
         shouldCommitToCloseRangedFight(observation, target)
