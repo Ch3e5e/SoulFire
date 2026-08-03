@@ -7252,6 +7252,82 @@ describe("beat-game run lifecycle", () => {
       .toBe(false);
   }, 10_000);
 
+  it("knocks back a zombie that catches a bare-handed escape", async () => {
+    const driver = new FakeBeatGameDriver();
+    const distantZombie = {
+      connectionEpoch: "epoch-1",
+      networkId: 55,
+      entityType: "minecraft:zombie",
+      position: {
+        x: 8,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2) === true
+          || query.selector.networkId === distantZombie.networkId
+        ? driver.entityResults
+        : [];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(
+        Effect.zipRight(
+          task.type === "collect-blocks" || task.type === "flee"
+            ? Effect.never
+            : Effect.void,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (!driver.tasks.some((task) =>
+              task.type === "collect-blocks"
+            )) {
+              yield* Effect.sleep(1);
+            }
+            driver.currentObservation = observation({ health: 8, food: 14 });
+            driver.entityResults = [distantZombie];
+            while (!driver.tasks.some((task) => task.type === "flee")) {
+              yield* Effect.sleep(1);
+            }
+            driver.currentObservation = observation({ health: 6, food: 14 });
+            driver.entityResults = [{
+              ...distantZombie,
+              position: { ...distantZombie.position, x: 2 },
+            }];
+            while (!driver.actions.some((action) =>
+              action.type === "attack-entity"
+            )) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.actions).toContainEqual({
+      type: "attack-entity",
+      connectionEpoch: distantZombie.connectionEpoch,
+      networkId: distantZombie.networkId,
+      sprinting: true,
+    });
+    expect(driver.tasks.some((task) => task.type === "attack-entity"))
+      .toBe(false);
+  }, 10_000);
+
   it("turns on a close zombie that catches an armed escape", async () => {
     const driver = new FakeBeatGameDriver();
     const zombie = {

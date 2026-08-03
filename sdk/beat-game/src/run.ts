@@ -2869,8 +2869,11 @@ function monitorEscapeSafety(
                   continueEscapingWhenHit,
                 );
               }
-              const caughtByFastMeleePursuer =
-                FAST_MELEE_PURSUER_ENTITY_TYPES.has(
+              const caughtByCloseMeleePursuer =
+                PROACTIVE_MELEE_HOSTILE_ENTITY_TYPES.has(
+                  threat.target.entityType,
+                )
+                && !PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(
                   threat.target.entityType,
                 )
                 && distanceSquared(
@@ -2878,7 +2881,7 @@ function monitorEscapeSafety(
                     threat.target.position,
                   ) <= EMERGENCY_KNOCKBACK_RANGE ** 2;
               if (
-                caughtByFastMeleePursuer
+                caughtByCloseMeleePursuer
                 && isSameEntityTarget(target, threat.target)
               ) {
                 return Effect.succeed({
