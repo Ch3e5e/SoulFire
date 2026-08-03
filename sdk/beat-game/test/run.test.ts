@@ -4476,6 +4476,8 @@ describe("beat-game run lifecycle", () => {
       interruptedEscapes: 0,
       fleeTasks: 1,
     });
+    const fleeIndex = driver.tasks.findIndex((task) => task.type === "flee");
+    expect(driver.taskPolicies[fleeIndex]?.allowMining).toBe(false);
   }, 10_000);
 
   it("keeps monitoring for new attackers after resuming item recovery", async () => {

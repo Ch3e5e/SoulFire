@@ -2715,11 +2715,7 @@ function escapeFromTarget(
       maximumEscapes: SINGLE_THREAT_MAXIMUM_ESCAPES,
       path: {
         ...escapePath,
-        allowMining: rangedThreat
-          ? false
-          : target.entityType === "minecraft:creeper"
-          ? needsRecovery
-          : escapePath.allowMining,
+        allowMining: needsRecovery && !rangedThreat,
         allowPlacing: false,
         avoidFluids: !currentlyInFluid,
         maxFallDistance: Math.min(
