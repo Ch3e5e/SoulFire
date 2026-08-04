@@ -207,7 +207,8 @@ describe("smoke decision diagnostics", () => {
     expect(diagnostics.activeAction).toMatchObject({
       action: "recover-death",
       actionId: "recovery-1",
-      reason: "The action is recovering 1 remembered death location",
+      reason:
+        "The action is processing the newest eligible corpse; 1 death location remains in checkpoint memory",
     });
     expect(diagnostics.nextIfReplanned).toMatchObject({
       decision: {
@@ -230,7 +231,12 @@ describe("smoke decision diagnostics", () => {
       rememberedDeaths: [{
         key: "death-1",
         position: { x: 100, y: 63, z: -20 },
+        inventoryItemCount: 1,
       }],
+      recoveryCandidate: {
+        key: "death-1",
+        inventoryItemCount: 1,
+      },
     });
   });
 });

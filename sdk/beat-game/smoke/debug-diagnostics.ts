@@ -294,7 +294,13 @@ export function buildSmokeDecisionDiagnostics(
         dimension: entry.value.dimension,
       },
       inventoryCounts: entry.value.inventoryCounts ?? {},
+      inventoryItemCount: Object.values(
+        entry.value.inventoryCounts ?? {},
+      ).reduce((total, count) => total + Math.max(0, count), 0),
     }));
+  const recoveryCandidate = planner.currentAction === "recover-death"
+    ? rememberedDeaths[0]
+    : undefined;
   const activeAction = planner.currentAction === undefined
     ? undefined
     : {
@@ -337,6 +343,7 @@ export function buildSmokeDecisionDiagnostics(
     },
     blockers: {
       pendingRequirements,
+      recoveryCandidate,
       rememberedDeaths,
     },
     progress: {
@@ -628,9 +635,9 @@ function explainCurrentAction(
     const remembered = checkpoint.memory.deathPositions.length;
     return observation.player.dead
       ? "The player is dead and must respawn before recovery can continue"
-      : `The action is recovering ${remembered} remembered death location${
-        remembered === 1 ? "" : "s"
-      }`;
+      : `The action is processing the newest eligible corpse; ${remembered} death location${
+        remembered === 1 ? " remains" : "s remain"
+      } in checkpoint memory`;
   }
   if (action.startsWith("satisfy:")) {
     const key = action.slice("satisfy:".length);
