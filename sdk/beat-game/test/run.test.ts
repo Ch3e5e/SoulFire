@@ -24390,6 +24390,46 @@ describe("beat-game run lifecycle", () => {
     })));
   });
 
+  it("keeps gathering wood with raw food above the emergency threshold", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      food: 8,
+      counts: { "minecraft:mutton": 5 },
+    });
+    let interruptedCollections = 0;
+    let resolveCollectionStarted!: () => void;
+    const collectionStarted = new Promise<void>((resolve) => {
+      resolveCollectionStarted = resolve;
+    });
+    driver.taskResolver = (task) => {
+      driver.tasks.push(task);
+      if (task.type !== "collect-blocks") {
+        return Effect.void;
+      }
+      resolveCollectionStarted();
+      return Effect.never.pipe(
+        Effect.onInterrupt(() =>
+          Effect.sync(() => {
+            interruptedCollections += 1;
+          })
+        ),
+      );
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      yield* Effect.promise(() => collectionStarted).pipe(
+        Effect.timeout("5 seconds"),
+      );
+      yield* Effect.sleep(100);
+      expect(interruptedCollections).toBe(0);
+      expect(driver.tasks.some((task) => task.type === "auto-eat")).toBe(false);
+      yield* run.stop;
+    })));
+  });
+
   it("continues a food-supply hunt while wounded", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({

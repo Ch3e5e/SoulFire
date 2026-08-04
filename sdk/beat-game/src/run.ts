@@ -4081,6 +4081,7 @@ function shouldInterruptForMeal(
     || (
       decision.requirement.key !== "food"
       && decision.requirement.key !== "food-supply"
+      && decision.requirement.key !== "logs"
     );
 }
 
