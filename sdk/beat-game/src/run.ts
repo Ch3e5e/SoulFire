@@ -2259,7 +2259,6 @@ function executeDecision(
                       current.player.position,
                       pendingDeath.position,
                     ) <= ACTIVE_CORPSE_RECOVERY_DISTANCE ** 2
-                  && current.player.health > LETHAL_MELEE_DISENGAGE_HEALTH
                   && current.player.food > CRITICAL_HUNGER_FOOD_LEVEL
                   && (
                     pendingDeath.position.y

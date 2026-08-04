@@ -5071,7 +5071,7 @@ describe("beat-game run lifecycle", () => {
     }));
   }, 15_000);
 
-  it("attempts a nearby valuable corpse after bounded food searches", async () => {
+  it("attempts a nearby valuable corpse after bounded low-health food searches", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const deathPosition = {
@@ -5102,12 +5102,12 @@ describe("beat-game run lifecycle", () => {
         }],
       },
     }, undefined));
-    driver.currentObservation = observation({ health: 15, food: 16 });
+    driver.currentObservation = observation({ health: 5, food: 16 });
     driver.xzPathResolver = (x, z, dimension, radius, policy) =>
       Effect.sync(() => {
         driver.xzPaths.push({ x, z, dimension, radius, policy });
         driver.currentObservation = observation({
-          health: 15,
+          health: 5,
           food: 16,
           position: {
             ...driver.currentObservation.player.position,
