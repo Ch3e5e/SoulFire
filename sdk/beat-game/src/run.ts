@@ -4125,12 +4125,13 @@ function hasUnsafeAirDuringAction(
   >,
   observation: BeatGameObservation,
 ): boolean {
-  const provisioningFood = decision.type === "satisfy-requirement"
+  const managesAirRecovery = decision.type === "satisfy-requirement"
     && (
       decision.requirement.key === "food"
       || decision.requirement.key === "food-supply"
+      || decision.requirement.key === "lava-bucket"
     );
-  if (!provisioningFood) {
+  if (!managesAirRecovery) {
     return hasUnsafeAir(observation);
   }
   return observation.player.maxAir > 0
@@ -8161,6 +8162,22 @@ function excavateResourceSearchStaircase(
         return yield* Effect.fail(origin.left);
       }
       yield* escapeToOverworldSurface(state, position);
+      const surfaced = yield* state.driver.observe;
+      yield* advanceExplorationFrontier(
+        state,
+        surfaced.player.position,
+        explorationPurpose(
+          "avoid-unstable-resource-staircase",
+          surfaced.player.position,
+        ),
+        24,
+        {
+          ...state.strategy.path,
+          avoidFluids: true,
+        },
+        true,
+        false,
+      );
       return;
     }
     const from = origin.right;

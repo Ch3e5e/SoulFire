@@ -15019,6 +15019,7 @@ describe("beat-game run lifecycle", () => {
     } as const;
     driver.currentObservation = observation({
       position: aquiferPosition,
+      air: 195,
       counts: {
         "minecraft:bucket": 1,
         "minecraft:cobblestone": 120,
@@ -15065,16 +15066,27 @@ describe("beat-game run lifecycle", () => {
     const surfaceRecovered = new Promise<void>((resolve) => {
       resolveSurfaceRecovery = resolve;
     });
+    let resolveRelocation!: () => void;
+    const relocated = new Promise<void>((resolve) => {
+      resolveRelocation = resolve;
+    });
     driver.pathResolver = (position, radius, policy) =>
+      Effect.sleep(50).pipe(
+        Effect.zipRight(Effect.sync(() => {
+          driver.paths.push({ position, radius, policy });
+          if (position.y >= 64) {
+            driver.currentObservation = observation({
+              position,
+              counts: driver.currentObservation.inventory.counts,
+            });
+            resolveSurfaceRecovery();
+          }
+        })),
+      );
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
       Effect.sync(() => {
-        driver.paths.push({ position, radius, policy });
-        if (position.y >= 64) {
-          driver.currentObservation = observation({
-            position,
-            counts: driver.currentObservation.inventory.counts,
-          });
-          resolveSurfaceRecovery();
-        }
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+        resolveRelocation();
       });
     await Effect.runPromise(store.save(checkpoint(
       BeatGamePhase.ENTER_NETHER,
@@ -15094,6 +15106,9 @@ describe("beat-game run lifecycle", () => {
       yield* Effect.promise(() => surfaceRecovered).pipe(
         Effect.timeout("5 seconds"),
       );
+      yield* Effect.promise(() => relocated).pipe(
+        Effect.timeout("5 seconds"),
+      );
       yield* run.stop;
       yield* run.awaitCompletion.pipe(Effect.either);
     })));
@@ -15107,6 +15122,12 @@ describe("beat-game run lifecycle", () => {
     }));
     expect(driver.paths).not.toContainEqual(expect.objectContaining({
       position: expect.objectContaining({ y: 53 }),
+    }));
+    expect(driver.xzPaths).toContainEqual(expect.objectContaining({
+      dimension: "minecraft:overworld",
+      policy: expect.objectContaining({
+        avoidFluids: true,
+      }),
     }));
   });
 
