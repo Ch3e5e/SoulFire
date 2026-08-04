@@ -126,14 +126,6 @@ public final class FleeTaskProvider implements BotTaskProvider<FleeTask> {
     return normalized;
   }
 
-  static boolean shouldSprintJump(
-    boolean sprinting,
-    boolean onGround,
-    boolean inFluid
-  ) {
-    return sprinting && onGround && !inFluid;
-  }
-
   private static final class FleeControl implements ControlTask {
     private final BotTaskContext context;
     private final FleeTask input;
@@ -220,19 +212,6 @@ public final class FleeTaskProvider implements BotTaskProvider<FleeTask> {
       var escape = Objects.requireNonNull(activeEscape);
       if (!escape.result().isDone()) {
         escape.control().tick();
-        var bot = context.bot();
-        var player = bot.minecraft().player;
-        if (player != null && shouldSprintJump(
-          input.getOptions().getSprint(),
-          player.onGround(),
-          player.isInWater() || player.isInLava()
-        )) {
-          // Sprint jumping is both faster on level ground and makes a fleeing
-          // player substantially harder for ranged mobs to hit. Apply it
-          // after the path executor has chosen the safe forward route so the
-          // hop follows that route instead of replacing it.
-          bot.controlState().jump(true);
-        }
       }
       if (!escape.result().isDone()) {
         return;
