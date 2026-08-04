@@ -3133,6 +3133,98 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("scouts a nearby shallow old corpse before gathering supplies", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const deathPosition = {
+      x: 72,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    const observedAt = new Date(Date.now() - 10 * 60_000).toISOString();
+    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
+      runId: "shallow-corpse-scout-run",
+      teamId: "shallow-corpse-scout-team",
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        deathPositions: [{
+          key: `death:${observedAt}`,
+          value: {
+            ...deathPosition,
+            inventoryCounts: { "minecraft:iron_ingot": 9 },
+          },
+          observedAt,
+          confidence: 1,
+        }],
+      },
+    }, undefined));
+    driver.currentObservation = observation({
+      health: 14,
+      food: 8,
+    });
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(6) ? [] : driver.entityResults;
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+        if (position.x === deathPosition.x) {
+          driver.currentObservation = observation({
+            health: 14,
+            food: 8,
+            position: {
+              x: deathPosition.x - 23.5,
+              y: deathPosition.y,
+              z: deathPosition.z,
+              dimension: deathPosition.dimension,
+            },
+          });
+        }
+      });
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        runId: "shallow-corpse-scout-run",
+        team: { teamId: "shallow-corpse-scout-team" },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            yield* run.events.pipe(
+              Stream.filter((event) =>
+                event.type === "items-recovered"
+                && event.detail
+                  === "Abandoned a stale corpse after confirming no drops remain nearby"
+              ),
+              Stream.runHead,
+            );
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.paths).toContainEqual(expect.objectContaining({
+      position: deathPosition,
+      radius: 24,
+      policy: expect.objectContaining({
+        allowMining: false,
+        allowPlacing: false,
+        avoidFluids: true,
+      }),
+    }));
+    expect(driver.tasks).toHaveLength(0);
+    expect(
+      (await Effect.runPromise(store.load("shallow-corpse-scout-run")))
+        ?.memory.deathPositions,
+    ).toHaveLength(0);
+  });
+
   it("arms itself after partially recovering an active corpse", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();

@@ -164,6 +164,9 @@ const DISTANT_DEATH_RECOVERY_BOOTSTRAP_DISTANCE = 128;
 const ACTIVE_CORPSE_RECOVERY_DISTANCE = 512;
 const ACTIVE_CORPSE_RECOVERY_MAX_AGE_MS = 4 * 60_000;
 const IMMEDIATE_CORPSE_RECOVERY_DISTANCE = 12;
+const STALE_CORPSE_SCOUT_MAXIMUM_DISTANCE = 96;
+const STALE_CORPSE_SCOUT_MAXIMUM_VERTICAL_DISTANCE = 12;
+const STALE_CORPSE_SCOUT_GOAL_RADIUS = 24;
 const DEEP_CORPSE_EXCAVATION_MINIMUM_DEPTH = 32;
 const DISTANT_CORPSE_EXCAVATION_MINIMUM_HORIZONTAL_DISTANCE = 64;
 const CORPSE_DROP_INSPECTION_DISTANCE = 32;
@@ -1882,11 +1885,56 @@ function executeDecision(
                 respawned.player.position,
               );
             if (recoveryAttempted) {
-              const nearbyCorpseDrops = yield* inspectNearbyCorpseDrops(
+              let nearbyCorpseDrops = yield* inspectNearbyCorpseDrops(
                 state,
                 pendingDeath,
                 respawned,
               );
+              if (
+                nearbyCorpseDrops === undefined
+                && shouldScoutStaleCorpse(pendingDeath, respawned)
+              ) {
+                yield* emit(state, {
+                  type: "diagnostic",
+                  message:
+                    "Scouting a nearby shallow corpse before gathering a full recovery kit",
+                  data: {
+                    deathPosition: pendingDeath.position,
+                    playerPosition: respawned.player.position,
+                  },
+                });
+                yield* state.driver.pathfind(
+                  pendingDeath.position,
+                  STALE_CORPSE_SCOUT_GOAL_RADIUS,
+                  {
+                    ...state.strategy.path,
+                    allowMining: false,
+                    allowPlacing: false,
+                    avoidFluids: true,
+                    maxSearchTimeMs: Math.min(
+                      state.strategy.path.maxSearchTimeMs,
+                      30_000,
+                    ),
+                  },
+                ).pipe(
+                  Effect.catchTag("BeatGameDriverError", (error) =>
+                    emit(state, {
+                      type: "diagnostic",
+                      message: "Could not reach corpse scouting range",
+                      data: {
+                        deathPosition: pendingDeath.position,
+                        error: error.message,
+                      },
+                    })
+                  ),
+                );
+                respawned = yield* observeDriverFresh(state);
+                nearbyCorpseDrops = yield* inspectNearbyCorpseDrops(
+                  state,
+                  pendingDeath,
+                  respawned,
+                );
+              }
               if (nearbyCorpseDrops?.length === 0) {
                 return yield* abandonPendingDeath(
                   state,
@@ -13272,6 +13320,28 @@ function isRecentActiveCorpse(pendingDeath: PendingDeath): boolean {
   return Number.isFinite(ageMs)
     && ageMs >= 0
     && ageMs <= ACTIVE_CORPSE_RECOVERY_MAX_AGE_MS;
+}
+
+function shouldScoutStaleCorpse(
+  pendingDeath: PendingDeath,
+  observation: BeatGameObservation,
+): boolean {
+  if (
+    isRecentActiveCorpse(pendingDeath)
+    || pendingDeath.position.dimension
+      !== observation.player.position.dimension
+    || observation.player.health <= LETHAL_MELEE_DISENGAGE_HEALTH
+    || observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
+    || Math.abs(
+        pendingDeath.position.y - observation.player.position.y,
+      ) > STALE_CORPSE_SCOUT_MAXIMUM_VERTICAL_DISTANCE
+  ) {
+    return false;
+  }
+  return horizontalDistanceSquared(
+    pendingDeath.position,
+    observation.player.position,
+  ) <= STALE_CORPSE_SCOUT_MAXIMUM_DISTANCE ** 2;
 }
 
 function classifyDeathRecoveryInventory(
