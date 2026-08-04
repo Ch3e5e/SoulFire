@@ -2916,9 +2916,12 @@ function monitorObservedSafety(
     && decision.type !== "retreat"
     && decision.type !== "eat"
   ) {
-    return shouldTakeNightShelter(state, observation).pipe(
-      Effect.flatMap((shelterNeeded) =>
-        shelterNeeded
+    return Effect.all([
+      shouldTakeNightShelter(state, previousObservation),
+      shouldTakeNightShelter(state, observation),
+    ]).pipe(
+      Effect.flatMap(([previousShelterNeeded, shelterNeeded]) =>
+        previousShelterNeeded && shelterNeeded
           ? Effect.succeed({
             replanReason: "night fell while the bot was under-equipped",
           } satisfies ActionResult)

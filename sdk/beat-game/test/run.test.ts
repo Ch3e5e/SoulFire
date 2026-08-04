@@ -60,6 +60,65 @@ async function runUntilExplorationStarts(options: {
 }
 
 describe("beat-game run lifecycle", () => {
+  it("ignores one transient under-equipped observation at night", async () => {
+    const driver = new FakeBeatGameDriver();
+    const protectedObservation = observation({
+      counts: {
+        "minecraft:shield": 1,
+        "minecraft:stone_sword": 1,
+        "minecraft:cooked_beef": 4,
+      },
+    });
+    driver.currentEnvironment = { gameTime: 14_000n };
+    driver.currentObservation = protectedObservation;
+    let actionStarted = false;
+    let safetyObservations = 0;
+    driver.observationResolver = () =>
+      Effect.sync(() => {
+        if (!actionStarted) {
+          return protectedObservation;
+        }
+        safetyObservations += 1;
+        return safetyObservations === 1
+          ? observation({ counts: { "minecraft:stone_sword": 1 } })
+          : protectedObservation;
+      });
+    const failures: string[] = [];
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+        hooks: {
+          satisfyRequirement: () =>
+            Effect.sync(() => {
+              actionStarted = true;
+            }).pipe(Effect.zipRight(Effect.never)),
+        },
+      });
+      yield* run.events.pipe(
+        Stream.runForEach((event) =>
+          event.type === "action-failed"
+              && event.detail?.includes(
+                "night fell while the bot was under-equipped",
+              ) === true
+            ? Effect.sync(() => {
+              failures.push(event.detail ?? "");
+            })
+            : Effect.void
+        ),
+        Effect.forkScoped,
+      );
+      while (safetyObservations < 3) {
+        yield* Effect.sleep(1);
+      }
+      yield* Effect.sleep(5);
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    expect(failures).toEqual([]);
+  });
+
   it("interrupts vulnerable work at night and seals underground", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentEnvironment = { gameTime: 12_900n };
