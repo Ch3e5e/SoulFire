@@ -156,6 +156,7 @@ const MAX_VALUABLE_DEATH_RECOVERY_PREPARATION_FAILURES = 8;
 const DEATH_RECOVERY_PREPARATION_PROGRESS_DISTANCE = 8;
 const DISTANT_DEATH_RECOVERY_BOOTSTRAP_DISTANCE = 128;
 const ACTIVE_CORPSE_RECOVERY_DISTANCE = 512;
+const ACTIVE_CORPSE_RECOVERY_MAX_AGE_MS = 4 * 60_000;
 const IMMEDIATE_CORPSE_RECOVERY_DISTANCE = 12;
 const DEEP_CORPSE_EXCAVATION_MINIMUM_DEPTH = 32;
 const DISTANT_CORPSE_EXCAVATION_MINIMUM_HORIZONTAL_DISTANCE = 64;
@@ -12961,6 +12962,11 @@ function prepareForDistantDeathRecovery(
     const canRaceActiveCorpse =
       current.player.health >= state.strategy.minimumHealth
       && (
+        deathRecoveryTravelFoodCount(current)
+            >= DEATH_RECOVERY_FOOD_RESERVE_COUNT
+        || isRecentActiveCorpse(pendingDeath)
+      )
+      && (
         !recoveryRequiresPreparedExcavation
         || hasMiningPickaxe(current)
       )
@@ -13148,6 +13154,13 @@ function prepareForDistantDeathRecovery(
     }
     return undefined;
   });
+}
+
+function isRecentActiveCorpse(pendingDeath: PendingDeath): boolean {
+  const ageMs = Date.now() - Date.parse(pendingDeath.observedAt);
+  return Number.isFinite(ageMs)
+    && ageMs >= 0
+    && ageMs <= ACTIVE_CORPSE_RECOVERY_MAX_AGE_MS;
 }
 
 function classifyDeathRecoveryInventory(
