@@ -155,6 +155,9 @@ const REQUIREMENT_NO_PROGRESS_REPLAN_DELAY_MS = 1_000;
 const LOCAL_NAVIGATION_RECOVERY_MINIMUM_DISTANCE = 3;
 const LOCAL_NAVIGATION_RECOVERY_MAX_SEARCH_TIME_MS = 5_000;
 const LOCAL_NAVIGATION_RECOVERY_TIMEOUT_MS = 15_000;
+const DRY_SHAFT_RECOVERY_MAXIMUM_RISE = 8;
+const DRY_SHAFT_RECOVERY_STEP_RADIUS = 0.35;
+const DRY_SHAFT_RECOVERY_STEP_TIMEOUT_MS = 10_000;
 const EXPLORATION_MAXIMUM_LEG_DISTANCE = 32;
 const EXPLORATION_MAXIMUM_SURFACE_ELEVATION_CHANGE = 12;
 const MAX_SAFE_DEATH_RECOVERY_FAILURES = 3;
@@ -10520,12 +10523,13 @@ function recoverLocalNavigationTrap(
   if (position.dimension !== "minecraft:overworld") {
     return Effect.succeed(false);
   }
-  return state.driver.sampleSurface(
-    position,
-    AIR_ESCAPE_SURFACE_SEARCH_RADIUS,
-    1,
-  ).pipe(
-    Effect.map((columns) => {
+  return Effect.gen(function* () {
+    const columns = yield* state.driver.sampleSurface(
+      position,
+      AIR_ESCAPE_SURFACE_SEARCH_RADIUS,
+      1,
+    );
+    const targets = (() => {
       const stableColumns = selectStableSurfaceEscapeColumns(
         columns,
         position,
@@ -10553,41 +10557,221 @@ function recoverLocalNavigationTrap(
         ]),
       );
       return [...uniqueColumns.values()].map((surface) => ({
-          x: surface.x + 0.5,
-          y: surface.surfaceY + 1,
-          z: surface.z + 0.5,
-          dimension: position.dimension,
-        }));
-    }),
-    Effect.flatMap((targets) =>
-      targets.length === 0
-        ? Effect.succeed(false)
-        : pathfindToFirstReachableSurface(
-          state,
-          targets,
-          0,
-          LOCAL_NAVIGATION_RECOVERY_TIMEOUT_MS,
-          {
-            ...state.strategy.path,
-            allowMining: true,
-            allowPlacing: true,
-            avoidFluids: true,
-            sprint: false,
-            maxSearchTimeMs: Math.min(
-              state.strategy.path.maxSearchTimeMs,
-              LOCAL_NAVIGATION_RECOVERY_MAX_SEARCH_TIME_MS,
-            ),
-          },
-        ).pipe(
-          Effect.as(true),
-          Effect.catchAll((cause) =>
-            cause.operation === "pathfind"
-              ? Effect.succeed(false)
-              : Effect.fail(cause)
+        x: surface.x + 0.5,
+        y: surface.surfaceY + 1,
+        z: surface.z + 0.5,
+        dimension: position.dimension,
+      }));
+    })();
+    if (targets.length === 0) {
+      return false;
+    }
+    const pathRecovered = yield* pathfindToFirstReachableSurface(
+      state,
+      targets,
+      0,
+      LOCAL_NAVIGATION_RECOVERY_TIMEOUT_MS,
+      {
+        ...state.strategy.path,
+        allowMining: true,
+        allowPlacing: true,
+        avoidFluids: true,
+        sprint: false,
+        maxSearchTimeMs: Math.min(
+          state.strategy.path.maxSearchTimeMs,
+          LOCAL_NAVIGATION_RECOVERY_MAX_SEARCH_TIME_MS,
+        ),
+      },
+      DRY_SURFACE_APPROACH_RADIUS,
+    ).pipe(
+      Effect.as(true),
+      Effect.catchAll((cause) =>
+        cause.operation === "pathfind"
+          ? Effect.succeed(false)
+          : Effect.fail(cause)
+      ),
+    );
+    if (pathRecovered) {
+      return true;
+    }
+    return yield* excavateDryShaftRecoveryStaircase(
+      state,
+      position,
+      targets.map(({ y }) => y),
+    );
+  });
+}
+
+interface DryShaftRecoveryStep {
+  readonly feet: BeatGameBlockPosition;
+  readonly head: BeatGameBlockPosition;
+}
+
+function excavateDryShaftRecoveryStaircase(
+  state: RunState,
+  position: BeatGamePosition,
+  candidateSurfaceY: readonly number[],
+): Effect.Effect<boolean, BeatGameDriverError> {
+  return Effect.gen(function* () {
+    const startingY = Math.floor(position.y);
+    const targetY = [...candidateSurfaceY]
+      .filter((y) =>
+        y - startingY >= 2
+        && y - startingY <= DRY_SHAFT_RECOVERY_MAXIMUM_RISE
+      )
+      .sort((left, right) => left - right)[0];
+    if (targetY === undefined) {
+      return false;
+    }
+    const directions = [
+      { x: 1, z: 0 },
+      { x: -1, z: 0 },
+      { x: 0, z: 1 },
+      { x: 0, z: -1 },
+    ] as const;
+    let route: readonly DryShaftRecoveryStep[] | undefined;
+    for (const direction of directions) {
+      const candidate = yield* inspectDryShaftRecoveryRoute(
+        state.driver,
+        position,
+        targetY,
+        direction,
+      );
+      if (candidate !== undefined) {
+        route = candidate;
+        break;
+      }
+    }
+    if (route === undefined) {
+      return false;
+    }
+
+    const observation = yield* state.driver.observe;
+    if (hasMiningPickaxe(observation)) {
+      yield* state.driver.act({
+        type: "select-item",
+        selector: { itemIds: MINING_PICKAXE_ITEM_IDS },
+      });
+    }
+    for (const step of route) {
+      for (const obstruction of [step.head, step.feet]) {
+        const block = yield* queryExactBlock(state.driver, obstruction);
+        if (block !== undefined && !block.replaceable) {
+          yield* state.driver.act({
+            type: "dig-block",
+            position: obstruction,
+          });
+        }
+      }
+      const target: BeatGamePosition = {
+        x: step.feet.x + 0.5,
+        y: step.feet.y,
+        z: step.feet.z + 0.5,
+        dimension: step.feet.dimension,
+      };
+      yield* state.driver.pathfind(
+        target,
+        DRY_SHAFT_RECOVERY_STEP_RADIUS,
+        {
+          ...state.strategy.path,
+          allowMining: false,
+          allowPlacing: false,
+          avoidFluids: true,
+          sprint: false,
+          maxSearchTimeMs: Math.min(
+            state.strategy.path.maxSearchTimeMs,
+            LOCAL_NAVIGATION_RECOVERY_MAX_SEARCH_TIME_MS,
           ),
-        )
-    ),
-  );
+        },
+      ).pipe(
+        Effect.timeoutFail({
+          duration: DRY_SHAFT_RECOVERY_STEP_TIMEOUT_MS,
+          onTimeout: () => new BeatGameDriverError({
+            operation: "recover-dry-shaft",
+            code: "unreachable",
+            retryable: true,
+            message: `Timed out climbing the recovery stair at ${
+              positionKey(step.feet)
+            }`,
+          }),
+        }),
+      );
+      const current = yield* state.driver.observe;
+      if (
+        Math.floor(current.player.position.x) !== step.feet.x
+        || Math.floor(current.player.position.z) !== step.feet.z
+        || current.player.position.y < step.feet.y - 0.25
+      ) {
+        return yield* Effect.fail(new BeatGameDriverError({
+          operation: "recover-dry-shaft",
+          code: "no-progress",
+          retryable: true,
+          message: `The bot did not reach recovery stair ${
+            positionKey(step.feet)
+          }`,
+        }));
+      }
+    }
+    return true;
+  });
+}
+
+function inspectDryShaftRecoveryRoute(
+  driver: BeatGameDriver,
+  position: BeatGamePosition,
+  targetY: number,
+  direction: Readonly<{ x: number; z: number }>,
+): Effect.Effect<readonly DryShaftRecoveryStep[] | undefined, BeatGameDriverError> {
+  return Effect.gen(function* () {
+    const originX = Math.floor(position.x);
+    const originZ = Math.floor(position.z);
+    const startingY = Math.floor(position.y);
+    const steps: DryShaftRecoveryStep[] = [];
+    for (let rise = 1; startingY + rise <= targetY; rise += 1) {
+      const feet: BeatGameBlockPosition = {
+        x: originX + direction.x * rise,
+        y: startingY + rise,
+        z: originZ + direction.z * rise,
+        dimension: position.dimension,
+      };
+      const head = { ...feet, y: feet.y + 1 };
+      const support = { ...feet, y: feet.y - 1 };
+      const [supportBlock, feetBlock, headBlock] = yield* Effect.all([
+        queryExactBlock(driver, support),
+        queryExactBlock(driver, feet),
+        queryExactBlock(driver, head),
+      ], { concurrency: 3 });
+      if (
+        !isStableDryShaftSupport(supportBlock)
+        || !isSafeDryShaftSpace(feetBlock)
+        || !isSafeDryShaftSpace(headBlock)
+      ) {
+        return undefined;
+      }
+      steps.push({ feet, head });
+    }
+    return steps;
+  });
+}
+
+function isStableDryShaftSupport(
+  block: BeatGameBlockObservation | undefined,
+): boolean {
+  return block !== undefined
+    && !block.replaceable
+    && block.solid !== false
+    && !isPlayerFluidBlock(block.blockId)
+    && block.properties.waterlogged !== "true"
+    && !isGravityAffectedBlockId(block.blockId);
+}
+
+function isSafeDryShaftSpace(
+  block: BeatGameBlockObservation | undefined,
+): boolean {
+  return block !== undefined
+    && !isPlayerFluidBlock(block.blockId)
+    && block.properties.waterlogged !== "true"
+    && (block.replaceable || block.diggable);
 }
 
 function pathfindToFirstReachableSurface(
@@ -10601,6 +10785,7 @@ function pathfindToFirstReachableSurface(
     allowPlacing: true,
     avoidFluids: true,
   },
+  goalRadius = 1.5,
 ): Effect.Effect<void, BeatGameDriverError> {
   const target = targets[index];
   if (target === undefined) {
@@ -10608,7 +10793,7 @@ function pathfindToFirstReachableSurface(
   }
   const pathfind = state.driver.pathfind(
     target,
-    1.5,
+    goalRadius,
     path,
   );
   const boundedPathfind = attemptTimeoutMs === undefined
@@ -10650,6 +10835,7 @@ function pathfindToFirstReachableSurface(
           index + 1,
           attemptTimeoutMs,
           path,
+          goalRadius,
         )
         : Effect.fail(cause)
     ),

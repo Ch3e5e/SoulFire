@@ -7187,6 +7187,166 @@ describe("beat-game run lifecycle", () => {
     });
   }, 10_000);
 
+  it("carves an upward staircase out of a dry shaft", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      position: { x: 0.5, y: 61.2, z: 0.5 },
+      counts: {
+        "minecraft:cooked_beef": 4,
+        "minecraft:stone_pickaxe": 1,
+        "minecraft:stone_sword": 1,
+      },
+    });
+    driver.entityResults = [{
+      connectionEpoch: "epoch-1",
+      networkId: 43,
+      entityType: "minecraft:creeper",
+      position: {
+        x: 4,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:01.000Z",
+    }];
+    driver.surfaceColumns = Array.from({ length: 9 }, (_, index) => ({
+      x: index % 3 + 2,
+      z: Math.floor(index / 3) - 1,
+      loaded: true,
+      surfaceY: 64,
+      blockId: "minecraft:grass_block",
+      biomeId: "minecraft:plains",
+      skyLight: 15,
+      blockLight: 0,
+    }));
+    const blocks = new Map<string, ReturnType<typeof blockObservation>>();
+    const setBlock = (
+      position: BeatGameBlockPosition,
+      overrides: Parameters<typeof blockObservation>[1] = {},
+    ) => {
+      blocks.set(
+        `${position.x}:${position.y}:${position.z}`,
+        blockObservation(position, overrides),
+      );
+    };
+    for (let rise = 1; rise <= 4; rise += 1) {
+      setBlock({
+        x: rise,
+        y: 61 + rise - 1,
+        z: 0,
+        dimension: "minecraft:overworld",
+      }, rise === 4 ? { blockId: "minecraft:grass_block" } : {});
+      for (const y of [61 + rise, 62 + rise]) {
+        setBlock({
+          x: rise,
+          y,
+          z: 0,
+          dimension: "minecraft:overworld",
+        }, rise === 4
+          ? {
+            blockId: "minecraft:air",
+            diggable: false,
+            replaceable: true,
+            solid: false,
+          }
+          : {});
+      }
+    }
+    driver.blockQueryResolver = ({ center, radius, selector }) => {
+      if (radius > 0.25 || Object.keys(selector).length > 0) {
+        return [];
+      }
+      const block = blocks.get(
+        `${Math.floor(center.x)}:${Math.floor(center.y)}:${
+          Math.floor(center.z)
+        }`,
+      );
+      return block === undefined ? [] : [block];
+    };
+    driver.actionObserver = (action) => {
+      if (action.type !== "dig-block") {
+        return;
+      }
+      setBlock(action.position, {
+        blockId: "minecraft:air",
+        diggable: false,
+        replaceable: true,
+        solid: false,
+      });
+    };
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(
+        Effect.zipRight(
+          task.type === "flee"
+            ? Effect.fail(new BeatGameDriverError({
+              operation: "task.flee",
+              code: "unreachable",
+              retryable: true,
+              message: "The bot is trapped in a dry shaft",
+            }))
+            : Effect.never,
+        ),
+      );
+    driver.pathResolver = (position, radius, policy) => {
+      const record = Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+      });
+      if (radius !== 0.35) {
+        return record.pipe(
+          Effect.zipRight(Effect.fail(new BeatGameDriverError({
+            operation: "pathfind",
+            code: "unreachable",
+            retryable: true,
+            message: "The sealed vertical shaft has no walkable route",
+          }))),
+        );
+      }
+      return record.pipe(Effect.tap(() => Effect.sync(() => {
+        driver.currentObservation = {
+          ...driver.currentObservation,
+          player: {
+            ...driver.currentObservation.player,
+            position,
+          },
+        };
+        if (position.y === 65) {
+          driver.entityResults = [];
+        }
+      })));
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      for (
+        let polls = 0;
+        polls < 1_000 && driver.currentObservation.player.position.y < 65;
+        polls += 1
+      ) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    })));
+
+    expect(driver.currentObservation.player.position.y).toBe(65);
+    expect(driver.actions.filter((action) => action.type === "dig-block"))
+      .toHaveLength(6);
+    expect(driver.paths.filter(({ radius }) => radius === 0.35).map(
+      ({ position }) => position,
+    )).toEqual([
+      expect.objectContaining({ x: 1.5, y: 62, z: 0.5 }),
+      expect.objectContaining({ x: 2.5, y: 63, z: 0.5 }),
+      expect.objectContaining({ x: 3.5, y: 64, z: 0.5 }),
+      expect.objectContaining({ x: 4.5, y: 65, z: 0.5 }),
+    ]);
+  }, 10_000);
+
   it("detects nearby creepers without requiring line of sight", async () => {
     const driver = new FakeBeatGameDriver();
     const creeper = {
