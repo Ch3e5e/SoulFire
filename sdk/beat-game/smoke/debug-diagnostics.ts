@@ -474,11 +474,17 @@ export function buildSmokeStuckDiagnostics(
   const lastProgressAgeMs = lastProgress === undefined
     ? undefined
     : Math.max(0, capturedAtMs - lastProgress.observedAtMs);
+  const expectedQuietWindowMs = lastTaskProgress?.message === "Smelting"
+    ? 4 * 60_000
+    : 30_000;
   if (
     input.currentAction !== undefined
     && actionAgeMs !== undefined
-    && actionAgeMs >= 30_000
-    && (lastProgressAgeMs === undefined || lastProgressAgeMs >= 30_000)
+    && actionAgeMs >= expectedQuietWindowMs
+    && (
+      lastProgressAgeMs === undefined
+      || lastProgressAgeMs >= expectedQuietWindowMs
+    )
   ) {
     findings.push({
       code: "no-recent-progress",
@@ -488,6 +494,7 @@ export function buildSmokeStuckDiagnostics(
         action: input.currentAction,
         actionAgeMs,
         lastProgressAgeMs,
+        expectedQuietWindowMs,
       },
     });
   }
@@ -523,6 +530,7 @@ export function buildSmokeStuckDiagnostics(
       },
     lastProgressAt: lastProgress?.observedAt,
     lastProgressAgeMs,
+    expectedQuietWindowMs,
     findings,
   } as const;
 }

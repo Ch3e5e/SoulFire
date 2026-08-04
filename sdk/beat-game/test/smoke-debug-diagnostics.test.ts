@@ -404,6 +404,34 @@ describe("smoke stuck diagnostics", () => {
     expect(diagnostics.status).toBe("progressing");
     expect(diagnostics.findings).toEqual([]);
   });
+
+  it("allows a batch smelt to remain quiet while the furnace cooks", () => {
+    const diagnostics = buildSmokeStuckDiagnostics({
+      capturedAt: "2026-08-03T10:02:00.000Z",
+      currentAction: "satisfy:food",
+      activity: [
+        {
+          observedAt: "2026-08-03T10:00:00.000Z",
+          kind: "beat-game-event",
+          event: { type: "action-started", action: "satisfy:food" },
+        },
+        {
+          observedAt: "2026-08-03T10:00:40.000Z",
+          kind: "task-progress-observed",
+          task: {
+            taskId: "smelt-1",
+            progress: { fraction: 0, message: "Smelting" },
+          },
+        },
+      ],
+    });
+
+    expect(diagnostics).toMatchObject({
+      status: "progressing",
+      expectedQuietWindowMs: 240_000,
+      findings: [],
+    });
+  });
 });
 
 function block(
