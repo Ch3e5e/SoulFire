@@ -1256,9 +1256,6 @@ function shouldTakeNightShelter(
       y: playerBlock.y + 2,
     });
     const alreadyCovered = overhead !== undefined && !overhead.replaceable;
-    if (yield* isPlayerInFluid(state.driver, observation.player.position)) {
-      return false;
-    }
     const nearbyThreats = yield* state.driver.queryEntities({
       origin: {
         ...observation.player.position,
@@ -1280,8 +1277,27 @@ function shelterUntilMorning(
   state: RunState,
   observation: BeatGameObservation,
 ): Effect.Effect<void, BeatGameDriverError> {
-  const surfaceOrigin = observation.player.position;
   return Effect.gen(function* () {
+    let shelterObservation = observation;
+    if (
+      yield* isPlayerInFluid(
+        state.driver,
+        shelterObservation.player.position,
+      )
+    ) {
+      const reachedDrySurface = yield* swimToNearbyDrySurface(state);
+      if (!reachedDrySurface) {
+        yield* emit(state, {
+          type: "diagnostic",
+          message: "Could not reach dry ground for a night shelter",
+          data: { position: shelterObservation.player.position },
+        });
+        yield* Effect.sleep(NIGHT_SHELTER_POLL_MS);
+        return;
+      }
+      shelterObservation = yield* state.driver.observe;
+    }
+    const surfaceOrigin = shelterObservation.player.position;
     const playerBlock = {
       x: Math.floor(surfaceOrigin.x),
       y: Math.floor(surfaceOrigin.y),
@@ -1295,7 +1311,7 @@ function shelterUntilMorning(
     const alreadyCovered = overhead !== undefined && !overhead.replaceable;
     const sealPosition = alreadyCovered
       ? undefined
-      : yield* digAndSealNightShelter(state, observation);
+      : yield* digAndSealNightShelter(state, shelterObservation);
     if (!alreadyCovered && sealPosition === undefined) {
       yield* emit(state, {
         type: "diagnostic",
@@ -2780,6 +2796,21 @@ function monitorObservedSafety(
       replanReason: "paused corpse recovery for a travel meal",
       travelMealRequested: true,
     } satisfies ActionResult);
+  }
+  if (
+    decision.type !== "recover-death"
+    && decision.type !== "retreat"
+    && decision.type !== "eat"
+  ) {
+    return shouldTakeNightShelter(state, observation).pipe(
+      Effect.flatMap((shelterNeeded) =>
+        shelterNeeded
+          ? Effect.succeed({
+            replanReason: "night fell while the bot was under-equipped",
+          } satisfies ActionResult)
+          : Effect.suspend(() => monitor(observation))
+      ),
+    );
   }
   return Effect.suspend(() => monitor(observation));
 }
@@ -14160,6 +14191,9 @@ function withTaskIdempotency(
     botId: driver.botId,
     observe: driver.observe,
     events: driver.events,
+    ...(driver.environment === undefined
+      ? {}
+      : { environment: driver.environment }),
     queryBlocks: driver.queryBlocks,
     queryEntities: driver.queryEntities,
     raycast: driver.raycast,

@@ -60,14 +60,25 @@ async function runUntilExplorationStarts(options: {
 }
 
 describe("beat-game run lifecycle", () => {
-  it("seals an under-equipped bot underground until morning", async () => {
+  it("interrupts vulnerable work at night and seals underground", async () => {
     const driver = new FakeBeatGameDriver();
-    driver.currentEnvironment = { gameTime: 14_000n };
+    driver.currentEnvironment = { gameTime: 12_900n };
     driver.currentObservation = observation({
       counts: {
         "minecraft:wooden_sword": 1,
       },
     });
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (task.type === "collect-blocks") {
+          driver.currentEnvironment = { gameTime: 14_000n };
+        }
+      }).pipe(
+        Effect.zipRight(
+          task.type === "collect-blocks" ? Effect.never : Effect.void,
+        ),
+      );
     const removedBlocks = new Set<string>();
     let sealPlaced = false;
     const key = (x: number, y: number, z: number) => `${x}:${y}:${z}`;
@@ -157,6 +168,9 @@ describe("beat-game run lifecycle", () => {
     const placeIndex = driver.actions.findIndex((action) =>
       action.type === "place-block"
     );
+    expect(driver.tasks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "collect-blocks" }),
+    ]));
     expect(placeIndex).toBeGreaterThan(2);
     expect(driver.actions.slice(0, placeIndex)).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -191,6 +205,93 @@ describe("beat-game run lifecycle", () => {
         dimension: "minecraft:overworld",
       }),
       radius: 1,
+    }));
+  }, 10_000);
+
+  it("routes from water to dry ground before digging a night shelter", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentEnvironment = { gameTime: 14_000n };
+    driver.currentObservation = observation({
+      counts: {
+        "minecraft:dirt": 1,
+        "minecraft:wooden_sword": 1,
+      },
+      position: { x: 0.5, y: 62, z: 0.5 },
+    });
+    driver.surfaceColumns = [-1, 0, 1].flatMap((deltaX) =>
+      [-1, 0, 1].map((deltaZ) => ({
+        x: 4 + deltaX,
+        z: deltaZ,
+        loaded: true,
+        surfaceY: 63,
+        blockId: "minecraft:grass_block",
+        biomeId: "minecraft:plains",
+        skyLight: 15,
+        blockLight: 0,
+      }))
+    );
+    driver.blockQueryResolver = ({ center, selector }) => {
+      const position = {
+        x: Math.floor(center.x),
+        y: Math.floor(center.y),
+        z: Math.floor(center.z),
+        dimension: center.dimension,
+      };
+      if (selector.blockIds?.includes("minecraft:water") === true) {
+        return position.x === 0 && position.z === 0
+          ? [blockObservation(position, {
+            blockId: "minecraft:water",
+            diggable: false,
+            replaceable: true,
+            solid: false,
+          })]
+          : [];
+      }
+      if (
+        position.x >= 3
+        && position.x <= 5
+        && position.z >= -1
+        && position.z <= 1
+        && position.y === 63
+      ) {
+        return [blockObservation(position, {
+          blockId: "minecraft:grass_block",
+        })];
+      }
+      return [blockObservation(position, {
+        blockId: "minecraft:air",
+        diggable: false,
+        replaceable: true,
+        solid: false,
+      })];
+    };
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (driver.paths.length === 0) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    expect(driver.paths[0]).toEqual(expect.objectContaining({
+      position: expect.objectContaining({
+        y: 64,
+        dimension: "minecraft:overworld",
+      }),
+      radius: 0.75,
+      policy: expect.objectContaining({
+        allowMining: false,
+        allowPlacing: false,
+        avoidFluids: false,
+      }),
     }));
   }, 10_000);
 
