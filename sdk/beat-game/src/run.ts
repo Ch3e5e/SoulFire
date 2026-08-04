@@ -3125,6 +3125,27 @@ function monitorEscapeSafety(
           if (currentTarget === undefined) {
             return Effect.succeed({ type: "safe" } as const);
           }
+          const caughtMeleeAttacker =
+            PROACTIVE_MELEE_HOSTILE_ENTITY_TYPES.has(
+              currentTarget.entityType,
+            )
+            && !PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(
+              currentTarget.entityType,
+            )
+            && distanceSquared(
+              observation.player.position,
+              currentTarget.position,
+            ) <= EMERGENCY_KNOCKBACK_RANGE ** 2;
+          if (
+            caughtMeleeAttacker
+            && currentTarget.entityType === "minecraft:drowned"
+            && !shouldCommitToMeleeFight(observation, currentTarget)
+          ) {
+            return Effect.succeed({
+              type: "knockback",
+              target: currentTarget,
+            } as const);
+          }
           if (
             shouldCommitToCaughtRangedFight(observation, currentTarget)
             || (
@@ -3354,7 +3375,10 @@ function knockBackAndSprintAway(
       playerPosition,
     );
     const directAquaticEvasion = currentlyInFluid
-      && PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(threat.entityType);
+      && (
+        PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(threat.entityType)
+        || threat.entityType === "minecraft:drowned"
+      );
     const directSprintDistance = threat.entityType === "minecraft:creeper"
       ? CREEPER_ESCAPE_SURFACE_PROJECTION_DISTANCE
       : EMERGENCY_ESCAPE_SURFACE_PROJECTION_DISTANCE;
