@@ -2538,7 +2538,7 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
-  it("bootstraps equipment outside the safe direct corpse recovery range", async () => {
+  it("bootstraps equipment from surface logs outside the current line of sight", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const deathPosition = {
@@ -2547,7 +2547,7 @@ describe("beat-game run lifecycle", () => {
       z: 0,
       dimension: "minecraft:overworld",
     };
-    const observedAt = new Date().toISOString();
+    const observedAt = "2026-01-01T00:00:00.000Z";
     const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
       runId: "bootstrap-corpse-run",
       teamId: "bootstrap-corpse-team",
@@ -2593,8 +2593,8 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks).toContainEqual(expect.objectContaining({
       type: "collect-blocks",
       blockIds: expect.arrayContaining(["minecraft:oak_log"]),
-      count: 2,
-      requireLineOfSight: true,
+      count: 12,
+      requireLineOfSight: false,
       targetYRange: { minimum: 60 },
     }));
     const logCollectionIndex = driver.tasks.findIndex((task) =>
@@ -21546,7 +21546,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks[logCollectionIndex]).toEqual(expect.objectContaining({
       type: "collect-blocks",
       avoidSubmergedTargets: true,
-      requireLineOfSight: true,
+      requireLineOfSight: false,
     }));
     expect(driver.taskPolicies[logCollectionIndex]?.avoidFluids).toBe(true);
     expect(driver.xzPaths[0]?.policy.allowMining).toBe(false);

@@ -6132,7 +6132,6 @@ function satisfyRequirementFromWorld(
         progressItemIds: requirement.itemIds,
         purpose: "find-logs",
         avoidSubmergedTargets: true,
-        requireLineOfSight: true,
         requireSurfaceTargets: true,
       });
     case "cobblestone":
@@ -7258,7 +7257,6 @@ function ensureEfficientFurnaceFuel(
         progressItemIds: LOG_ITEM_IDS,
         purpose: "find-furnace-fuel",
         avoidSubmergedTargets: true,
-        requireLineOfSight: true,
         requireSurfaceTargets: true,
       });
       currentObservation = yield* state.driver.observe;
@@ -12830,7 +12828,6 @@ function prepareForDistantDeathRecovery(
           progressItemIds: LOG_ITEM_IDS,
           purpose: "prepare-corpse-recovery",
           avoidSubmergedTargets: true,
-          requireLineOfSight: true,
           requireSurfaceTargets: true,
           path: protectedRecoveryPath,
           explorationTarget: pendingDeath.position,
@@ -12884,7 +12881,6 @@ function prepareForDistantDeathRecovery(
           progressItemIds: LOG_ITEM_IDS,
           purpose: "prepare-corpse-recovery-pickaxe",
           avoidSubmergedTargets: true,
-          requireLineOfSight: true,
           requireSurfaceTargets: true,
           path: protectedRecoveryPath,
           explorationTarget: pendingDeath.position,
@@ -12918,7 +12914,6 @@ function prepareForDistantDeathRecovery(
         progressItemIds: LOG_ITEM_IDS,
         purpose: "prepare-corpse-recovery-log-buffer",
         avoidSubmergedTargets: true,
-        requireLineOfSight: true,
         requireSurfaceTargets: true,
         path: protectedRecoveryPath,
         explorationTarget: pendingDeath.position,
