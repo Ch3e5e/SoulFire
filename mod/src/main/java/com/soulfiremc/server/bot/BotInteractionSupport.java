@@ -19,6 +19,7 @@ package com.soulfiremc.server.bot;
 
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.network.protocol.game.ServerboundPlayerInputPacket;
+import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Input;
 
 import java.util.function.Supplier;
@@ -44,6 +45,22 @@ public final class BotInteractionSupport {
       player.setShiftKeyDown(wasSneaking);
       player.connection.send(new ServerboundPlayerInputPacket(previousInput));
     }
+  }
+
+  /// Continues a block interaction through the held item's general use path
+  /// when the block-specific path passes, matching Minecraft's right-click
+  /// dispatch order.
+  public static InteractionResult withItemUseFallback(
+    InteractionResult blockResult,
+    Supplier<InteractionResult> useItem
+  ) {
+    if (
+      blockResult instanceof InteractionResult.Success
+        || blockResult instanceof InteractionResult.Fail
+    ) {
+      return blockResult;
+    }
+    return useItem.get();
   }
 
   private static void setSneaking(

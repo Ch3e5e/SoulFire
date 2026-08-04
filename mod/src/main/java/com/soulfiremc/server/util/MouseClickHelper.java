@@ -17,6 +17,7 @@
  */
 package com.soulfiremc.server.util;
 
+import com.soulfiremc.server.bot.BotInteractionSupport;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.multiplayer.MultiPlayerGameMode;
 import net.minecraft.client.player.LocalPlayer;
@@ -116,7 +117,17 @@ public final class MouseClickHelper {
 
       if (blockHitResult.getType() == HitResult.Type.BLOCK) {
         // Use item on block
-        if (gameMode.useItemOn(player, hand, blockHitResult) instanceof InteractionResult.Success success) {
+        var result = BotInteractionSupport.withItemUseFallback(
+          gameMode.useItemOn(player, hand, blockHitResult),
+          () -> {
+            var itemStack = player.getItemInHand(hand);
+            return !itemStack.isEmpty()
+              && itemStack.isItemEnabled(level.enabledFeatures())
+              ? gameMode.useItem(player, hand)
+              : InteractionResult.PASS;
+          }
+        );
+        if (result instanceof InteractionResult.Success success) {
           if (success.swingSource() == InteractionResult.SwingSource.CLIENT) {
             player.swing(hand);
           }

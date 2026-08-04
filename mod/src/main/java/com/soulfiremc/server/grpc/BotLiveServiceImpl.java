@@ -2184,15 +2184,24 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
         var result = BotInteractionSupport.withSneaking(
           player,
           request.getSneaking(),
-          () -> gameMode.useItemOn(
-            player,
-            hand,
-            new BlockHitResult(
-              hitPosition,
-              direction,
-              position,
-              false
-            )
+          () -> BotInteractionSupport.withItemUseFallback(
+            gameMode.useItemOn(
+              player,
+              hand,
+              new BlockHitResult(
+                hitPosition,
+                direction,
+                position,
+                false
+              )
+            ),
+            () -> {
+              var itemStack = player.getItemInHand(hand);
+              return !itemStack.isEmpty()
+                && itemStack.isItemEnabled(level.enabledFeatures())
+                ? gameMode.useItem(player, hand)
+                : InteractionResult.PASS;
+            }
           )
         );
         if (!(result instanceof InteractionResult.Success success)) {
