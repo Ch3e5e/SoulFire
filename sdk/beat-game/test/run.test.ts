@@ -17160,7 +17160,7 @@ describe("beat-game run lifecycle", () => {
       observedAt: "2026-01-01T00:00:00.000Z",
     } as const;
     driver.currentObservation = observation({
-      food: 12,
+      food: 17,
       health: 12,
     });
     driver.entityResults = [salmon];
