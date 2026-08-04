@@ -2402,8 +2402,46 @@ function queryCurrentDecisionActivity(
       return correlatedSince === undefined
         || observedAt === undefined
         || observedAt >= correlatedSince;
-    }).slice(-limit),
+    }).slice(-limit).map(compactDecisionActivityEntry),
     recentActionOutcomes: recentActionOutcomes(activity),
+  };
+}
+
+function compactDecisionActivityEntry(entry: unknown): unknown {
+  if (!isDebugRecord(entry) || entry.kind !== "entity-query") {
+    return entry;
+  }
+  const entities = Array.isArray(entry.entities)
+    ? entry.entities.filter(isDebugRecord)
+    : [];
+  const byEntityType = new Map<string, number>();
+  for (const entity of entities) {
+    const entityType = typeof entity.entityType === "string"
+      ? entity.entityType
+      : "unknown";
+    byEntityType.set(entityType, (byEntityType.get(entityType) ?? 0) + 1);
+  }
+  const { entities: _entities, ...metadata } = entry;
+  return {
+    ...metadata,
+    result: {
+      count: entities.length,
+      byEntityType: [...byEntityType]
+        .map(([entityType, count]) => ({ entityType, count }))
+        .sort((left, right) =>
+          right.count - left.count
+          || left.entityType.localeCompare(right.entityType)
+        ),
+      sample: entities.slice(0, 12).map((entity) => ({
+        networkId: entity.networkId,
+        entityType: entity.entityType,
+        position: entity.position,
+        alive: entity.alive,
+        ...(entity.health === undefined ? {} : { health: entity.health }),
+        ...(entity.itemId === undefined ? {} : { itemId: entity.itemId }),
+        ...(entity.target === undefined ? {} : { target: entity.target }),
+      })),
+    },
   };
 }
 

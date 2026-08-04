@@ -297,7 +297,7 @@ export function buildSmokeDecisionDiagnostics(
     },
     activeAction,
     nextIfReplanned: {
-      decision: nextIfReplanned,
+      decision: summarizeDecision(nextIfReplanned),
       reason: explainDecision(nextIfReplanned, checkpoint, observation, strategy),
     },
     signals: {
@@ -319,6 +319,26 @@ export function buildSmokeDecisionDiagnostics(
     progress: {
       lastStableAction: checkpoint.lastStableAction,
       recentlyCompletedActions: planner.completedActions.slice(-12),
+    },
+  };
+}
+
+function summarizeDecision(decision: BeatGamePlannerDecision) {
+  if (decision.type !== "satisfy-requirement") {
+    return decision;
+  }
+  return {
+    type: decision.type,
+    action: decision.action,
+    requirement: {
+      key: decision.requirement.key,
+      priority: decision.requirement.priority,
+      currentCount: decision.requirement.currentCount,
+      targetCount: decision.requirement.targetCount,
+      missingCount: Math.max(
+        0,
+        decision.requirement.targetCount - decision.requirement.currentCount,
+      ),
     },
   };
 }

@@ -208,9 +208,21 @@ describe("smoke decision diagnostics", () => {
       reason: "The action is recovering 1 remembered death location",
     });
     expect(diagnostics.nextIfReplanned).toMatchObject({
+      decision: {
+        type: "satisfy-requirement",
+        action: "satisfy:logs",
+        requirement: { key: "logs", missingCount: 4 },
+      },
       reason:
         "logs is the highest-priority actionable requirement: 4 missing (0/4, priority 120)",
     });
+    if (
+      diagnostics.nextIfReplanned.decision.type !== "satisfy-requirement"
+    ) {
+      throw new Error("Expected a requirement decision");
+    }
+    expect(diagnostics.nextIfReplanned.decision.requirement)
+      .not.toHaveProperty("itemIds");
     expect(diagnostics.blockers).toMatchObject({
       pendingRequirements: [{ key: "logs", missingCount: 4 }],
       rememberedDeaths: [{
