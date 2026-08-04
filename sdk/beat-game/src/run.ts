@@ -7032,12 +7032,11 @@ function satisfyFoodRequirement(
     return Effect.void;
   }
   if (observation.player.health < state.strategy.minimumHealth) {
-    return state.driver.queryBlocks({
-      center: observation.player.position,
-      radius: WORKSTATION_REUSE_RADIUS,
-      selector: { blockIds: ["minecraft:furnace"] },
-      maximumResults: 1,
-    }).pipe(
+    return findReusableWorkstations(
+      state.driver,
+      observation,
+      "minecraft:furnace",
+    ).pipe(
       Effect.flatMap((furnaces) =>
         furnaces.length > 0
           || (observation.inventory.counts["minecraft:furnace"] ?? 0) > 0
@@ -7596,12 +7595,11 @@ function ensureFurnaceForCooking(
   PreparedWorkstation,
   BeatGameError | BeatGameDriverError
 > {
-  return state.driver.queryBlocks({
-    center: observation.player.position,
-    radius: WORKSTATION_REUSE_RADIUS,
-    selector: { blockIds: ["minecraft:furnace"] },
-    maximumResults: 1,
-  }).pipe(
+  return findReusableWorkstations(
+    state.driver,
+    observation,
+    "minecraft:furnace",
+  ).pipe(
     Effect.flatMap((furnaces) => {
       const cobblestoneCount =
         observation.inventory.counts["minecraft:cobblestone"] ?? 0;
@@ -11285,21 +11283,11 @@ function ensureWorkstation(
       }
       return yield* ensureWorkstation(state, recovered, blockId);
     }
-    const existing = (yield* state.driver.queryBlocks({
-      center: observation.player.position,
-      radius: WORKSTATION_REUSE_RADIUS,
-      selector: { blockIds: [blockId] },
-      maximumResults: 8,
-    }))
-      .filter(({ position }) =>
-        position.dimension === observation.player.position.dimension
-        && Math.abs(position.y - observation.player.position.y)
-          <= WORKSTATION_REUSE_MAX_VERTICAL_DISTANCE
-      )
-      .sort((left, right) =>
-        distanceSquared(left.position, observation.player.position)
-        - distanceSquared(right.position, observation.player.position)
-      );
+    const existing = yield* findReusableWorkstations(
+      state.driver,
+      observation,
+      blockId,
+    );
     for (const candidate of existing) {
       const approached = yield* state.driver.pathfind(
         {
@@ -11423,6 +11411,32 @@ function ensureWorkstation(
       message: `${blockId} could not be placed on any nearby support`,
     }));
   });
+}
+
+function findReusableWorkstations(
+  driver: BeatGameDriver,
+  observation: BeatGameObservation,
+  blockId: "minecraft:crafting_table" | "minecraft:furnace",
+): Effect.Effect<readonly BeatGameBlockObservation[], BeatGameDriverError> {
+  return driver.queryBlocks({
+    center: observation.player.position,
+    radius: WORKSTATION_REUSE_RADIUS,
+    selector: { blockIds: [blockId] },
+    maximumResults: 8,
+  }).pipe(
+    Effect.map((workstations) =>
+      workstations
+        .filter(({ position }) =>
+          position.dimension === observation.player.position.dimension
+          && Math.abs(position.y - observation.player.position.y)
+            <= WORKSTATION_REUSE_MAX_VERTICAL_DISTANCE
+        )
+        .sort((left, right) =>
+          distanceSquared(left.position, observation.player.position)
+          - distanceSquared(right.position, observation.player.position)
+        )
+    ),
+  );
 }
 
 function ensureInventorySpace(
