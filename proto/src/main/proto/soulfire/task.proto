@@ -740,6 +740,38 @@ message CollectBlocksTaskResult {
   WorldPosition final_position = 3;
 }
 
+// Live diagnostics for a running block collection task. This is packed into
+// BotTaskProgress.detail so SDK clients can explain which blocks and approach
+// positions the server is currently considering without changing task
+// execution.
+message CollectBlocksTaskProgressDetail {
+  enum Phase {
+    PHASE_UNSPECIFIED = 0;
+    PHASE_SEARCHING = 1;
+    PHASE_PLANNING_ROUTE = 2;
+    PHASE_FOLLOWING_ROUTE = 3;
+    PHASE_BREAKING_BLOCK = 4;
+    PHASE_RETRYING_APPROACH = 5;
+    PHASE_SKIPPING_TARGET = 6;
+  }
+
+  message FailedApproach {
+    BlockPosition target = 1 [(google.api.field_behavior) = REQUIRED];
+    repeated BlockPosition player_positions = 2;
+  }
+
+  Phase phase = 1 [(google.api.field_behavior) = REQUIRED];
+  BlockPosition player_position = 2;
+  repeated BlockPosition active_targets = 3;
+  repeated BlockPosition rejected_targets = 4;
+  repeated FailedApproach failed_approaches = 5;
+  bool path_planning = 6;
+  uint32 path_current_movement = 7;
+  uint32 path_total_movements = 8;
+  repeated BlockPosition completed_breaks = 9;
+  uint32 consecutive_stalled_paths = 10;
+}
+
 // Clears every diggable block in an inclusive cuboid.
 message ExcavateTask {
   BlockPosition corner_a = 1 [(google.api.field_behavior) = REQUIRED];

@@ -68,6 +68,7 @@ import {
   SmokeDebugTimeline,
   startSmokeDebugServer,
 } from "./debug-server.ts";
+import { decodeSmokeTaskProgress } from "./debug-task-progress.ts";
 import {
   buildSmokeActivePathDiagnostics,
   buildSmokeDecisionDiagnostics,
@@ -529,6 +530,7 @@ const program = Effect.scoped(Effect.gen(function* () {
     Stream.retry(Schedule.spaced(Duration.seconds(1))),
     Stream.runForEach((event) => {
       const task = event.task;
+      const progress = decodeSmokeTaskProgress(task?.progress);
       const fingerprint = json(task === undefined
         ? {}
         : {
@@ -536,7 +538,7 @@ const program = Effect.scoped(Effect.gen(function* () {
           taskType: task.taskType,
           status: task.status,
           summary: task.summary,
-          progress: task.progress,
+          progress,
           failure: task.failure,
         });
       if (fingerprint === lastTaskProgressFingerprint) {
@@ -553,7 +555,7 @@ const program = Effect.scoped(Effect.gen(function* () {
               taskType: task.taskType,
               status: task.status,
               summary: task.summary,
-              progress: task.progress,
+              progress,
               failure: task.failure,
               revision: task.revision,
               updatedAt: task.updatedAt,

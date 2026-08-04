@@ -1095,6 +1095,53 @@ class CollectBlocksTaskResult(_message.Message):
     final_position: _common_pb2.WorldPosition
     def __init__(self, reason: _Optional[_Union[CollectBlocksCompletionReason, str]] = ..., blocks_broken: _Optional[int] = ..., final_position: _Optional[_Union[_common_pb2.WorldPosition, _Mapping]] = ...) -> None: ...
 
+class CollectBlocksTaskProgressDetail(_message.Message):
+    __slots__ = ("phase", "player_position", "active_targets", "rejected_targets", "failed_approaches", "path_planning", "path_current_movement", "path_total_movements", "completed_breaks", "consecutive_stalled_paths")
+    class Phase(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+        __slots__ = ()
+        PHASE_UNSPECIFIED: _ClassVar[CollectBlocksTaskProgressDetail.Phase]
+        PHASE_SEARCHING: _ClassVar[CollectBlocksTaskProgressDetail.Phase]
+        PHASE_PLANNING_ROUTE: _ClassVar[CollectBlocksTaskProgressDetail.Phase]
+        PHASE_FOLLOWING_ROUTE: _ClassVar[CollectBlocksTaskProgressDetail.Phase]
+        PHASE_BREAKING_BLOCK: _ClassVar[CollectBlocksTaskProgressDetail.Phase]
+        PHASE_RETRYING_APPROACH: _ClassVar[CollectBlocksTaskProgressDetail.Phase]
+        PHASE_SKIPPING_TARGET: _ClassVar[CollectBlocksTaskProgressDetail.Phase]
+    PHASE_UNSPECIFIED: CollectBlocksTaskProgressDetail.Phase
+    PHASE_SEARCHING: CollectBlocksTaskProgressDetail.Phase
+    PHASE_PLANNING_ROUTE: CollectBlocksTaskProgressDetail.Phase
+    PHASE_FOLLOWING_ROUTE: CollectBlocksTaskProgressDetail.Phase
+    PHASE_BREAKING_BLOCK: CollectBlocksTaskProgressDetail.Phase
+    PHASE_RETRYING_APPROACH: CollectBlocksTaskProgressDetail.Phase
+    PHASE_SKIPPING_TARGET: CollectBlocksTaskProgressDetail.Phase
+    class FailedApproach(_message.Message):
+        __slots__ = ("target", "player_positions")
+        TARGET_FIELD_NUMBER: _ClassVar[int]
+        PLAYER_POSITIONS_FIELD_NUMBER: _ClassVar[int]
+        target: _common_pb2.BlockPosition
+        player_positions: _containers.RepeatedCompositeFieldContainer[_common_pb2.BlockPosition]
+        def __init__(self, target: _Optional[_Union[_common_pb2.BlockPosition, _Mapping]] = ..., player_positions: _Optional[_Iterable[_Union[_common_pb2.BlockPosition, _Mapping]]] = ...) -> None: ...
+    PHASE_FIELD_NUMBER: _ClassVar[int]
+    PLAYER_POSITION_FIELD_NUMBER: _ClassVar[int]
+    ACTIVE_TARGETS_FIELD_NUMBER: _ClassVar[int]
+    REJECTED_TARGETS_FIELD_NUMBER: _ClassVar[int]
+    FAILED_APPROACHES_FIELD_NUMBER: _ClassVar[int]
+    PATH_PLANNING_FIELD_NUMBER: _ClassVar[int]
+    PATH_CURRENT_MOVEMENT_FIELD_NUMBER: _ClassVar[int]
+    PATH_TOTAL_MOVEMENTS_FIELD_NUMBER: _ClassVar[int]
+    COMPLETED_BREAKS_FIELD_NUMBER: _ClassVar[int]
+    CONSECUTIVE_STALLED_PATHS_FIELD_NUMBER: _ClassVar[int]
+    phase: CollectBlocksTaskProgressDetail.Phase
+    player_position: _common_pb2.BlockPosition
+    active_targets: _containers.RepeatedCompositeFieldContainer[_common_pb2.BlockPosition]
+    rejected_targets: _containers.RepeatedCompositeFieldContainer[_common_pb2.BlockPosition]
+    failed_approaches: _containers.RepeatedCompositeFieldContainer[CollectBlocksTaskProgressDetail.FailedApproach]
+    path_planning: bool
+    path_current_movement: int
+    path_total_movements: int
+    completed_breaks: _containers.RepeatedCompositeFieldContainer[_common_pb2.BlockPosition]
+    consecutive_stalled_paths: int
+    def __init__(self, phase: _Optional[_Union[CollectBlocksTaskProgressDetail.Phase, str]] = ..., player_position: _Optional[_Union[_common_pb2.BlockPosition, _Mapping]] = ..., active_targets: _Optional[_Iterable[_Union[_common_pb2.BlockPosition, _Mapping]]] = ..., rejected_targets: _Optional[_Iterable[_Union[_common_pb2.BlockPosition, _Mapping]]] = ..., failed_approaches: _Optional[_Iterable[_Union[CollectBlocksTaskProgressDetail.FailedApproach, _Mapping]]] = ..., path_planning: bool = ..., path_current_movement: _Optional[int] = ..., path_total_movements: _Optional[int] = ..., completed_breaks: _Optional[_Iterable[_Union[_common_pb2.BlockPosition, _Mapping]]] = ..., consecutive_stalled_paths: _Optional[int] = ...) -> None: ...
+
 class ExcavateTask(_message.Message):
     __slots__ = ("corner_a", "corner_b", "options", "maximum_blocks")
     CORNER_A_FIELD_NUMBER: _ClassVar[int]

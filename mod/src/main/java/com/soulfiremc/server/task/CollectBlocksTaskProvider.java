@@ -17,9 +17,12 @@
  */
 package com.soulfiremc.server.task;
 
+import com.google.protobuf.Any;
+import com.soulfiremc.grpc.generated.BlockPosition;
 import com.soulfiremc.grpc.generated.BotTaskProgress;
 import com.soulfiremc.grpc.generated.CollectBlocksCompletionReason;
 import com.soulfiremc.grpc.generated.CollectBlocksTask;
+import com.soulfiremc.grpc.generated.CollectBlocksTaskProgressDetail;
 import com.soulfiremc.grpc.generated.CollectBlocksTaskResult;
 import com.soulfiremc.grpc.generated.IntRange;
 import com.soulfiremc.grpc.generated.PathfindOptions;
@@ -400,7 +403,11 @@ public final class CollectBlocksTaskProvider
         );
         return;
       }
-      context.reportProgress(progress("Planning route to matching block"));
+      activeTargets = Set.copyOf(candidates);
+      context.reportProgress(progress(
+        "Planning route to matching block",
+        CollectBlocksTaskProgressDetail.Phase.PHASE_PLANNING_ROUTE
+      ));
       PathConstraint constraint = PathfindingSupport.buildConstraint(
         context.bot(),
         pathOptions
@@ -411,7 +418,6 @@ public final class CollectBlocksTaskProvider
           rejectedTargets
         );
       }
-      activeTargets = Set.copyOf(candidates);
       var level = context.bot().minecraft().level;
       var player = context.bot().minecraft().player;
       if (level == null || player == null) {
@@ -442,7 +448,11 @@ public final class CollectBlocksTaskProvider
         target.face()
       );
       activeNearbyBreakTicks = 0;
-      context.reportProgress(progress("Mining nearby matching block"));
+      activeTargets = Set.of(target.position());
+      context.reportProgress(progress(
+        "Mining nearby matching block",
+        CollectBlocksTaskProgressDetail.Phase.PHASE_BREAKING_BLOCK
+      ));
     }
 
     private void tickNearbyBreak() {
@@ -456,14 +466,18 @@ public final class CollectBlocksTaskProvider
         rejectedTargets.add(target.position());
         clearNearbyBreak(true);
         context.reportProgress(progress(
-          "Skipping a nearby block rejected by the server"
+          "Skipping a nearby block rejected by the server",
+          CollectBlocksTaskProgressDetail.Phase.PHASE_SKIPPING_TARGET
         ));
         return;
       }
       if (blockBreak.isCompleted(context.bot())) {
         if (blockBreak.breakAttempted()) {
           blocksBroken++;
-          context.reportProgress(progress("Nearby matching block mined"));
+          context.reportProgress(progress(
+            "Nearby matching block mined",
+            CollectBlocksTaskProgressDetail.Phase.PHASE_BREAKING_BLOCK
+          ));
         }
         clearNearbyBreak(false);
         return;
@@ -477,7 +491,8 @@ public final class CollectBlocksTaskProvider
         rejectedTargets.add(target.position());
         clearNearbyBreak(true);
         context.reportProgress(progress(
-          "Skipping a nearby block that could not be mined"
+          "Skipping a nearby block that could not be mined",
+          CollectBlocksTaskProgressDetail.Phase.PHASE_SKIPPING_TARGET
         ));
       }
     }
@@ -503,9 +518,14 @@ public final class CollectBlocksTaskProvider
           return;
         }
         var pathProgress = path.progress();
-        context.reportProgress(progress(pathProgress.planning()
-          ? "Planning collection route"
-          : "Following collection route"));
+        context.reportProgress(progress(
+          pathProgress.planning()
+            ? "Planning collection route"
+            : "Following collection route",
+          pathProgress.planning()
+            ? CollectBlocksTaskProgressDetail.Phase.PHASE_PLANNING_ROUTE
+            : CollectBlocksTaskProgressDetail.Phase.PHASE_FOLLOWING_ROUTE
+        ));
         return;
       }
       activePath = null;
@@ -525,7 +545,8 @@ public final class CollectBlocksTaskProvider
             return;
           }
           context.reportProgress(progress(
-            "Trying another approach to a matching block"
+            "Trying another approach to a matching block",
+            CollectBlocksTaskProgressDetail.Phase.PHASE_RETRYING_APPROACH
           ));
           return;
         }
@@ -534,7 +555,10 @@ public final class CollectBlocksTaskProvider
           confirmedBreaks,
           targetCount - blocksBroken
         );
-        context.reportProgress(progress("Matching block mined"));
+        context.reportProgress(progress(
+          "Matching block mined",
+          CollectBlocksTaskProgressDetail.Phase.PHASE_BREAKING_BLOCK
+        ));
       } catch (CompletionException exception) {
         var confirmedBreaks = confirmedBreaks(path);
         blocksBroken += (int) Math.min(
@@ -563,7 +587,8 @@ public final class CollectBlocksTaskProvider
               && !reachedStalledPathLimit()
           ) {
             context.reportProgress(progress(
-              "Trying another approach after collection path stalled"
+              "Trying another approach after collection path stalled",
+              CollectBlocksTaskProgressDetail.Phase.PHASE_RETRYING_APPROACH
             ));
             return;
           }
@@ -578,14 +603,16 @@ public final class CollectBlocksTaskProvider
         ) {
           rejectedTargets.add(rejection.blockPosition());
           context.reportProgress(progress(
-            "Skipping a matching block rejected by the server"
+            "Skipping a matching block rejected by the server",
+            CollectBlocksTaskProgressDetail.Phase.PHASE_SKIPPING_TARGET
           ));
           return;
         }
         if (cause instanceof BlockPlaceRejectedException) {
           rejectedTargets.addAll(failedTargets);
           context.reportProgress(progress(
-            "Skipping targets whose route requires a rejected placement"
+            "Skipping targets whose route requires a rejected placement",
+            CollectBlocksTaskProgressDetail.Phase.PHASE_SKIPPING_TARGET
           ));
           return;
         }
@@ -807,7 +834,50 @@ public final class CollectBlocksTaskProvider
       ) >= 0;
     }
 
-    private BotTaskProgress progress(String message) {
+    private BotTaskProgress progress(
+      String message,
+      CollectBlocksTaskProgressDetail.Phase phase
+    ) {
+      var detail = CollectBlocksTaskProgressDetail.newBuilder()
+        .setPhase(phase)
+        .setConsecutiveStalledPaths(consecutiveStalledPaths);
+      var player = context.bot().minecraft().player;
+      var level = context.bot().minecraft().level;
+      if (player != null && level != null) {
+        var dimension = level.dimension().identifier().toString();
+        detail.setPlayerPosition(position(
+          SFVec3i.fromInt(player.blockPosition()),
+          dimension
+        ));
+        detail.addAllActiveTargets(positions(activeTargets, dimension));
+        detail.addAllRejectedTargets(positions(rejectedTargets, dimension));
+        rejectedAdjacentPositions.entrySet().stream()
+          .sorted(Map.Entry.comparingByKey(positionComparator()))
+          .map(entry -> CollectBlocksTaskProgressDetail.FailedApproach
+            .newBuilder()
+            .setTarget(position(entry.getKey(), dimension))
+            .addAllPlayerPositions(positions(entry.getValue(), dimension))
+            .build())
+          .forEach(detail::addFailedApproaches);
+        var path = activePath;
+        if (path != null) {
+          var pathProgress = path.progress();
+          detail
+            .setPathPlanning(pathProgress.planning())
+            .setPathCurrentMovement(Math.max(
+              0,
+              pathProgress.currentMovement()
+            ))
+            .setPathTotalMovements(Math.max(
+              0,
+              pathProgress.totalMovements()
+            ))
+            .addAllCompletedBreaks(positions(
+              path.completedBlockBreaks(),
+              dimension
+            ));
+        }
+      }
       return BotTaskProgress.newBuilder()
         .setMessage(message)
         .setCurrent(blocksBroken)
@@ -816,6 +886,38 @@ public final class CollectBlocksTaskProvider
           1.0,
           (double) blocksBroken / targetCount
         ))
+        .setDetail(Any.pack(detail.build()))
+        .build();
+    }
+
+    private static List<BlockPosition> positions(
+      Iterable<SFVec3i> positions,
+      String dimension
+    ) {
+      var ordered = new java.util.ArrayList<SFVec3i>();
+      positions.forEach(ordered::add);
+      return ordered.stream()
+        .sorted(positionComparator())
+        .map(position -> position(position, dimension))
+        .toList();
+    }
+
+    private static Comparator<SFVec3i> positionComparator() {
+      return Comparator
+        .comparingInt((SFVec3i position) -> position.y)
+        .thenComparingInt(position -> position.x)
+        .thenComparingInt(position -> position.z);
+    }
+
+    private static BlockPosition position(
+      SFVec3i position,
+      String dimension
+    ) {
+      return BlockPosition.newBuilder()
+        .setX(position.x)
+        .setY(position.y)
+        .setZ(position.z)
+        .setDimension(dimension)
         .build();
     }
 
@@ -892,6 +994,7 @@ public final class CollectBlocksTaskProvider
       activeNearbyBreak = null;
       activeNearbyTarget = null;
       activeNearbyBreakTicks = 0;
+      activeTargets = Set.of();
     }
 
     @Override
