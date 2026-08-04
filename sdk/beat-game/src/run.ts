@@ -3945,7 +3945,25 @@ function recoverFromFailedDefense(
   return state.driver.observe.pipe(
     Effect.flatMap((observation) => {
       if (PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)) {
-        return escapeFromTarget(state, target);
+        return needsOverworldSurfaceRecovery(
+          state,
+          observation.player.position,
+        ).pipe(
+          Effect.flatMap((needsRecovery) =>
+            needsRecovery
+              ? recoverLocalNavigationTrap(
+                state,
+                observation.player.position,
+              ).pipe(
+                Effect.flatMap((recovered) =>
+                  recovered
+                    ? Effect.void
+                    : escapeFromTarget(state, target)
+                ),
+              )
+              : escapeFromTarget(state, target)
+          ),
+        );
       }
       if (shouldCommitToMeleeFight(observation, target)) {
         return knockBackAndSprintAway(state, observation, target);

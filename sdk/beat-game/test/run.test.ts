@@ -8095,6 +8095,113 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("mines out of an underground trap after a ranged defense route fails", async () => {
+    const driver = new FakeBeatGameDriver();
+    const undergroundPosition = {
+      x: 0,
+      y: 60,
+      z: 0,
+      dimension: "minecraft:overworld",
+    } as const;
+    const skeleton = {
+      connectionEpoch: "epoch-1",
+      networkId: 181,
+      entityType: "minecraft:skeleton",
+      position: {
+        x: 6,
+        y: 61,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.currentObservation = observation({
+      health: 20,
+      position: undergroundPosition,
+      counts: {
+        "minecraft:stone_pickaxe": 1,
+        "minecraft:stone_sword": 1,
+      },
+    });
+    driver.surfaceColumns = [{
+      x: -6,
+      z: 0,
+      loaded: true,
+      surfaceY: 70,
+      blockId: "minecraft:grass_block",
+      biomeId: "minecraft:forest",
+      skyLight: 15,
+      blockLight: 0,
+    }];
+    driver.entityResults = [skeleton];
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2) ? driver.entityResults : [];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(
+        Effect.zipRight(
+          task.type === "attack-entity"
+            ? Effect.fail(new BeatGameDriverError({
+              operation: "task.attack-entity",
+              code: "unreachable",
+              retryable: true,
+              message: "The skeleton is above the enclosed tunnel",
+            }))
+            : Effect.void,
+        ),
+      );
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+        driver.entityResults = [];
+        driver.currentObservation = observation({
+          position,
+          counts: {
+            "minecraft:stone_pickaxe": 1,
+            "minecraft:stone_sword": 1,
+          },
+        });
+      });
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (driver.paths.length === 0) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.tasks.filter((task) => task.type === "attack-entity"))
+      .toHaveLength(1);
+    expect(driver.paths[0]).toEqual({
+      position: {
+        x: -5.5,
+        y: 71,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+      radius: 1.5,
+      policy: expect.objectContaining({
+        allowMining: true,
+        allowPlacing: true,
+        avoidFluids: true,
+      }),
+    });
+    expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
+  });
+
   it("eats and regenerates after surviving a defensive fight", async () => {
     const driver = new FakeBeatGameDriver();
     const skeleton = {
