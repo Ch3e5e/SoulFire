@@ -66,19 +66,23 @@ export function approachLavaSourceFromSide(
           Effect.map((blocks) => {
             const candidates = lavaInteractionStandCandidates(
               source.position,
-            ).sort((left, right) =>
-              lavaSightlineObstructionCount(
+            ).map((position) => ({
+              position,
+              sightlineObstructions: lavaSightlineObstructionCount(
                 blocks,
-                left,
+                position,
                 source.position,
+              ),
+            })).sort((left, right) =>
+              left.sightlineObstructions - right.sightlineObstructions
+              || distanceSquared(
+                observation.player.position,
+                left.position,
               )
-                - lavaSightlineObstructionCount(
-                  blocks,
-                  right,
-                  source.position,
+                - distanceSquared(
+                  observation.player.position,
+                  right.position,
                 )
-              || distanceSquared(observation.player.position, left)
-                - distanceSquared(observation.player.position, right)
             );
             return { source, blocks, candidates };
           }),
@@ -89,17 +93,22 @@ export function approachLavaSourceFromSide(
     const attemptedDryStands = new Set<string>();
     for (const prepared of preparedSources) {
       for (const candidate of prepared.candidates) {
-        const key = positionKey(candidate);
+        const key = positionKey(candidate.position);
         if (
           attemptedDryStands.has(key)
-          || !isSafeLavaInteractionStand(prepared.blocks, candidate)
+          || options.requireExposableSource === true
+            && candidate.sightlineObstructions > 0
+          || !isSafeLavaInteractionStand(
+            prepared.blocks,
+            candidate.position,
+          )
         ) {
           continue;
         }
         attemptedDryStands.add(key);
         const reached = yield* pathfindToLavaInteractionStand(
           driver,
-          candidate,
+          candidate.position,
           options.path,
           false,
         );
@@ -121,13 +130,15 @@ export function approachLavaSourceFromSide(
     const attemptedExcavationStands = new Set<string>();
     for (const prepared of preparedSources) {
       for (const candidate of prepared.candidates) {
-        const key = positionKey(candidate);
+        const key = positionKey(candidate.position);
         if (
           attemptedExcavationStands.has(key)
+          || options.requireExposableSource === true
+            && candidate.sightlineObstructions > 0
           || !isExcavatableLavaInteractionStand(
             prepared.source.position,
             prepared.blocks,
-            candidate,
+            candidate.position,
           )
         ) {
           continue;
@@ -135,7 +146,7 @@ export function approachLavaSourceFromSide(
         attemptedExcavationStands.add(key);
         const reached = yield* pathfindToLavaInteractionStand(
           driver,
-          candidate,
+          candidate.position,
           options.path,
           true,
         );
