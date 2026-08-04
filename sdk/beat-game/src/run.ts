@@ -64,6 +64,10 @@ import {
   triangulateStronghold,
 } from "./geometry.js";
 import {
+  approachLavaSourceFromSide,
+  LIQUID_INTERACTION_REACH,
+} from "./liquids.js";
+import {
   BEAT_GAME_CHECKPOINT_SCHEMA_VERSION,
   BeatGamePhase,
   BeatGameRunStatus,
@@ -381,10 +385,8 @@ const HUNT_DROP_ITEM_IDS_BY_ENTITY_TYPE: Readonly<
   "minecraft:zombie_villager": ["minecraft:rotten_flesh"],
 };
 const LIQUID_INTERACTION_APPROACH_RADIUS = 3;
-const LIQUID_INTERACTION_STAND_RADIUS = 0.75;
 // Keep a margin below the protocol interaction limit. A candidate at the
 // exact limit can become unreachable after pathfinding settles within radius.
-const LIQUID_INTERACTION_REACH = 4;
 const FISHING_SHORE_SEARCH_RADIUS = Math.ceil(LIQUID_INTERACTION_REACH);
 const FISHING_COLLECTION_BATCH_SIZE = 3;
 const FISHING_MAXIMUM_FAILED_CASTS = 4;
@@ -411,7 +413,6 @@ const DEEP_LAVA_SEARCH_MAX_Y = -48;
 const DEEP_LAVA_DESCENT_STEP = 12;
 const PORTAL_CASTING_ADDITIONAL_LAVA_SOURCE_COUNT =
   NETHER_PORTAL_FRAME_OBSIDIAN_COUNT - 1;
-const PORTAL_LAVA_SOURCE_CLUSTER_RADIUS = 8;
 const EXPLORATION_REANCHOR_DISTANCE = 16;
 const EXPLORATION_FRONTIER_LIMIT = 64;
 const EXPLORATION_DEATH_DISPLACEMENT_WINDOW_MS = 10 * 60 * 1_000;
@@ -7793,10 +7794,13 @@ function fillLiquidBucket(
         return;
       }
       const approach = yield* approachLavaSourceFromSide(
-        state,
+        state.driver,
         current,
         sources,
-        { requireExposableSource: true },
+        {
+          path: state.strategy.path,
+          requireExposableSource: true,
+        },
       ).pipe(Effect.either);
       if (approach._tag === "Left") {
         const visibleSourceIsBelow = sources.some(({ position }) =>
@@ -8110,9 +8114,10 @@ function preparePortalCastingLavaPool(
     });
     if (sources.length >= PORTAL_CASTING_ADDITIONAL_LAVA_SOURCE_COUNT) {
       yield* approachLavaSourceFromSide(
-        state,
+        state.driver,
         observation,
         sources,
+        { path: state.strategy.path },
       );
       return true;
     }
@@ -8440,337 +8445,6 @@ function queryExactBlockAt(
       )
     ),
   );
-}
-
-function approachLavaSourceFromSide(
-  state: RunState,
-  observation: BeatGameObservation,
-  sources: readonly BeatGameBlockObservation[],
-  options: {
-    readonly requireExposableSource?: boolean;
-  } = {},
-): Effect.Effect<BeatGameBlockObservation, BeatGameDriverError> {
-  return Effect.gen(function* () {
-    const nearbySources = [...sources].sort((left, right) =>
-      Math.min(
-        PORTAL_CASTING_ADDITIONAL_LAVA_SOURCE_COUNT,
-        lavaSourceClusterSize(right, sources),
-      )
-      - Math.min(
-        PORTAL_CASTING_ADDITIONAL_LAVA_SOURCE_COUNT,
-        lavaSourceClusterSize(left, sources),
-      )
-      || Math.abs(observation.player.position.y - left.position.y)
-      - Math.abs(observation.player.position.y - right.position.y)
-      || distanceSquared(observation.player.position, left.position)
-      - distanceSquared(observation.player.position, right.position)
-    );
-    const preparedSources = yield* Effect.forEach(
-      nearbySources,
-      (source) =>
-        queryLavaInteractionVolume(state.driver, source.position).pipe(
-          Effect.map((blocks) => {
-            const candidates = lavaInteractionStandCandidates(
-              source.position,
-            ).sort((left, right) =>
-              lavaSightlineObstructionCount(
-                blocks,
-                left,
-                source.position,
-              )
-                - lavaSightlineObstructionCount(
-                  blocks,
-                  right,
-                  source.position,
-                )
-              || distanceSquared(observation.player.position, left)
-                - distanceSquared(observation.player.position, right)
-            );
-            return { source, blocks, candidates };
-          }),
-        ),
-      { concurrency: 1 },
-    );
-
-    const attemptedDryStands = new Set<string>();
-    for (const prepared of preparedSources) {
-      for (const candidate of prepared.candidates) {
-        const key = positionKey(candidate);
-        if (
-          attemptedDryStands.has(key)
-          || !isSafeLavaInteractionStand(prepared.blocks, candidate)
-        ) {
-          continue;
-        }
-        attemptedDryStands.add(key);
-        const reached = yield* pathfindToLavaInteractionStand(
-          state,
-          candidate,
-          false,
-        );
-        if (
-          reached
-          && (
-            options.requireExposableSource !== true
-            || (yield* isLavaSourceExposableFromCurrentPosition(
-              state.driver,
-              prepared.source,
-            ))
-          )
-        ) {
-          return prepared.source;
-        }
-      }
-    }
-
-    const attemptedExcavationStands = new Set<string>();
-    for (const prepared of preparedSources) {
-      for (const candidate of prepared.candidates) {
-        const key = positionKey(candidate);
-        if (
-          attemptedExcavationStands.has(key)
-          || !isExcavatableLavaInteractionStand(
-            prepared.source.position,
-            prepared.blocks,
-            candidate,
-          )
-        ) {
-          continue;
-        }
-        attemptedExcavationStands.add(key);
-        const reached = yield* pathfindToLavaInteractionStand(
-          state,
-          candidate,
-          true,
-        );
-        if (
-          reached
-          && (
-            options.requireExposableSource !== true
-            || (yield* isLavaSourceExposableFromCurrentPosition(
-              state.driver,
-              prepared.source,
-            ))
-          )
-        ) {
-          return prepared.source;
-        }
-      }
-    }
-    return yield* Effect.fail(new BeatGameDriverError({
-      operation: "approach-lava-source",
-      code: "unreachable",
-      retryable: true,
-      message:
-        `Could not reach, excavate, or expose a safe side-on stand beside ${
-          nearbySources.length
-        } nearby lava source${nearbySources.length === 1 ? "" : "s"}`,
-    }));
-  });
-}
-
-function lavaSourceClusterSize(
-  source: BeatGameBlockObservation,
-  sources: readonly BeatGameBlockObservation[],
-): number {
-  return sources.filter((candidate) =>
-    candidate.position.dimension === source.position.dimension
-    && distanceSquared(candidate.position, source.position)
-      <= PORTAL_LAVA_SOURCE_CLUSTER_RADIUS ** 2
-  ).length;
-}
-
-function isLavaSourceExposableFromCurrentPosition(
-  driver: BeatGameDriver,
-  source: BeatGameBlockObservation,
-): Effect.Effect<boolean, BeatGameDriverError> {
-  return Effect.gen(function* () {
-    const current = yield* driver.observe;
-    const eyePosition = {
-      ...current.player.position,
-      y: current.player.position.y + 1.62,
-    };
-    const sourceCenter = blockCenter(source.position);
-    const direction = {
-      x: sourceCenter.x - eyePosition.x,
-      y: sourceCenter.y - eyePosition.y,
-      z: sourceCenter.z - eyePosition.z,
-    };
-    const sourceDistance = Math.sqrt(
-      direction.x * direction.x
-        + direction.y * direction.y
-        + direction.z * direction.z,
-    );
-    if (sourceDistance > LIQUID_INTERACTION_REACH) {
-      return false;
-    }
-    const obstruction = (yield* driver.raycast({
-      direction,
-      maximumDistance: Math.min(
-        LIQUID_INTERACTION_REACH,
-        sourceDistance + 0.05,
-      ),
-      includeFluids: false,
-    })).block;
-    return obstruction === undefined
-      || sameBlockPosition(obstruction.position, source.position);
-  });
-}
-
-function queryLavaInteractionVolume(
-  driver: BeatGameDriver,
-  source: BeatGameBlockPosition,
-): Effect.Effect<
-  ReadonlyMap<string, BeatGameBlockObservation>,
-  BeatGameDriverError
-> {
-  return driver.queryBlocks({
-    center: blockCenter(source),
-    radius: 4.9,
-    selector: {},
-    maximumResults: 500,
-  }).pipe(
-    Effect.map((blocks) =>
-      new Map(blocks.map((block) => [positionKey(block.position), block]))
-    ),
-  );
-}
-
-function pathfindToLavaInteractionStand(
-  state: RunState,
-  candidate: BeatGamePosition,
-  allowMining: boolean,
-): Effect.Effect<boolean, BeatGameDriverError> {
-  return state.driver.pathfind(
-    candidate,
-    LIQUID_INTERACTION_STAND_RADIUS,
-    {
-      ...state.strategy.path,
-      allowMining,
-      avoidFluids: true,
-      maxFallDistance: Math.min(state.strategy.path.maxFallDistance, 1),
-    },
-  ).pipe(
-    Effect.as(true),
-    Effect.catchTag("BeatGameDriverError", () => Effect.succeed(false)),
-  );
-}
-
-function lavaInteractionStandCandidates(
-  source: BeatGameBlockPosition,
-): BeatGamePosition[] {
-  const sourceCenter = blockCenter(source);
-  const candidates: BeatGamePosition[] = [];
-  const horizontalReach = Math.floor(LIQUID_INTERACTION_REACH);
-  for (let xOffset = -horizontalReach; xOffset <= horizontalReach; xOffset++) {
-    for (
-      let zOffset = -horizontalReach;
-      zOffset <= horizontalReach;
-      zOffset++
-    ) {
-      if (xOffset === 0 && zOffset === 0) {
-        continue;
-      }
-      for (let yOffset = -1; yOffset <= 3; yOffset++) {
-        const candidate = {
-          x: source.x + xOffset + 0.5,
-          y: source.y + yOffset,
-          z: source.z + zOffset + 0.5,
-          dimension: source.dimension,
-        };
-        const eyePosition = {
-          ...candidate,
-          y: candidate.y + 1.62,
-        };
-        if (
-          Math.sqrt(distanceSquared(eyePosition, sourceCenter))
-            <= LIQUID_INTERACTION_REACH
-        ) {
-          candidates.push(candidate);
-        }
-      }
-    }
-  }
-  return candidates;
-}
-
-function lavaSightlineObstructionCount(
-  blocks: ReadonlyMap<string, BeatGameBlockObservation>,
-  candidate: BeatGamePosition,
-  source: BeatGameBlockPosition,
-): number {
-  const eye = { ...candidate, y: candidate.y + 1.62 };
-  const target = blockCenter(source);
-  const length = Math.sqrt(distanceSquared(eye, target));
-  const samples = Math.max(1, Math.ceil(length * 5));
-  const visited = new Set<string>();
-  let obstructions = 0;
-  for (let sample = 1; sample < samples; sample += 1) {
-    const progress = sample / samples;
-    const position = {
-      x: Math.floor(eye.x + (target.x - eye.x) * progress),
-      y: Math.floor(eye.y + (target.y - eye.y) * progress),
-      z: Math.floor(eye.z + (target.z - eye.z) * progress),
-      dimension: source.dimension,
-    } satisfies BeatGameBlockPosition;
-    if (sameBlockPosition(position, source)) {
-      continue;
-    }
-    const key = positionKey(position);
-    if (visited.has(key)) {
-      continue;
-    }
-    visited.add(key);
-    const block = blocks.get(key);
-    if (
-      block !== undefined
-      && !block.replaceable
-      && !isPlayerFluidBlock(block.blockId)
-    ) {
-      obstructions += 1;
-    }
-  }
-  return obstructions;
-}
-
-function isSafeLavaInteractionStand(
-  blocks: ReadonlyMap<string, BeatGameBlockObservation>,
-  candidate: BeatGamePosition,
-): boolean {
-  const body = floorBlockPosition(candidate);
-  const feet = blocks.get(positionKey(body));
-  const head = blocks.get(positionKey({ ...body, y: body.y + 1 }));
-  const support = blocks.get(positionKey({ ...body, y: body.y - 1 }));
-  return feet?.replaceable === true
-    && head?.replaceable === true
-    && isStableStaircaseAnchor(support)
-    && ![feet, head, support].some((block) =>
-      block !== undefined && isPlayerFluidBlock(block.blockId)
-    );
-}
-
-function isExcavatableLavaInteractionStand(
-  source: BeatGameBlockPosition,
-  blocks: ReadonlyMap<string, BeatGameBlockObservation>,
-  candidate: BeatGamePosition,
-): boolean {
-  const body = floorBlockPosition(candidate);
-  const feet = blocks.get(positionKey(body));
-  const head = blocks.get(positionKey({ ...body, y: body.y + 1 }));
-  const support = blocks.get(positionKey({ ...body, y: body.y - 1 }));
-  const horizontalDistance = Math.max(
-    Math.abs(body.x - source.x),
-    Math.abs(body.z - source.z),
-  );
-  return horizontalDistance >= 2
-    && isStableStaircaseAnchor(support)
-    && [feet, head].every((block) =>
-      block !== undefined
-      && !isPlayerFluidBlock(block.blockId)
-      && (block.replaceable
-        || block.diggable
-          && !isGravityAffectedBlockId(block.blockId))
-    );
 }
 
 function isPlayerStabilityBlock(

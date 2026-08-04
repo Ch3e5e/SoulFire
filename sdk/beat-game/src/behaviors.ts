@@ -21,6 +21,7 @@ import {
   type BeatGamePathPolicy,
   type BeatGamePosition,
 } from "./model.js";
+import { approachLavaSourceFromSide } from "./liquids.js";
 import type {
   BeatGameBlockFace,
   BeatGameBuildBlock,
@@ -4971,34 +4972,35 @@ function collectPortalCastingLavaSource(
       3,
       mergePathPolicy(path),
     );
-    const observation = yield* driver.observe;
+    let observation = yield* driver.observe;
     const sourceCenter = blockCenter(source.position);
-    const eyePosition = {
-      ...observation.player.position,
-      y: observation.player.position.y + 1.62,
-    };
-    const direction = {
-      x: sourceCenter.x - eyePosition.x,
-      y: sourceCenter.y - eyePosition.y,
-      z: sourceCenter.z - eyePosition.z,
-    };
-    const distance = Math.sqrt(
-      direction.x * direction.x
-        + direction.y * direction.y
-        + direction.z * direction.z,
+    let obstruction = yield* portalCastingLavaSightline(
+      driver,
+      observation,
+      source.position,
     );
-    const rotation = rotationToward(eyePosition, sourceCenter);
-    yield* driver.act({
-      type: "look",
-      yaw: rotation.yaw,
-      pitch: rotation.pitch,
-    });
-    yield* waitForRotation(driver, rotation.yaw, rotation.pitch, 40, 50);
-    const obstruction = (yield* driver.raycast({
-      direction,
-      maximumDistance: distance + 0.05,
-      includeFluids: false,
-    })).block;
+    if (
+      obstruction !== undefined
+      && !samePosition(obstruction.position, source.position)
+    ) {
+      const repositioned = yield* approachLavaSourceFromSide(
+        driver,
+        observation,
+        [source],
+        {
+          path: mergePathPolicy(path),
+          requireExposableSource: true,
+        },
+      ).pipe(Effect.either);
+      if (repositioned._tag === "Right") {
+        observation = yield* driver.observe;
+        obstruction = yield* portalCastingLavaSightline(
+          driver,
+          observation,
+          source.position,
+        );
+      }
+    }
     if (
       obstruction !== undefined
       && !samePosition(obstruction.position, source.position)
@@ -5061,6 +5063,38 @@ function collectPortalCastingLavaSource(
       driver,
       `The lava source at ${positionKey(source.position)} was not collected`,
     ));
+  });
+}
+
+function portalCastingLavaSightline(
+  driver: BeatGameDriver,
+  observation: BeatGameObservation,
+  source: BeatGameBlockPosition,
+): Effect.Effect<BeatGameBlockObservation | undefined, BeatGameDriverError> {
+  return Effect.gen(function* () {
+    const sourceCenter = blockCenter(source);
+    const eyePosition = {
+      ...observation.player.position,
+      y: observation.player.position.y + 1.62,
+    };
+    const direction = {
+      x: sourceCenter.x - eyePosition.x,
+      y: sourceCenter.y - eyePosition.y,
+      z: sourceCenter.z - eyePosition.z,
+    };
+    const distance = Math.sqrt(distanceSquared(eyePosition, sourceCenter));
+    const rotation = rotationToward(eyePosition, sourceCenter);
+    yield* driver.act({
+      type: "look",
+      yaw: rotation.yaw,
+      pitch: rotation.pitch,
+    });
+    yield* waitForRotation(driver, rotation.yaw, rotation.pitch, 40, 50);
+    return (yield* driver.raycast({
+      direction,
+      maximumDistance: distance + 0.05,
+      includeFluids: false,
+    })).block;
   });
 }
 

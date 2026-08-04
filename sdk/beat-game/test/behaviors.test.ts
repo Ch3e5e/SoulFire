@@ -4073,7 +4073,7 @@ describe("beat-game behavior programs", () => {
     expect(driver.activeControlScopes).toBe(0);
   });
 
-  it("refreshes lava sources between portal casting steps", async () => {
+  it("repositions before refreshing and collecting portal lava", async () => {
     const driver = new FakeBeatGameDriver();
     const origin = {
       x: 0,
@@ -4107,6 +4107,12 @@ describe("beat-game behavior programs", () => {
       blockId: "minecraft:lava",
       replaceable: true,
     });
+    const safeStand = {
+      x: 7,
+      y: 64,
+      z: 8,
+      dimension: origin.dimension,
+    } as const;
     const key = (position: BeatGameBlockPosition) =>
       `${position.dimension}:${position.x}:${position.y}:${position.z}`;
     const targetKeys = new Set(targets.map(key));
@@ -4137,15 +4143,31 @@ describe("beat-game behavior programs", () => {
       position: origin,
     });
     let lavaQueryCount = 0;
-    driver.blockQueryResolver = ({ center, selector }) => {
+    let sourceCollected = false;
+    driver.blockQueryResolver = ({ center, radius, selector }) => {
       if (selector.blockIds?.includes("minecraft:lava") === true) {
         lavaQueryCount += 1;
-        return lavaQueryCount === 1 ? [source] : [];
+        return sourceCollected ? [] : [source];
       }
       if (selector.blockIds?.includes("minecraft:obsidian") === true) {
         return [...blocks.values()].filter(({ blockId }) =>
           blockId === "minecraft:obsidian"
         );
+      }
+      if (radius === 4.9 && Object.keys(selector).length === 0) {
+        return [
+          blockObservation(safeStand, {
+            blockId: "minecraft:air",
+            replaceable: true,
+          }),
+          blockObservation({ ...safeStand, y: safeStand.y + 1 }, {
+            blockId: "minecraft:air",
+            replaceable: true,
+          }),
+          blockObservation({ ...safeStand, y: safeStand.y - 1 }, {
+            blockId: "minecraft:stone",
+          }),
+        ];
       }
       const position = queriedBlockPosition(center);
       return [blocks.get(key(position)) ?? blockObservation(position, {
@@ -4153,7 +4175,33 @@ describe("beat-game behavior programs", () => {
         replaceable: true,
       })];
     };
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+        if (radius === 0.75) {
+          driver.currentObservation = observation({
+            counts: driver.currentObservation.inventory.counts,
+            position,
+            rotation: driver.currentObservation.player.rotation,
+          });
+        }
+      });
+    driver.raycastResolver = ({ maximumDistance }) =>
+      maximumDistance > 4
+        && driver.currentObservation.player.position.x
+          !== safeStand.x + 0.5
+        ? {
+          block: blockObservation({
+            x: 4,
+            y: 64,
+            z: 4,
+            dimension: origin.dimension,
+          }, { blockId: "minecraft:stone" }),
+          distance: 4,
+        }
+        : { distance: maximumDistance };
     let selectedItemId = "";
+    let activeTarget: BeatGameBlockPosition | undefined;
     const updateInventory = (
       update: (counts: Record<string, number>) => void,
     ) => {
@@ -4185,25 +4233,35 @@ describe("beat-game behavior programs", () => {
         return;
       }
       if (selectedItemId === "minecraft:lava_bucket") {
+        activeTarget = targets.find((target) =>
+          blocks.get(key(target))?.blockId !== "minecraft:obsidian"
+        );
+        if (activeTarget === undefined) {
+          throw new Error("Expected another portal casting target");
+        }
         updateInventory((counts) => {
           delete counts["minecraft:lava_bucket"];
           counts["minecraft:bucket"] = (counts["minecraft:bucket"] ?? 0) + 1;
         });
-        blocks.set(key(firstTarget), blockObservation(firstTarget, {
+        blocks.set(key(activeTarget), blockObservation(activeTarget, {
           blockId: "minecraft:lava",
           replaceable: true,
         }));
         return;
       }
       if (selectedItemId === "minecraft:water_bucket") {
+        if (activeTarget === undefined) {
+          throw new Error("Expected an active portal casting target");
+        }
+        const activeWater = { ...activeTarget, z: activeTarget.z - 1 };
         updateInventory((counts) => {
           delete counts["minecraft:water_bucket"];
           counts["minecraft:bucket"] = (counts["minecraft:bucket"] ?? 0) + 1;
         });
-        blocks.set(key(firstTarget), blockObservation(firstTarget, {
+        blocks.set(key(activeTarget), blockObservation(activeTarget, {
           blockId: "minecraft:obsidian",
         }));
-        blocks.set(key(water), blockObservation(water, {
+        blocks.set(key(activeWater), blockObservation(activeWater, {
           blockId: "minecraft:water",
           properties: { level: "0" },
           replaceable: true,
@@ -4211,27 +4269,52 @@ describe("beat-game behavior programs", () => {
         return;
       }
       if (selectedItemId === "minecraft:bucket") {
+        const activeWater = activeTarget === undefined
+          ? undefined
+          : { ...activeTarget, z: activeTarget.z - 1 };
+        const hasPlacedWater = activeWater !== undefined
+          && blocks.has(key(activeWater));
         updateInventory((counts) => {
           counts["minecraft:bucket"] = Math.max(
             0,
             (counts["minecraft:bucket"] ?? 0) - 1,
           );
-          counts["minecraft:water_bucket"] = 1;
+          if (hasPlacedWater) {
+            counts["minecraft:water_bucket"] = 1;
+          } else {
+            counts["minecraft:lava_bucket"] = 1;
+            sourceCollected = true;
+          }
         });
-        blocks.delete(key(water));
+        if (hasPlacedWater && activeWater !== undefined) {
+          blocks.delete(key(activeWater));
+        }
       }
     };
 
-    await expect(Effect.runPromise(castNetherPortal(driver, {
+    await Effect.runPromise(castNetherPortal(driver, {
       origin,
       ignite: false,
-    }))).rejects.toThrow(
-      "No live lava source remained for the next portal casting step",
-    );
+    }));
 
     expect(blocks.get(key(firstTarget))?.blockId).toBe("minecraft:obsidian");
-    expect(blocks.has(key(secondTarget))).toBe(false);
-    expect(lavaQueryCount).toBe(2);
+    expect(blocks.get(key(secondTarget))?.blockId).toBe("minecraft:obsidian");
+    expect(lavaQueryCount).toBeGreaterThanOrEqual(3);
+    expect(sourceCollected).toBe(true);
+    expect(driver.paths).toContainEqual({
+      position: {
+        x: safeStand.x + 0.5,
+        y: safeStand.y,
+        z: safeStand.z + 0.5,
+        dimension: safeStand.dimension,
+      },
+      radius: 0.75,
+      policy: expect.objectContaining({
+        allowMining: false,
+        avoidFluids: true,
+        maxFallDistance: 1,
+      }),
+    });
     expect(driver.activeControlScopes).toBe(0);
   });
 
