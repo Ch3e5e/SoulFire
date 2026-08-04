@@ -396,6 +396,10 @@ const LAVA_EMERGENCY_SPRINT_MS = 1_500;
 const IRON_SEARCH_Y = 16;
 const IRON_SEARCH_MAX_Y = 24;
 const IRON_SEARCH_DESCENT_STEP = 12;
+const IRON_ORE_BLOCK_IDS = [
+  "minecraft:iron_ore",
+  "minecraft:deepslate_iron_ore",
+] as const;
 const RESOURCE_SEARCH_PICKAXE_DURABILITY_RESERVE = 64;
 const RESOURCE_DESCENT_PICKAXE_DURABILITY_RESERVE = 48;
 const SURFACE_ESCAPE_PICKAXE_DURABILITY_PER_LEVEL = 3;
@@ -7819,11 +7823,21 @@ function satisfyIronRequirement(
       ),
     );
   }
-  if (
-    observation.player.position.dimension === "minecraft:overworld"
-    && observation.player.position.y > IRON_SEARCH_MAX_Y
-  ) {
-    return Effect.gen(function* () {
+  return Effect.gen(function* () {
+    const nearbyIron = yield* state.driver.queryBlocks({
+      center: observation.player.position,
+      radius: state.strategy.blockSearchRadius,
+      selector: { blockIds: IRON_ORE_BLOCK_IDS },
+      maximumResults: 1,
+    });
+    if (
+      !nearbyIron.some(({ blockId }) =>
+        blockId === "minecraft:iron_ore"
+        || blockId === "minecraft:deepslate_iron_ore"
+      )
+      && observation.player.position.dimension === "minecraft:overworld"
+      && observation.player.position.y > IRON_SEARCH_MAX_Y
+    ) {
       yield* ensureMiningPickaxe(
         state,
         observation,
@@ -7847,27 +7861,25 @@ function satisfyIronRequirement(
         current.player.position,
         targetY,
       );
+      return;
+    }
+    yield* collectBlocksOrExplore(state, observation, {
+      blockIds: IRON_ORE_BLOCK_IDS,
+      count: bufferedCollectionCount("iron", missing - rawIron),
+      progressItemIds: ["minecraft:raw_iron"],
+      purpose: "find-iron",
+      avoidSubmergedTargets: true,
+      avoidFluids: true,
+      preferSurfaceExploration: false,
+      prepareAttempt: (current) =>
+        ensureMiningPickaxe(
+          state,
+          current,
+          "minecraft:stone_pickaxe",
+          STONE_OR_BETTER_MINING_PICKAXE_ITEM_IDS,
+          RESOURCE_SEARCH_PICKAXE_DURABILITY_RESERVE,
+        ),
     });
-  }
-  return collectBlocksOrExplore(state, observation, {
-    blockIds: [
-      "minecraft:iron_ore",
-      "minecraft:deepslate_iron_ore",
-    ],
-    count: bufferedCollectionCount("iron", missing - rawIron),
-    progressItemIds: ["minecraft:raw_iron"],
-    purpose: "find-iron",
-    avoidSubmergedTargets: true,
-    avoidFluids: true,
-    preferSurfaceExploration: false,
-    prepareAttempt: (current) =>
-      ensureMiningPickaxe(
-        state,
-        current,
-        "minecraft:stone_pickaxe",
-        STONE_OR_BETTER_MINING_PICKAXE_ITEM_IDS,
-        RESOURCE_SEARCH_PICKAXE_DURABILITY_RESERVE,
-      ),
   });
 }
 

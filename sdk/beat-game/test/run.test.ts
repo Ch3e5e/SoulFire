@@ -21020,6 +21020,7 @@ describe("beat-game run lifecycle", () => {
   it("stops an in-flight collection once external inventory gains meet its buffered target", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
+      position: { y: 24 },
       counts: {
         "minecraft:cooked_beef": 12,
         "minecraft:oak_log": 8,
@@ -21148,6 +21149,67 @@ describe("beat-game run lifecycle", () => {
       task.type === "collect-blocks"
       && task.blockIds.includes("minecraft:iron_ore")
     )).toHaveLength(0);
+  });
+
+  it("mines loaded iron before descending past it", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      position: {
+        x: 24.5,
+        y: 64,
+        z: -12.5,
+        dimension: "minecraft:overworld",
+      },
+      counts: {
+        "minecraft:cooked_beef": 5,
+        "minecraft:oak_log": 8,
+        "minecraft:cobblestone": 30,
+        "minecraft:stone_sword": 1,
+        "minecraft:stone_pickaxe": 1,
+        "minecraft:water_bucket": 1,
+      },
+    });
+    const nearbyIron = blockObservation({
+      x: 24,
+      y: 55,
+      z: -12,
+      dimension: "minecraft:overworld",
+    }, { blockId: "minecraft:iron_ore" });
+    driver.blockQueryResolver = (query) =>
+      query.selector.blockIds?.includes("minecraft:iron_ore") === true
+        ? [nearbyIron]
+        : [];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(
+        Effect.zipRight(
+          task.type === "collect-blocks"
+              && task.blockIds.includes("minecraft:iron_ore")
+            ? Effect.never
+            : Effect.void,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some((task) =>
+        task.type === "collect-blocks"
+        && task.blockIds.includes("minecraft:iron_ore")
+      )) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    })));
+
+    expect(driver.tasks.some((task) =>
+      task.type === "collect-blocks"
+      && task.blockIds.includes("minecraft:iron_ore")
+    )).toBe(true);
+    expect(driver.actions.some((action) => action.type === "dig-block"))
+      .toBe(false);
   });
 
   it("does not treat submerged kelp as staircase footing", async () => {
