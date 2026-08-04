@@ -7498,7 +7498,7 @@ describe("beat-game run lifecycle", () => {
     }];
     driver.entityQueryResolver = (query) =>
       query.selector.categories?.includes(2) ? driver.entityResults : [];
-    driver.surfaceColumns = Array.from({ length: 10 }, (_, index) =>
+    driver.surfaceColumns = Array.from({ length: 18 }, (_, index) =>
       index + 1
     ).flatMap((distance) =>
       [-2, -1, 0, 1, 2].map((z) => ({
@@ -9439,6 +9439,19 @@ describe("beat-game run lifecycle", () => {
     ];
     driver.entityQueryResolver = (query) =>
       query.selector.categories?.includes(2) ? driver.entityResults : [];
+    driver.surfaceColumns = Array.from({ length: 18 }, (_, index) =>
+      index + 1
+    ).flatMap((distance) =>
+      [-2, -1, 0, 1, 2].map((z) => ({
+        x: -distance,
+        z,
+        loaded: true,
+        surfaceY: 63,
+        blockId: "minecraft:grass_block",
+        skyLight: 15,
+        blockLight: 0,
+      }))
+    );
     driver.taskObserver = (task) => {
       if (task.type === "flee") {
         driver.entityResults = [];
@@ -9472,7 +9485,19 @@ describe("beat-game run lifecycle", () => {
         categories: [2],
         alive: true,
       },
+      triggerRadius: 24,
+      safeDistance: 32,
     }));
+    expect(driver.actions).toContainEqual({
+      type: "set-movement",
+      left: true,
+      right: false,
+    });
+    expect(driver.actions).toContainEqual({
+      type: "set-movement",
+      left: false,
+      right: true,
+    });
     expect(driver.tasks.some((task) => task.type === "attack-entity"))
       .toBe(false);
   }, 10_000);
