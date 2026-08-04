@@ -644,6 +644,7 @@ const EMERGENCY_ESCAPE_LAVA_CHECK_RADIUS = 4;
 const NIGHT_SHELTER_START_TICK = 13_000n;
 const NIGHT_SHELTER_END_TICK = 23_000n;
 const NIGHT_SHELTER_DEPTH = 3;
+const NIGHT_SHELTER_MINIMUM_SURFACE_COVER = 3;
 const NIGHT_SHELTER_POLL_MS = 1_000;
 const NIGHT_SHELTER_DESCENT_ATTEMPTS = 30;
 const NIGHT_SHELTER_BLOCK_ITEM_IDS = [
@@ -1245,6 +1246,9 @@ function shouldTakeNightShelter(
     if (!isHostileNight(environment.gameTime)) {
       return false;
     }
+    if (yield* isSafelyBelowOverworldSurface(state.driver, observation)) {
+      return false;
+    }
     const protectedForNightTravel =
       (observation.inventory.counts["minecraft:shield"] ?? 0) > 0
       && hasMeleeWeapon(observation)
@@ -1256,6 +1260,28 @@ function shouldTakeNightShelter(
     }
     return true;
   });
+}
+
+function isSafelyBelowOverworldSurface(
+  driver: BeatGameDriver,
+  observation: BeatGameObservation,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  const player = observation.player.position;
+  return driver.sampleSurface(player, 0, 1).pipe(
+    Effect.map((columns) => {
+      const playerX = Math.floor(player.x);
+      const playerZ = Math.floor(player.z);
+      const column = columns.find((candidate) =>
+        candidate.loaded
+        && candidate.x === playerX
+        && candidate.z === playerZ
+        && candidate.surfaceY !== undefined
+      );
+      return column?.surfaceY !== undefined
+        && Math.floor(player.y) + NIGHT_SHELTER_MINIMUM_SURFACE_COVER
+          <= column.surfaceY;
+    }),
+  );
 }
 
 function shelterUntilMorning(

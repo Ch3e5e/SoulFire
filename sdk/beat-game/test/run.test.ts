@@ -119,6 +119,73 @@ describe("beat-game run lifecycle", () => {
     expect(failures).toEqual([]);
   });
 
+  it("keeps working at night while safely below the surface", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentEnvironment = { gameTime: 14_000n };
+    driver.currentObservation = observation({
+      position: {
+        x: 0.5,
+        y: 40,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+      counts: { "minecraft:wooden_sword": 1 },
+    });
+    driver.surfaceColumns = [{
+      x: 0,
+      z: 0,
+      loaded: true,
+      surfaceY: 64,
+      blockId: "minecraft:grass_block",
+      biomeId: "minecraft:plains",
+      skyLight: 15,
+      blockLight: 0,
+    }];
+    let actionStarted = false;
+    const failures: string[] = [];
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+        hooks: {
+          satisfyRequirement: () =>
+            Effect.sync(() => {
+              actionStarted = true;
+            }).pipe(Effect.zipRight(Effect.never)),
+        },
+      });
+      yield* run.events.pipe(
+        Stream.runForEach((event) =>
+          event.type === "action-failed"
+            ? Effect.sync(() => {
+              failures.push(event.detail ?? "");
+            })
+            : Effect.void
+        ),
+        Effect.forkScoped,
+      );
+      while (!actionStarted || driver.surfaceQueries.length < 3) {
+        yield* Effect.sleep(1);
+      }
+      yield* Effect.sleep(5);
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    expect(failures).toEqual([]);
+    expect(driver.surfaceQueries).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        center: expect.objectContaining({ x: 0.5, y: 40, z: 0.5 }),
+        radius: 0,
+        sampleStep: 1,
+      }),
+    ]));
+    expect(driver.actions).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "dig-block" }),
+      expect.objectContaining({ type: "place-block" }),
+    ]));
+  });
+
   it("interrupts vulnerable work at night and seals underground", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentEnvironment = { gameTime: 12_900n };
