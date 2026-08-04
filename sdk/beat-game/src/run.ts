@@ -421,7 +421,6 @@ const AIR_ESCAPE_MAXIMUM_SHAFT_BLOCKS = 64;
 const AIR_ESCAPE_VERTICAL_PROGRESS_ATTEMPTS = 20;
 const AIR_ESCAPE_VERTICAL_PROGRESS = 0.75;
 const OVERWORLD_LOW_GROUND_MAX_Y = 62;
-const OVERWORLD_FORCED_SURFACE_RECOVERY_MAX_Y = 64;
 const SURFACE_RESOURCE_MINIMUM_Y_MARGIN = 4;
 const SURFACE_RESOURCE_PATH_MINIMUM_Y_MARGIN = 1;
 const SURFACE_NEIGHBOR_MAX_HEIGHT_DELTA = 1;
@@ -9855,7 +9854,6 @@ function needsOverworldSurfaceRecovery(
 ): Effect.Effect<boolean, BeatGameDriverError> {
   if (
     position.dimension !== "minecraft:overworld"
-    || position.y > OVERWORLD_FORCED_SURFACE_RECOVERY_MAX_Y
   ) {
     return Effect.succeed(false);
   }

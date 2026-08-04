@@ -18256,12 +18256,12 @@ describe("beat-game run lifecycle", () => {
     expect(driver.xzPaths).toHaveLength(0);
   });
 
-  it("recovers from a shallow underground pocket before exploring", async () => {
+  it("recovers from a shallow underground pocket above sea level before exploring", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
       position: {
         x: 58.5,
-        y: 62,
+        y: 66,
         z: -8.5,
         dimension: "minecraft:overworld",
       },
@@ -18270,7 +18270,7 @@ describe("beat-game run lifecycle", () => {
       x: 58,
       z: -8,
       loaded: true,
-      surfaceY: 68,
+      surfaceY: 72,
       blockId: "minecraft:grass_block",
       biomeId: "minecraft:plains",
       skyLight: 15,
@@ -18301,7 +18301,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.paths[0]).toEqual({
       position: {
         x: 58.5,
-        y: 69,
+        y: 73,
         z: -7.5,
         dimension: "minecraft:overworld",
       },
