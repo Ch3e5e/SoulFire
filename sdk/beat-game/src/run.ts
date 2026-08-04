@@ -171,6 +171,7 @@ const DEEP_CORPSE_EXCAVATION_MINIMUM_DEPTH = 32;
 const DISTANT_CORPSE_EXCAVATION_MINIMUM_HORIZONTAL_DISTANCE = 64;
 const CORPSE_DROP_INSPECTION_DISTANCE = 32;
 const CORPSE_DROP_MATCH_RADIUS = 16;
+const DEATH_RECOVERY_PREPARATION_STAGING_DISTANCE = 256;
 const EMERGENCY_ARMAMENT_LOG_COUNT = 2;
 const DEATH_RECOVERY_BOOTSTRAP_LOG_COUNT = 12;
 const DEATH_RECOVERY_BOOTSTRAP_BLOCK_COUNT = 16;
@@ -1957,13 +1958,8 @@ function executeDecision(
                   data: { drops: nearbyCorpseDrops.length },
                 });
               }
-              const corpseIsImmediatelyReachable = distanceSquared(
-                respawned.player.position,
-                pendingDeath.position,
-              ) <= CORPSE_DROP_INSPECTION_DISTANCE ** 2;
               const preparationPending =
                 nearbyCorpseDrops !== undefined
-                  && corpseIsImmediatelyReachable
                   ? undefined
                   : yield* prepareForDistantDeathRecovery(
                     state,
@@ -13005,6 +13001,11 @@ function prepareForDistantDeathRecovery(
       allowPlacing: false,
       avoidFluids: true,
     };
+    const preparationTarget = (value: BeatGameObservation) =>
+      deathRecoveryPreparationTarget(
+        value.player.position,
+        pendingDeath.position,
+      );
     const buildingMaterialCount = (value: BeatGameObservation): number =>
       DEATH_RECOVERY_BUILDING_ITEM_IDS.reduce(
         (total, itemId) =>
@@ -13073,7 +13074,7 @@ function prepareForDistantDeathRecovery(
           preferredRadius: HIGH_YIELD_FOOD_PREFERENCE_RADIUS,
           maximumExplorationHops: 2,
           path: foodSearchPath,
-          explorationTarget: pendingDeath.position,
+          explorationTarget: preparationTarget(value),
           allowCriticalAquaticTargets: true,
           maximumSafeAquaticFoodLevel: Math.max(
             state.strategy.eatBelowFood,
@@ -13154,7 +13155,7 @@ function prepareForDistantDeathRecovery(
         purpose: "prepare-corpse-recovery-blocks",
         avoidSubmergedTargets: true,
         path: protectedRecoveryPath,
-        explorationTarget: pendingDeath.position,
+        explorationTarget: preparationTarget(value),
       }).pipe(Effect.zipRight(state.driver.observe));
     };
 
@@ -13181,7 +13182,7 @@ function prepareForDistantDeathRecovery(
           avoidSubmergedTargets: true,
           requireSurfaceTargets: true,
           path: protectedRecoveryPath,
-          explorationTarget: pendingDeath.position,
+          explorationTarget: preparationTarget(current),
         });
         current = yield* state.driver.observe;
       }
@@ -13234,7 +13235,7 @@ function prepareForDistantDeathRecovery(
           avoidSubmergedTargets: true,
           requireSurfaceTargets: true,
           path: protectedRecoveryPath,
-          explorationTarget: pendingDeath.position,
+          explorationTarget: preparationTarget(current),
         });
         current = yield* state.driver.observe;
         additionalLogs = additionalLogsForWoodenPickaxe(current);
@@ -13267,7 +13268,7 @@ function prepareForDistantDeathRecovery(
         avoidSubmergedTargets: true,
         requireSurfaceTargets: true,
         path: protectedRecoveryPath,
-        explorationTarget: pendingDeath.position,
+        explorationTarget: preparationTarget(current),
       });
       current = yield* state.driver.observe;
     }
@@ -13303,6 +13304,25 @@ function prepareForDistantDeathRecovery(
     }
     return undefined;
   });
+}
+
+function deathRecoveryPreparationTarget(
+  currentPosition: BeatGamePosition,
+  deathPosition: BeatGamePosition,
+): BeatGamePosition {
+  const deltaX = currentPosition.x - deathPosition.x;
+  const deltaZ = currentPosition.z - deathPosition.z;
+  const distance = Math.hypot(deltaX, deltaZ);
+  const directionX = distance === 0 ? 1 : deltaX / distance;
+  const directionZ = distance === 0 ? 0 : deltaZ / distance;
+  return {
+    x: deathPosition.x
+      + directionX * DEATH_RECOVERY_PREPARATION_STAGING_DISTANCE,
+    y: currentPosition.y,
+    z: deathPosition.z
+      + directionZ * DEATH_RECOVERY_PREPARATION_STAGING_DISTANCE,
+    dimension: currentPosition.dimension,
+  };
 }
 
 function isRecentActiveCorpse(pendingDeath: PendingDeath): boolean {

@@ -2973,6 +2973,20 @@ describe("beat-game run lifecycle", () => {
       },
     }, undefined));
     driver.currentObservation = observation({ health: 5, food: 9 });
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(6)
+        ? [{
+          connectionEpoch: "epoch-1",
+          networkId: 72,
+          entityType: "minecraft:item",
+          itemId: "minecraft:iron_ingot",
+          position: deathPosition,
+          velocity: { x: 0, y: 0, z: 0 },
+          alive: true,
+          health: 5,
+          observedAt: new Date().toISOString(),
+        }]
+        : [];
     driver.pathResolver = (position, radius, policy) =>
       Effect.sync(() => {
         driver.paths.push({ position, radius, policy });
@@ -3334,6 +3348,180 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks).toContainEqual(expect.objectContaining({
       type: "attack-entity",
     }));
+  });
+
+  it("immediately follows an existing route to loaded corpse drops below", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const deathPosition = {
+      x: 24,
+      y: -31,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    const observedAt = new Date(Date.now() - 10 * 60_000).toISOString();
+    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
+      runId: "loaded-deep-corpse-run",
+      teamId: "loaded-deep-corpse-team",
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        deathPositions: [{
+          key: `death:${observedAt}`,
+          value: {
+            ...deathPosition,
+            inventoryCounts: {
+              "minecraft:iron_ingot": 7,
+              "minecraft:iron_pickaxe": 1,
+            },
+          },
+          observedAt,
+          confidence: 1,
+        }],
+      },
+    }, undefined));
+    driver.currentObservation = observation({
+      health: 14,
+      food: 8,
+      counts: { "minecraft:dirt": 11 },
+    });
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(6)
+        ? [{
+          connectionEpoch: "epoch-1",
+          networkId: 73,
+          entityType: "minecraft:item",
+          itemId: "minecraft:iron_ingot",
+          position: deathPosition,
+          velocity: { x: 0, y: 0, z: 0 },
+          alive: true,
+          health: 5,
+          observedAt: new Date().toISOString(),
+        }]
+        : [];
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+      }).pipe(
+        Effect.zipRight(
+          position.x === deathPosition.x
+              && position.y === deathPosition.y
+              && position.z === deathPosition.z
+            ? Effect.never
+            : Effect.void,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        runId: "loaded-deep-corpse-run",
+        team: { teamId: "loaded-deep-corpse-team" },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (!driver.paths.some(({ position }) =>
+              position.x === deathPosition.x
+              && position.y === deathPosition.y
+              && position.z === deathPosition.z
+            )) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.paths).toContainEqual(expect.objectContaining({
+      position: deathPosition,
+      radius: 2,
+      policy: expect.objectContaining({ allowMining: false }),
+    }));
+    expect(driver.tasks).not.toContainEqual(expect.objectContaining({
+      type: "collect-blocks",
+    }));
+    expect(driver.tasks).not.toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+    }));
+    expect(driver.xzPaths).toHaveLength(0);
+  });
+
+  it("prepares outside corpse chunk-loading range", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const deathPosition = {
+      x: 700,
+      y: -31,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    const observedAt = new Date(Date.now() - 10 * 60_000).toISOString();
+    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
+      runId: "corpse-staging-run",
+      teamId: "corpse-staging-team",
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        deathPositions: [{
+          key: `death:${observedAt}`,
+          value: {
+            ...deathPosition,
+            inventoryCounts: { "minecraft:iron_ingot": 7 },
+          },
+          observedAt,
+          confidence: 1,
+        }],
+      },
+    }, undefined));
+    driver.currentObservation = observation({
+      health: 14,
+      food: 8,
+      position: {
+        x: 450,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+    });
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        runId: "corpse-staging-run",
+        team: { teamId: "corpse-staging-team" },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (driver.xzPaths.length === 0) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.xzPaths[0]).toEqual(expect.objectContaining({
+      x: 444,
+      z: 0,
+      dimension: deathPosition.dimension,
+    }));
+    expect(driver.xzPaths[0]?.x).toBeLessThan(
+      driver.currentObservation.player.position.x,
+    );
   });
 
   it("scouts a nearby shallow old corpse before gathering supplies", async () => {
