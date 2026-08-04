@@ -132,7 +132,16 @@ export function decideBeatGameAction(
     && hasCookableRawFood(observation)
   ) {
     const food = requirements.find(({ key }) => key === "food");
-    if (food !== undefined && !food.satisfied) {
+    const logs = requirements.find(({ key }) => key === "logs");
+    if (
+      food !== undefined
+      && !food.satisfied
+      && (
+        observation.player.health < strategy.minimumHealth
+        || logs === undefined
+        || logs.satisfied
+      )
+    ) {
       return requirementDecision(food);
     }
   }

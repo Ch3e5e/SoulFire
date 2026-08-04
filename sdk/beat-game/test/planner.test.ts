@@ -60,7 +60,10 @@ describe("beat-game planner", () => {
     const decision = decideBeatGameAction({
       checkpoint: checkpoint(BeatGamePhase.PREPARE_OVERWORLD),
       observation: observation({
-        counts: { "minecraft:porkchop": 3 },
+        counts: {
+          "minecraft:oak_log": defaultBeatGameStrategy.targetLogCount,
+          "minecraft:porkchop": 3,
+        },
         food: defaultBeatGameStrategy.eatBelowFood,
       }),
       strategy: defaultBeatGameStrategy,
@@ -70,6 +73,23 @@ describe("beat-game planner", () => {
       type: "satisfy-requirement",
       action: "satisfy:food",
       requirement: { key: "food" },
+    });
+  });
+
+  it("gathers cooking prerequisites before preparing raw food while healthy", () => {
+    const decision = decideBeatGameAction({
+      checkpoint: checkpoint(BeatGamePhase.PREPARE_OVERWORLD),
+      observation: observation({
+        counts: { "minecraft:porkchop": 3 },
+        food: defaultBeatGameStrategy.eatBelowFood,
+      }),
+      strategy: defaultBeatGameStrategy,
+    });
+
+    expect(decision).toMatchObject({
+      type: "satisfy-requirement",
+      action: "satisfy:logs",
+      requirement: { key: "logs" },
     });
   });
 
