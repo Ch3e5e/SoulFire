@@ -60,6 +60,140 @@ async function runUntilExplorationStarts(options: {
 }
 
 describe("beat-game run lifecycle", () => {
+  it("seals an under-equipped bot underground until morning", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentEnvironment = { gameTime: 14_000n };
+    driver.currentObservation = observation({
+      counts: {
+        "minecraft:wooden_sword": 1,
+      },
+    });
+    const removedBlocks = new Set<string>();
+    let sealPlaced = false;
+    const key = (x: number, y: number, z: number) => `${x}:${y}:${z}`;
+    driver.blockQueryResolver = ({ center, selector }) => {
+      if (selector.blockIds?.includes("minecraft:water") === true) {
+        return [];
+      }
+      const position = {
+        x: Math.floor(center.x),
+        y: Math.floor(center.y),
+        z: Math.floor(center.z),
+        dimension: center.dimension,
+      };
+      const blockKey = key(position.x, position.y, position.z);
+      const isShaft = position.x === 0 && position.z === 0;
+      const isSeal = isShaft && position.y === 63;
+      const isShaftFloor = isShaft
+        && position.y >= 61
+        && position.y <= 63;
+      const isSealSupport = position.x === 1
+        && position.y === 63
+        && position.z === 0;
+      if (
+        isSeal && sealPlaced
+        || isSealSupport
+        || isShaftFloor && !removedBlocks.has(blockKey)
+      ) {
+        return [blockObservation(position, {
+          blockId: isSeal
+            ? "minecraft:dirt"
+            : "minecraft:stone",
+        })];
+      }
+      return [blockObservation(position, {
+        blockId: "minecraft:air",
+        diggable: false,
+        replaceable: true,
+        solid: false,
+      })];
+    };
+    driver.actionObserver = (action) => {
+      if (action.type === "dig-block") {
+        const collectedDirt = action.position.y === 63
+          ? { "minecraft:dirt": 1 }
+          : {};
+        removedBlocks.add(key(
+          action.position.x,
+          action.position.y,
+          action.position.z,
+        ));
+        if (
+          action.position.y
+            === Math.floor(driver.currentObservation.player.position.y) - 1
+        ) {
+          driver.currentObservation = observation({
+            position: {
+              ...driver.currentObservation.player.position,
+              y: driver.currentObservation.player.position.y - 1,
+            },
+            counts: {
+              ...driver.currentObservation.inventory.counts,
+              ...collectedDirt,
+            },
+          });
+        } else if (action.position.y === 63) {
+          sealPlaced = false;
+        }
+      }
+      if (action.type === "place-block") {
+        sealPlaced = true;
+        removedBlocks.delete(key(0, 63, 0));
+        driver.currentEnvironment = { gameTime: 23_000n };
+      }
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (driver.paths.length === 0) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    const placeIndex = driver.actions.findIndex((action) =>
+      action.type === "place-block"
+    );
+    expect(placeIndex).toBeGreaterThan(2);
+    expect(driver.actions.slice(0, placeIndex)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "dig-block",
+        position: expect.objectContaining({ y: 63 }),
+      }),
+      expect.objectContaining({
+        type: "dig-block",
+        position: expect.objectContaining({ y: 62 }),
+      }),
+      expect.objectContaining({
+        type: "dig-block",
+        position: expect.objectContaining({ y: 61 }),
+      }),
+    ]));
+    expect(driver.actions[placeIndex]).toEqual({
+      type: "place-block",
+      against: {
+        x: 1,
+        y: 63,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      face: "west",
+      hand: "main",
+    });
+    expect(driver.paths[0]).toEqual(expect.objectContaining({
+      position: expect.objectContaining({
+        x: 0,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      }),
+      radius: 1,
+    }));
+  }, 10_000);
+
   it("adopts a durable checkpoint on a replacement SoulFire instance", async () => {
     const driver = new FakeBeatGameDriver("replacement-instance", "bot-1");
     const store = new InMemoryBeatGameCheckpointStore();

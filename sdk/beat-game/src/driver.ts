@@ -109,6 +109,18 @@ export interface BeatGameSurfaceColumn {
   readonly blockLight: number;
 }
 
+export interface BeatGameEnvironmentObservation {
+  readonly gameTime?: bigint;
+  readonly raining?: boolean;
+}
+
+export interface SoulFireBeatGameDriverOptions {
+  readonly environment?: Effect.Effect<
+    BeatGameEnvironmentObservation,
+    BeatGameDriverError
+  >;
+}
+
 export interface BeatGameBuildBlock {
   readonly offset: Readonly<{ x: number; y: number; z: number }>;
   readonly blockId: string;
@@ -449,6 +461,10 @@ export interface BeatGameDriver {
   readonly botId: string;
   readonly observe: Effect.Effect<BeatGameObservation, BeatGameDriverError>;
   readonly events: Stream.Stream<BeatGameDriverEvent, BeatGameDriverError>;
+  readonly environment?: Effect.Effect<
+    BeatGameEnvironmentObservation,
+    BeatGameDriverError
+  >;
   readonly queryBlocks: (
     query: BeatGameQueryBlocks,
   ) => Effect.Effect<
@@ -510,6 +526,7 @@ export interface BeatGameDriver {
 
 export function makeSoulFireBeatGameDriver(
   bot: SoulFireBot,
+  options: SoulFireBeatGameDriverOptions = {},
 ): BeatGameDriver {
   const mapError = (operation: string) => (cause: unknown) =>
     driverError(operation, cause);
@@ -1068,6 +1085,9 @@ export function makeSoulFireBeatGameDriver(
     instanceId: bot.instanceId,
     botId: bot.id,
     observe,
+    ...(options.environment === undefined
+      ? {}
+      : { environment: options.environment }),
     events: bot.events().pipe(
       Stream.map((payload): BeatGameDriverEvent => {
         const observedAt = new Date().toISOString();

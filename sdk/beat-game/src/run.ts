@@ -637,6 +637,19 @@ const CREEPER_ESCAPE_MINIMUM_SEGMENT_DISTANCE = 0.5;
 const CREEPER_ESCAPE_MINIMUM_AWAY_ALIGNMENT = 0.25;
 const CREEPER_ESCAPE_SURFACE_PROJECTION_DISTANCE = 18;
 const EMERGENCY_ESCAPE_LAVA_CHECK_RADIUS = 4;
+const NIGHT_SHELTER_START_TICK = 13_000n;
+const NIGHT_SHELTER_END_TICK = 23_000n;
+const NIGHT_SHELTER_DEPTH = 3;
+const NIGHT_SHELTER_POLL_MS = 1_000;
+const NIGHT_SHELTER_DESCENT_ATTEMPTS = 30;
+const NIGHT_SHELTER_BLOCK_ITEM_IDS = [
+  "minecraft:dirt",
+  "minecraft:coarse_dirt",
+  "minecraft:cobblestone",
+  "minecraft:cobbled_deepslate",
+  ...PLANK_ITEM_IDS,
+  ...LOG_ITEM_IDS,
+] as const;
 const DEATH_OBSERVATION_DEDUPLICATION_WINDOW_MS = 5_000;
 const BAREHANDED_DEFENSE_MINIMUM_HEALTH = 18;
 const MELEE_DISENGAGE_HEALTH = 16;
@@ -744,7 +757,9 @@ export function beatGame(
   bot: SoulFireBot,
   options: BeatGameOptions = {},
 ): Effect.Effect<BeatGameRun, BeatGameError, Scope.Scope> {
-  return beatGameWithDriver(makeSoulFireBeatGameDriver(bot), options);
+  return liveEnvironmentDriver(bot).pipe(
+    Effect.flatMap((driver) => beatGameWithDriver(driver, options)),
+  );
 }
 
 export function beatGameWithDriver(
@@ -981,9 +996,38 @@ export function beatGameTeam(
   bots: readonly SoulFireBot[],
   options: BeatGameTeamRunOptions = {},
 ): Effect.Effect<BeatGameTeamRun, BeatGameError, Scope.Scope> {
-  return beatGameTeamWithDrivers(
-    bots.map(makeSoulFireBeatGameDriver),
-    options,
+  return Effect.all(
+    bots.map(liveEnvironmentDriver),
+    { concurrency: "unbounded" },
+  ).pipe(
+    Effect.flatMap((drivers) => beatGameTeamWithDrivers(drivers, options)),
+  );
+}
+
+function liveEnvironmentDriver(
+  bot: SoulFireBot,
+): Effect.Effect<BeatGameDriver, never, Scope.Scope> {
+  const fallback = makeSoulFireBeatGameDriver(bot);
+  return Effect.acquireRelease(
+    bot.observe({ filter: { includeEnvironment: true } }),
+    (session) => session.close().pipe(Effect.ignore),
+  ).pipe(
+    Effect.map((session) =>
+      makeSoulFireBeatGameDriver(bot, {
+        environment: Effect.sync(() => {
+          const environment = session.state.environment;
+          return {
+            ...(environment.gameTime === undefined
+              ? {}
+              : { gameTime: environment.gameTime }),
+            ...(environment.raining === undefined
+              ? {}
+              : { raining: environment.raining }),
+          };
+        }),
+      })
+    ),
+    Effect.catchAll(() => Effect.succeed(fallback)),
   );
 }
 
@@ -1114,6 +1158,33 @@ function runLoop(
       if (checkpoint.planner.phase === BeatGamePhase.COMPLETE) {
         return yield* completeRun(state);
       }
+      const nightShelterNeeded = yield* shouldTakeNightShelter(
+        state,
+        observation,
+      ).pipe(
+        Effect.catchAll((error) =>
+          emit(state, {
+            type: "diagnostic",
+            message: "Could not evaluate night shelter conditions",
+            data: { error: error.message },
+          }).pipe(Effect.as(false))
+        ),
+      );
+      if (nightShelterNeeded) {
+        yield* cancellable(
+          state,
+          shelterUntilMorning(state, observation).pipe(
+            Effect.catchAll((error) =>
+              emit(state, {
+                type: "diagnostic",
+                message: "Night shelter attempt failed",
+                data: { error: error.message },
+              })
+            ),
+          ),
+        );
+        continue;
+      }
       const decision = decideBeatGameAction({
         checkpoint,
         observation,
@@ -1145,6 +1216,268 @@ function runLoop(
           Effect.zipRight(Effect.fail(error)),
         )
     ),
+  );
+}
+
+function shouldTakeNightShelter(
+  state: RunState,
+  observation: BeatGameObservation,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  if (
+    state.driver.environment === undefined
+    || observation.player.position.dimension !== "minecraft:overworld"
+    || observation.player.dead
+    || !observation.player.onGround
+  ) {
+    return Effect.succeed(false);
+  }
+  return Effect.gen(function* () {
+    const environment = yield* state.driver.environment!;
+    if (!isHostileNight(environment.gameTime)) {
+      return false;
+    }
+    const protectedForNightTravel =
+      (observation.inventory.counts["minecraft:shield"] ?? 0) > 0
+      && hasMeleeWeapon(observation)
+      && observation.player.health >= state.strategy.minimumHealth
+      && observation.player.food > URGENT_HUNGER_FOOD_LEVEL
+      && countNightShelterItems(observation, EDIBLE_FOOD_ITEM_IDS) >= 4;
+    if (protectedForNightTravel) {
+      return false;
+    }
+    const playerBlock = {
+      x: Math.floor(observation.player.position.x),
+      y: Math.floor(observation.player.position.y),
+      z: Math.floor(observation.player.position.z),
+      dimension: observation.player.position.dimension,
+    };
+    const overhead = yield* queryExactBlock(state.driver, {
+      ...playerBlock,
+      y: playerBlock.y + 2,
+    });
+    const alreadyCovered = overhead !== undefined && !overhead.replaceable;
+    if (yield* isPlayerInFluid(state.driver, observation.player.position)) {
+      return false;
+    }
+    const nearbyThreats = yield* state.driver.queryEntities({
+      origin: {
+        ...observation.player.position,
+        y: observation.player.position.y + 1.62,
+      },
+      radius: THREAT_ESCAPE_SAFE_DISTANCE,
+      selector: {
+        categories: [2],
+        alive: true,
+        requireLineOfSight: true,
+      },
+      maximumResults: 1,
+    });
+    return nearbyThreats.length === 0;
+  });
+}
+
+function shelterUntilMorning(
+  state: RunState,
+  observation: BeatGameObservation,
+): Effect.Effect<void, BeatGameDriverError> {
+  const surfaceOrigin = observation.player.position;
+  return Effect.gen(function* () {
+    const playerBlock = {
+      x: Math.floor(surfaceOrigin.x),
+      y: Math.floor(surfaceOrigin.y),
+      z: Math.floor(surfaceOrigin.z),
+      dimension: surfaceOrigin.dimension,
+    };
+    const overhead = yield* queryExactBlock(state.driver, {
+      ...playerBlock,
+      y: playerBlock.y + 2,
+    });
+    const alreadyCovered = overhead !== undefined && !overhead.replaceable;
+    const sealPosition = alreadyCovered
+      ? undefined
+      : yield* digAndSealNightShelter(state, observation);
+    if (!alreadyCovered && sealPosition === undefined) {
+      yield* emit(state, {
+        type: "diagnostic",
+        message: "Could not construct a sealed night shelter",
+        data: { position: surfaceOrigin },
+      });
+      yield* state.driver.pathfind(
+        surfaceOrigin,
+        1,
+        {
+          ...state.strategy.path,
+          allowMining: true,
+          allowPlacing: true,
+          avoidFluids: true,
+          maxSearchTimeMs: Math.min(
+            state.strategy.path.maxSearchTimeMs,
+            30_000,
+          ),
+        },
+      ).pipe(Effect.ignore);
+      yield* Effect.sleep(NIGHT_SHELTER_POLL_MS);
+      return;
+    }
+    yield* emit(state, {
+      type: "diagnostic",
+      message: alreadyCovered
+        ? "Waiting under existing cover until morning"
+        : "Waiting in a sealed shelter until morning",
+      data: { position: surfaceOrigin, sealPosition },
+    });
+    while (true) {
+      const environment = yield* state.driver.environment!;
+      if (!isHostileNight(environment.gameTime)) {
+        break;
+      }
+      const current = yield* state.driver.observe;
+      if (current.player.dead) {
+        return;
+      }
+      yield* Effect.sleep(NIGHT_SHELTER_POLL_MS);
+    }
+    if (sealPosition !== undefined) {
+      yield* state.driver.withControl(
+        state.driver.act({
+          type: "dig-block",
+          position: sealPosition,
+        }),
+      );
+      yield* state.driver.pathfind(
+        surfaceOrigin,
+        1,
+        {
+          ...state.strategy.path,
+          allowMining: true,
+          allowPlacing: true,
+          avoidFluids: true,
+          minimumY: Math.floor(surfaceOrigin.y) - NIGHT_SHELTER_DEPTH - 2,
+          maximumY: Math.floor(surfaceOrigin.y) + 2,
+          maxSearchTimeMs: Math.min(
+            state.strategy.path.maxSearchTimeMs,
+            30_000,
+          ),
+        },
+      ).pipe(Effect.ignore);
+    }
+  });
+}
+
+function digAndSealNightShelter(
+  state: RunState,
+  observation: BeatGameObservation,
+): Effect.Effect<BeatGameBlockPosition | undefined, BeatGameDriverError> {
+  const startingY = Math.floor(observation.player.position.y);
+  const shaft = {
+    x: Math.floor(observation.player.position.x),
+    z: Math.floor(observation.player.position.z),
+    dimension: observation.player.position.dimension,
+  };
+  return state.driver.withControl(Effect.gen(function* () {
+    if (hasMiningPickaxe(observation)) {
+      yield* state.driver.act({
+        type: "select-item",
+        selector: { itemIds: MINING_PICKAXE_ITEM_IDS },
+      });
+    }
+    for (let depth = 1; depth <= NIGHT_SHELTER_DEPTH; depth += 1) {
+      const current = yield* state.driver.observe;
+      const floor = {
+        ...shaft,
+        y: Math.floor(current.player.position.y) - 1,
+      };
+      const floorBlock = yield* queryExactBlock(state.driver, floor);
+      if (
+        floorBlock === undefined
+        || !floorBlock.diggable
+        || floorBlock.replaceable
+      ) {
+        return undefined;
+      }
+      yield* state.driver.act({ type: "dig-block", position: floor });
+      const expectedY = startingY - depth;
+      let descended = false;
+      for (
+        let attempt = 0;
+        attempt < NIGHT_SHELTER_DESCENT_ATTEMPTS;
+        attempt += 1
+      ) {
+        const latest = yield* state.driver.observe;
+        if (latest.player.position.y <= expectedY + 0.35) {
+          descended = true;
+          break;
+        }
+        yield* Effect.sleep(100);
+      }
+      if (!descended) {
+        return undefined;
+      }
+    }
+    const sealPosition = {
+      ...shaft,
+      y: startingY - 1,
+    };
+    const placementFaces = [
+      { against: { ...sealPosition, x: sealPosition.x + 1 }, face: "west" },
+      { against: { ...sealPosition, x: sealPosition.x - 1 }, face: "east" },
+      { against: { ...sealPosition, z: sealPosition.z + 1 }, face: "north" },
+      { against: { ...sealPosition, z: sealPosition.z - 1 }, face: "south" },
+    ] as const;
+    let placement: typeof placementFaces[number] | undefined;
+    for (const candidate of placementFaces) {
+      const support = yield* queryExactBlock(state.driver, candidate.against);
+      if (support !== undefined && !support.replaceable) {
+        placement = candidate;
+        break;
+      }
+    }
+    if (placement === undefined) {
+      return undefined;
+    }
+    const current = yield* state.driver.observe;
+    if (
+      countNightShelterItems(current, NIGHT_SHELTER_BLOCK_ITEM_IDS) === 0
+    ) {
+      return undefined;
+    }
+    yield* state.driver.act({
+      type: "select-item",
+      selector: { itemIds: NIGHT_SHELTER_BLOCK_ITEM_IDS },
+    });
+    yield* state.driver.act({
+      type: "place-block",
+      against: placement.against,
+      face: placement.face,
+      hand: "main",
+    });
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const seal = yield* queryExactBlock(state.driver, sealPosition);
+      if (seal !== undefined && !seal.replaceable) {
+        return sealPosition;
+      }
+      yield* Effect.sleep(100);
+    }
+    return undefined;
+  }));
+}
+
+function isHostileNight(gameTime: bigint | undefined): boolean {
+  if (gameTime === undefined) {
+    return false;
+  }
+  const dayTime = (gameTime % 24_000n + 24_000n) % 24_000n;
+  return dayTime >= NIGHT_SHELTER_START_TICK
+    && dayTime < NIGHT_SHELTER_END_TICK;
+}
+
+function countNightShelterItems(
+  observation: BeatGameObservation,
+  itemIds: readonly string[],
+): number {
+  return itemIds.reduce(
+    (total, itemId) => total + (observation.inventory.counts[itemId] ?? 0),
+    0,
   );
 }
 

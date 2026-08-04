@@ -784,6 +784,18 @@ const program = Effect.scoped(Effect.gen(function* () {
   });
   const driver = {
     ...baseDriver,
+    ...(debugSession === undefined
+      ? {}
+      : {
+        environment: Effect.sync(() => ({
+          ...(debugSession.state.environment.gameTime === undefined
+            ? {}
+            : { gameTime: debugSession.state.environment.gameTime }),
+          ...(debugSession.state.environment.raining === undefined
+            ? {}
+            : { raining: debugSession.state.environment.raining }),
+        })),
+      }),
     observe: baseDriver.observe.pipe(
       Effect.tap((observation) => {
         const effects = [];

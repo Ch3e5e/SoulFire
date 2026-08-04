@@ -88,6 +88,7 @@ export {
   type BeatGameCraftability,
   type BeatGameDriver,
   type BeatGameDriverEvent,
+  type BeatGameEnvironmentObservation,
   type BeatGameEntitySelector,
   type BeatGameHand,
   type BeatGameItemSelector,
@@ -101,6 +102,7 @@ export {
   type BeatGameSurfaceColumn,
   type BeatGameTask,
   type BeatGameTaskExecutionOptions,
+  type SoulFireBeatGameDriverOptions,
 } from "./driver.js";
 export {
   BeatGameActionError,

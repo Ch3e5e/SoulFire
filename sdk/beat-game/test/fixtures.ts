@@ -23,6 +23,7 @@ import {
   type BeatGameRaycastQuery,
   type BeatGameRecipe,
   type BeatGameSurfaceColumn,
+  type BeatGameEnvironmentObservation,
   type BeatGameTask,
   type BeatGameCraftability,
   type BeatGameTaskExecutionOptions,
@@ -172,6 +173,10 @@ export class FakeBeatGameDriver implements BeatGameDriver {
     readonly policy: BeatGamePathPolicy;
   }[] = [];
   public surfaceColumns: readonly BeatGameSurfaceColumn[] = [];
+  public currentEnvironment: BeatGameEnvironmentObservation = {
+    gameTime: 0n,
+    raining: false,
+  };
   public activeControlScopes = 0;
   public maximumActiveControlScopes = 0;
   public recipeResolver: (
@@ -248,6 +253,7 @@ export class FakeBeatGameDriver implements BeatGameDriver {
   }
 
   public readonly observe = Effect.suspend(() => this.observationResolver());
+  public readonly environment = Effect.sync(() => this.currentEnvironment);
   public events: BeatGameDriver["events"] = Stream.empty;
 
   public readonly queryBlocks: BeatGameDriver["queryBlocks"] = (query) =>
