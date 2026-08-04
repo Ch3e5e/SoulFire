@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   createNetherPortalFrame,
+  inferNetherPortalFrames,
   NETHER_PORTAL_FRAME_OBSIDIAN_COUNT,
   rotationToward,
   triangulateStronghold,
@@ -33,6 +34,28 @@ describe("beat-game geometry", () => {
       dimension: "minecraft:overworld",
     });
     expect(frame.interior).toHaveLength(6);
+  });
+
+  it("infers the strongest partial portal frame near the player", () => {
+    const origin = {
+      x: -566,
+      y: 11,
+      z: -493,
+      dimension: "minecraft:overworld",
+    } as const;
+    const partialFrame = createNetherPortalFrame(origin).blocks.slice(0, 3);
+
+    const candidates = inferNetherPortalFrames(partialFrame, {
+      x: -565.5,
+      y: 10,
+      z: -494.6,
+      dimension: "minecraft:overworld",
+    });
+
+    expect(candidates[0]).toEqual({
+      frame: createNetherPortalFrame(origin),
+      matchingBlocks: 3,
+    });
   });
 
   it("triangulates intersecting eye samples from a useful baseline", () => {

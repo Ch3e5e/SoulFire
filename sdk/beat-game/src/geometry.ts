@@ -19,6 +19,11 @@ export interface PortalFrame {
   readonly interior: readonly BeatGameBlockPosition[];
 }
 
+export interface NetherPortalFrameMatch {
+  readonly frame: PortalFrame;
+  readonly matchingBlocks: number;
+}
+
 export function rotationToward(
   origin: BeatGamePosition,
   target: Pick<BeatGamePosition, "x" | "y" | "z">,
@@ -128,6 +133,64 @@ export function createNetherPortalFrame(
     blocks,
     interior,
   };
+}
+
+export function inferNetherPortalFrames(
+  obsidian: readonly BeatGameBlockPosition[],
+  reference: BeatGamePosition,
+): readonly NetherPortalFrameMatch[] {
+  const observedKeys = new Set(obsidian
+    .filter(({ dimension }) => dimension === reference.dimension)
+    .map(positionKey));
+  const candidates = new Map<string, PortalFrame>();
+  for (const block of obsidian) {
+    if (block.dimension !== reference.dimension) {
+      continue;
+    }
+    for (const axis of ["x", "z"] as const) {
+      const template = createNetherPortalFrame({
+        x: 0,
+        y: 0,
+        z: 0,
+        dimension: block.dimension,
+      }, axis);
+      for (const templateBlock of template.blocks) {
+        const origin = {
+          x: block.x - templateBlock.x,
+          y: block.y - templateBlock.y,
+          z: block.z - templateBlock.z,
+          dimension: block.dimension,
+        };
+        const frame = createNetherPortalFrame(origin, axis);
+        candidates.set(
+          `${axis}:${positionKey(origin)}`,
+          frame,
+        );
+      }
+    }
+  }
+
+  return [...candidates.values()]
+    .map((frame) => ({
+      frame,
+      matchingBlocks: frame.blocks.filter((position) =>
+        observedKeys.has(positionKey(position))
+      ).length,
+    }))
+    .filter(({ matchingBlocks }) => matchingBlocks > 0)
+    .sort((left, right) =>
+      right.matchingBlocks - left.matchingBlocks
+      || distanceSquared(left.frame.origin, reference)
+        - distanceSquared(right.frame.origin, reference)
+      || left.frame.origin.y - right.frame.origin.y
+      || left.frame.origin.x - right.frame.origin.x
+      || left.frame.origin.z - right.frame.origin.z
+      || left.frame.axis.localeCompare(right.frame.axis)
+    );
+}
+
+function positionKey(position: BeatGameBlockPosition): string {
+  return `${position.dimension}:${position.x}:${position.y}:${position.z}`;
 }
 
 export function distanceSquared(

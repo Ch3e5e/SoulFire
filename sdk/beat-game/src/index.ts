@@ -119,8 +119,10 @@ export {
   directionFromRotation,
   distanceSquared,
   horizontalDirection,
+  inferNetherPortalFrames,
   NETHER_PORTAL_FRAME_OBSIDIAN_COUNT,
   rotationToward,
+  type NetherPortalFrameMatch,
   type PortalFrame,
 } from "./geometry.js";
 export {

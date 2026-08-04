@@ -5503,7 +5503,12 @@ function placeBucketOnTopOf(
       type: "select-item",
       selector: { itemIds },
     });
-    yield* driver.act({ type: "use-item", hand: "main" });
+    yield* driver.act({
+      type: "interact-block",
+      position: support,
+      face: "up",
+      hand: "main",
+    });
   });
   return attempt.pipe(
     Effect.catchAll((cause) =>
@@ -5527,6 +5532,39 @@ function placeBucketOnTopOf(
             : Effect.fail(cause)
         ),
       )
+    ),
+    Effect.zipRight(waitForExactBlockState(
+      driver,
+      target,
+      (block) =>
+        block?.blockId === expectedBlockId
+        || (
+          expectedBlockId === "minecraft:water"
+          && block?.properties.waterlogged === "true"
+        ),
+      5,
+      50,
+    )),
+    Effect.flatMap((block) =>
+      block?.blockId === expectedBlockId
+          || (
+            expectedBlockId === "minecraft:water"
+            && block?.properties.waterlogged === "true"
+          )
+        ? Effect.void
+        : attemptsRemaining > 1
+        ? Effect.sleep(100).pipe(
+          Effect.zipRight(placeBucketOnTopOf(
+            driver,
+            support,
+            itemIds,
+            attemptsRemaining - 1,
+          )),
+        )
+        : Effect.fail(behaviorError(
+          driver,
+          `Bucket placement missed ${positionKey(target)}`,
+        ))
     ),
   );
 }

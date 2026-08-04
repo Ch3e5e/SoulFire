@@ -3998,8 +3998,16 @@ describe("beat-game behavior programs", () => {
     expect(blocks.get(key(target))?.blockId).toBe("minecraft:obsidian");
     expect(conversionQueries).toBe(3);
     expect(driver.actions.filter(({ type }) => type === "use-item"))
-      .toHaveLength(5);
-    expect(rejectedLavaPlacement).toBe(true);
+      .toHaveLength(2);
+    expect(driver.actions.filter(({ type }) => type === "interact-block"))
+      .toHaveLength(2);
+    expect(driver.actions).toContainEqual({
+      type: "interact-block",
+      position: { ...target, y: target.y - 1 },
+      face: "up",
+      hand: "main",
+    });
+    expect(rejectedLavaPlacement).toBe(false);
     expect(rejectedWaterPickup).toBe(true);
     expect(driver.paths).toContainEqual({
       position: water,
@@ -4011,8 +4019,6 @@ describe("beat-game behavior programs", () => {
         maxFallDistance: 1,
       }),
     });
-    expect(driver.actions.some(({ type }) => type === "interact-block"))
-      .toBe(false);
     expect(driver.tasks).toHaveLength(0);
     expect(driver.activeControlScopes).toBe(0);
   });
@@ -4229,7 +4235,10 @@ describe("beat-game behavior programs", () => {
         });
         return;
       }
-      if (action.type !== "use-item") {
+      if (
+        action.type !== "use-item"
+        && action.type !== "interact-block"
+      ) {
         return;
       }
       if (selectedItemId === "minecraft:lava_bucket") {
@@ -4730,7 +4739,7 @@ describe("beat-game behavior programs", () => {
     await expect(Effect.runPromise(castNetherPortal(driver, {
       origin,
       ignite: false,
-    }))).rejects.toThrow("Portal casting lava missed");
+    }))).rejects.toThrow("Bucket placement missed");
 
     const builtPositions = driver.tasks
       .filter((task) => task.type === "build")

@@ -59,9 +59,11 @@ import {
 import {
   createNetherPortalFrame,
   distanceSquared,
+  inferNetherPortalFrames,
   NETHER_PORTAL_FRAME_OBSIDIAN_COUNT,
   rotationToward,
   triangulateStronghold,
+  type PortalFrame,
 } from "./geometry.js";
 import {
   approachLavaSourceFromSide,
@@ -1821,22 +1823,24 @@ function executeDecision(
                           : Effect.succeed(current)
                       ),
                       Effect.flatMap((current) =>
-                        resolvePortalBuildOrigin(
+                        resolvePortalBuildFrame(
                           state.driver,
                           current,
                         )
                       ),
-                      Effect.flatMap((origin) =>
+                      Effect.flatMap((frame) =>
                         useCastPortal
                           ? castNetherPortal(state.driver, {
-                            origin,
+                            origin: frame.origin,
+                            axis: frame.axis,
                             path: {
                               ...state.strategy.path,
                               avoidFluids: true,
                             },
                           })
                           : buildNetherPortal(state.driver, {
-                            origin,
+                            origin: frame.origin,
+                            axis: frame.axis,
                             path: state.strategy.path,
                           })
                       ),
@@ -13649,10 +13653,10 @@ function backoffDuration(attempt: number): number {
   return Math.min(5_000, 250 * 2 ** Math.max(0, attempt - 1));
 }
 
-function resolvePortalBuildOrigin(
+function resolvePortalBuildFrame(
   driver: BeatGameDriver,
   observation: BeatGameObservation,
-): Effect.Effect<BeatGameBlockPosition, BeatGameDriverError> {
+): Effect.Effect<PortalFrame, BeatGameDriverError> {
   const player = observation.player.position;
   const baseX = Math.floor(player.x) - 1;
   const baseZ = Math.floor(player.z) + 2;
@@ -13662,11 +13666,11 @@ function resolvePortalBuildOrigin(
   const findFloor = (
     offsetIndex: number,
     y: number,
-  ): Effect.Effect<BeatGameBlockPosition, BeatGameDriverError> => {
+  ): Effect.Effect<PortalFrame, BeatGameDriverError> => {
     const offset = offsets[offsetIndex];
     if (offset === undefined) {
       return Effect.fail(new BeatGameDriverError({
-        operation: "resolvePortalBuildOrigin",
+        operation: "resolvePortalBuildFrame",
         retryable: true,
         message:
           `Could not find a clear portal workspace near ${baseX}, ${baseZ}`,
@@ -13698,16 +13702,16 @@ function resolvePortalBuildOrigin(
         if (!blocks.some(({ position }) => samePosition(position, candidate))) {
           return findFloor(offsetIndex, y - 1);
         }
-        const origin = {
+        const frame = createNetherPortalFrame({
           x,
           y: y + 1,
           z,
           dimension: player.dimension,
-        };
-        return portalBuildWorkspaceIsClearable(driver, origin).pipe(
+        });
+        return portalBuildWorkspaceIsClearable(driver, frame).pipe(
           Effect.flatMap((clearable) =>
             clearable
-              ? Effect.succeed(origin)
+              ? Effect.succeed(frame)
               : findFloor(offsetIndex + 1, highestY)
           ),
         );
@@ -13715,7 +13719,52 @@ function resolvePortalBuildOrigin(
     );
   };
 
-  return findFloor(0, highestY);
+  return resolveExistingPortalBuildFrame(driver, observation).pipe(
+    Effect.flatMap((frame) =>
+      frame === undefined
+        ? findFloor(0, highestY)
+        : Effect.succeed(frame)
+    ),
+  );
+}
+
+function resolveExistingPortalBuildFrame(
+  driver: BeatGameDriver,
+  observation: BeatGameObservation,
+): Effect.Effect<PortalFrame | undefined, BeatGameDriverError> {
+  const player = observation.player.position;
+  return driver.queryBlocks({
+    center: player,
+    radius: 16,
+    selector: { blockIds: ["minecraft:obsidian"] },
+    maximumResults: 128,
+  }).pipe(
+    Effect.flatMap((blocks) => {
+      const candidates = inferNetherPortalFrames(
+        blocks.map(({ position }) => position),
+        player,
+      );
+      const findClearable = (
+        index: number,
+      ): Effect.Effect<PortalFrame | undefined, BeatGameDriverError> => {
+        const candidate = candidates[index];
+        if (candidate === undefined) {
+          return Effect.succeed(undefined);
+        }
+        return portalBuildWorkspaceIsClearable(
+          driver,
+          candidate.frame,
+        ).pipe(
+          Effect.flatMap((clearable) =>
+            clearable
+              ? Effect.succeed(candidate.frame)
+              : findClearable(index + 1)
+          ),
+        );
+      };
+      return findClearable(0);
+    }),
+  );
 }
 
 function portalBuildSearchOffsets(
@@ -13739,20 +13788,24 @@ function portalBuildSearchOffsets(
 
 function portalBuildWorkspaceIsClearable(
   driver: BeatGameDriver,
-  origin: BeatGameBlockPosition,
+  frame: PortalFrame,
 ): Effect.Effect<boolean, BeatGameDriverError> {
-  const frame = createNetherPortalFrame(origin);
+  const { origin } = frame;
   const frameKeys = new Set(frame.blocks.map(positionKey));
   const castingStand = {
-    x: origin.x + 1,
+    x: origin.x + (frame.axis === "x" ? 1 : -2),
     y: origin.y + 1,
-    z: origin.z - 2,
+    z: origin.z + (frame.axis === "z" ? 1 : -2),
     dimension: origin.dimension,
   };
   const positions = [...new Map([
     ...frame.blocks,
     ...frame.interior,
-    ...frame.blocks.map((position) => ({ ...position, z: position.z - 1 })),
+    ...frame.blocks.map((position) => ({
+      ...position,
+      x: position.x - (frame.axis === "z" ? 1 : 0),
+      z: position.z - (frame.axis === "x" ? 1 : 0),
+    })),
     castingStand,
     { ...castingStand, y: castingStand.y + 1 },
   ].map((position) => [positionKey(position), position])).values()];
@@ -13769,12 +13822,11 @@ function portalBuildWorkspaceIsClearable(
         return true;
       }
       const position = positions[index];
-      return block.diggable
-        || (
-          position !== undefined
-          && frameKeys.has(positionKey(position))
-          && block.blockId === "minecraft:obsidian"
-        );
+      if (block.blockId === "minecraft:obsidian") {
+        return position !== undefined
+          && frameKeys.has(positionKey(position));
+      }
+      return block.diggable;
     })),
   );
 }
