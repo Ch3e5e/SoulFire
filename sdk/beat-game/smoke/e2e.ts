@@ -661,7 +661,7 @@ const program = Effect.scoped(Effect.gen(function* () {
   yield* baseDriver.waitForChunks(4, 60_000);
   const debugSession = debugApiEnabled
     ? yield* Effect.acquireRelease(
-      bot.observe(),
+      bot.observe({ filter: { includeEnvironment: true } }),
       (session) => session.close().pipe(Effect.ignore),
     )
     : undefined;
