@@ -5783,10 +5783,8 @@ describe("beat-game run lifecycle", () => {
       ),
     ));
 
-    expect(stateBeforeStop).toEqual({
-      interruptedEscapes: 1,
-      fleeTasks: 1,
-    });
+    expect(stateBeforeStop.interruptedEscapes).toBeGreaterThanOrEqual(1);
+    expect(stateBeforeStop.fleeTasks).toBeGreaterThanOrEqual(1);
     const fleeIndex = driver.tasks.findIndex((task) => task.type === "flee");
     expect(driver.taskPolicies[fleeIndex]?.allowMining).toBe(false);
     expect(driver.actions).toContainEqual({
@@ -5795,6 +5793,9 @@ describe("beat-game run lifecycle", () => {
       networkId: zombie.networkId,
       sprinting: true,
     });
+    expect(driver.actions.some((action) =>
+      action.type === "set-movement" && action.forward === true
+    )).toBe(false);
   }, 10_000);
 
   it("keeps monitoring for new attackers after resuming item recovery", async () => {
@@ -7869,7 +7870,7 @@ describe("beat-game run lifecycle", () => {
     ]);
   });
 
-  it("raises a shield and attacks a ranged hostile at critical health", async () => {
+  it("flees a ranged hostile at critical health despite carrying a shield", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
       health: 3,
@@ -7897,16 +7898,8 @@ describe("beat-game run lifecycle", () => {
     driver.entityQueryResolver = (query) =>
       query.selector.categories?.includes(2) ? driver.entityResults : [];
     driver.taskObserver = (task) => {
-      if (task.type === "attack-entity") {
+      if (task.type === "flee") {
         driver.entityResults = [];
-        driver.currentObservation = observation({
-          health: 20,
-          counts: {
-            "minecraft:cooked_beef": 1,
-            "minecraft:shield": 1,
-            "minecraft:stone_sword": 1,
-          },
-        });
       }
     };
 
@@ -7917,9 +7910,7 @@ describe("beat-game run lifecycle", () => {
         Effect.flatMap((run) =>
           Effect.gen(function* () {
             while (
-              !driver.tasks.some((task) =>
-                task.type === "attack-entity"
-              )
+              !driver.tasks.some((task) => task.type === "flee")
             ) {
               yield* Effect.sleep(1);
             }
@@ -7930,20 +7921,12 @@ describe("beat-game run lifecycle", () => {
       ),
     ));
 
-    expect(driver.actions).toContainEqual({
-      type: "equip-item",
-      selector: { itemIds: ["minecraft:shield"] },
-      equipmentSlot: "offhand",
-    });
+    expect(driver.tasks.some((task) => task.type === "attack-entity"))
+      .toBe(false);
     expect(driver.tasks).toContainEqual(expect.objectContaining({
-      type: "attack-entity",
-      target: expect.objectContaining({
-        entityType: "minecraft:skeleton",
-      }),
-      selectBestWeapon: true,
-      useOffhandShield: true,
+      type: "flee",
+      selector: { categories: [2], alive: true },
     }));
-    expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
   });
 
   it("evades an approaching melee hostile before contact while wounded", async () => {
@@ -9209,7 +9192,7 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
-  it("keeps blocking a ranged attacker in a confined underground fight", async () => {
+  it("retreats from a critical underground ranged fight", async () => {
     const driver = new FakeBeatGameDriver();
     const undergroundPosition = {
       x: 0,
@@ -9268,7 +9251,9 @@ describe("beat-game run lifecycle", () => {
       while (!driver.tasks.some((task) => task.type === "attack-entity")) {
         yield* Effect.sleep(1);
       }
-      yield* Effect.sleep(20);
+      while (!driver.tasks.some((task) => task.type === "flee")) {
+        yield* Effect.sleep(1);
+      }
       yield* run.stop;
     })));
 
@@ -9276,7 +9261,10 @@ describe("beat-game run lifecycle", () => {
       type: "attack-entity",
       useOffhandShield: true,
     }));
-    expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "flee",
+      selector: { categories: [2], alive: true },
+    }));
   });
 
   it("flees after a shielded ranged attack route fails", async () => {
@@ -11623,7 +11611,7 @@ describe("beat-game run lifecycle", () => {
       .toBe(false);
   });
 
-  it("uses a bare-handed knockback hit while escaping at critical health", async () => {
+  it("uses a bare-handed knockback without sprinting into unknown terrain", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
       health: 8,
@@ -11659,9 +11647,7 @@ describe("beat-game run lifecycle", () => {
         Effect.flatMap((run) =>
           Effect.gen(function* () {
             while (
-              !driver.actions.some((action) =>
-                action.type === "set-movement" && action.sprint === true
-              )
+              !driver.tasks.some((task) => task.type === "flee")
             ) {
               yield* Effect.sleep(1);
             }
@@ -11678,12 +11664,13 @@ describe("beat-game run lifecycle", () => {
       networkId: 24,
       sprinting: true,
     });
-    expect(driver.actions).toContainEqual({
-      type: "set-movement",
-      forward: true,
-      jump: true,
-      sprint: true,
-    });
+    expect(driver.actions.some((action) =>
+      action.type === "set-movement" && action.forward === true
+    )).toBe(false);
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "flee",
+      selector: { categories: [2], alive: true },
+    }));
   });
 
   it("escapes a close zombie at lethal health despite having a weapon", async () => {
@@ -12332,7 +12319,7 @@ describe("beat-game run lifecycle", () => {
     )).toBe(false);
   });
 
-  it("keeps escaping at low health when no route can be found", async () => {
+  it("keeps using knockback without sprinting when no escape route exists", async () => {
     const driver = new FakeBeatGameDriver();
     const attacker = {
       connectionEpoch: "epoch-1",
@@ -12358,6 +12345,13 @@ describe("beat-game run lifecycle", () => {
         Effect.zipRight(
           task.type === "collect-blocks"
             ? Effect.never
+            : task.type === "flee"
+            ? Effect.fail(new BeatGameDriverError({
+              operation: "task.flee",
+              code: "unreachable",
+              retryable: true,
+              message: "No safe flee route exists",
+            }))
             : Effect.succeed({}),
         ),
       );
@@ -12384,7 +12378,7 @@ describe("beat-game run lifecycle", () => {
             driver.currentObservation = observation({ health: 3 });
             while (
               driver.actions.filter((action) =>
-                action.type === "set-movement"
+                action.type === "attack-entity"
               ).length < 2
             ) {
               yield* Effect.sleep(1);
@@ -12397,8 +12391,12 @@ describe("beat-game run lifecycle", () => {
     ));
 
     expect(
-      driver.actions.filter((action) => action.type === "set-movement").length,
+      driver.actions.filter((action) => action.type === "attack-entity")
+        .length,
     ).toBeGreaterThanOrEqual(2);
+    expect(driver.actions.some((action) =>
+      action.type === "set-movement" && action.forward === true
+    )).toBe(false);
     expect(driver.tasks.some((task) => task.type === "attack-nearest"))
       .toBe(false);
   });

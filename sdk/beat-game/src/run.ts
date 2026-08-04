@@ -3104,6 +3104,9 @@ function shouldDisengageFromThreat(
   ) {
     return true;
   }
+  if (observation.player.health <= LETHAL_MELEE_DISENGAGE_HEALTH) {
+    return true;
+  }
   if (shouldCommitToCloseRangedFight(observation, target)) {
     return false;
   }
@@ -3112,9 +3115,6 @@ function shouldDisengageFromThreat(
   }
   if (shouldCommitToFastMeleePursuerFight(observation, target)) {
     return false;
-  }
-  if (observation.player.health <= LETHAL_MELEE_DISENGAGE_HEALTH) {
-    return true;
   }
   if (shouldCommitToMeleeFight(observation, target)) {
     return false;
@@ -3208,15 +3208,6 @@ function shouldCommitToUndergroundRangedFight(
     && hasMeleeWeapon(observation)
     && observation.player.health > LETHAL_MELEE_DISENGAGE_HEALTH
     && observation.player.food > CRITICAL_HUNGER_FOOD_LEVEL;
-}
-
-function shouldCommitToShieldedUndergroundRangedFight(
-  observation: BeatGameObservation,
-  target: BeatGameEntityObservation,
-): boolean {
-  return observation.player.position.y <= OVERWORLD_LOW_GROUND_MAX_Y
-    && PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
-    && (observation.inventory.counts["minecraft:shield"] ?? 0) > 0;
 }
 
 function shouldCommitToCloseRangedFight(
@@ -4140,11 +4131,6 @@ function knockBackAndSprintAway(
       threat.entityType === "minecraft:creeper"
       && distance <= CREEPER_EMERGENCY_REEVASION_RADIUS
       && nearbyLava.length === 0;
-    const emergencyBlindMeleeSprint =
-      PROACTIVE_MELEE_HOSTILE_ENTITY_TYPES.has(threat.entityType)
-      && distance <= EMERGENCY_KNOCKBACK_RANGE
-      && observation.player.health < CAUGHT_MELEE_COMMIT_MINIMUM_HEALTH
-      && nearbyLava.length === 0;
     return yield* state.driver.withControl(Effect.gen(function* () {
       if (distance <= EMERGENCY_KNOCKBACK_RANGE) {
         yield* performKnockbackStrike(state, observation, threat);
@@ -4156,7 +4142,6 @@ function knockBackAndSprintAway(
           direction === undefined
           && !directAquaticEvasion
           && !emergencyBlindCreeperSprint
-          && !emergencyBlindMeleeSprint
         )
       ) {
         return false;
@@ -5967,33 +5952,27 @@ function defendAgainstTarget(
           observation,
           target,
         );
-      const commitThroughLethalWound =
-        shouldCommitToCloseRangedFight(observation, target)
-        || shouldCommitToCaughtRangedFight(observation, target)
-        || shouldCommitToShieldedUndergroundRangedFight(
-          observation,
-          target,
+      const disengageWhenWounded = !(
+        (
+          canBlockWithShield
+          && PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
         )
-        || shouldCommitToFastMeleePursuerFight(observation, target);
+        || shouldCommitToUndergroundRangedFight(observation, target)
+        || shouldCommitToCloseRangedFight(observation, target)
+        || shouldCommitToFastMeleePursuerFight(observation, target)
+        || shouldCommitToCaughtMeleePursuerFight(observation, target)
+      );
       const guardedAttack = Effect.raceFirst(
         attack.pipe(Effect.as("defended" as const)),
         monitorDefenseHealth(
           state,
           observation.player.health,
           observation.player.position,
-          !(
-            (
-              canBlockWithShield
-              && PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
-            )
-            || shouldCommitToUndergroundRangedFight(observation, target)
-            || shouldCommitToCloseRangedFight(observation, target)
-            || shouldCommitToFastMeleePursuerFight(observation, target)
-            || shouldCommitToCaughtMeleePursuerFight(observation, target)
-          ),
+          disengageWhenWounded,
           {
             commitThroughWound,
-            commitThroughLethalWound,
+            enforcePursuitLeash:
+              PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType),
           },
         ),
       ).pipe(
@@ -6023,7 +6002,7 @@ function monitorDefenseHealth(
   disengageWhenWounded = true,
   options: {
     readonly commitThroughWound?: boolean;
-    readonly commitThroughLethalWound?: boolean;
+    readonly enforcePursuitLeash?: boolean;
   } = {},
 ): Effect.Effect<"disengage" | "unsafe-air", BeatGameDriverError> {
   return Effect.sleep(
@@ -6040,7 +6019,7 @@ function monitorDefenseHealth(
       if (
         observation.player.position.dimension !== engagementPosition.dimension
         || (
-          disengageWhenWounded
+          (disengageWhenWounded || options.enforcePursuitLeash === true)
           && distanceSquared(
             observation.player.position,
             engagementPosition,
@@ -6049,10 +6028,7 @@ function monitorDefenseHealth(
       ) {
         return Effect.succeed("disengage" as const);
       }
-      if (
-        options.commitThroughLethalWound !== true
-        && observation.player.health <= LETHAL_MELEE_DISENGAGE_HEALTH
-      ) {
+      if (observation.player.health <= LETHAL_MELEE_DISENGAGE_HEALTH) {
         return Effect.succeed("disengage" as const);
       }
       return state.driver.queryEntities({
@@ -6068,7 +6044,6 @@ function monitorDefenseHealth(
           if (
             !disengageWhenWounded
             || options.commitThroughWound === true
-            || options.commitThroughLethalWound === true
             || (
               observation.player.health >= state.strategy.minimumHealth
               || observation.player.health >= engagementHealth
