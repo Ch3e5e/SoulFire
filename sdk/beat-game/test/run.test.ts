@@ -5165,6 +5165,28 @@ describe("beat-game run lifecycle", () => {
 
   it("allows water when no dry creeper escape corridor exists", async () => {
     const driver = new FakeBeatGameDriver();
+    driver.surfaceColumns = Array.from({ length: 18 }, (_, index) => ({
+      x: -(index + 1),
+      z: 0,
+      loaded: true,
+      surfaceY: 63,
+      blockId: "minecraft:water",
+      biomeId: "minecraft:river",
+      skyLight: 15,
+      blockLight: 0,
+    }));
+    driver.blockQueryResolver = ({ center, selector }) =>
+      selector.blockIds?.includes("minecraft:water") === true
+        ? [blockObservation({
+          x: Math.floor(center.x),
+          y: Math.floor(center.y),
+          z: Math.floor(center.z),
+          dimension: center.dimension,
+        }, {
+          blockId: "minecraft:water",
+          replaceable: true,
+        })]
+        : [];
     driver.entityResults = [{
       connectionEpoch: "epoch-1",
       networkId: 41,
@@ -5216,7 +5238,7 @@ describe("beat-game run lifecycle", () => {
       avoidFluids: false,
       maxFallDistance: 3,
     });
-    expect(driver.actions).not.toContainEqual(expect.objectContaining({
+    expect(driver.actions).toContainEqual(expect.objectContaining({
       type: "set-movement",
       forward: true,
       jump: true,

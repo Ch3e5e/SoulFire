@@ -3360,7 +3360,7 @@ function knockBackAndSprintAway(
     ]).filter((candidate) =>
       candidate.position.dimension === playerPosition.dimension
     );
-    const direction = selectSafeDirectEscapeDirection(
+    const dryDirection = selectSafeDirectEscapeDirection(
       escapeSurface,
       playerPosition,
       preferredDirection,
@@ -3368,6 +3368,18 @@ function knockBackAndSprintAway(
       directSprintDistance,
       PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(threat.entityType) ? 2 : 0,
     );
+    const direction = dryDirection
+      ?? (threat.entityType === "minecraft:creeper"
+        ? selectSafeDirectEscapeDirection(
+          escapeSurface,
+          playerPosition,
+          preferredDirection,
+          escapeThreats,
+          directSprintDistance,
+          0,
+          true,
+        )
+        : undefined);
     const projectedPosition = direction === undefined
       ? playerPosition
       : {
@@ -3482,6 +3494,7 @@ function selectSafeDirectEscapeDirection(
   threats: readonly BeatGameEntityObservation[],
   distance: number,
   lateralHalfWidth: number,
+  allowSwimmableSurface = false,
 ): Readonly<{ x: number; z: number }> | undefined {
   const preferred = normalizeHorizontalDirection(preferredDirection);
   const directions = [
@@ -3507,6 +3520,7 @@ function selectSafeDirectEscapeDirection(
         direction.z,
         distance,
         lateralHalfWidth,
+        allowSwimmableSurface,
       )
     ) {
       continue;
@@ -3598,12 +3612,16 @@ function hasSafeDirectEscapeCorridor(
   directionZ: number,
   distance: number,
   lateralHalfWidth: number,
+  allowSwimmableSurface = false,
 ): boolean {
   const safeColumns = new Map(
     columns.flatMap((column) =>
       column.loaded
         && column.surfaceY !== undefined
-        && !isUnsafeSurfaceBlock(column.blockId)
+        && (
+          !isUnsafeSurfaceBlock(column.blockId)
+          || allowSwimmableSurface && isSwimmableSurfaceBlock(column.blockId)
+        )
         ? [[`${column.x}:${column.z}`, column.surfaceY] as const]
         : []
     ),
