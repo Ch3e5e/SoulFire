@@ -177,6 +177,10 @@ export class FakeBeatGameDriver implements BeatGameDriver {
     gameTime: 0n,
     raining: false,
   };
+  public environmentResolver: () => Effect.Effect<
+    BeatGameEnvironmentObservation,
+    BeatGameDriverError
+  > = () => Effect.succeed(this.currentEnvironment);
   public activeControlScopes = 0;
   public maximumActiveControlScopes = 0;
   public recipeResolver: (
@@ -253,7 +257,9 @@ export class FakeBeatGameDriver implements BeatGameDriver {
   }
 
   public readonly observe = Effect.suspend(() => this.observationResolver());
-  public readonly environment = Effect.sync(() => this.currentEnvironment);
+  public readonly environment = Effect.suspend(() =>
+    this.environmentResolver()
+  );
   public events: BeatGameDriver["events"] = Stream.empty;
 
   public readonly queryBlocks: BeatGameDriver["queryBlocks"] = (query) =>

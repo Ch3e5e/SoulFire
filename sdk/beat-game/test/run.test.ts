@@ -186,7 +186,7 @@ describe("beat-game run lifecycle", () => {
     ]));
   });
 
-  it("interrupts vulnerable work at night and seals underground", async () => {
+  it("keeps a night shelter sealed until daylight is confirmed", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentEnvironment = { gameTime: 12_900n };
     driver.currentObservation = observation({
@@ -207,6 +207,21 @@ describe("beat-game run lifecycle", () => {
       );
     const removedBlocks = new Set<string>();
     let sealPlaced = false;
+    let postSealEnvironmentObservations = 0;
+    driver.environmentResolver = () =>
+      Effect.sync(() => {
+        if (!sealPlaced) {
+          return driver.currentEnvironment;
+        }
+        postSealEnvironmentObservations += 1;
+        if (postSealEnvironmentObservations === 1) {
+          return {};
+        }
+        if (postSealEnvironmentObservations === 2) {
+          return { gameTime: 16_000n };
+        }
+        return { gameTime: 23_000n };
+      });
     const key = (x: number, y: number, z: number) => `${x}:${y}:${z}`;
     driver.blockQueryResolver = ({ center, selector }) => {
       if (selector.blockIds?.includes("minecraft:water") === true) {
@@ -276,7 +291,6 @@ describe("beat-game run lifecycle", () => {
       if (action.type === "place-block") {
         sealPlaced = true;
         removedBlocks.delete(key(0, 63, 0));
-        driver.currentEnvironment = { gameTime: 23_000n };
       }
     };
 
@@ -332,6 +346,9 @@ describe("beat-game run lifecycle", () => {
       }),
       radius: 1,
     }));
+    expect(postSealEnvironmentObservations).toBeGreaterThanOrEqual(5);
+    expect(driver.actions.filter(({ type }) => type === "place-block"))
+      .toHaveLength(1);
   }, 10_000);
 
   it("moves to solid ground before digging a night shelter", async () => {

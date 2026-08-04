@@ -647,6 +647,7 @@ const NIGHT_SHELTER_DEPTH = 3;
 const NIGHT_SHELTER_MINIMUM_SURFACE_COVER = 3;
 const NIGHT_SHELTER_POLL_MS = 1_000;
 const NIGHT_SHELTER_DESCENT_ATTEMPTS = 30;
+const NIGHT_SHELTER_DAYLIGHT_CONFIRMATIONS = 3;
 const NIGHT_SHELTER_BLOCK_ITEM_IDS = [
   "minecraft:dirt",
   "minecraft:coarse_dirt",
@@ -1471,16 +1472,20 @@ function shelterUntilMorning(
         : "Waiting in a sealed shelter until morning",
       data: { position: surfaceOrigin, sealPosition },
     });
-    while (true) {
+    let daylightConfirmations = 0;
+    while (daylightConfirmations < NIGHT_SHELTER_DAYLIGHT_CONFIRMATIONS) {
       const environment = yield* state.driver.environment!;
-      if (!isHostileNight(environment.gameTime)) {
-        break;
-      }
+      daylightConfirmations = environment.gameTime !== undefined
+          && !isHostileNight(environment.gameTime)
+        ? daylightConfirmations + 1
+        : 0;
       const current = yield* state.driver.observe;
       if (current.player.dead) {
         return;
       }
-      yield* Effect.sleep(NIGHT_SHELTER_POLL_MS);
+      if (daylightConfirmations < NIGHT_SHELTER_DAYLIGHT_CONFIRMATIONS) {
+        yield* Effect.sleep(NIGHT_SHELTER_POLL_MS);
+      }
     }
     if (sealPosition !== undefined) {
       yield* state.driver.withControl(
