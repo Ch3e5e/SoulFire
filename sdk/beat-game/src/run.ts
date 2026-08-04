@@ -1811,6 +1811,15 @@ function executeDecision(
                   ready
                     ? state.driver.observe.pipe(
                       Effect.flatMap((current) =>
+                        useCastPortal
+                          ? ensurePortalMiningPickaxe(
+                            state,
+                            current,
+                            RESOURCE_SEARCH_PICKAXE_DURABILITY_RESERVE,
+                          ).pipe(Effect.zipRight(state.driver.observe))
+                          : Effect.succeed(current)
+                      ),
+                      Effect.flatMap((current) =>
                         resolvePortalBuildOrigin(
                           state.driver,
                           current,
@@ -8108,17 +8117,9 @@ function preparePortalCastingLavaPool(
       return true;
     }
 
-    const canCraftDurablePickaxe =
-      (observation.inventory.counts["minecraft:iron_ingot"] ?? 0) >= 3;
-    yield* ensureMiningPickaxe(
+    yield* ensurePortalMiningPickaxe(
       state,
       observation,
-      canCraftDurablePickaxe
-        ? "minecraft:iron_pickaxe"
-        : "minecraft:stone_pickaxe",
-      canCraftDurablePickaxe
-        ? DURABLE_MINING_PICKAXE_ITEM_IDS
-        : MINING_PICKAXE_ITEM_IDS,
       RESOURCE_DESCENT_PICKAXE_DURABILITY_RESERVE,
     );
     const current = yield* state.driver.observe;
@@ -8152,6 +8153,26 @@ function preparePortalCastingLavaPool(
     );
     return false;
   });
+}
+
+function ensurePortalMiningPickaxe(
+  state: RunState,
+  observation: BeatGameObservation,
+  minimumRemainingDurability: number,
+): Effect.Effect<void, BeatGameDriverError> {
+  const canCraftDurablePickaxe =
+    (observation.inventory.counts["minecraft:iron_ingot"] ?? 0) >= 3;
+  return ensureMiningPickaxe(
+    state,
+    observation,
+    canCraftDurablePickaxe
+      ? "minecraft:iron_pickaxe"
+      : "minecraft:stone_pickaxe",
+    canCraftDurablePickaxe
+      ? DURABLE_MINING_PICKAXE_ITEM_IDS
+      : MINING_PICKAXE_ITEM_IDS,
+    minimumRemainingDurability,
+  );
 }
 
 function excavateResourceSearchStaircase(
