@@ -3798,6 +3798,78 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("does not bypass a missing food reserve after bounded preparation", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const deathPosition = {
+      x: 700,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    const observedAt = new Date().toISOString();
+    const runId = "bounded-corpse-food-reserve-run";
+    const teamId = "bounded-corpse-food-reserve-team";
+    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
+      runId,
+      teamId,
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        deathPositions: [{
+          key: `death:${observedAt}`,
+          value: {
+            ...deathPosition,
+            inventoryCounts: { "minecraft:iron_ingot": 7 },
+          },
+          observedAt,
+          confidence: 1,
+        }],
+      },
+    }, undefined));
+    driver.currentObservation = observation({
+      counts: {
+        "minecraft:beef": 3,
+        "minecraft:dirt": 16,
+        "minecraft:oak_log": 12,
+        "minecraft:wooden_pickaxe": 1,
+        "minecraft:wooden_sword": 1,
+      },
+    });
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+      });
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        runId,
+        team: { teamId },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      });
+      yield* run.events.pipe(
+        Stream.filter((event) =>
+          event.type === "diagnostic"
+          && event.message
+            === "Continuing preparation for a valuable distant corpse"
+          && event.data?.preparationFailures === 8
+          && event.data.foodReserveStillMissing === true
+        ),
+        Stream.runHead,
+        Effect.timeout("10 seconds"),
+      );
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    expect(driver.paths).not.toContainEqual(expect.objectContaining({
+      position: deathPosition,
+    }));
+  }, 15_000);
+
   it("abandons distant recovery after three bounded food searches", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();

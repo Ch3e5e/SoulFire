@@ -1515,6 +1515,10 @@ function executeDecision(
                 const recoveryClass = classifyDeathRecoveryInventory(
                   pendingDeath.inventoryCounts,
                 );
+                const foodReserveStillMissing =
+                  preparationPending === DEATH_RECOVERY_FOOD_SEARCH_PENDING
+                  && deathRecoveryTravelFoodCount(current)
+                    < DEATH_RECOVERY_FOOD_RESERVE_COUNT;
                 if (
                   preparationFailures
                     >= MAX_SAFE_DEATH_RECOVERY_FAILURES
@@ -1534,6 +1538,7 @@ function executeDecision(
                   if (
                     preparationFailures
                       >= MAX_VALUABLE_DEATH_RECOVERY_PREPARATION_FAILURES
+                    && !foodReserveStillMissing
                   ) {
                     yield* emit(state, {
                       type: "diagnostic",
@@ -1552,6 +1557,7 @@ function executeDecision(
                       data: {
                         preparationFailures,
                         reason: preparationPending,
+                        foodReserveStillMissing,
                       },
                     });
                   }
@@ -1560,6 +1566,7 @@ function executeDecision(
                   recoveryClass !== "valuable"
                   || preparationFailures
                     < MAX_VALUABLE_DEATH_RECOVERY_PREPARATION_FAILURES
+                  || foodReserveStillMissing
                 ) {
                   return {
                     replanReason: preparationPending,
