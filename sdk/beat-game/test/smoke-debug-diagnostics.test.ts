@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { buildSmokeSpatialDiagnostics } from "../smoke/debug-diagnostics.js";
+import {
+  buildSmokeActivePathDiagnostics,
+  buildSmokeSpatialDiagnostics,
+} from "../smoke/debug-diagnostics.js";
 
 const origin = {
   x: 10,
@@ -96,6 +99,38 @@ describe("smoke spatial diagnostics", () => {
       unloaded: 1,
       minimumY: 62,
       maximumY: 66,
+    });
+  });
+
+  it("measures active path progress against the exact traced goal", () => {
+    const diagnostics = buildSmokeActivePathDiagnostics({
+      pathId: "path-1",
+      startedAt: "2026-08-03T10:00:00.000Z",
+      origin,
+      goal: {
+        type: "xz",
+        x: 20,
+        z: -4,
+        dimension: origin.dimension,
+        radius: 2,
+      },
+      policy: {
+        allowMining: false,
+        allowPlacing: false,
+        maxFallDistance: 3,
+        maxSearchTimeMs: 30_000,
+      },
+    }, {
+      ...origin,
+      x: 16,
+    }, "2026-08-03T10:00:01.250Z");
+
+    expect(diagnostics).toMatchObject({
+      status: "active",
+      pathId: "path-1",
+      elapsedMs: 1_250,
+      displacementFromOrigin: 6,
+      distanceToGoal: 2,
     });
   });
 });

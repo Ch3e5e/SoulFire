@@ -4,6 +4,7 @@ import {
   beatGameWithDriver,
   BeatGamePhase,
   BeatGameRunStatus,
+  decideBeatGameAction,
   defaultBeatGameStrategy,
   makeSoulFireBeatGameDriver,
   type BeatGameBlockSelector,
@@ -15,6 +16,7 @@ import {
   type BeatGameQueryEntities,
   type BeatGameRaycastQuery,
   type BeatGameRun,
+  type BeatGameStrategy,
 } from "../dist/index.js";
 import { JsonFileBeatGameCheckpointStore } from "../dist/node.js";
 import {
@@ -60,7 +62,11 @@ import {
   SmokeDebugTimeline,
   startSmokeDebugServer,
 } from "./debug-server.ts";
-import { buildSmokeSpatialDiagnostics } from "./debug-diagnostics.ts";
+import {
+  buildSmokeActivePathDiagnostics,
+  buildSmokeSpatialDiagnostics,
+  type SmokeActivePathTrace,
+} from "./debug-diagnostics.ts";
 
 const execFile = promisify(execFileCallback);
 const repositoryRoot = path.resolve(import.meta.dirname, "../../..");
@@ -237,6 +243,17 @@ interface ControlledMinecraftFixture extends BaseMinecraftFixture {
 type MinecraftFixture =
   | SurvivalMinecraftFixture
   | ControlledMinecraftFixture;
+
+interface SmokePathOutcome {
+  readonly pathId: string;
+  readonly status: "completed" | "failed";
+  readonly startedAt: string;
+  readonly completedAt: string;
+  readonly goal: SmokeActivePathTrace["goal"];
+  readonly origin: BeatGamePosition;
+  readonly playerPosition?: BeatGamePosition;
+  readonly cause?: string;
+}
 
 const program = Effect.scoped(Effect.gen(function* () {
   if (configuredArtifactDirectory === undefined) {
@@ -646,6 +663,86 @@ const program = Effect.scoped(Effect.gen(function* () {
       dead: boolean;
     }>
     | undefined;
+  let activePathTrace: SmokeActivePathTrace | undefined;
+  let lastPathOutcome: SmokePathOutcome | undefined;
+  const tracePath = (
+    kind: "pathfind" | "pathfind-xz",
+    goal: SmokeActivePathTrace["goal"],
+    policy: BeatGamePathPolicy,
+    details: Readonly<Record<string, unknown>>,
+    execute: () => ReturnType<typeof baseDriver.pathfind>,
+  ) => {
+    const pathId = randomUUID();
+    const startedAt = new Date().toISOString();
+    let trace: SmokeActivePathTrace | undefined;
+    return Effect.gen(function* () {
+      const observation = yield* baseDriver.observe;
+      trace = {
+        pathId,
+        startedAt,
+        origin: observation.player.position,
+        goal,
+        policy,
+      };
+      activePathTrace = trace;
+      yield* record(`${kind}-started`, {
+        pathId,
+        startedAt,
+        origin: trace.origin,
+        ...details,
+        policy,
+      }).pipe(Effect.orDie);
+      yield* execute();
+      const player = yield* bot.world.player().pipe(Effect.orDie);
+      const completedAt = new Date().toISOString();
+      lastPathOutcome = {
+        pathId,
+        status: "completed",
+        startedAt,
+        completedAt,
+        goal: trace.goal,
+        origin: trace.origin,
+        ...(player.position === undefined
+          ? {}
+          : { playerPosition: player.position }),
+      };
+      yield* record(`${kind}-completed`, {
+        pathId,
+        startedAt,
+        completedAt,
+        ...details,
+        playerPosition: player.position,
+        playerVelocity: player.velocity,
+      }).pipe(Effect.orDie);
+    }).pipe(
+      Effect.tapErrorCause((cause) => {
+        const completedAt = new Date().toISOString();
+        if (trace !== undefined) {
+          lastPathOutcome = {
+            pathId,
+            status: "failed",
+            startedAt,
+            completedAt,
+            goal: trace.goal,
+            origin: trace.origin,
+            cause: String(cause),
+          };
+        }
+        return record(`${kind}-failed`, {
+          pathId,
+          startedAt,
+          completedAt,
+          ...details,
+          cause: String(cause),
+        }).pipe(Effect.orDie);
+      }),
+      Effect.ensuring(Effect.sync(() => {
+        if (activePathTrace?.pathId === pathId) {
+          activePathTrace = undefined;
+        }
+      })),
+    );
+  };
   const driver = {
     ...baseDriver,
     observe: baseDriver.observe.pipe(
@@ -749,70 +846,26 @@ const program = Effect.scoped(Effect.gen(function* () {
       position: Parameters<typeof baseDriver.pathfind>[0],
       radius: number,
       policy: Parameters<typeof baseDriver.pathfind>[2],
-    ) =>
-      record("pathfind-started", { position, radius, policy }).pipe(
-        Effect.orDie,
-        Effect.zipRight(baseDriver.pathfind(position, radius, policy)),
-        Effect.tap(() =>
-          Effect.gen(function* () {
-            const player = yield* bot.world.player();
-            yield* record("pathfind-completed", {
-              position,
-              radius,
-              playerPosition: player.position,
-              playerVelocity: player.velocity,
-            });
-          }).pipe(Effect.orDie)
-        ),
-        Effect.tapErrorCause((cause) =>
-          record("pathfind-failed", {
-            position,
-            radius,
-            cause: String(cause),
-          }).pipe(Effect.orDie)
-        ),
-      ),
+    ) => tracePath(
+      "pathfind",
+      { type: "position", position, radius },
+      policy,
+      { position, radius },
+      () => baseDriver.pathfind(position, radius, policy),
+    ),
     pathfindXZ: (
       x: number,
       z: number,
       dimension: string,
       radius: number,
       policy: Parameters<typeof baseDriver.pathfindXZ>[4],
-    ) =>
-      record("pathfind-xz-started", {
-        x,
-        z,
-        dimension,
-        radius,
-        policy,
-      }).pipe(
-        Effect.orDie,
-        Effect.zipRight(
-          baseDriver.pathfindXZ(x, z, dimension, radius, policy),
-        ),
-        Effect.tap(() =>
-          Effect.gen(function* () {
-            const player = yield* bot.world.player();
-            yield* record("pathfind-xz-completed", {
-              x,
-              z,
-              dimension,
-              radius,
-              playerPosition: player.position,
-              playerVelocity: player.velocity,
-            });
-          }).pipe(Effect.orDie)
-        ),
-        Effect.tapErrorCause((cause) =>
-          record("pathfind-xz-failed", {
-            x,
-            z,
-            dimension,
-            radius,
-            cause: String(cause),
-          }).pipe(Effect.orDie)
-        ),
-      ),
+    ) => tracePath(
+      "pathfind-xz",
+      { type: "xz", x, z, dimension, radius },
+      policy,
+      { x, z, dimension, radius },
+      () => baseDriver.pathfindXZ(x, z, dimension, radius, policy),
+    ),
     runTask: (
       task: Parameters<typeof baseDriver.runTask>[0],
       policy: Parameters<typeof baseDriver.runTask>[1],
@@ -846,18 +899,21 @@ const program = Effect.scoped(Effect.gen(function* () {
         ),
       ),
   };
+  const beatGameStrategy = {
+    ...defaultBeatGameStrategy,
+    actionTimeoutMs: 600_000,
+    observationPollMs: 250,
+    entitySearchRadius: 320,
+    path: {
+      ...defaultBeatGameStrategy.path,
+      maxSearchTimeMs: 120_000,
+    },
+  } satisfies BeatGameStrategy;
   const run = yield* beatGameWithDriver(driver, {
     runId,
     checkpointStore,
     team: { teamId: `${runId}-team` },
-    strategy: {
-      actionTimeoutMs: 600_000,
-      observationPollMs: 250,
-      entitySearchRadius: 320,
-      path: {
-        maxSearchTimeMs: 120_000,
-      },
-    },
+    strategy: beatGameStrategy,
   });
   yield* Stream.runForEach(run.events, (event) =>
     record("beat-game-event", { event })
@@ -870,10 +926,13 @@ const program = Effect.scoped(Effect.gen(function* () {
         description:
           "Capture spatial state, entity motion, decisions, tasks, and pathfinding activity around one pinned origin",
         execute: (input) => captureSmokeDiagnostics({
+          activePath: activePathTrace,
           bot,
           driver,
           input,
+          lastPathOutcome,
           run,
+          strategy: beatGameStrategy,
         }),
       },
       {
@@ -916,6 +975,15 @@ const program = Effect.scoped(Effect.gen(function* () {
                 ),
                 lastStableAction: snapshot.checkpoint.lastStableAction,
               },
+              decision: {
+                activeAction: planner.currentAction,
+                activeActionId: planner.currentActionId,
+                nextIfReplanned: decideBeatGameAction({
+                  checkpoint: snapshot.checkpoint,
+                  observation,
+                  strategy: beatGameStrategy,
+                }),
+              },
               player: observation.player,
               inventory: observation.inventory,
               nearby: {
@@ -923,6 +991,16 @@ const program = Effect.scoped(Effect.gen(function* () {
                 solidBlocks,
                 entityRadius: 48,
                 entities,
+              },
+              pathfinding: {
+                active: activePathTrace === undefined
+                  ? undefined
+                  : buildSmokeActivePathDiagnostics(
+                    activePathTrace,
+                    observation.player.position,
+                    new Date().toISOString(),
+                  ),
+                lastOutcome: lastPathOutcome,
               },
               pathActivity: queryDebugTimeline({
                 kind: [
@@ -1038,6 +1116,36 @@ const program = Effect.scoped(Effect.gen(function* () {
                 includeDescriptions: true,
               })
             ),
+          ),
+      },
+      {
+        method: "GET",
+        path: "/path/active",
+        description:
+          "Inspect the correlated active route, current progress, and latest outcome without replanning",
+        execute: () => captureSmokeActivePath({
+          activePath: activePathTrace,
+          bot,
+          includePlan: false,
+          lastPathOutcome,
+        }),
+      },
+      {
+        method: "POST",
+        path: "/path/active",
+        description:
+          "Inspect the active route and optionally calculate a fresh read-only path trace",
+        execute: (input) =>
+          debugRequest(() => {
+            const request = debugRecord(input, "active path request");
+            return optionalDebugBoolean(request, "includePlan") ?? true;
+          }).pipe(
+            Effect.flatMap((includePlan) => captureSmokeActivePath({
+              activePath: activePathTrace,
+              bot,
+              includePlan,
+              lastPathOutcome,
+            })),
           ),
       },
     ];
@@ -1987,10 +2095,13 @@ function queryDebugTimeline(input: unknown): readonly unknown[] {
 }
 
 function captureSmokeDiagnostics(options: Readonly<{
+  activePath: SmokeActivePathTrace | undefined;
   bot: SoulFireBot;
   driver: BeatGameDriver;
   input: unknown;
+  lastPathOutcome: SmokePathOutcome | undefined;
   run: BeatGameRun;
+  strategy: BeatGameStrategy;
 }>): Effect.Effect<unknown, unknown> {
   return Effect.gen(function* () {
     const request = yield* debugRequest(() =>
@@ -2032,6 +2143,7 @@ function captureSmokeDiagnostics(options: Readonly<{
     const finalPlayer = yield* options.bot.world.player();
     const completedAt = new Date().toISOString();
     const planner = snapshot.checkpoint.planner;
+    const finalPosition = finalPlayer.position ?? origin;
     return {
       run: {
         runId: snapshot.checkpoint.runId,
@@ -2048,10 +2160,23 @@ function captureSmokeDiagnostics(options: Readonly<{
       },
       player: observation.player,
       inventory: observation.inventory,
+      decision: {
+        activeAction: planner.currentAction,
+        activeActionId: planner.currentActionId,
+        retryCount: planner.retryCount,
+        latestActionEvent: latestDebugTimelineEntry([
+          "beat-game-event",
+        ], (entry) => isBeatGameActionEvent(entry)),
+        nextIfReplanned: decideBeatGameAction({
+          checkpoint: snapshot.checkpoint,
+          observation,
+          strategy: options.strategy,
+        }),
+      },
       spatial: buildSmokeSpatialDiagnostics({
         origin,
         originVelocity: observation.player.velocity,
-        finalPosition: finalPlayer.position ?? origin,
+        finalPosition,
         localBlockRadius,
         entityRadius,
         surfaceRadius,
@@ -2061,6 +2186,16 @@ function captureSmokeDiagnostics(options: Readonly<{
         entities,
         surface,
       }),
+      pathfinding: {
+        active: options.activePath === undefined
+          ? undefined
+          : buildSmokeActivePathDiagnostics(
+            options.activePath,
+            finalPosition,
+            completedAt,
+          ),
+        lastOutcome: options.lastPathOutcome,
+      },
       decisions: querySignificantDebugActivity(historyLimit),
       currentIntent: {
         taskStarted: latestDebugTimelineEntry("task-started"),
@@ -2103,11 +2238,27 @@ function captureSmokeDiagnostics(options: Readonly<{
 
 function latestDebugTimelineEntry(
   kinds: string | readonly string[],
+  predicate: (entry: unknown) => boolean = () => true,
 ): unknown {
   return debugTimeline.query({
     kinds: typeof kinds === "string" ? [kinds] : kinds,
-    limit: 1,
-  })[0];
+    limit: debugApiTimelineEntries,
+  }).findLast(predicate);
+}
+
+function isBeatGameActionEvent(entry: unknown): boolean {
+  if (!isDebugRecord(entry) || entry.kind !== "beat-game-event") {
+    return false;
+  }
+  const event = entry.event;
+  return isDebugRecord(event)
+    && typeof event.type === "string"
+    && [
+      "action-started",
+      "action-retried",
+      "action-succeeded",
+      "action-failed",
+    ].includes(event.type);
 }
 
 function querySignificantDebugActivity(limit: number): readonly unknown[] {
@@ -2385,6 +2536,62 @@ function parseDebugPathPlan(input: unknown): Readonly<{
         }),
     },
   };
+}
+
+function captureSmokeActivePath(options: Readonly<{
+  activePath: SmokeActivePathTrace | undefined;
+  bot: SoulFireBot;
+  includePlan: boolean;
+  lastPathOutcome: SmokePathOutcome | undefined;
+}>): Effect.Effect<unknown, unknown> {
+  if (options.activePath === undefined) {
+    return Effect.succeed({
+      status: "idle",
+      lastOutcome: options.lastPathOutcome,
+    });
+  }
+  const trace = options.activePath;
+  return Effect.gen(function* () {
+    const player = yield* options.bot.world.player();
+    if (player.position === undefined) {
+      return yield* Effect.fail(new SmokeDebugRequestError(
+        "The bot player has no current position",
+        409,
+      ));
+    }
+    const diagnostics = buildSmokeActivePathDiagnostics(
+      trace,
+      player.position,
+      new Date().toISOString(),
+    );
+    if (!options.includePlan) {
+      return {
+        ...diagnostics,
+        lastOutcome: options.lastPathOutcome,
+      };
+    }
+    const goal = trace.goal.type === "position"
+      ? goals.near(trace.goal.position, trace.goal.radius)
+      : goals.xz(trace.goal.x, trace.goal.z, {
+        dimension: trace.goal.dimension,
+        radius: trace.goal.radius,
+      });
+    const plan = yield* options.bot.pathfinder.plan(goal, {
+      path: pathfinderOptions(trace.policy),
+      includeDescriptions: true,
+    }).pipe(
+      Effect.map((result) => ({ ok: true as const, result })),
+      Effect.catchAll((cause) => Effect.succeed({
+        ok: false as const,
+        error: cause instanceof Error ? cause.message : String(cause),
+      })),
+    );
+    return {
+      ...diagnostics,
+      plan,
+      lastOutcome: options.lastPathOutcome,
+    };
+  });
 }
 
 function pathfinderOptions(policy: BeatGamePathPolicy) {

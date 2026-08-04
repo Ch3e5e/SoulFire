@@ -1,6 +1,7 @@
 import type {
   BeatGameBlockObservation,
   BeatGameEntityObservation,
+  BeatGamePathPolicy,
   BeatGamePosition,
 } from "../src/model.js";
 import type { BeatGameSurfaceColumn } from "../src/driver.js";
@@ -9,6 +10,28 @@ interface DebugVector {
   readonly x: number;
   readonly y: number;
   readonly z: number;
+}
+
+export type SmokePathGoal =
+  | Readonly<{
+    type: "position";
+    position: BeatGamePosition;
+    radius: number;
+  }>
+  | Readonly<{
+    type: "xz";
+    x: number;
+    z: number;
+    dimension: string;
+    radius: number;
+  }>;
+
+export interface SmokeActivePathTrace {
+  readonly pathId: string;
+  readonly startedAt: string;
+  readonly origin: BeatGamePosition;
+  readonly goal: SmokePathGoal;
+  readonly policy: BeatGamePathPolicy;
 }
 
 export interface SmokeSpatialDiagnosticsInput {
@@ -162,6 +185,47 @@ export function buildSmokeSpatialDiagnostics(
         },
       })),
     },
+  };
+}
+
+export function buildSmokeActivePathDiagnostics(
+  trace: SmokeActivePathTrace,
+  currentPosition: BeatGamePosition,
+  capturedAt: string,
+) {
+  const sameDimension = trace.origin.dimension === currentPosition.dimension;
+  const elapsedMs = Math.max(
+    0,
+    Date.parse(capturedAt) - Date.parse(trace.startedAt),
+  );
+  const goalDimension = trace.goal.type === "position"
+    ? trace.goal.position.dimension
+    : trace.goal.dimension;
+  const distanceToGoal = goalDimension !== currentPosition.dimension
+    ? undefined
+    : trace.goal.type === "position"
+    ? Math.max(
+      0,
+      distance(currentPosition, trace.goal.position) - trace.goal.radius,
+    )
+    : Math.max(
+      0,
+      Math.hypot(
+        trace.goal.x - currentPosition.x,
+        trace.goal.z - currentPosition.z,
+      ) - trace.goal.radius,
+    );
+
+  return {
+    ...trace,
+    status: "active" as const,
+    capturedAt,
+    elapsedMs,
+    currentPosition,
+    displacementFromOrigin: sameDimension
+      ? distance(trace.origin, currentPosition)
+      : undefined,
+    distanceToGoal,
   };
 }
 
