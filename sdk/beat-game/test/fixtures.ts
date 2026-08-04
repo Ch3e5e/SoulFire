@@ -174,7 +174,7 @@ export class FakeBeatGameDriver implements BeatGameDriver {
   }[] = [];
   public surfaceColumns: readonly BeatGameSurfaceColumn[] = [];
   public currentEnvironment: BeatGameEnvironmentObservation = {
-    gameTime: 0n,
+    gameTime: 6_000n,
     raining: false,
   };
   public environmentResolver: () => Effect.Effect<

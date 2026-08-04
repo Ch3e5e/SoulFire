@@ -1010,12 +1010,12 @@ describe("beat-game run lifecycle", () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const deathPosition = {
-      x: 24,
+      x: 48,
       y: 64,
       z: -12,
       dimension: "minecraft:overworld",
     };
-    const observedAt = new Date(Date.now() - 15 * 60 * 1_000).toISOString();
+    const observedAt = new Date(Date.now() - 3 * 60 * 1_000).toISOString();
     const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
       runId: "durable-death-run",
       teamId: "durable-death-team",
@@ -1040,7 +1040,11 @@ describe("beat-game run lifecycle", () => {
       },
     }, undefined));
     driver.currentObservation = observation({
-      counts: { "minecraft:oak_log": 1 },
+      counts: {
+        "minecraft:cooked_beef": 8,
+        "minecraft:oak_log": 1,
+        "minecraft:wooden_sword": 1,
+      },
     });
     driver.entityResults = [{
       connectionEpoch: "epoch-1",
@@ -1560,7 +1564,7 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
-  it("heals before resuming a restored corpse journey", async () => {
+  it("heals before scouting a restored corpse", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const deathPosition = {
@@ -1650,10 +1654,11 @@ describe("beat-game run lifecycle", () => {
 
     expect(driver.paths).toContainEqual(expect.objectContaining({
       position: deathPosition,
-      radius: 2,
+      radius: 24,
       policy: expect.objectContaining({
-        avoidFluids: false,
-        sprint: false,
+        allowMining: false,
+        allowPlacing: false,
+        avoidFluids: true,
       }),
     }));
     expect(driver.tasks).toContainEqual(expect.objectContaining({
@@ -1907,9 +1912,11 @@ describe("beat-game run lifecycle", () => {
         checkpointStore: store,
         strategy: { observationPollMs: 1 },
       });
-      while (driver.xzPaths.length === 0) {
-        yield* Effect.sleep(1);
-      }
+      yield* Effect.gen(function* () {
+        while (driver.xzPaths.length === 0) {
+          yield* Effect.sleep(1);
+        }
+      }).pipe(Effect.timeout("5 seconds"));
       yield* Effect.sleep(20);
       yield* run.stop;
       yield* run.awaitCompletion.pipe(Effect.either);
@@ -2157,11 +2164,13 @@ describe("beat-game run lifecycle", () => {
       }).pipe(
         Effect.flatMap((run) =>
           Effect.gen(function* () {
-            while (
-              !driver.tasks.some((task) => task.type === "attack-entity")
-            ) {
-              yield* Effect.sleep(1);
-            }
+            yield* Effect.gen(function* () {
+              while (
+                !driver.tasks.some((task) => task.type === "attack-entity")
+              ) {
+                yield* Effect.sleep(1);
+              }
+            }).pipe(Effect.timeout("5 seconds"));
             yield* run.stop;
             yield* run.awaitCompletion.pipe(Effect.either);
           })
@@ -2619,9 +2628,8 @@ describe("beat-game run lifecycle", () => {
     const saved = await Effect.runPromise(store.load("burned-corpse-run"));
     expect(saved?.planner.phase).toBe(BeatGamePhase.PREPARE_OVERWORLD);
     expect(saved?.memory.deathPositions).toEqual([]);
-    expect(driver.paths).toContainEqual(expect.objectContaining({
+    expect(driver.paths).not.toContainEqual(expect.objectContaining({
       position: deathPosition,
-      policy: expect.objectContaining({ avoidFluids: true }),
     }));
   });
 
@@ -3403,7 +3411,9 @@ describe("beat-game run lifecycle", () => {
     driver.currentObservation = observation({
       counts: {
         "minecraft:wooden_sword": 1,
+        "minecraft:wooden_pickaxe": 1,
         "minecraft:dirt": 16,
+        "minecraft:oak_log": 12,
         "minecraft:beef": 7,
       },
     });
@@ -3444,13 +3454,15 @@ describe("beat-game run lifecycle", () => {
       }).pipe(
         Effect.flatMap((run) =>
           Effect.gen(function* () {
-            while (
-              !driver.paths.some(({ position }) =>
-                position.x === deathPosition.x
-              )
-            ) {
-              yield* Effect.sleep(1);
-            }
+            yield* Effect.gen(function* () {
+              while (
+                !driver.paths.some(({ position }) =>
+                  position.x === deathPosition.x
+                )
+              ) {
+                yield* Effect.sleep(1);
+              }
+            }).pipe(Effect.timeout("5 seconds"));
             yield* run.stop;
             yield* run.awaitCompletion.pipe(Effect.either);
           })

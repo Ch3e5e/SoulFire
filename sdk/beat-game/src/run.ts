@@ -180,6 +180,7 @@ const EMERGENCY_ARMAMENT_LOG_COUNT = 2;
 const DEATH_RECOVERY_BOOTSTRAP_LOG_COUNT = 12;
 const DEATH_RECOVERY_BOOTSTRAP_BLOCK_COUNT = 16;
 const DEATH_RECOVERY_FOOD_RESERVE_COUNT = 8;
+const DEATH_RECOVERY_FOOD_REFILL_THRESHOLD = 6;
 const DEATH_RECOVERY_AQUATIC_FALLBACK_EXPLORATION_LEGS = 2;
 const DEATH_RECOVERY_FOOD_SEARCH_TIMEOUT_MS = 60_000;
 const DEATH_RECOVERY_FOOD_SEARCH_PENDING =
@@ -667,6 +668,7 @@ const DEATH_OBSERVATION_DEDUPLICATION_WINDOW_MS = 5_000;
 const BAREHANDED_DEFENSE_MINIMUM_HEALTH = 18;
 const MELEE_DISENGAGE_HEALTH = 16;
 const LETHAL_MELEE_DISENGAGE_HEALTH = 7;
+const UNSHIELDED_RANGED_FIGHT_MINIMUM_HEALTH = 14;
 const CAUGHT_MELEE_COMMIT_MINIMUM_HEALTH = MELEE_DISENGAGE_HEALTH;
 const THREAT_ESCAPE_SAFE_DISTANCE = 24;
 const SINGLE_THREAT_MAXIMUM_ESCAPES = 4;
@@ -2123,12 +2125,21 @@ function executeDecision(
               yield* retreatAndRecover(
                 state,
                 POST_DEFENSE_RECOVERY_DURATION_MS,
+                {
+                  preserveFoodBelowCount:
+                    DEATH_RECOVERY_FOOD_RESERVE_COUNT,
+                },
               );
               respawned = yield* observeDriverFresh(state);
             }
             if (
               respawned.player.food <= state.strategy.eatBelowFood
               && hasUsableFood(respawned)
+              && (
+                respawned.player.health <= LETHAL_MELEE_DISENGAGE_HEALTH
+                || deathRecoveryTravelFoodCount(respawned)
+                  >= DEATH_RECOVERY_FOOD_RESERVE_COUNT
+              )
             ) {
               yield* eatWhenNeeded(state.driver, {
                 foodItemIds: preferredUsableFoodItemIds(respawned),
@@ -2329,14 +2340,19 @@ function executeDecision(
               yield* retreatAndRecover(
                 state,
                 POST_DEFENSE_RECOVERY_DURATION_MS,
+                {
+                  preserveFoodBelowCount:
+                    DEATH_RECOVERY_FOOD_RESERVE_COUNT,
+                },
               );
               yield* respawnAndRecover(state.driver, {
                 deathPosition: pendingDeath.position,
+                retryThroughFluids: true,
                 path: {
                   ...state.strategy.path,
                   allowMining: nearbyCorpseDrops !== undefined
                     || hasMiningPickaxe(respawned),
-                  avoidFluids: false,
+                  avoidFluids: true,
                   additionalPlaceItemIds:
                     DEATH_RECOVERY_ADDITIONAL_PLACE_ITEM_IDS,
                   sprint: false,
@@ -3182,7 +3198,7 @@ function monitorObservedSafety(
     && observation.player.food <= state.strategy.eatBelowFood
     && hasUsableFood(observation)
     && (
-      observation.player.health < state.strategy.minimumHealth
+      observation.player.health <= LETHAL_MELEE_DISENGAGE_HEALTH
       || observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
       || deathRecoveryTravelFoodCount(observation)
         >= DEATH_RECOVERY_FOOD_RESERVE_COUNT
@@ -3484,7 +3500,7 @@ function shouldCommitToUnshieldedRangedFight(
 ): boolean {
   return PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
     && hasMeleeWeapon(observation)
-    && observation.player.health >= MELEE_DISENGAGE_HEALTH
+    && observation.player.health >= UNSHIELDED_RANGED_FIGHT_MINIMUM_HEALTH
     && observation.player.food > URGENT_HUNGER_FOOD_LEVEL;
 }
 
@@ -6610,6 +6626,9 @@ function positionAwayFrom(
 function retreatAndRecover(
   state: RunState,
   recoveryDurationMs = RECOVERY_DURATION_MS,
+  options: {
+    readonly preserveFoodBelowCount?: number;
+  } = {},
 ): Effect.Effect<void, BeatGameDriverError> {
   const escapePath = {
     ...state.strategy.path,
@@ -6699,6 +6718,15 @@ function retreatAndRecover(
                 observation.player.food < 20
                 && hasUsableFood(observation)
               ) {
+                if (
+                  options.preserveFoodBelowCount !== undefined
+                  && observation.player.health
+                    > LETHAL_MELEE_DISENGAGE_HEALTH
+                  && deathRecoveryTravelFoodCount(observation)
+                    < options.preserveFoodBelowCount
+                ) {
+                  return Effect.void;
+                }
                 return eatWhenNeeded(state.driver, {
                   foodItemIds: preferredUsableFoodItemIds(observation),
                   foodLevel: 20,
@@ -13841,7 +13869,7 @@ function prepareForDistantDeathRecovery(
     }
 
     const food = travelFoodCount(current);
-    if (food < DEATH_RECOVERY_FOOD_RESERVE_COUNT) {
+    if (food <= DEATH_RECOVERY_FOOD_REFILL_THRESHOLD) {
       current = yield* ensureTravelFood(current);
     }
     if (travelFoodCount(current) < DEATH_RECOVERY_FOOD_RESERVE_COUNT) {
