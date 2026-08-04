@@ -8861,6 +8861,103 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
   });
 
+  it("evades before mining upward when a ranged route fails while wounded", async () => {
+    const driver = new FakeBeatGameDriver();
+    const undergroundPosition = {
+      x: 0,
+      y: -15,
+      z: 0,
+      dimension: "minecraft:overworld",
+    } as const;
+    const skeleton = {
+      connectionEpoch: "epoch-1",
+      networkId: 182,
+      entityType: "minecraft:skeleton",
+      position: {
+        x: 0,
+        y: -7,
+        z: 2,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    const counts = {
+      "minecraft:shield": 1,
+      "minecraft:stone_pickaxe": 1,
+      "minecraft:stone_sword": 1,
+    };
+    driver.currentObservation = observation({
+      health: 12,
+      position: undergroundPosition,
+      counts,
+    });
+    driver.surfaceColumns = [{
+      x: -6,
+      z: 0,
+      loaded: true,
+      surfaceY: 70,
+      blockId: "minecraft:grass_block",
+      biomeId: "minecraft:forest",
+      skyLight: 15,
+      blockLight: 0,
+    }];
+    driver.entityResults = [skeleton];
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2)
+          || query.selector.networkId === skeleton.networkId
+        ? driver.entityResults
+        : [];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (task.type === "flee") {
+          driver.entityResults = [];
+        }
+      }).pipe(
+        Effect.zipRight(
+          task.type === "attack-entity"
+            ? Effect.fail(new BeatGameDriverError({
+              operation: "task.attack-entity",
+              code: "unreachable",
+              retryable: true,
+              message: "The skeleton is firing down an enclosed shaft",
+            }))
+            : Effect.void,
+        ),
+      );
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (!driver.tasks.some((task) => task.type === "flee")) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.tasks.filter((task) => task.type === "attack-entity"))
+      .toHaveLength(1);
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "flee",
+      selector: { categories: [2], alive: true },
+    }));
+    expect(driver.paths).toHaveLength(0);
+  });
+
   it("abandons a shielded ranged pursuit when a hostile group closes in", async () => {
     const driver = new FakeBeatGameDriver();
     const skeleton = {
@@ -13965,6 +14062,161 @@ describe("beat-game run lifecycle", () => {
       maximumResults: 1,
     });
     expect(useItemInterrupted).toBe(true);
+  });
+
+  it("prefers a source-rich lava pool over a nearer lone source", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const start = {
+      x: 0.5,
+      y: -50,
+      z: 0.5,
+      dimension: "minecraft:overworld",
+    } as const;
+    const loneSource = blockObservation({
+      x: 4,
+      y: -52,
+      z: 0,
+      dimension: start.dimension,
+    }, {
+      blockId: "minecraft:lava",
+      properties: { level: "0" },
+      replaceable: true,
+    });
+    const poolSources = [
+      { x: 20, z: 0 },
+      { x: 20, z: 1 },
+      { x: 21, z: 0 },
+      { x: 21, z: 1 },
+    ].map(({ x, z }) => blockObservation({
+      x,
+      y: -52,
+      z,
+      dimension: start.dimension,
+    }, {
+      blockId: "minecraft:lava",
+      properties: { level: "0" },
+      replaceable: true,
+    }));
+    const loneStand = {
+      x: 2,
+      y: -50,
+      z: 0,
+      dimension: start.dimension,
+    } as const;
+    const poolStand = {
+      x: 18,
+      y: -50,
+      z: 0,
+      dimension: start.dimension,
+    } as const;
+    const standVolume = (stand: BeatGameBlockPosition) => [
+      blockObservation(stand, {
+        blockId: "minecraft:air",
+        replaceable: true,
+      }),
+      blockObservation({ ...stand, y: stand.y + 1 }, {
+        blockId: "minecraft:air",
+        replaceable: true,
+      }),
+      blockObservation({ ...stand, y: stand.y - 1 }),
+    ];
+    const sources = [loneSource, ...poolSources];
+    driver.currentObservation = observation({
+      position: start,
+      counts: {
+        "minecraft:bucket": 1,
+        "minecraft:cobblestone": 20,
+        "minecraft:cooked_beef": 8,
+        "minecraft:flint_and_steel": 1,
+        "minecraft:iron_ingot": 7,
+        "minecraft:iron_pickaxe": 1,
+        "minecraft:oak_log": 8,
+        "minecraft:shield": 1,
+        "minecraft:stone_sword": 1,
+        "minecraft:water_bucket": 1,
+      },
+    });
+    driver.blockQueryResolver = ({ center, radius, selector }) => {
+      if (
+        selector.blockIds?.includes("minecraft:lava") === true
+        && selector.properties?.level === "0"
+      ) {
+        if (radius > 0.25) {
+          return sources;
+        }
+        return sources.filter(({ position }) =>
+          position.x === Math.floor(center.x)
+          && position.y === Math.floor(center.y)
+          && position.z === Math.floor(center.z)
+        );
+      }
+      if (radius === 4.9 && Object.keys(selector).length === 0) {
+        return standVolume(center.x < 10 ? loneStand : poolStand);
+      }
+      return [];
+    };
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+        if (radius === 0.75) {
+          driver.currentObservation = observation({
+            position,
+            counts: driver.currentObservation.inventory.counts,
+          });
+        }
+      });
+    driver.raycastResolver = () => ({ distance: 2 });
+    driver.actionResolver = (action) => {
+      if (action.type === "look") {
+        driver.currentObservation = observation({
+          position: driver.currentObservation.player.position,
+          counts: driver.currentObservation.inventory.counts,
+          rotation: { yaw: action.yaw, pitch: action.pitch },
+        });
+      }
+      return action.type === "use-item" ? Effect.never : Effect.succeed({});
+    };
+    await Effect.runPromise(store.save(checkpoint(
+      BeatGamePhase.ENTER_NETHER,
+      {
+        runId: "clustered-lava-source-run",
+        teamId: "clustered-lava-source-team",
+      },
+    ), undefined));
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        runId: "clustered-lava-source-run",
+        team: { teamId: "clustered-lava-source-team" },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.actions.some((action) => action.type === "use-item")) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    }).pipe(Effect.timeout("5 seconds"))));
+
+    expect(driver.paths.find(({ radius }) => radius === 0.75)).toEqual(
+      expect.objectContaining({
+        position: {
+          x: poolStand.x + 0.5,
+          y: poolStand.y,
+          z: poolStand.z + 0.5,
+          dimension: poolStand.dimension,
+        },
+      }),
+    );
+    expect(driver.paths).not.toContainEqual(expect.objectContaining({
+      position: {
+        x: loneStand.x + 0.5,
+        y: loneStand.y,
+        z: loneStand.z + 0.5,
+        dimension: loneStand.dimension,
+      },
+    }));
   });
 
   it("prefers a clear lava sightline over a closer blocked stand", async () => {

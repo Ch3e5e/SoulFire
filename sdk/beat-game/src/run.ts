@@ -411,6 +411,7 @@ const DEEP_LAVA_SEARCH_MAX_Y = -48;
 const DEEP_LAVA_DESCENT_STEP = 12;
 const PORTAL_CASTING_ADDITIONAL_LAVA_SOURCE_COUNT =
   NETHER_PORTAL_FRAME_OBSIDIAN_COUNT - 1;
+const PORTAL_LAVA_SOURCE_CLUSTER_RADIUS = 8;
 const EXPLORATION_REANCHOR_DISTANCE = 16;
 const EXPLORATION_FRONTIER_LIMIT = 64;
 const EXPLORATION_DEATH_DISPLACEMENT_WINDOW_MS = 10 * 60 * 1_000;
@@ -4279,6 +4280,11 @@ function recoverFromFailedDefense(
   return state.driver.observe.pipe(
     Effect.flatMap((observation) => {
       if (PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)) {
+        if (observation.player.health < state.strategy.minimumHealth) {
+          return escapeFromTarget(state, target, {
+            continueEscapingWhenHit: true,
+          });
+        }
         return needsOverworldSurfaceRecovery(
           state,
           observation.player.position,
@@ -8424,7 +8430,17 @@ function approachLavaSourceFromSide(
 ): Effect.Effect<BeatGameBlockObservation, BeatGameDriverError> {
   return Effect.gen(function* () {
     const nearbySources = [...sources].sort((left, right) =>
-      distanceSquared(observation.player.position, left.position)
+      Math.min(
+        PORTAL_CASTING_ADDITIONAL_LAVA_SOURCE_COUNT,
+        lavaSourceClusterSize(right, sources),
+      )
+      - Math.min(
+        PORTAL_CASTING_ADDITIONAL_LAVA_SOURCE_COUNT,
+        lavaSourceClusterSize(left, sources),
+      )
+      || Math.abs(observation.player.position.y - left.position.y)
+      - Math.abs(observation.player.position.y - right.position.y)
+      || distanceSquared(observation.player.position, left.position)
       - distanceSquared(observation.player.position, right.position)
     );
     const preparedSources = yield* Effect.forEach(
@@ -8529,6 +8545,17 @@ function approachLavaSourceFromSide(
         } nearby lava source${nearbySources.length === 1 ? "" : "s"}`,
     }));
   });
+}
+
+function lavaSourceClusterSize(
+  source: BeatGameBlockObservation,
+  sources: readonly BeatGameBlockObservation[],
+): number {
+  return sources.filter((candidate) =>
+    candidate.position.dimension === source.position.dimension
+    && distanceSquared(candidate.position, source.position)
+      <= PORTAL_LAVA_SOURCE_CLUSTER_RADIUS ** 2
+  ).length;
 }
 
 function isLavaSourceExposableFromCurrentPosition(
