@@ -4308,7 +4308,7 @@ function swimToNearbyDrySurface(
         dimension: observation.player.position.dimension,
       };
       if (!swimDirectly) {
-        const routed = yield* state.driver.pathfind(
+        yield* state.driver.pathfind(
           target,
           DRY_SURFACE_APPROACH_RADIUS,
           {
@@ -4340,15 +4340,16 @@ function swimToNearbyDrySurface(
           }),
           Effect.either,
         );
-        if (routed._tag === "Right") {
-          const current = yield* state.driver.observe;
-          if (!(yield* isPlayerInFluid(
-            state.driver,
-            current.player.position,
-          ))) {
-            return true;
-          }
-        }
+      }
+      const current = yield* state.driver.observe;
+      if (current.player.dead) {
+        return true;
+      }
+      if (!(yield* isPlayerInFluid(
+        state.driver,
+        current.player.position,
+      ))) {
+        return true;
       }
       const reached = yield* swimTowardDrySurface(state, surface);
       if (reached) {

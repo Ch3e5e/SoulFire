@@ -11443,6 +11443,107 @@ describe("beat-game run lifecycle", () => {
     });
   });
 
+  it("stops swimming when a failed shore route already reached dry ground", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.surfaceColumns = [-1, 0, 1].map((z) => ({
+      x: 4,
+      z,
+      loaded: true,
+      surfaceY: 64,
+      blockId: "minecraft:grass_block",
+      skyLight: 15,
+      blockLight: 0,
+    }));
+    driver.blockQueryResolver = (query) =>
+      query.selector.blockIds?.includes("minecraft:water") === true
+          && driver.currentObservation.player.position.x < 4
+        ? [blockObservation({
+          x: Math.floor(query.center.x),
+          y: Math.floor(query.center.y),
+          z: Math.floor(query.center.z),
+          dimension: query.center.dimension,
+        }, {
+          blockId: "minecraft:water",
+          diggable: false,
+          replaceable: true,
+        })]
+        : [];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(
+        Effect.zipRight(
+          task.type === "collect-blocks" ? Effect.never : Effect.void,
+        ),
+      );
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+        driver.currentObservation = observation({
+          air: 300,
+          position,
+        });
+      }).pipe(
+        Effect.zipRight(Effect.fail(new BeatGameDriverError({
+          operation: "pathfind",
+          code: "timeout",
+          retryable: true,
+          message: "The route timed out after reaching shore",
+        }))),
+      );
+    driver.actionObserver = (action) => {
+      const current = driver.currentObservation;
+      if (action.type === "look") {
+        driver.currentObservation = {
+          ...current,
+          player: {
+            ...current.player,
+            rotation: { yaw: action.yaw, pitch: action.pitch },
+          },
+        };
+        return;
+      }
+      if (
+        action.type === "set-movement"
+        && action.jump === true
+        && current.player.rotation.pitch === -90
+      ) {
+        driver.currentObservation = observation({
+          air: 300,
+          position: { x: 0, y: 63.95, z: 0 },
+        });
+      }
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some((task) => task.type === "collect-blocks")) {
+        yield* Effect.sleep(1);
+      }
+      driver.currentObservation = observation({
+        air: 100,
+        position: { x: 0, y: 61, z: 0 },
+      });
+      while (driver.paths.length === 0) {
+        yield* Effect.sleep(1);
+      }
+      yield* Effect.sleep(10);
+      yield* run.stop;
+    })));
+
+    expect(driver.currentObservation.player.position).toMatchObject({
+      x: 4.5,
+      y: 65,
+      z: 0.5,
+    });
+    expect(driver.actions).not.toContainEqual(expect.objectContaining({
+      type: "look",
+      pitch: -20,
+    }));
+  });
+
   it("keeps ascending before responding to an underwater threat", async () => {
     const driver = new FakeBeatGameDriver();
     const creeper = {
