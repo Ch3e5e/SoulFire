@@ -460,6 +460,33 @@ describe("smoke stuck diagnostics", () => {
     });
   });
 
+  it("does not report intentionally interrupted routes as failures", () => {
+    const interruptedPath = (seconds: number) => ({
+      observedAt: `2026-08-03T10:00:${String(seconds).padStart(2, "0")}.000Z`,
+      kind: "pathfind-interrupted",
+      cause: "All fibers interrupted without errors.",
+    });
+    const diagnostics = buildSmokeStuckDiagnostics({
+      capturedAt: "2026-08-03T10:00:20.000Z",
+      currentAction: "satisfy:food",
+      activity: [
+        {
+          observedAt: "2026-08-03T10:00:00.000Z",
+          kind: "beat-game-event",
+          event: { type: "action-started", action: "satisfy:food" },
+        },
+        interruptedPath(5),
+        interruptedPath(10),
+        interruptedPath(15),
+      ],
+    });
+
+    expect(diagnostics).toMatchObject({
+      status: "progressing",
+      findings: [],
+    });
+  });
+
   it("does not treat an unquantified entity chase as frozen progress", () => {
     const progress = (observedAt: string) => ({
       observedAt,

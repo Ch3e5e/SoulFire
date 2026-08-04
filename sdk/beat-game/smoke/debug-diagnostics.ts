@@ -882,9 +882,7 @@ function parseSmokeProgressActivity(
   }
   if (
     input.kind === "pathfind-failed"
-    || input.kind === "pathfind-interrupted"
     || input.kind === "pathfind-xz-failed"
-    || input.kind === "pathfind-xz-interrupted"
   ) {
     return [{
       observedAt: input.observedAt,
