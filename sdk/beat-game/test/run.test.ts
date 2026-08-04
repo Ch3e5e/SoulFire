@@ -25259,6 +25259,53 @@ describe("beat-game run lifecycle", () => {
     )).toBe(false);
   });
 
+  it("eats raw food when a nearby furnace cannot be reached", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      health: 8,
+      food: 15,
+      counts: { "minecraft:salmon": 1 },
+    });
+    driver.blockQueryResolver = ({ selector }) =>
+      selector.blockIds?.includes("minecraft:furnace") === true
+        ? [blockObservation({
+          x: 16,
+          y: 64,
+          z: 0,
+          dimension: "minecraft:overworld",
+        }, { blockId: "minecraft:furnace" })]
+        : [];
+    driver.pathResolver = () =>
+      Effect.fail(new BeatGameDriverError({
+        operation: "pathfind",
+        code: "unreachable",
+        retryable: true,
+        message: "The furnace is isolated by terrain",
+      }));
+    driver.taskResolver = (task) => {
+      driver.tasks.push(task);
+      return task.type === "auto-eat" ? Effect.never : Effect.void;
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some((task) => task.type === "auto-eat")) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    })));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "auto-eat",
+      foodItemIds: ["minecraft:salmon"],
+      maximumMeals: 1,
+      completeWhenNoFood: true,
+    }));
+    expect(driver.tasks.some((task) => task.type === "smelt")).toBe(false);
+  });
+
   it("uses rotten flesh for emergency recovery instead of traveling for food", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({

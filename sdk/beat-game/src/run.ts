@@ -7032,6 +7032,14 @@ function satisfyFoodRequirement(
     return Effect.void;
   }
   if (observation.player.health < state.strategy.minimumHealth) {
+    const eatRawFoodAndRecover = () =>
+      eatWhenNeeded(state.driver, {
+        foodItemIds: [batch.rawItemId],
+        foodLevel: Math.max(18, state.strategy.eatBelowFood),
+        maximumMeals: batch.count,
+        completeWhenNoFood: true,
+        path: state.strategy.path,
+      }).pipe(Effect.zipRight(retreatAndRecover(state)));
     return findReusableWorkstations(
       state.driver,
       observation,
@@ -7040,14 +7048,14 @@ function satisfyFoodRequirement(
       Effect.flatMap((furnaces) =>
         furnaces.length > 0
           || (observation.inventory.counts["minecraft:furnace"] ?? 0) > 0
-          ? cookRawFoodBatch(state, observation, batch)
-          : eatWhenNeeded(state.driver, {
-            foodItemIds: [batch.rawItemId],
-            foodLevel: Math.max(18, state.strategy.eatBelowFood),
-            maximumMeals: batch.count,
-            completeWhenNoFood: true,
-            path: state.strategy.path,
-          }).pipe(Effect.zipRight(retreatAndRecover(state)))
+          ? cookRawFoodBatch(state, observation, batch).pipe(
+            Effect.catchTag("BeatGameDriverError", (error) =>
+              error.retryable && error.code !== "bot-dead"
+                ? eatRawFoodAndRecover()
+                : Effect.fail(error)
+            ),
+          )
+          : eatRawFoodAndRecover()
       ),
     );
   }
