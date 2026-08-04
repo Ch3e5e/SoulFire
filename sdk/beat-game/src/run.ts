@@ -1235,13 +1235,6 @@ function shouldTakeNightShelter(
     if (!isHostileNight(environment.gameTime)) {
       return false;
     }
-    const inFluid = yield* isPlayerInFluid(
-      state.driver,
-      observation.player.position,
-    );
-    if (!observation.player.onGround && !inFluid) {
-      return false;
-    }
     const protectedForNightTravel =
       (observation.inventory.counts["minecraft:shield"] ?? 0) > 0
       && hasMeleeWeapon(observation)

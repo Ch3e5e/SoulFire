@@ -215,6 +215,7 @@ describe("beat-game run lifecycle", () => {
       counts: { "minecraft:dirt": 1 },
       health: 4,
       food: 8,
+      onGround: false,
     });
     driver.entityResults = [{
       connectionEpoch: "epoch",
