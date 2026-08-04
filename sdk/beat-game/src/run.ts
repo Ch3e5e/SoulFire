@@ -610,6 +610,7 @@ const MELEE_ENGAGEMENT_RADIUS = 4;
 const CREEPER_PROACTIVE_EVASION_RADIUS = 8;
 const CREEPER_EMERGENCY_REEVASION_RADIUS = 6;
 const PROACTIVE_RANGED_ENGAGEMENT_RADIUS = 16;
+const SHIELDED_AMBUSH_ESCAPE_THRESHOLD = 3;
 const PROACTIVE_THREAT_MAXIMUM_VERTICAL_DISTANCE = 6;
 const RANGED_THREAT_ESCAPE_TRIGGER_RADIUS = 24;
 const RANGED_THREAT_ESCAPE_SAFE_DISTANCE = 32;
@@ -2477,16 +2478,18 @@ function findImmediateThreat(
             <= PROACTIVE_RANGED_ENGAGEMENT_RADIUS
               * PROACTIVE_RANGED_ENGAGEMENT_RADIUS
         );
-        const unshieldedAmbush = nearbyThreats.length > 1
-          && (observation.inventory.counts["minecraft:shield"] ?? 0) === 0;
+        const hasShield =
+          (observation.inventory.counts["minecraft:shield"] ?? 0) > 0;
+        const unshieldedAmbush = !hasShield && nearbyThreats.length > 1;
+        const shieldedAmbush = hasShield
+          && nearbyThreats.length >= SHIELDED_AMBUSH_ESCAPE_THRESHOLD;
         const armedClosePursuer = shouldCommitToCaughtMeleePursuerFight(
           observation,
           melee.target,
         );
-        const shouldFleeMelee = (
-          unshieldedAmbush
-          && !armedClosePursuer
-        ) || shouldDisengageFromThreat(
+        const shouldFleeMelee = shieldedAmbush
+          || (unshieldedAmbush && !armedClosePursuer)
+          || shouldDisengageFromThreat(
           state,
           observation,
           melee.target,
@@ -2508,11 +2511,13 @@ function findImmediateThreat(
             <= PROACTIVE_RANGED_ENGAGEMENT_RADIUS
               * PROACTIVE_RANGED_ENGAGEMENT_RADIUS
         );
-        const unshieldedAmbush = nearbyThreats.length > 1
-          && (observation.inventory.counts["minecraft:shield"] ?? 0) === 0;
+        const overwhelmingAmbush = isOverwhelmingAmbush(
+          observation,
+          nearbyThreats.map(({ target }) => target),
+        );
         return {
           target: ranged.target,
-          response: unshieldedAmbush || shouldDisengageFromThreat(
+          response: overwhelmingAmbush || shouldDisengageFromThreat(
               state,
               observation,
               ranged.target,
@@ -4913,6 +4918,17 @@ function isAggressiveNeutralMob(
   return entity.target !== undefined;
 }
 
+function isOverwhelmingAmbush(
+  observation: BeatGameObservation,
+  nearbyThreats: readonly BeatGameEntityObservation[],
+): boolean {
+  const threshold =
+    (observation.inventory.counts["minecraft:shield"] ?? 0) > 0
+      ? SHIELDED_AMBUSH_ESCAPE_THRESHOLD
+      : 2;
+  return nearbyThreats.length >= threshold;
+}
+
 function findNearbyAttackThreat(
   state: RunState,
   observation: BeatGameObservation,
@@ -4997,11 +5013,13 @@ function findNearbyAttackThreat(
           candidate.position,
         ) <= PROACTIVE_RANGED_ENGAGEMENT_RADIUS ** 2
       );
-      const unshieldedAmbush = nearbyThreats.length > 1
-        && (observation.inventory.counts["minecraft:shield"] ?? 0) === 0;
+      const overwhelmingAmbush = isOverwhelmingAmbush(
+        observation,
+        nearbyThreats,
+      );
       const shouldEscape =
         ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(nearest.entityType)
-        || unshieldedAmbush
+        || overwhelmingAmbush
         || shouldDisengageFromThreat(state, observation, nearest);
       return {
         target: nearest,
@@ -5151,24 +5169,36 @@ function monitorDefenseHealth(
       ) {
         return Effect.succeed("disengage" as const);
       }
-      if (
-        !disengageWhenWounded
-        || options.commitThroughWound === true
-        || options.commitThroughLethalWound === true
-        || (
-          observation.player.health >= state.strategy.minimumHealth
-          || observation.player.health >= engagementHealth
-        )
-      ) {
-        return monitorDefenseHealth(
-          state,
-          engagementHealth,
-          engagementPosition,
-          disengageWhenWounded,
-          options,
-        );
-      }
-      return Effect.succeed("disengage" as const);
+      return state.driver.queryEntities({
+        origin: observation.player.position,
+        radius: PROACTIVE_RANGED_ENGAGEMENT_RADIUS,
+        selector: { categories: [2], alive: true },
+        maximumResults: SHIELDED_AMBUSH_ESCAPE_THRESHOLD,
+      }).pipe(
+        Effect.flatMap((nearbyThreats) => {
+          if (isOverwhelmingAmbush(observation, nearbyThreats)) {
+            return Effect.succeed("disengage" as const);
+          }
+          if (
+            !disengageWhenWounded
+            || options.commitThroughWound === true
+            || options.commitThroughLethalWound === true
+            || (
+              observation.player.health >= state.strategy.minimumHealth
+              || observation.player.health >= engagementHealth
+            )
+          ) {
+            return monitorDefenseHealth(
+              state,
+              engagementHealth,
+              engagementPosition,
+              disengageWhenWounded,
+              options,
+            );
+          }
+          return Effect.succeed("disengage" as const);
+        }),
+      );
     }),
   );
 }
