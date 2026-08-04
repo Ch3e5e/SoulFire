@@ -2355,6 +2355,11 @@ function monitorObservedSafety(
     && observation.player.food <= state.strategy.eatBelowFood
     && hasUsableFood(observation)
     && (
+      observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
+      || deathRecoveryTravelFoodCount(observation)
+        > DEATH_RECOVERY_MINIMUM_FOOD_COUNT
+    )
+    && (
       previousObservation.player.food > state.strategy.eatBelowFood
       || !hasUsableFood(previousObservation)
     )
@@ -3705,6 +3710,16 @@ function surfaceEscapeTarget(
 
 function hasUsableFood(observation: BeatGameObservation): boolean {
   return preferredUsableFoodItemIds(observation).length > 0;
+}
+
+function deathRecoveryTravelFoodCount(
+  observation: BeatGameObservation,
+): number {
+  return [...EDIBLE_FOOD_ITEM_IDS, ...EMERGENCY_FOOD_ITEM_IDS].reduce(
+    (total, itemId) =>
+      total + (observation.inventory.counts[itemId] ?? 0),
+    0,
+  );
 }
 
 function shouldInterruptForMeal(
@@ -12449,12 +12464,7 @@ function prepareForDistantDeathRecovery(
           total + (value.inventory.counts[itemId] ?? 0),
         0,
       );
-    const travelFoodCount = (value: BeatGameObservation): number =>
-      [...EDIBLE_FOOD_ITEM_IDS, ...EMERGENCY_FOOD_ITEM_IDS].reduce(
-        (total, itemId) =>
-          total + (value.inventory.counts[itemId] ?? 0),
-        0,
-      );
+    const travelFoodCount = deathRecoveryTravelFoodCount;
     const logCount = (value: BeatGameObservation): number =>
       LOG_ITEM_IDS.reduce(
         (total, itemId) =>

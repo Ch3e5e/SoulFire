@@ -866,7 +866,7 @@ describe("beat-game run lifecycle", () => {
     }, undefined));
     driver.currentObservation = observation({
       health: 14,
-      food: 11,
+      food: 6,
       counts: {
         "minecraft:cod": 1,
         "minecraft:wooden_sword": 1,
@@ -894,6 +894,110 @@ describe("beat-game run lifecycle", () => {
 
     expect(driver.tasks.filter((task) => task.type === "auto-eat"))
       .toHaveLength(1);
+  });
+
+  it("preserves newly gathered food until the corpse travel reserve is ready", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const deathPosition = {
+      x: 700,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    const observedAt = new Date().toISOString();
+    const runId = "corpse-food-reserve-run";
+    const teamId = "corpse-food-reserve-team";
+    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
+      runId,
+      teamId,
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        deathPositions: [{
+          key: `death:${observedAt}`,
+          value: {
+            ...deathPosition,
+            inventoryCounts: { "minecraft:iron_pickaxe": 1 },
+          },
+          observedAt,
+          confidence: 1,
+        }],
+      },
+    }, undefined));
+    const recoveryCounts = {
+      "minecraft:dirt": 16,
+      "minecraft:oak_log": 12,
+      "minecraft:wooden_pickaxe": 1,
+      "minecraft:wooden_sword": 1,
+    };
+    driver.currentObservation = observation({
+      health: 14,
+      food: 11,
+      counts: recoveryCounts,
+    });
+    const salmon = {
+      connectionEpoch: "epoch-1",
+      networkId: 301,
+      entityType: "minecraft:salmon",
+      position: {
+        x: 3,
+        y: 62,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 3,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    let salmonAvailable = true;
+    driver.entityQueryResolver = (query) =>
+      salmonAvailable
+          && query.selector.entityTypes?.includes("minecraft:salmon") === true
+        ? [salmon]
+        : [];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (task.type === "attack-entity") {
+          salmonAvailable = false;
+          driver.currentObservation = observation({
+            health: 14,
+            food: 11,
+            counts: {
+              ...recoveryCounts,
+              "minecraft:salmon": 1,
+            },
+          });
+        }
+      });
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        runId,
+        team: { teamId },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      });
+      while (driver.xzPaths.length === 0) {
+        yield* Effect.sleep(1);
+      }
+      yield* Effect.sleep(20);
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    expect(driver.currentObservation.inventory.counts["minecraft:salmon"])
+      .toBe(1);
+    expect(driver.tasks.some((task) => task.type === "auto-eat"))
+      .toBe(false);
   });
 
   it("recovers a lifecycle death even after an immediate respawn", async () => {
