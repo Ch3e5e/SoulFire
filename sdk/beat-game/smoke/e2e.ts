@@ -7,12 +7,14 @@ import {
   defaultBeatGameStrategy,
   makeSoulFireBeatGameDriver,
   type BeatGameBlockSelector,
+  type BeatGameDriver,
   type BeatGameEntitySelector,
   type BeatGamePathPolicy,
   type BeatGamePosition,
   type BeatGameQueryBlocks,
   type BeatGameQueryEntities,
   type BeatGameRaycastQuery,
+  type BeatGameRun,
 } from "../dist/index.js";
 import { JsonFileBeatGameCheckpointStore } from "../dist/node.js";
 import {
@@ -58,6 +60,7 @@ import {
   SmokeDebugTimeline,
   startSmokeDebugServer,
 } from "./debug-server.ts";
+import { buildSmokeSpatialDiagnostics } from "./debug-diagnostics.ts";
 
 const execFile = promisify(execFileCallback);
 const repositoryRoot = path.resolve(import.meta.dirname, "../../..");
@@ -861,6 +864,18 @@ const program = Effect.scoped(Effect.gen(function* () {
   ).pipe(Effect.forkScoped);
   if (debugApiEnabled) {
     const debugOperations: SmokeDebugOperation[] = [
+      {
+        method: "GET",
+        path: "/diagnostics/snapshot",
+        description:
+          "Capture spatial state, entity motion, decisions, tasks, and pathfinding activity around one pinned origin",
+        execute: (input) => captureSmokeDiagnostics({
+          bot,
+          driver,
+          input,
+          run,
+        }),
+      },
       {
         method: "GET",
         path: "/overview",
@@ -1969,6 +1984,159 @@ function queryDebugTimeline(input: unknown): readonly unknown[] {
     limit: optionalDebugInteger(request, "limit", 1, debugApiTimelineEntries)
       ?? 250,
   });
+}
+
+function captureSmokeDiagnostics(options: Readonly<{
+  bot: SoulFireBot;
+  driver: BeatGameDriver;
+  input: unknown;
+  run: BeatGameRun;
+}>): Effect.Effect<unknown, unknown> {
+  return Effect.gen(function* () {
+    const request = yield* debugRequest(() =>
+      debugRecord(options.input, "diagnostic snapshot request")
+    );
+    const localBlockRadius = yield* debugRequest(() =>
+      optionalDebugInteger(request, "blockRadius", 1, 12) ?? 5
+    );
+    const entityRadius = yield* debugRequest(() =>
+      optionalDebugInteger(request, "entityRadius", 1, 128) ?? 48
+    );
+    const surfaceRadius = yield* debugRequest(() =>
+      optionalDebugInteger(request, "surfaceRadius", 1, 64) ?? 12
+    );
+    const historyLimit = yield* debugRequest(() =>
+      optionalDebugInteger(request, "historyLimit", 1, 200) ?? 40
+    );
+    const startedAt = new Date().toISOString();
+    const [snapshot, observation] = yield* Effect.all([
+      options.run.snapshot,
+      options.driver.observe,
+    ], { concurrency: "unbounded" });
+    const origin = observation.player.position;
+    const [blocks, entities, surface] = yield* Effect.all([
+      options.driver.queryBlocks({
+        center: origin,
+        radius: localBlockRadius,
+        selector: {},
+        maximumResults: Math.ceil(4 / 3 * Math.PI * localBlockRadius ** 3) + 32,
+      }),
+      options.driver.queryEntities({
+        origin,
+        radius: entityRadius,
+        selector: {},
+        maximumResults: 256,
+      }),
+      options.driver.sampleSurface(origin, surfaceRadius, 2),
+    ], { concurrency: "unbounded" });
+    const finalPlayer = yield* options.bot.world.player();
+    const completedAt = new Date().toISOString();
+    const planner = snapshot.checkpoint.planner;
+    return {
+      run: {
+        runId: snapshot.checkpoint.runId,
+        phase: planner.phase,
+        status: planner.status,
+        objective: planner.objective,
+        currentAction: planner.currentAction,
+        currentActionId: planner.currentActionId,
+        retryCount: planner.retryCount,
+        pendingRequirements: planner.requirements.filter(
+          (requirement) => !requirement.satisfied,
+        ),
+        lastStableAction: snapshot.checkpoint.lastStableAction,
+      },
+      player: observation.player,
+      inventory: observation.inventory,
+      spatial: buildSmokeSpatialDiagnostics({
+        origin,
+        originVelocity: observation.player.velocity,
+        finalPosition: finalPlayer.position ?? origin,
+        localBlockRadius,
+        entityRadius,
+        surfaceRadius,
+        startedAt,
+        completedAt,
+        blocks,
+        entities,
+        surface,
+      }),
+      decisions: querySignificantDebugActivity(historyLimit),
+      currentIntent: {
+        taskStarted: latestDebugTimelineEntry("task-started"),
+        taskProgress: latestDebugTimelineEntry("task-progress-observed"),
+        taskFailure: latestDebugTimelineEntry("task-failed"),
+        pathStarted: latestDebugTimelineEntry([
+          "pathfind-started",
+          "pathfind-xz-started",
+        ]),
+        pathFailure: latestDebugTimelineEntry([
+          "pathfind-failed",
+          "pathfind-xz-failed",
+        ]),
+        primitiveStarted: latestDebugTimelineEntry("primitive-started"),
+        primitiveFailure: latestDebugTimelineEntry("primitive-failed"),
+      },
+      paths: queryDebugTimeline({
+        kind: [
+          "pathfind-started",
+          "pathfind-completed",
+          "pathfind-failed",
+          "pathfind-xz-started",
+          "pathfind-xz-completed",
+          "pathfind-xz-failed",
+        ].join(","),
+        limit: historyLimit,
+      }),
+      tasks: queryDebugTimeline({
+        kind: [
+          "task-started",
+          "task-progress-observed",
+          "task-completed",
+          "task-failed",
+        ].join(","),
+        limit: historyLimit,
+      }),
+    };
+  });
+}
+
+function latestDebugTimelineEntry(
+  kinds: string | readonly string[],
+): unknown {
+  return debugTimeline.query({
+    kinds: typeof kinds === "string" ? [kinds] : kinds,
+    limit: 1,
+  })[0];
+}
+
+function querySignificantDebugActivity(limit: number): readonly unknown[] {
+  return debugTimeline.query({
+    kinds: [
+      "beat-game-event",
+      "primitive-started",
+      "primitive-failed",
+      "task-started",
+      "task-failed",
+    ],
+    limit: debugApiTimelineEntries,
+  }).filter((entry) => {
+    if (!isDebugRecord(entry) || entry.kind !== "beat-game-event") {
+      return true;
+    }
+    const event = entry.event;
+    return isDebugRecord(event)
+      && typeof event.type === "string"
+      && ![
+        "checkpoint-saved",
+        "observation-recorded",
+        "team-claim-changed",
+      ].includes(event.type);
+  }).slice(-limit);
+}
+
+function isDebugRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function parseDebugBlockRequest(input: unknown): Readonly<{

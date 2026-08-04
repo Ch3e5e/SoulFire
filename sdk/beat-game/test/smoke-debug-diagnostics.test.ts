@@ -1,0 +1,155 @@
+import { describe, expect, it } from "vitest";
+
+import { buildSmokeSpatialDiagnostics } from "../smoke/debug-diagnostics.js";
+
+const origin = {
+  x: 10,
+  y: 64,
+  z: -4,
+  dimension: "minecraft:overworld",
+} as const;
+
+describe("smoke spatial diagnostics", () => {
+  it("relates world observations and entity motion to one pinned origin", () => {
+    const diagnostics = buildSmokeSpatialDiagnostics({
+      origin,
+      originVelocity: { x: 1, y: 0, z: 0 },
+      finalPosition: { ...origin, x: 13, z: 0 },
+      localBlockRadius: 5,
+      entityRadius: 48,
+      surfaceRadius: 12,
+      startedAt: "2026-08-03T10:00:00.000Z",
+      completedAt: "2026-08-03T10:00:00.250Z",
+      blocks: [
+        block("minecraft:air", 10, 65, -4, false),
+        block("minecraft:stone", 10, 63, -4, true),
+        block("minecraft:water", 12, 64, -4, false),
+        block("minecraft:stone", 11, 63, -4, true),
+      ],
+      entities: [
+        entity("minecraft:cow", 7, { x: 16, y: 64, z: -4 }, {
+          x: 1,
+          y: 0,
+          z: 0,
+        }),
+        entity("minecraft:creeper", 8, { x: 14, y: 64, z: -4 }, {
+          x: 0,
+          y: 0,
+          z: 0,
+        }),
+        {
+          ...entity("minecraft:item", 9, { x: 11, y: 64, z: -4 }, {
+            x: 0,
+            y: 0,
+            z: 0,
+          }),
+          itemId: "minecraft:beef",
+        },
+      ],
+      surface: [
+        surface(8, -6, 62, "minecraft:water"),
+        surface(10, -4, 64, "minecraft:grass_block"),
+        surface(12, -2, 66, "minecraft:stone"),
+        {
+          x: 14,
+          z: 0,
+          loaded: false,
+          skyLight: 0,
+          blockLight: 0,
+        },
+      ],
+    });
+
+    expect(diagnostics.capture).toMatchObject({
+      durationMs: 250,
+      displacement: 5,
+      origin,
+    });
+    expect(diagnostics.blocks).toMatchObject({
+      observed: 4,
+      air: 1,
+      fluids: 1,
+      solid: 2,
+      byBlockId: [
+        { id: "minecraft:stone", count: 2 },
+        { id: "minecraft:air", count: 1 },
+        { id: "minecraft:water", count: 1 },
+      ],
+    });
+    expect(diagnostics.entities.items[0]).toMatchObject({
+      itemId: "minecraft:beef",
+      distance: 1,
+      closingSpeed: 1,
+    });
+    expect(diagnostics.entities.hostile[0]).toMatchObject({
+      entityType: "minecraft:creeper",
+      distance: 4,
+      closingSpeed: 1,
+    });
+    expect(diagnostics.entities.other[0]).toMatchObject({
+      entityType: "minecraft:cow",
+      distance: 6,
+      closingSpeed: 0,
+    });
+    expect(diagnostics.surface).toMatchObject({
+      observed: 4,
+      unloaded: 1,
+      minimumY: 62,
+      maximumY: 66,
+    });
+  });
+});
+
+function block(
+  blockId: string,
+  x: number,
+  y: number,
+  z: number,
+  solid: boolean,
+) {
+  return {
+    blockId,
+    position: { x, y, z, dimension: origin.dimension },
+    properties: {},
+    diggable: true,
+    replaceable: blockId === "minecraft:air",
+    solid,
+    interactive: false,
+    observedAt: "2026-08-03T10:00:00.100Z",
+  };
+}
+
+function entity(
+  entityType: string,
+  networkId: number,
+  position: Readonly<{ x: number; y: number; z: number }>,
+  velocity: Readonly<{ x: number; y: number; z: number }>,
+) {
+  return {
+    connectionEpoch: "epoch",
+    networkId,
+    entityType,
+    position: { ...position, dimension: origin.dimension },
+    velocity,
+    alive: true,
+    observedAt: "2026-08-03T10:00:00.100Z",
+  };
+}
+
+function surface(
+  x: number,
+  z: number,
+  surfaceY: number,
+  blockId: string,
+) {
+  return {
+    x,
+    z,
+    loaded: true,
+    surfaceY,
+    blockId,
+    biomeId: "minecraft:plains",
+    skyLight: 15,
+    blockLight: 0,
+  };
+}
