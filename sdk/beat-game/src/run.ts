@@ -175,6 +175,7 @@ const DISTANT_CORPSE_EXCAVATION_MINIMUM_HORIZONTAL_DISTANCE = 64;
 const CORPSE_DROP_INSPECTION_DISTANCE = 32;
 const CORPSE_DROP_MATCH_RADIUS = 16;
 const DEATH_RECOVERY_PREPARATION_STAGING_DISTANCE = 256;
+const BOUNDED_VALUABLE_DEATH_RECOVERY_MAX_DESCENT = 8;
 const EMERGENCY_ARMAMENT_LOG_COUNT = 2;
 const DEATH_RECOVERY_BOOTSTRAP_LOG_COUNT = 12;
 const DEATH_RECOVERY_BOOTSTRAP_BLOCK_COUNT = 16;
@@ -632,6 +633,7 @@ const RANGED_THREAT_ESCAPE_SAFE_DISTANCE = 32;
 const ENDERMAN_WATER_ESCAPE_RADIUS = 16;
 const DEFENSIVE_PURSUIT_MAX_DISTANCE = 12;
 const STALLED_RANGED_PURSUIT_MAXIMUM_PROGRESS = 2;
+const BAREHANDED_RANGED_DEFENSE_MAX_DISTANCE = 8;
 const EMERGENCY_KNOCKBACK_RANGE = 3.5;
 const EMERGENCY_ESCAPE_SPRINT_MS = 1_250;
 const RANGED_ESCAPE_SPRINT_MS = 2_500;
@@ -646,7 +648,7 @@ const CREEPER_ESCAPE_MINIMUM_AWAY_ALIGNMENT = 0.25;
 const CREEPER_ESCAPE_SURFACE_PROJECTION_DISTANCE = 18;
 const EMERGENCY_ESCAPE_LAVA_CHECK_RADIUS = 4;
 const NIGHT_SHELTER_START_TICK = 13_000n;
-const NIGHT_SHELTER_END_TICK = 23_000n;
+const NIGHT_SHELTER_END_TICK = 1_000n;
 const NIGHT_SHELTER_DEPTH = 3;
 const NIGHT_SHELTER_MINIMUM_SURFACE_COVER = 3;
 const NIGHT_SHELTER_POLL_MS = 1_000;
@@ -1797,8 +1799,11 @@ function isHostileNight(gameTime: bigint | undefined): boolean {
     return false;
   }
   const dayTime = (gameTime % 24_000n + 24_000n) % 24_000n;
-  return dayTime >= NIGHT_SHELTER_START_TICK
-    && dayTime < NIGHT_SHELTER_END_TICK;
+  return NIGHT_SHELTER_START_TICK < NIGHT_SHELTER_END_TICK
+    ? dayTime >= NIGHT_SHELTER_START_TICK
+      && dayTime < NIGHT_SHELTER_END_TICK
+    : dayTime >= NIGHT_SHELTER_START_TICK
+      || dayTime < NIGHT_SHELTER_END_TICK;
 }
 
 function countNightShelterItems(
@@ -2229,6 +2234,22 @@ function executeDecision(
                   preparationPending === DEATH_RECOVERY_FOOD_SEARCH_PENDING
                   && deathRecoveryTravelFoodCount(current)
                     < DEATH_RECOVERY_FOOD_RESERVE_COUNT;
+                const boundedValuableRecoveryReady =
+                  recoveryClass === "valuable"
+                  && preparationFailures
+                    >= MAX_VALUABLE_DEATH_RECOVERY_PREPARATION_FAILURES
+                  && distanceSquared(
+                      current.player.position,
+                      pendingDeath.position,
+                    ) <= ACTIVE_CORPSE_RECOVERY_DISTANCE ** 2
+                  && current.player.health > LETHAL_MELEE_DISENGAGE_HEALTH
+                  && current.player.food > CRITICAL_HUNGER_FOOD_LEVEL
+                  && (
+                    pendingDeath.position.y
+                        >= current.player.position.y
+                          - BOUNDED_VALUABLE_DEATH_RECOVERY_MAX_DESCENT
+                    || hasMiningPickaxe(current)
+                  );
                 if (
                   preparationFailures
                     >= MAX_SAFE_DEATH_RECOVERY_FAILURES
@@ -2248,7 +2269,10 @@ function executeDecision(
                   if (
                     preparationFailures
                       >= MAX_VALUABLE_DEATH_RECOVERY_PREPARATION_FAILURES
-                    && !foodReserveStillMissing
+                    && (
+                      !foodReserveStillMissing
+                      || boundedValuableRecoveryReady
+                    )
                   ) {
                     yield* emit(state, {
                       type: "diagnostic",
@@ -2257,6 +2281,7 @@ function executeDecision(
                       data: {
                         preparationFailures,
                         reason: preparationPending,
+                        boundedFallback: boundedValuableRecoveryReady,
                       },
                     });
                   } else {
@@ -2276,7 +2301,10 @@ function executeDecision(
                   recoveryClass !== "valuable"
                   || preparationFailures
                     < MAX_VALUABLE_DEATH_RECOVERY_PREPARATION_FAILURES
-                  || foodReserveStillMissing
+                  || (
+                    foodReserveStillMissing
+                    && !boundedValuableRecoveryReady
+                  )
                 ) {
                   return {
                     replanReason: preparationPending,
@@ -3417,7 +3445,7 @@ function shouldEngageRangedFight(
 ): boolean {
   return shouldCommitToRangedFight(observation, target)
     || shouldCommitToUndergroundRangedFight(observation, target)
-    || isReadyForBarehandedDefense(observation)
+    || shouldCommitToBarehandedRangedFight(observation, target)
     || (
       hasMeleeWeapon(observation)
       && observation.player.health >= state.strategy.minimumHealth
@@ -3467,6 +3495,17 @@ function shouldCommitToCloseRangedFight(
       (observation.inventory.counts["minecraft:shield"] ?? 0) > 0
       || isReadyForBarehandedDefense(observation)
     );
+}
+
+function shouldCommitToBarehandedRangedFight(
+  observation: BeatGameObservation,
+  target: BeatGameEntityObservation,
+): boolean {
+  return PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
+    && !hasMeleeWeapon(observation)
+    && isReadyForBarehandedDefense(observation)
+    && distanceSquared(observation.player.position, target.position)
+      <= BAREHANDED_RANGED_DEFENSE_MAX_DISTANCE ** 2;
 }
 
 function shouldCommitToCaughtRangedFight(
@@ -6193,10 +6232,7 @@ function defendAgainstTarget(
       const commitThroughWound =
         shouldCommitToUnshieldedRangedFight(observation, target)
         || shouldCommitToUndergroundRangedFight(observation, target)
-        || (
-          PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
-          && isReadyForBarehandedDefense(observation)
-        )
+        || shouldCommitToBarehandedRangedFight(observation, target)
         || shouldCommitToCaughtMeleePursuerFight(observation, target)
         || shouldCommitToBarehandedCaughtFastPursuerFight(
           observation,

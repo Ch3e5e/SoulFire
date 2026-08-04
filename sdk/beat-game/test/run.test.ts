@@ -220,7 +220,10 @@ describe("beat-game run lifecycle", () => {
         if (postSealEnvironmentObservations === 2) {
           return { gameTime: 16_000n };
         }
-        return { gameTime: 23_000n };
+        if (postSealEnvironmentObservations === 3) {
+          return { gameTime: 23_000n };
+        }
+        return { gameTime: 1_000n };
       });
     const key = (x: number, y: number, z: number) => `${x}:${y}:${z}`;
     driver.blockQueryResolver = ({ center, selector }) => {
@@ -456,7 +459,7 @@ describe("beat-game run lifecycle", () => {
       if (action.type === "place-block") {
         sealPlaced = true;
         removedBlocks.delete(key(4, 63, 0));
-        driver.currentEnvironment = { gameTime: 23_000n };
+        driver.currentEnvironment = { gameTime: 1_000n };
       }
     };
 
@@ -5048,6 +5051,62 @@ describe("beat-game run lifecycle", () => {
     })));
 
     expect(driver.paths).not.toContainEqual(expect.objectContaining({
+      position: deathPosition,
+    }));
+  }, 15_000);
+
+  it("attempts a nearby valuable corpse after bounded food searches", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const deathPosition = {
+      x: 300,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    const observedAt = new Date().toISOString();
+    const runId = "bounded-nearby-corpse-run";
+    const teamId = "bounded-nearby-corpse-team";
+    const initial = checkpoint(BeatGamePhase.ENTER_NETHER, {
+      runId,
+      teamId,
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        deathPositions: [{
+          key: `death:${observedAt}`,
+          value: {
+            ...deathPosition,
+            inventoryCounts: { "minecraft:iron_pickaxe": 2 },
+          },
+          observedAt,
+          confidence: 1,
+        }],
+      },
+    }, undefined));
+    driver.currentObservation = observation({ health: 15, food: 16 });
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        runId,
+        team: { teamId },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.paths.some(({ position }) =>
+        position.x === deathPosition.x
+        && position.y === deathPosition.y
+        && position.z === deathPosition.z
+      )) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    }).pipe(Effect.timeout("10 seconds"))));
+
+    expect(driver.paths).toContainEqual(expect.objectContaining({
       position: deathPosition,
     }));
   }, 15_000);
@@ -9699,6 +9758,58 @@ describe("beat-game run lifecycle", () => {
       selectBestWeapon: true,
     }));
     expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
+  });
+
+  it("evades a distant ranged attacker instead of chasing it bare-handed", async () => {
+    const driver = new FakeBeatGameDriver();
+    const skeleton = {
+      connectionEpoch: "epoch-1",
+      networkId: 20,
+      entityType: "minecraft:skeleton",
+      position: {
+        x: 15,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.currentObservation = observation({ health: 20, food: 20 });
+    driver.entityResults = [skeleton];
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2)
+          || query.selector.networkId === skeleton.networkId
+        ? driver.entityResults
+        : [];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (task.type === "flee") {
+          driver.entityResults = [];
+        }
+      });
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some((task) => task.type === "flee")) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "flee",
+      triggerRadius: 24,
+      safeDistance: 32,
+    }));
+    expect(driver.tasks.some((task) => task.type === "attack-entity"))
+      .toBe(false);
   });
 
   it("fights a ranged hostile from a confined shaft when armed", async () => {
