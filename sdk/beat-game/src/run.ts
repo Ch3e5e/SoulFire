@@ -1166,6 +1166,15 @@ function runLoop(
       if (checkpoint.planner.phase === BeatGamePhase.COMPLETE) {
         return yield* completeRun(state);
       }
+      const decision = decideBeatGameAction({
+        checkpoint,
+        observation,
+        strategy: state.strategy,
+      });
+      if (decision.type === "advance-phase") {
+        yield* advancePhase(state, decision.to);
+        continue;
+      }
       const liveObservation = yield* Ref.get(state.observation);
       const urgentCorpseRecovery = observation.player.dead
         && !liveObservation.player.dead
@@ -1197,15 +1206,6 @@ function runLoop(
             ),
           ),
         );
-        continue;
-      }
-      const decision = decideBeatGameAction({
-        checkpoint,
-        observation,
-        strategy: state.strategy,
-      });
-      if (decision.type === "advance-phase") {
-        yield* advancePhase(state, decision.to);
         continue;
       }
       const claim = yield* claimAction(state, decision);
