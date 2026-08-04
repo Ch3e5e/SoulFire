@@ -33,6 +33,8 @@ export type SmokePathGoal =
 export interface SmokeActivePathTrace {
   readonly pathId: string;
   readonly startedAt: string;
+  readonly fiberId?: string;
+  readonly owner?: unknown;
   readonly origin: BeatGamePosition;
   readonly goal: SmokePathGoal;
   readonly policy: BeatGamePathPolicy;

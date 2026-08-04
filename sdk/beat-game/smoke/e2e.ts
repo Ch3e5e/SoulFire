@@ -46,9 +46,12 @@ import {
 import path from "node:path";
 import { promisify } from "node:util";
 import {
+  Cause,
   Duration,
   Effect,
+  Exit,
   Fiber,
+  FiberId,
   Ref,
   Schedule,
   Scope,
@@ -248,7 +251,7 @@ type MinecraftFixture =
 
 interface SmokePathOutcome {
   readonly pathId: string;
-  readonly status: "completed" | "failed";
+  readonly status: "completed" | "failed" | "interrupted";
   readonly startedAt: string;
   readonly completedAt: string;
   readonly goal: SmokeActivePathTrace["goal"];
@@ -676,8 +679,10 @@ const program = Effect.scoped(Effect.gen(function* () {
   ) => {
     const pathId = randomUUID();
     const startedAt = new Date().toISOString();
+    const owner = currentDebugActionContext();
     let trace: SmokeActivePathTrace | undefined;
     return Effect.gen(function* () {
+      const fiberId = FiberId.threadName(yield* Effect.fiberId);
       const observation = yield* baseDriver.observe;
       trace = {
         pathId,
@@ -690,6 +695,8 @@ const program = Effect.scoped(Effect.gen(function* () {
       yield* record(`${kind}-started`, {
         pathId,
         startedAt,
+        fiberId,
+        owner,
         origin: trace.origin,
         ...details,
         policy,
@@ -712,30 +719,40 @@ const program = Effect.scoped(Effect.gen(function* () {
         pathId,
         startedAt,
         completedAt,
+        durationMs: elapsedMilliseconds(startedAt, completedAt),
+        fiberId,
+        owner,
         ...details,
         playerPosition: player.position,
         playerVelocity: player.velocity,
       }).pipe(Effect.orDie);
     }).pipe(
-      Effect.tapErrorCause((cause) => {
+      Effect.onExit((exit) => {
+        if (Exit.isSuccess(exit)) {
+          return Effect.void;
+        }
         const completedAt = new Date().toISOString();
+        const status = Exit.isInterrupted(exit) ? "interrupted" : "failed";
+        const failure = debugExitFailure(exit);
         if (trace !== undefined) {
           lastPathOutcome = {
             pathId,
-            status: "failed",
+            status,
             startedAt,
             completedAt,
             goal: trace.goal,
             origin: trace.origin,
-            cause: String(cause),
+            cause: failure.cause,
           };
         }
-        return record(`${kind}-failed`, {
+        return record(`${kind}-${status}`, {
           pathId,
           startedAt,
           completedAt,
+          durationMs: elapsedMilliseconds(startedAt, completedAt),
+          owner,
           ...details,
-          cause: String(cause),
+          ...failure,
         }).pipe(Effect.orDie);
       }),
       Effect.ensuring(Effect.sync(() => {
@@ -872,34 +889,93 @@ const program = Effect.scoped(Effect.gen(function* () {
       task: Parameters<typeof baseDriver.runTask>[0],
       policy: Parameters<typeof baseDriver.runTask>[1],
       execution: Parameters<typeof baseDriver.runTask>[2],
-    ) =>
-      record("task-started", { task, policy, execution }).pipe(
-        Effect.orDie,
-        Effect.zipRight(baseDriver.runTask(task, policy, execution)),
-        Effect.tap((result) =>
-          record("task-completed", { task, result }).pipe(Effect.orDie)
-        ),
-        Effect.tapErrorCause((cause) =>
-          record("task-failed", {
-            task,
-            cause: String(cause),
-          }).pipe(Effect.orDie)
-        ),
-      ),
-    act: (action: Parameters<typeof baseDriver.act>[0]) =>
-      record("primitive-started", { action }).pipe(
-        Effect.orDie,
-        Effect.zipRight(baseDriver.act(action)),
-        Effect.tap(() =>
-          record("primitive-completed", { action }).pipe(Effect.orDie)
-        ),
-        Effect.tapErrorCause((cause) =>
-          record("primitive-failed", {
-            action,
-            cause: String(cause),
-          }).pipe(Effect.orDie)
-        ),
-      ),
+    ) => {
+      const operationId = randomUUID();
+      const startedAt = new Date().toISOString();
+      const owner = currentDebugActionContext();
+      return Effect.gen(function* () {
+        const fiberId = FiberId.threadName(yield* Effect.fiberId);
+        yield* record("task-started", {
+          operationId,
+          startedAt,
+          fiberId,
+          owner,
+          task,
+          policy,
+          execution,
+        }).pipe(Effect.orDie);
+        return yield* baseDriver.runTask(task, policy, execution).pipe(
+          Effect.onExit((exit) => {
+            const completedAt = new Date().toISOString();
+            if (Exit.isSuccess(exit)) {
+              return record("task-completed", {
+                operationId,
+                startedAt,
+                completedAt,
+                durationMs: elapsedMilliseconds(startedAt, completedAt),
+                owner,
+                task,
+                result: exit.value,
+              }).pipe(Effect.orDie);
+            }
+            const status = Exit.isInterrupted(exit)
+              ? "interrupted"
+              : "failed";
+            return record(`task-${status}`, {
+              operationId,
+              startedAt,
+              completedAt,
+              durationMs: elapsedMilliseconds(startedAt, completedAt),
+              owner,
+              task,
+              ...debugExitFailure(exit),
+            }).pipe(Effect.orDie);
+          }),
+        );
+      });
+    },
+    act: (action: Parameters<typeof baseDriver.act>[0]) => {
+      const operationId = randomUUID();
+      const startedAt = new Date().toISOString();
+      const owner = currentDebugActionContext();
+      return Effect.gen(function* () {
+        const fiberId = FiberId.threadName(yield* Effect.fiberId);
+        yield* record("primitive-started", {
+          operationId,
+          startedAt,
+          fiberId,
+          owner,
+          action,
+        }).pipe(Effect.orDie);
+        return yield* baseDriver.act(action).pipe(
+          Effect.onExit((exit) => {
+            const completedAt = new Date().toISOString();
+            if (Exit.isSuccess(exit)) {
+              return record("primitive-completed", {
+                operationId,
+                startedAt,
+                completedAt,
+                durationMs: elapsedMilliseconds(startedAt, completedAt),
+                owner,
+                action,
+              }).pipe(Effect.orDie);
+            }
+            const status = Exit.isInterrupted(exit)
+              ? "interrupted"
+              : "failed";
+            return record(`primitive-${status}`, {
+              operationId,
+              startedAt,
+              completedAt,
+              durationMs: elapsedMilliseconds(startedAt, completedAt),
+              owner,
+              action,
+              ...debugExitFailure(exit),
+            }).pipe(Effect.orDie);
+          }),
+        );
+      });
+    },
   };
   const beatGameStrategy = {
     ...defaultBeatGameStrategy,
@@ -1039,9 +1115,11 @@ const program = Effect.scoped(Effect.gen(function* () {
                   "pathfind-started",
                   "pathfind-completed",
                   "pathfind-failed",
+                  "pathfind-interrupted",
                   "pathfind-xz-started",
                   "pathfind-xz-completed",
                   "pathfind-xz-failed",
+                  "pathfind-xz-interrupted",
                 ].join(","),
                 limit: 12,
               }),
@@ -1051,6 +1129,7 @@ const program = Effect.scoped(Effect.gen(function* () {
                   "task-progress-observed",
                   "task-completed",
                   "task-failed",
+                  "task-interrupted",
                 ].join(","),
                 limit: 20,
               }),
@@ -2262,26 +2341,36 @@ function captureSmokeDiagnostics(options: Readonly<{
       currentIntent: {
         taskStarted: latestDebugTimelineEntry("task-started"),
         taskProgress: latestDebugTimelineEntry("task-progress-observed"),
-        taskFailure: latestDebugTimelineEntry("task-failed"),
+        taskFailure: latestDebugTimelineEntry([
+          "task-failed",
+          "task-interrupted",
+        ]),
         pathStarted: latestDebugTimelineEntry([
           "pathfind-started",
           "pathfind-xz-started",
         ]),
         pathFailure: latestDebugTimelineEntry([
           "pathfind-failed",
+          "pathfind-interrupted",
           "pathfind-xz-failed",
+          "pathfind-xz-interrupted",
         ]),
         primitiveStarted: latestDebugTimelineEntry("primitive-started"),
-        primitiveFailure: latestDebugTimelineEntry("primitive-failed"),
+        primitiveFailure: latestDebugTimelineEntry([
+          "primitive-failed",
+          "primitive-interrupted",
+        ]),
       },
       paths: queryDebugTimeline({
         kind: [
           "pathfind-started",
           "pathfind-completed",
           "pathfind-failed",
+          "pathfind-interrupted",
           "pathfind-xz-started",
           "pathfind-xz-completed",
           "pathfind-xz-failed",
+          "pathfind-xz-interrupted",
         ].join(","),
         limit: historyLimit,
       }),
@@ -2291,6 +2380,7 @@ function captureSmokeDiagnostics(options: Readonly<{
           "task-progress-observed",
           "task-completed",
           "task-failed",
+          "task-interrupted",
         ].join(","),
         limit: historyLimit,
       }),
@@ -2329,8 +2419,10 @@ function querySignificantDebugActivity(limit: number): readonly unknown[] {
       "beat-game-event",
       "primitive-started",
       "primitive-failed",
+      "primitive-interrupted",
       "task-started",
       "task-failed",
+      "task-interrupted",
     ],
     limit: debugApiTimelineEntries,
   }).filter((entry) => {
@@ -2359,17 +2451,21 @@ function queryCurrentDecisionActivity(
       "pathfind-started",
       "pathfind-completed",
       "pathfind-failed",
+      "pathfind-interrupted",
       "pathfind-xz-started",
       "pathfind-xz-completed",
       "pathfind-xz-failed",
+      "pathfind-xz-interrupted",
       "player-vitals-observed",
       "primitive-started",
       "primitive-completed",
       "primitive-failed",
+      "primitive-interrupted",
       "task-started",
       "task-progress-observed",
       "task-completed",
       "task-failed",
+      "task-interrupted",
     ],
     limit: debugApiTimelineEntries,
   });
@@ -3087,6 +3183,78 @@ function record(
       eventLog.append(`${line}\n`)
     );
   });
+}
+
+function currentDebugActionContext():
+  | Readonly<{
+    action: string;
+    actionId?: string;
+    phase?: string;
+    sequence?: string;
+  }>
+  | undefined {
+  const latest = debugTimeline.query({
+    kinds: ["beat-game-event"],
+    limit: debugApiTimelineEntries,
+  }).findLast((entry) => {
+    if (!isDebugRecord(entry) || entry.kind !== "beat-game-event") {
+      return false;
+    }
+    const event = entry.event;
+    return isDebugRecord(event)
+      && typeof event.type === "string"
+      && [
+        "action-started",
+        "action-retried",
+        "action-succeeded",
+        "action-failed",
+      ].includes(event.type);
+  });
+  if (!isDebugRecord(latest) || !isDebugRecord(latest.event)) {
+    return undefined;
+  }
+  const event = latest.event;
+  if (
+    event.type !== "action-started"
+    && event.type !== "action-retried"
+  ) {
+    return undefined;
+  }
+  if (typeof event.action !== "string") {
+    return undefined;
+  }
+  return {
+    action: event.action,
+    ...(typeof event.actionId === "string"
+      ? { actionId: event.actionId }
+      : {}),
+    ...(typeof event.phase === "string" ? { phase: event.phase } : {}),
+    ...(typeof event.sequence === "string"
+      ? { sequence: event.sequence }
+      : {}),
+  };
+}
+
+function debugExitFailure(
+  exit: Exit.Exit<unknown, unknown>,
+): Readonly<{
+  cause: string;
+  interruptors: readonly string[];
+}> {
+  if (Exit.isSuccess(exit)) {
+    return { cause: "", interruptors: [] };
+  }
+  return {
+    cause: Cause.pretty(exit.cause),
+    interruptors: Array.from(
+      Cause.interruptors(exit.cause),
+      FiberId.threadName,
+    ),
+  };
+}
+
+function elapsedMilliseconds(startedAt: string, completedAt: string): number {
+  return Math.max(0, Date.parse(completedAt) - Date.parse(startedAt));
 }
 
 function writeJson(
