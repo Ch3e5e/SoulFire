@@ -613,6 +613,7 @@ const PROACTIVE_MELEE_DISENGAGEMENT_RADIUS = 12;
 const MELEE_ENGAGEMENT_RADIUS = 4;
 const CREEPER_PROACTIVE_EVASION_RADIUS = 8;
 const CREEPER_EMERGENCY_REEVASION_RADIUS = 6;
+const CREEPER_CRITICAL_REEVASION_RADIUS = 4;
 const PROACTIVE_RANGED_ENGAGEMENT_RADIUS = 16;
 const SHIELDED_AMBUSH_ESCAPE_THRESHOLD = 3;
 const PROACTIVE_THREAT_MAXIMUM_VERTICAL_DISTANCE = 6;
@@ -3195,7 +3196,23 @@ function monitorEscapeSafety(
         maximumResults: 1,
       }).pipe(
         Effect.zip(findImmediateThreat(state, observation)),
-        Effect.flatMap(([[currentTarget], immediateThreat]) => {
+        Effect.zip(state.driver.queryEntities({
+          origin: {
+            ...observation.player.position,
+            y: observation.player.position.y + 1.62,
+          },
+          radius: CREEPER_EMERGENCY_REEVASION_RADIUS,
+          selector: {
+            entityTypes: ["minecraft:creeper"],
+            alive: true,
+            requireLineOfSight: true,
+          },
+          maximumResults: 8,
+        })),
+        Effect.flatMap(([
+          [[currentTarget], immediateThreat],
+          visibleCreepers,
+        ]) => {
           const urgentCreeper = immediateThreat?.response === "flee"
               && immediateThreat.target.entityType === "minecraft:creeper"
               && distanceSquared(
@@ -3210,10 +3227,42 @@ function monitorEscapeSafety(
                   ) <= CREEPER_EMERGENCY_REEVASION_RADIUS ** 2
             ? currentTarget
             : undefined;
-          if (urgentCreeper !== undefined) {
+          const visibleUrgentCreeper = urgentCreeper === undefined
+            ? undefined
+            : visibleCreepers.find((creeper) =>
+              isSameEntityTarget(creeper, urgentCreeper)
+            );
+          const nearbyVisibleCreepers = visibleCreepers.filter((creeper) =>
+            creeper.entityType === "minecraft:creeper"
+            && distanceSquared(
+                observation.player.position,
+                creeper.position,
+              ) <= CREEPER_EMERGENCY_REEVASION_RADIUS ** 2
+          );
+          const urgentCreeperDistanceSquared = visibleUrgentCreeper === undefined
+            ? Number.POSITIVE_INFINITY
+            : distanceSquared(
+              observation.player.position,
+              visibleUrgentCreeper.position,
+            );
+          const previousTargetDistanceSquared = distanceSquared(
+            previousObservation.player.position,
+            target.position,
+          );
+          if (
+            visibleUrgentCreeper !== undefined
+            && (
+              !isSameEntityTarget(target, visibleUrgentCreeper)
+              || urgentCreeperDistanceSquared
+                <= CREEPER_CRITICAL_REEVASION_RADIUS ** 2
+              || urgentCreeperDistanceSquared + 1
+                < previousTargetDistanceSquared
+              || nearbyVisibleCreepers.length > 1
+            )
+          ) {
             return Effect.succeed({
               type: "escape",
-              target: urgentCreeper,
+              target: visibleUrgentCreeper,
             } as const);
           }
           if (

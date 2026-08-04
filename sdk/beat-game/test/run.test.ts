@@ -5275,6 +5275,84 @@ describe("beat-game run lifecycle", () => {
     }));
   }, 10_000);
 
+  it("lets an occluded creeper flee route finish planning", async () => {
+    const driver = new FakeBeatGameDriver();
+    const creeper = {
+      connectionEpoch: "epoch-1",
+      networkId: 41,
+      entityType: "minecraft:creeper",
+      position: {
+        x: 4,
+        y: 62,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:01.000Z",
+    } as const;
+    let fleeCompleted = false;
+    let fleeInterruptions = 0;
+    driver.entityQueryResolver = (query) => {
+      if (query.selector.requireLineOfSight === true) {
+        return [];
+      }
+      return query.selector.networkId === creeper.networkId
+          || query.selector.categories?.includes(2) === true
+          || query.selector.entityTypes?.includes("minecraft:creeper") === true
+        ? [creeper]
+        : [];
+    };
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(
+        Effect.zipRight(
+          task.type === "flee"
+            ? Effect.sleep(250).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  fleeCompleted = true;
+                  driver.entityQueryResolver = () => [];
+                })
+              ),
+              Effect.onInterrupt(() =>
+                Effect.sync(() => {
+                  fleeInterruptions += 1;
+                })
+              ),
+            )
+            : task.type === "collect-blocks"
+            ? Effect.never
+            : Effect.void,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (!fleeCompleted) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    })));
+
+    expect(fleeInterruptions).toBe(0);
+    expect(driver.tasks.filter((task) => task.type === "flee")).toHaveLength(
+      1,
+    );
+    expect(driver.entityQueries).toContainEqual(expect.objectContaining({
+      radius: 6,
+      selector: expect.objectContaining({
+        entityTypes: ["minecraft:creeper"],
+        alive: true,
+        requireLineOfSight: true,
+      }),
+    }));
+  }, 10_000);
+
   it("allows a submerged escape route to reach dry land", async () => {
     const driver = new FakeBeatGameDriver();
     driver.entityResults = [{
