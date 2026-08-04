@@ -654,6 +654,7 @@ const POST_DEFENSE_RECOVERY_DURATION_MS = 90_000;
 const MAXIMUM_RECOVERY_POLL_MS = 500;
 const MINIMUM_RECOVERY_POLL_MS = 100;
 const MINIMUM_SAFE_AIR_TICKS = 260;
+const AIR_ESCAPE_CRITICAL_AIR_TICKS = 100;
 const AIR_ESCAPE_ASCENT_STAGNATION_OBSERVATIONS = 10;
 const AIR_ESCAPE_ASCENT_PROGRESS_EPSILON = 0.05;
 const AIR_ESCAPE_OPEN_COLUMN_SEARCH_RADIUS = 4;
@@ -4367,7 +4368,9 @@ function recoverFromFluid(
               ? Effect.succeed(true)
               : state.driver.observe.pipe(
                 Effect.flatMap((latest) =>
-                  escapeNearbyBreathingPocket(state, latest)
+                  hasCriticalAir(latest)
+                    ? Effect.succeed(false)
+                    : escapeNearbyBreathingPocket(state, latest)
                 ),
               )
           ),
@@ -4681,6 +4684,10 @@ function swimToNearbyDrySurface(
       if (reached) {
         return true;
       }
+      const latest = yield* state.driver.observe;
+      if (hasCriticalAir(latest)) {
+        return false;
+      }
     }
     return false;
   });
@@ -4752,8 +4759,19 @@ function excavateAirEscapeShaft(
       ) {
         return;
       }
-      const overhead = overheadEscapeBlock(observation.player.position);
-      const obstruction = yield* queryExactBlock(state.driver, overhead);
+      const overheadCandidates = overheadEscapeBlocks(
+        observation.player.position,
+      );
+      let overhead = overheadCandidates.at(-1)!;
+      let obstruction: BeatGameBlockObservation | undefined;
+      for (const candidate of overheadCandidates) {
+        const block = yield* queryExactBlock(state.driver, candidate);
+        if (block !== undefined && !block.replaceable) {
+          overhead = candidate;
+          obstruction = block;
+          break;
+        }
+      }
       if (obstruction !== undefined && !obstruction.replaceable) {
         if (!obstruction.diggable) {
           return yield* Effect.fail(new BeatGameDriverError({
@@ -4998,15 +5016,26 @@ function isAirBlock(blockId: string): boolean {
     || blockId === "minecraft:void_air";
 }
 
-function overheadEscapeBlock(
+function hasCriticalAir(observation: BeatGameObservation): boolean {
+  return observation.player.maxAir > 0
+    && observation.player.air < Math.min(
+      AIR_ESCAPE_CRITICAL_AIR_TICKS,
+      observation.player.maxAir / 3,
+    );
+}
+
+function overheadEscapeBlocks(
   position: BeatGamePosition,
-): BeatGameBlockPosition {
-  return {
+): readonly BeatGameBlockPosition[] {
+  const base = {
     x: Math.floor(position.x),
-    y: Math.floor(position.y) + 2,
     z: Math.floor(position.z),
     dimension: position.dimension,
   };
+  return [
+    { ...base, y: Math.floor(position.y) + 1 },
+    { ...base, y: Math.floor(position.y) + 2 },
+  ];
 }
 
 function queryExactBlock(

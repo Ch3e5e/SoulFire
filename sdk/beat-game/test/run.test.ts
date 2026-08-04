@@ -13297,7 +13297,7 @@ describe("beat-game run lifecycle", () => {
       .toBe(false);
   });
 
-  it("mines through an overhead obstruction to escape a submerged cavity", async () => {
+  it("abandons a blocked shore and clears the immediate swimming ceiling", async () => {
     const driver = new FakeBeatGameDriver();
     const preparedItems = {
       "minecraft:oak_log": 8,
@@ -13306,27 +13306,24 @@ describe("beat-game run lifecycle", () => {
       "minecraft:wooden_pickaxe": 1,
       "minecraft:beef": 8,
     };
-    let surfaceQueries = 0;
-    driver.surfaceQueryResolver = () => {
-      surfaceQueries += 1;
-      return surfaceQueries <= 2
-        ? []
-        : [{
-          x: 8,
-          z: 0,
-          loaded: true,
-          surfaceY: 64,
-          blockId: "minecraft:grass_block",
-          biomeId: "minecraft:plains",
-          skyLight: 15,
-          blockLight: 0,
-        }];
-    };
+    driver.surfaceQueryResolver = () =>
+      [-1, 0, 1].map((z) => ({
+        x: 1,
+        z,
+        loaded: true,
+        surfaceY: 63,
+        blockId: "minecraft:grass_block",
+        biomeId: "minecraft:plains",
+        skyLight: 15,
+        blockLight: 0,
+      }));
     driver.taskResolver = (task) =>
       Effect.sync(() => {
         driver.tasks.push(task);
       }).pipe(Effect.zipRight(Effect.never));
     let overheadCleared = false;
+    let swimmingTowardShore = false;
+    let escapedFromFluid = false;
     let resolveEscaped!: () => void;
     const escaped = new Promise<void>((resolve) => {
       resolveEscaped = resolve;
@@ -13338,7 +13335,7 @@ describe("beat-game run lifecycle", () => {
       const blockIds = query.selector.blockIds;
       if (
         blockIds?.includes("minecraft:water") === true
-        && blockY < 65
+        && !escapedFromFluid
       ) {
         return [blockObservation({
           x: blockX,
@@ -13351,13 +13348,11 @@ describe("beat-game run lifecycle", () => {
           replaceable: true,
         })];
       }
-      if (
-        blockIds === undefined
-        && blockX === 0
-        && blockY === 63
-        && blockZ === 0
-      ) {
-        return overheadCleared
+      if (blockIds === undefined) {
+        const immediateCeiling = blockX === 0
+          && blockY === 63
+          && blockZ === 0;
+        return immediateCeiling && overheadCleared
           ? [blockObservation({
             x: 0,
             y: 63,
@@ -13369,10 +13364,10 @@ describe("beat-game run lifecycle", () => {
             replaceable: true,
           })]
           : [blockObservation({
-            x: 0,
-            y: 63,
-            z: 0,
-            dimension: "minecraft:overworld",
+            x: blockX,
+            y: blockY,
+            z: blockZ,
+            dimension: query.center.dimension,
           })];
       }
       return [];
@@ -13411,7 +13406,18 @@ describe("beat-game run lifecycle", () => {
         overheadCleared = true;
         return;
       }
+      if (action.type === "reset-movement") {
+        swimmingTowardShore = false;
+        return;
+      }
       if (action.type !== "set-movement" || action.jump !== true) {
+        return;
+      }
+      if (
+        action.forward === true
+        && current.player.rotation.pitch !== -90
+      ) {
+        swimmingTowardShore = true;
         return;
       }
       const verticalEscape = action.forward === undefined && overheadCleared;
@@ -13425,12 +13431,28 @@ describe("beat-game run lifecycle", () => {
           air: 300,
           position: {
             ...current.player.position,
-            y: 63,
+            y: 64,
           },
         },
       };
+      escapedFromFluid = true;
       resolveEscaped();
     };
+    driver.observationResolver = () =>
+      Effect.sync(() => {
+        if (!swimmingTowardShore) {
+          return driver.currentObservation;
+        }
+        const current = driver.currentObservation;
+        driver.currentObservation = {
+          ...current,
+          player: {
+            ...current.player,
+            air: current.player.air - 5,
+          },
+        };
+        return driver.currentObservation;
+      });
 
     await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const run = yield* beatGameWithDriver(driver, {
@@ -13442,13 +13464,13 @@ describe("beat-game run lifecycle", () => {
         yield* Effect.sleep(1);
       }
       driver.currentObservation = observation({
-        air: 100,
+        air: 190,
         food: 12,
         counts: preparedItems,
-        position: { x: 0.5, y: 61, z: 0.5 },
+        position: { x: 0.5, y: 62.4, z: 0.5 },
       });
       yield* Effect.promise(() => escaped).pipe(
-        Effect.timeout("5 seconds"),
+        Effect.timeout("10 seconds"),
       );
       yield* run.stop;
     })));
@@ -13494,8 +13516,8 @@ describe("beat-game run lifecycle", () => {
     expect(heldAscentIndex).toBeGreaterThanOrEqual(0);
     expect(releaseIndex).toBeGreaterThan(digIndex);
     expect(driver.paths).toHaveLength(0);
-    expect(driver.currentObservation.player.position.y).toBe(63);
-  });
+    expect(driver.currentObservation.player.position.y).toBe(64);
+  }, 15_000);
 
   it("keeps climbing a deep aquifer after surface pathfinding fails", async () => {
     const driver = new FakeBeatGameDriver();
