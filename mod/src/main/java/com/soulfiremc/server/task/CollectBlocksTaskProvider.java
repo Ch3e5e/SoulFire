@@ -303,9 +303,17 @@ public final class CollectBlocksTaskProvider
     return candidates.stream()
       .<GoalScorer>mapMulti((candidate, goals) -> {
         goals.accept(new BreakBlockPosGoal(candidate));
+        var visible = hasLineOfSight(
+          level,
+          eyePosition,
+          candidate.toBlockPos()
+        );
         if (
-          includeOccludedReachGoals
-            || hasLineOfSight(level, eyePosition, candidate.toBlockPos())
+          visible
+            || (
+              includeOccludedReachGoals
+                && !rejectedAdjacentPositions.containsKey(candidate)
+            )
         ) {
           goals.accept(new WithinBlockReachGoal(
             candidate,

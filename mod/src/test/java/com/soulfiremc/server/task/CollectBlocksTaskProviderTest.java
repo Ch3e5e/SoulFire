@@ -203,6 +203,27 @@ final class CollectBlocksTaskProviderTest {
   }
 
   @Test
+  void forcesAnOccludedTargetBreakAfterTheFirstApproachStalls() {
+    var blocks = new TestBlockAccessorBuilder();
+    var eyePosition = new Vec3(0.5D, 65.62D, 0.5D);
+    var target = new SFVec3i(0, 70, 0);
+    var failedPosition = new SFVec3i(1, 67, 0);
+    blocks.setBlockAt(0, 70, 0, Blocks.OAK_LOG);
+    blocks.setBlockAt(0, 69, 0, Blocks.OAK_LEAVES);
+
+    var goals = CollectBlocksTaskProvider.collectionGoals(
+      blocks.build(),
+      eyePosition,
+      List.of(target),
+      true,
+      Map.of(target, Set.of(failedPosition))
+    );
+
+    assertEquals(1, goals.size());
+    assertTrue(goals.iterator().next() instanceof BreakBlockPosGoal);
+  }
+
+  @Test
   void restrictsCollectionToTheRequestedElevationRange() {
     var range = IntRange.newBuilder()
       .setMinimum(60)
