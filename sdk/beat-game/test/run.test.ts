@@ -3725,7 +3725,7 @@ describe("beat-game run lifecycle", () => {
     const store = new InMemoryBeatGameCheckpointStore();
     const deathPosition = {
       x: 24,
-      y: 55,
+      y: 20,
       z: 0,
       dimension: "minecraft:overworld",
     };

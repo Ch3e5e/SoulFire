@@ -1471,13 +1471,19 @@ function executeDecision(
                   data: { drops: nearbyCorpseDrops.length },
                 });
               }
-              const preparationPending = nearbyCorpseDrops === undefined
-                ? yield* prepareForDistantDeathRecovery(
-                  state,
-                  pendingDeath,
-                  respawned,
-                )
-                : undefined;
+              const corpseIsImmediatelyReachable = distanceSquared(
+                respawned.player.position,
+                pendingDeath.position,
+              ) <= CORPSE_DROP_INSPECTION_DISTANCE ** 2;
+              const preparationPending =
+                nearbyCorpseDrops !== undefined
+                  && corpseIsImmediatelyReachable
+                  ? undefined
+                  : yield* prepareForDistantDeathRecovery(
+                    state,
+                    pendingDeath,
+                    respawned,
+                  );
               if (preparationPending !== undefined) {
                 const current = yield* state.driver.observe;
                 const preparationFailures =
@@ -12339,7 +12345,7 @@ function inspectNearbyCorpseDrops(
   if (
     observation.player.position.dimension
       !== pendingDeath.position.dimension
-    || distanceSquared(
+    || horizontalDistanceSquared(
         observation.player.position,
         pendingDeath.position,
       ) > CORPSE_DROP_INSPECTION_DISTANCE ** 2
