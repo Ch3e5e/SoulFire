@@ -633,6 +633,7 @@ const DEATH_OBSERVATION_DEDUPLICATION_WINDOW_MS = 5_000;
 const BAREHANDED_DEFENSE_MINIMUM_HEALTH = 18;
 const MELEE_DISENGAGE_HEALTH = 16;
 const LETHAL_MELEE_DISENGAGE_HEALTH = 7;
+const CAUGHT_MELEE_COMMIT_MINIMUM_HEALTH = 10;
 const THREAT_ESCAPE_SAFE_DISTANCE = 24;
 const SINGLE_THREAT_MAXIMUM_ESCAPES = 4;
 const DURABLE_DEATH_RECOVERY_WINDOW_MS = 8 * 60 * 60 * 1_000;
@@ -2783,7 +2784,7 @@ function shouldCommitToCaughtMeleePursuerFight(
 ): boolean {
   return COMMITTABLE_CLOSE_MELEE_ENTITY_TYPES.has(target.entityType)
     && hasMeleeWeapon(observation)
-    && observation.player.health > LETHAL_MELEE_DISENGAGE_HEALTH
+    && observation.player.health >= CAUGHT_MELEE_COMMIT_MINIMUM_HEALTH
     && distanceSquared(observation.player.position, target.position)
       <= EMERGENCY_KNOCKBACK_RANGE ** 2;
 }
@@ -3294,8 +3295,14 @@ function monitorEscapeSafety(
             ) <= EMERGENCY_KNOCKBACK_RANGE ** 2;
           if (
             caughtMeleeAttacker
-            && currentTarget.entityType === "minecraft:drowned"
-            && !shouldCommitToMeleeFight(observation, currentTarget)
+            && (
+              observation.player.health
+                < CAUGHT_MELEE_COMMIT_MINIMUM_HEALTH
+              || (
+                currentTarget.entityType === "minecraft:drowned"
+                && !shouldCommitToMeleeFight(observation, currentTarget)
+              )
+            )
           ) {
             return Effect.succeed({
               type: "knockback",
@@ -3596,6 +3603,11 @@ function knockBackAndSprintAway(
       threat.entityType === "minecraft:creeper"
       && distance <= CREEPER_EMERGENCY_REEVASION_RADIUS
       && nearbyLava.length === 0;
+    const emergencyBlindMeleeSprint =
+      PROACTIVE_MELEE_HOSTILE_ENTITY_TYPES.has(threat.entityType)
+      && distance <= EMERGENCY_KNOCKBACK_RANGE
+      && observation.player.health < CAUGHT_MELEE_COMMIT_MINIMUM_HEALTH
+      && nearbyLava.length === 0;
     return yield* state.driver.withControl(Effect.gen(function* () {
       if (distance <= EMERGENCY_KNOCKBACK_RANGE) {
         yield* performKnockbackStrike(state, observation, threat);
@@ -3607,6 +3619,7 @@ function knockBackAndSprintAway(
           direction === undefined
           && !directAquaticEvasion
           && !emergencyBlindCreeperSprint
+          && !emergencyBlindMeleeSprint
         )
       ) {
         return false;

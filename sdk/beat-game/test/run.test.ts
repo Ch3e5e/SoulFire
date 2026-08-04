@@ -10707,6 +10707,75 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("repeats knockback instead of committing to a zombie at low health", async () => {
+    const driver = new FakeBeatGameDriver();
+    let zombie: BeatGameEntityObservation = {
+      connectionEpoch: "epoch-1",
+      networkId: 25,
+      entityType: "minecraft:zombie",
+      position: {
+        x: 6,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:01.000Z",
+    };
+    driver.currentObservation = observation({
+      health: 8,
+      counts: {
+        "minecraft:cooked_beef": 1,
+        "minecraft:wooden_sword": 1,
+      },
+    });
+    driver.entityResults = [zombie];
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2) === true
+          || query.selector.networkId === zombie.networkId
+        ? driver.entityResults
+        : [];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (task.type === "flee") {
+          zombie = {
+            ...zombie,
+            position: { ...zombie.position, x: 2 },
+          };
+          driver.entityResults = [zombie];
+        }
+      }).pipe(
+        Effect.zipRight(task.type === "flee" ? Effect.never : Effect.void),
+      );
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (
+        driver.actions.filter((action) => action.type === "attack-entity")
+            .length < 2
+        && !driver.tasks.some((task) => task.type === "attack-entity")
+      ) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    })));
+
+    expect(
+      driver.actions.filter((action) => action.type === "attack-entity"),
+    ).toHaveLength(2);
+    expect(driver.tasks.some((task) => task.type === "attack-entity"))
+      .toBe(false);
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "flee",
+      selector: { categories: [2], alive: true },
+    }));
+  }, 10_000);
+
   it("dynamically replans an escape from a pursuing zombie", async () => {
     const driver = new FakeBeatGameDriver();
     const zombie = {
