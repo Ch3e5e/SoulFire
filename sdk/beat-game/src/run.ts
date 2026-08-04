@@ -619,6 +619,7 @@ const ENDERMAN_WATER_ESCAPE_RADIUS = 16;
 const DEFENSIVE_PURSUIT_MAX_DISTANCE = 12;
 const EMERGENCY_KNOCKBACK_RANGE = 3.5;
 const EMERGENCY_ESCAPE_SPRINT_MS = 1_250;
+const FAST_PURSUER_ADDITIONAL_DIRECT_ESCAPE_ATTEMPTS = 2;
 const EMERGENCY_ESCAPE_FLUID_PROJECTION_DISTANCE = 2;
 const EMERGENCY_ESCAPE_SURFACE_PROJECTION_DISTANCE = 10;
 const CREEPER_ESCAPE_SPRINT_MS = 2_500;
@@ -2850,6 +2851,18 @@ function escapeFromTarget(
     if (latest.player.dead) {
       return;
     }
+    if (
+      directEscapeSucceeded
+      && FAST_MELEE_PURSUER_ENTITY_TYPES.has(target.entityType)
+      && !hasMeleeWeapon(latest)
+      && (yield* continueDirectFastPursuerEscape(
+        state,
+        latest,
+        target,
+      ))
+    ) {
+      return;
+    }
     const needsRecovery = yield* needsOverworldSurfaceRecovery(
       state,
       latest.player.position,
@@ -3056,6 +3069,58 @@ function escapeFromTarget(
     if (outcome.type === "escape") {
       yield* escapeFromTarget(state, outcome.target, options);
     }
+  });
+}
+
+function continueDirectFastPursuerEscape(
+  state: RunState,
+  initialObservation: BeatGameObservation,
+  initialTarget: BeatGameEntityObservation,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  return Effect.gen(function* () {
+    let observation = initialObservation;
+    let target = initialTarget;
+    for (
+      let attempt = 0;
+      attempt < FAST_PURSUER_ADDITIONAL_DIRECT_ESCAPE_ATTEMPTS;
+      attempt += 1
+    ) {
+      const [currentTarget] = yield* state.driver.queryEntities({
+        origin: observation.player.position,
+        radius: THREAT_ESCAPE_SAFE_DISTANCE,
+        selector: { networkId: target.networkId, alive: true },
+        maximumResults: 1,
+      });
+      if (currentTarget === undefined) {
+        return true;
+      }
+      target = currentTarget;
+      if (
+        distanceSquared(observation.player.position, target.position)
+          >= THREAT_ESCAPE_SAFE_DISTANCE ** 2
+      ) {
+        return true;
+      }
+      if (!(yield* knockBackAndSprintAway(state, observation, target))) {
+        return false;
+      }
+      observation = yield* state.driver.observe;
+      if (observation.player.dead) {
+        return true;
+      }
+    }
+
+    const [remainingTarget] = yield* state.driver.queryEntities({
+      origin: observation.player.position,
+      radius: THREAT_ESCAPE_SAFE_DISTANCE,
+      selector: { networkId: target.networkId, alive: true },
+      maximumResults: 1,
+    });
+    return remainingTarget === undefined
+      || distanceSquared(
+          observation.player.position,
+          remainingTarget.position,
+        ) >= THREAT_ESCAPE_SAFE_DISTANCE ** 2;
   });
 }
 

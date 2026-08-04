@@ -9071,6 +9071,83 @@ describe("beat-game run lifecycle", () => {
       .toBe(false);
   }, 10_000);
 
+  it("chains direct sprints before replanning around a fast pursuer", async () => {
+    const driver = new FakeBeatGameDriver();
+    const spider = {
+      connectionEpoch: "epoch-1",
+      networkId: 521,
+      entityType: "minecraft:spider",
+      position: {
+        x: 8,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 16,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.currentObservation = observation({ health: 9.5, food: 14 });
+    driver.entityResults = [spider];
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2) === true
+          || query.selector.networkId === spider.networkId
+        ? driver.entityResults
+        : [];
+    driver.surfaceQueryResolver = (center, radius) =>
+      Array.from(
+        { length: Math.ceil(radius) * 2 + 1 },
+        (_, offset) => ({
+          x: Math.floor(center.x) - Math.ceil(radius) + offset,
+          z: 0,
+          dimension: center.dimension,
+          loaded: true,
+          surfaceY: 63,
+          blockId: "minecraft:stone",
+          skyLight: 15,
+          blockLight: 0,
+        }),
+      );
+    let directSprints = 0;
+    driver.actionObserver = (action) => {
+      if (
+        action.type !== "set-movement"
+        || action.forward !== true
+        || action.sprint !== true
+      ) {
+        return;
+      }
+      directSprints += 1;
+      driver.entityResults = [{
+        ...spider,
+        position: {
+          ...spider.position,
+          x: directSprints === 1 ? 13 : 25,
+        },
+      }];
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      let attempts = 5_000;
+      while (directSprints < 2 && attempts > 0) {
+        attempts -= 1;
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    })));
+
+    expect(directSprints).toBe(2);
+    expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
+    expect(driver.actions.filter((action) =>
+      action.type === "attack-entity"
+      && action.networkId === spider.networkId
+    )).toHaveLength(0);
+  }, 10_000);
+
   it("turns on a bare-handed fast pursuer after it wounds an active escape", async () => {
     const driver = new FakeBeatGameDriver();
     const distantSpider = {
