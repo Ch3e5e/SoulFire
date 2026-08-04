@@ -9595,7 +9595,10 @@ function needsOverworldSurfaceRecovery(
     return Effect.succeed(false);
   }
   return state.driver.sampleSurface(position, 4, 1).pipe(
-    Effect.map((columns) => selectSurfaceColumn(columns, position)),
+    Effect.map((columns) =>
+      selectSurfaceColumn(columns, position)
+        ?? selectSwimmableSurfaceEscapeColumns(columns, position, 1)[0]
+    ),
     Effect.map((surface) =>
       surface !== undefined && surface.surfaceY - position.y > 2
     ),
@@ -9612,13 +9615,16 @@ function returnToOverworldSurface(
       AIR_ESCAPE_SURFACE_SEARCH_RADIUS,
       1,
     );
-    const surfaces = selectSurfaceEscapeColumns(columns, position);
+    const drySurfaces = selectSurfaceEscapeColumns(columns, position);
+    const surfaces = drySurfaces.length > 0
+      ? drySurfaces
+      : selectSwimmableSurfaceEscapeColumns(columns, position);
     if (surfaces.length === 0) {
       return yield* Effect.fail(new BeatGameDriverError({
         operation: "pathfind",
         code: "unreachable",
         retryable: true,
-        message: "No loaded dry surface is available for air recovery",
+        message: "No loaded traversable surface is available for recovery",
       }));
     }
     const targets: readonly BeatGamePosition[] = surfaces.map((surface) => ({
@@ -9628,7 +9634,18 @@ function returnToOverworldSurface(
       dimension: position.dimension,
     }));
     yield* prepareSurfaceEscapePickaxe(state, position, targets);
-    yield* pathfindToFirstReachableSurface(state, targets);
+    yield* pathfindToFirstReachableSurface(
+      state,
+      targets,
+      0,
+      undefined,
+      {
+        ...state.strategy.path,
+        allowMining: true,
+        allowPlacing: true,
+        avoidFluids: drySurfaces.length > 0,
+      },
+    );
   });
 }
 
@@ -9905,6 +9922,50 @@ function selectSurfaceEscapeColumns(
     surfaceHorizontalDistanceSquared(left, position)
       - surfaceHorizontalDistanceSquared(right, position)
   );
+  return selectDirectionalSurfaceColumns(candidates, position, maximumResults);
+}
+
+function selectSwimmableSurfaceEscapeColumns(
+  columns: readonly {
+    readonly x: number;
+    readonly z: number;
+    readonly loaded: boolean;
+    readonly surfaceY?: number;
+    readonly blockId?: string;
+  }[],
+  position: BeatGamePosition,
+  maximumResults = AIR_ESCAPE_DIRECTION_SECTORS,
+): readonly {
+  readonly x: number;
+  readonly z: number;
+  readonly surfaceY: number;
+}[] {
+  const candidates = columns.flatMap((column) =>
+    column.loaded
+      && column.surfaceY !== undefined
+      && isSwimmableSurfaceBlock(column.blockId)
+      ? [{ x: column.x, z: column.z, surfaceY: column.surfaceY }]
+      : []
+  ).sort((left, right) =>
+    surfaceHorizontalDistanceSquared(left, position)
+      - surfaceHorizontalDistanceSquared(right, position)
+  );
+  return selectDirectionalSurfaceColumns(candidates, position, maximumResults);
+}
+
+function selectDirectionalSurfaceColumns(
+  candidates: readonly {
+    readonly x: number;
+    readonly z: number;
+    readonly surfaceY: number;
+  }[],
+  position: BeatGamePosition,
+  maximumResults: number,
+): readonly {
+  readonly x: number;
+  readonly z: number;
+  readonly surfaceY: number;
+}[] {
   const selected = new Map<number, (typeof candidates)[number]>();
   for (const candidate of candidates) {
     const angle = Math.atan2(
@@ -10079,6 +10140,12 @@ function isUnsafeSurfaceBlock(blockId: string | undefined): boolean {
     || blockId === "minecraft:lily_pad"
     || blockId === "minecraft:powder_snow"
     || blockId.endsWith("_leaves");
+}
+
+function isSwimmableSurfaceBlock(blockId: string | undefined): boolean {
+  return blockId !== undefined
+    && blockId !== "minecraft:lava"
+    && (PLAYER_FLUID_BLOCK_IDS as readonly string[]).includes(blockId);
 }
 
 function explorationPurpose(

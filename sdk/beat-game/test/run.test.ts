@@ -17388,6 +17388,64 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks.some((task) => task.type === "explore")).toBe(false);
   });
 
+  it("climbs toward an ocean surface when no dry column is nearby", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      position: {
+        x: 400.5,
+        y: -53,
+        z: 124.5,
+        dimension: "minecraft:overworld",
+      },
+    });
+    driver.surfaceColumns = [{
+      x: 400,
+      z: 124,
+      loaded: true,
+      surfaceY: 62,
+      blockId: "minecraft:water",
+      biomeId: "minecraft:cold_ocean",
+      skyLight: 14,
+      blockLight: 0,
+    }];
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (driver.paths.length === 0) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.paths[0]).toEqual({
+      position: {
+        x: 400.5,
+        y: 63,
+        z: 124.5,
+        dimension: "minecraft:overworld",
+      },
+      radius: 1.5,
+      policy: expect.objectContaining({
+        allowMining: true,
+        allowPlacing: true,
+        avoidFluids: false,
+      }),
+    });
+    expect(driver.xzPaths).toHaveLength(0);
+  });
+
   it("recovers from a shallow underground pocket before exploring", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
