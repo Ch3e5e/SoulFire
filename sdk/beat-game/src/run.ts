@@ -1161,22 +1161,28 @@ function runLoop(
       if (checkpoint.planner.phase === BeatGamePhase.COMPLETE) {
         return yield* completeRun(state);
       }
-      const nightShelterNeeded = yield* shouldTakeNightShelter(
-        state,
-        observation,
-      ).pipe(
-        Effect.catchAll((error) =>
-          emit(state, {
-            type: "diagnostic",
-            message: "Could not evaluate night shelter conditions",
-            data: { error: error.message },
-          }).pipe(Effect.as(false))
-        ),
-      );
+      const liveObservation = yield* Ref.get(state.observation);
+      const urgentCorpseRecovery = observation.player.dead
+        && !liveObservation.player.dead
+        && isRecentDeathObservation(observation.observedAt);
+      const nightShelterNeeded = urgentCorpseRecovery
+        ? false
+        : yield* shouldTakeNightShelter(
+          state,
+          liveObservation,
+        ).pipe(
+          Effect.catchAll((error) =>
+            emit(state, {
+              type: "diagnostic",
+              message: "Could not evaluate night shelter conditions",
+              data: { error: error.message },
+            }).pipe(Effect.as(false))
+          ),
+        );
       if (nightShelterNeeded) {
         yield* cancellable(
           state,
-          shelterUntilMorning(state, observation).pipe(
+          shelterUntilMorning(state, liveObservation).pipe(
             Effect.catchAll((error) =>
               emit(state, {
                 type: "diagnostic",
@@ -2727,6 +2733,7 @@ function monitorActionSafety(
                         previousObservation,
                         observation,
                         monitor,
+                        actionObservation.observedAt,
                       );
                     }
                     const response = threat.response;
@@ -2753,6 +2760,7 @@ function monitorActionSafety(
                 previousObservation,
                 observation,
                 monitor,
+                actionObservation.observedAt,
               );
                   }),
                 )
@@ -2774,6 +2782,7 @@ function monitorObservedSafety(
   monitor: (
     previousObservation: BeatGameObservation,
   ) => Effect.Effect<ActionResult, BeatGameError | BeatGameDriverError>,
+  actionObservedAt: string,
 ): Effect.Effect<ActionResult, BeatGameError | BeatGameDriverError> {
   if (
     decision.type === "recover-death"
@@ -2912,9 +2921,12 @@ function monitorObservedSafety(
     } satisfies ActionResult);
   }
   if (
-    decision.type !== "recover-death"
-    && decision.type !== "retreat"
+    decision.type !== "retreat"
     && decision.type !== "eat"
+    && (
+      decision.type !== "recover-death"
+      || !isRecentDeathObservation(actionObservedAt)
+    )
   ) {
     return Effect.all([
       shouldTakeNightShelter(state, previousObservation),
@@ -13294,7 +13306,11 @@ function prepareForDistantDeathRecovery(
 }
 
 function isRecentActiveCorpse(pendingDeath: PendingDeath): boolean {
-  const ageMs = Date.now() - Date.parse(pendingDeath.observedAt);
+  return isRecentDeathObservation(pendingDeath.observedAt);
+}
+
+function isRecentDeathObservation(observedAt: string): boolean {
+  const ageMs = Date.now() - Date.parse(observedAt);
   return Number.isFinite(ageMs)
     && ageMs >= 0
     && ageMs <= ACTIVE_CORPSE_RECOVERY_MAX_AGE_MS;
