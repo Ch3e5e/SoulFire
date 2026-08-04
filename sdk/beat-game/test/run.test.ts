@@ -21527,7 +21527,7 @@ describe("beat-game run lifecycle", () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
       counts: {
-        "minecraft:cooked_mutton": 7,
+        "minecraft:cooked_mutton": 5,
         "minecraft:beef": 6,
         "minecraft:coal": 1,
         "minecraft:furnace": 1,
@@ -21616,6 +21616,110 @@ describe("beat-game run lifecycle", () => {
     }));
     expect(driver.tasks.some((task) => task.type === "smelt")).toBe(false);
   });
+
+  it("replans food preparation when furnace materials remain unavailable", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      food: defaultBeatGameStrategy.eatBelowFood,
+      counts: {
+        "minecraft:beef": 2,
+        "minecraft:crafting_table": 1,
+        "minecraft:oak_log": 8,
+        "minecraft:wooden_pickaxe": 1,
+        "minecraft:wooden_sword": 1,
+      },
+    });
+    const craftingTable = blockObservation({
+      x: 1,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    }, { blockId: "minecraft:crafting_table" });
+    driver.blockQueryResolver = ({ center, selector }) => {
+      if (selector.blockIds?.includes("minecraft:crafting_table") === true) {
+        return [craftingTable];
+      }
+      if (selector.replaceable === false) {
+        return [blockObservation({
+          x: 2,
+          y: 63,
+          z: 0,
+          dimension: "minecraft:overworld",
+        })];
+      }
+      if (selector.replaceable === true) {
+        return [blockObservation({
+          x: Math.floor(center.x),
+          y: Math.floor(center.y),
+          z: Math.floor(center.z),
+          dimension: center.dimension,
+        }, { blockId: "minecraft:air", replaceable: true })];
+      }
+      return [];
+    };
+    driver.recipeResolver = (resultItemId) =>
+      resultItemId === "minecraft:furnace"
+        ? [{
+          recipeId: "minecraft:furnace",
+          recipeType: "minecraft:crafting_shaped",
+          resultItemId,
+          resultCount: 1,
+          ingredients: [{
+            itemIds: [
+              "minecraft:blackstone",
+              "minecraft:cobbled_deepslate",
+              "minecraft:cobblestone",
+            ],
+            tags: [],
+            count: 8,
+          }],
+        }]
+        : [];
+    driver.craftabilityResolver = () => ({
+      canCraft: false,
+      maximumCraftCount: 0,
+      requiredStation: "minecraft:crafting_table",
+      missing: [{
+        itemIds: [
+          "minecraft:blackstone",
+          "minecraft:cobbled_deepslate",
+          "minecraft:cobblestone",
+        ],
+        tags: [],
+        available: 0,
+        missing: 8,
+      }],
+    });
+
+    const failure = await Effect.runPromise(Effect.scoped(
+      Effect.gen(function* () {
+        const run = yield* beatGameWithDriver(driver, {
+          strategy: {
+            maximumActionRetries: 0,
+            observationPollMs: 1,
+          },
+        });
+        const failure = yield* run.events.pipe(
+          Stream.filter((event) =>
+            event.type === "action-failed"
+            && event.detail?.includes(
+              "resource acquisition remains incomplete",
+            ) === true
+          ),
+          Stream.runHead,
+          Effect.timeout("5 seconds"),
+        );
+        return failure;
+      }),
+    ));
+
+    expect(Option.isSome(failure)).toBe(true);
+    expect(Option.getOrUndefined(failure)).toMatchObject({
+      detail: expect.stringContaining("Interrupted for replanning"),
+    });
+    expect(driver.xzPaths.length).toBeGreaterThanOrEqual(1);
+    expect(driver.tasks.some((task) => task.type === "smelt")).toBe(false);
+  }, 10_000);
 
   it("cooks a partial raw-food batch at the normal hunger threshold", async () => {
     const driver = new FakeBeatGameDriver();

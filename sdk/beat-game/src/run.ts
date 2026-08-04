@@ -1744,6 +1744,18 @@ function executeDecision(
               current,
             )
           ),
+          Effect.catchAll((error) =>
+            error instanceof BeatGameDriverError
+                && error.code === "resource-exhausted"
+              ? Effect.succeed({
+                replanReason:
+                  `resource acquisition remains incomplete while satisfying ${
+                    decision.requirement.key
+                  }: ${error.message}`,
+                replanDelayMs: REQUIREMENT_NO_PROGRESS_REPLAN_DELAY_MS,
+              } satisfies ActionResult)
+              : Effect.fail(error)
+          ),
         );
       }
       case "build-and-enter-nether": {
