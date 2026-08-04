@@ -7567,6 +7567,25 @@ function collectBlocksOrExplore(
             frontierPath,
             preferSurfaceExploration,
             false,
+          ).pipe(
+            Effect.catchTag("BeatGameDriverError", (error) =>
+              error.operation === "pathfind"
+                    || error.operation === "pathfindXZ"
+                ? advanceExplorationFrontier(
+                  state,
+                  current.player.position,
+                  `${options.purpose}-detour`,
+                  state.strategy.blockSearchRadius,
+                  frontierPath,
+                  preferSurfaceExploration,
+                  false,
+                  explorationDetourRotation(
+                    current.player.position,
+                    directedTarget,
+                  ),
+                )
+                : Effect.fail(error)
+            ),
           )).pipe(
             Effect.catchTag("BeatGameDriverError", (error) =>
               error.operation === "pathfind"
@@ -10389,8 +10408,12 @@ function advanceExplorationFrontier(
   path: BeatGameStrategy["path"],
   preferSurface = true,
   allowFluidFallback = true,
+  rotation = 0,
 ): Effect.Effect<void, BeatGameDriverError> {
-  const key = `${position.dimension}:${purpose}`;
+  const normalizedRotation = ((rotation % 4) + 4) % 4;
+  const key = normalizedRotation === 0
+    ? `${position.dimension}:${purpose}`
+    : `${position.dimension}:${purpose}:${normalizedRotation}`;
   const hop = discoveryHopRadius(state, scanRadius);
   return Ref.get(state.checkpoint).pipe(
     Effect.flatMap((checkpoint) =>
@@ -10415,7 +10438,10 @@ function advanceExplorationFrontier(
             && !shouldReanchor
           ? { ...existing, nextIndex, totalAdvances }
           : { origin: position, nextIndex, totalAdvances };
-        const offset = squareSpiralOffset(frontier.nextIndex);
+        const offset = rotateExplorationOffset(
+          squareSpiralOffset(frontier.nextIndex),
+          normalizedRotation,
+        );
         const target = {
           x: frontier.origin.x + offset.x * hop,
           z: frontier.origin.z + offset.z * hop,
@@ -10484,6 +10510,31 @@ function advanceExplorationFrontier(
       )
     ),
   );
+}
+
+function explorationDetourRotation(
+  position: BeatGamePosition,
+  target: Pick<BeatGamePosition, "x" | "z">,
+): number {
+  return Math.abs(target.x - position.x) >= Math.abs(target.z - position.z)
+    ? 1
+    : 0;
+}
+
+function rotateExplorationOffset(
+  offset: Readonly<{ x: number; z: number }>,
+  rotation: number,
+): { readonly x: number; readonly z: number } {
+  switch (rotation) {
+    case 1:
+      return { x: -offset.z, z: offset.x };
+    case 2:
+      return { x: -offset.x, z: -offset.z };
+    case 3:
+      return { x: offset.z, z: -offset.x };
+    default:
+      return offset;
+  }
 }
 
 function retainExplorationFrontier(

@@ -4298,6 +4298,75 @@ describe("beat-game run lifecycle", () => {
     ).toBeLessThan(Math.abs(deathPosition.x - 0.5));
   });
 
+  it("detours when the directed corpse supply route is blocked", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const deathPosition = {
+      x: 700,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    } as const;
+    const observedAt = new Date().toISOString();
+    const runId = "detoured-corpse-preparation-run";
+    const teamId = "detoured-corpse-preparation-team";
+    const initial = checkpoint(BeatGamePhase.ENTER_NETHER, {
+      runId,
+      teamId,
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        deathPositions: [{
+          key: `death:${observedAt}`,
+          value: {
+            ...deathPosition,
+            inventoryCounts: { "minecraft:iron_pickaxe": 1 },
+          },
+          observedAt,
+          confidence: 1,
+        }],
+      },
+    }, undefined));
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+      }).pipe(
+        Effect.zipRight(
+          driver.xzPaths.length === 0
+            ? Effect.fail(new BeatGameDriverError({
+              operation: "pathfindXZ",
+              retryable: true,
+              message: "The directed recovery route is blocked",
+            }))
+            : Effect.never,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        runId,
+        team: { teamId },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      });
+      while (driver.xzPaths.length < 2) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    }).pipe(Effect.timeout("5 seconds"))));
+
+    const [directedLeg, detourLeg] = driver.xzPaths;
+    expect(directedLeg?.x).toBeGreaterThan(0.5);
+    expect(Math.abs(directedLeg?.z ?? Number.POSITIVE_INFINITY)).toBeLessThan(
+      1,
+    );
+    expect(Math.abs(detourLeg?.x ?? Number.POSITIVE_INFINITY)).toBeLessThan(1);
+    expect(detourLeg?.z).toBeGreaterThan(0.5);
+  });
+
   it("preserves a valuable corpse while preparation moves meaningfully closer", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
