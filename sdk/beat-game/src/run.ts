@@ -1227,13 +1227,19 @@ function shouldTakeNightShelter(
     state.driver.environment === undefined
     || observation.player.position.dimension !== "minecraft:overworld"
     || observation.player.dead
-    || !observation.player.onGround
   ) {
     return Effect.succeed(false);
   }
   return Effect.gen(function* () {
     const environment = yield* state.driver.environment!;
     if (!isHostileNight(environment.gameTime)) {
+      return false;
+    }
+    const inFluid = yield* isPlayerInFluid(
+      state.driver,
+      observation.player.position,
+    );
+    if (!observation.player.onGround && !inFluid) {
       return false;
     }
     const protectedForNightTravel =
@@ -1289,9 +1295,25 @@ function shelterUntilMorning(
       if (!reachedDrySurface) {
         yield* emit(state, {
           type: "diagnostic",
-          message: "Could not reach dry ground for a night shelter",
+          message:
+            "Could not reach dry ground for a night shelter; recovering to the water surface",
           data: { position: shelterObservation.player.position },
         });
+        yield* escapeToOverworldSurface(
+          state,
+          shelterObservation.player.position,
+        ).pipe(
+          Effect.catchTag("BeatGameDriverError", (error) =>
+            emit(state, {
+              type: "diagnostic",
+              message: "Could not recover to the water surface",
+              data: {
+                position: shelterObservation.player.position,
+                error: error.message,
+              },
+            })
+          ),
+        );
         yield* Effect.sleep(NIGHT_SHELTER_POLL_MS);
         return;
       }

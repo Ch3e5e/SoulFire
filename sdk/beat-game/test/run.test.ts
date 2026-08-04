@@ -216,6 +216,7 @@ describe("beat-game run lifecycle", () => {
         "minecraft:dirt": 1,
         "minecraft:wooden_sword": 1,
       },
+      onGround: false,
       position: { x: 0.5, y: 62, z: 0.5 },
     });
     driver.surfaceColumns = [-1, 0, 1].flatMap((deltaX) =>
@@ -290,6 +291,77 @@ describe("beat-game run lifecycle", () => {
       policy: expect.objectContaining({
         allowMining: false,
         allowPlacing: false,
+        avoidFluids: false,
+      }),
+    }));
+  }, 10_000);
+
+  it("recovers to the water surface when no dry shelter ground is loaded", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentEnvironment = { gameTime: 14_000n };
+    driver.currentObservation = observation({
+      counts: { "minecraft:wooden_sword": 1 },
+      onGround: false,
+      position: { x: 0.5, y: 52, z: 0.5 },
+    });
+    driver.surfaceColumns = [-1, 0, 1].flatMap((x) =>
+      [-1, 0, 1].map((z) => ({
+        x,
+        z,
+        loaded: true,
+        surfaceY: 63,
+        blockId: "minecraft:water",
+        biomeId: "minecraft:ocean",
+        skyLight: 15,
+        blockLight: 0,
+      }))
+    );
+    driver.blockQueryResolver = ({ center, selector }) => {
+      const position = {
+        x: Math.floor(center.x),
+        y: Math.floor(center.y),
+        z: Math.floor(center.z),
+        dimension: center.dimension,
+      };
+      return selector.blockIds?.includes("minecraft:water") === true
+        ? [blockObservation(position, {
+          blockId: "minecraft:water",
+          diggable: false,
+          replaceable: true,
+          solid: false,
+        })]
+        : [blockObservation(position, {
+          blockId: "minecraft:air",
+          diggable: false,
+          replaceable: true,
+          solid: false,
+        })];
+    };
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (driver.paths.length === 0) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    expect(driver.paths[0]).toEqual(expect.objectContaining({
+      position: expect.objectContaining({
+        y: 64,
+        dimension: "minecraft:overworld",
+      }),
+      radius: 1.5,
+      policy: expect.objectContaining({
+        allowMining: true,
+        allowPlacing: true,
         avoidFluids: false,
       }),
     }));
@@ -6307,7 +6379,7 @@ describe("beat-game run lifecycle", () => {
         z: 0.5,
         dimension: "minecraft:overworld",
       },
-      radius: 1.5,
+      radius: 0.75,
       policy: {
         allowMining: true,
         allowPlacing: true,
@@ -11319,7 +11391,7 @@ describe("beat-game run lifecycle", () => {
         z: 3.5,
         dimension: "minecraft:overworld",
       },
-      radius: 0.75,
+      radius: 1.5,
       policy: expect.objectContaining({
         allowMining: false,
         allowPlacing: false,
