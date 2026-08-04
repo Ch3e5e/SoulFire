@@ -1704,7 +1704,7 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
-  it("abandons an unreachable corpse after three safe recovery attempts", async () => {
+  it("keeps an unreachable valuable corpse after repeated safe recovery attempts", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const deathPosition = {
@@ -1767,8 +1767,10 @@ describe("beat-game run lifecycle", () => {
           Effect.gen(function* () {
             yield* run.events.pipe(
               Stream.filter((event) =>
-                event.type === "action-succeeded"
-                && event.action === "recover-death"
+                event.type === "diagnostic"
+                && event.message
+                  === "Keeping a valuable corpse pending after failed recovery attempts"
+                && event.data?.recoveryFailures === 3
               ),
               Stream.runHead,
             );
@@ -1797,7 +1799,7 @@ describe("beat-game run lifecycle", () => {
       store.load("unreachable-corpse-run"),
     );
     expect(saved?.planner.phase).toBe(BeatGamePhase.ENTER_NETHER);
-    expect(saved?.memory.deathPositions).toEqual([]);
+    expect(saved?.memory.deathPositions).toHaveLength(1);
   });
 
   it("does not mistake a distant matching drop for corpse recovery", async () => {
@@ -3896,7 +3898,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks).toHaveLength(0);
   });
 
-  it("bounds preparation for a valuable distant corpse after extended failures", async () => {
+  it("attempts a valuable distant corpse after bounded preparation without forgetting it", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const deathPosition = {
@@ -3937,7 +3939,7 @@ describe("beat-game run lifecycle", () => {
         }))),
       );
 
-    const equipmentSearches = await Effect.runPromise(Effect.scoped(
+    const recoveryActivity = await Effect.runPromise(Effect.scoped(
       Effect.gen(function* () {
         const run = yield* beatGameWithDriver(driver, {
           runId: "bounded-corpse-equipment-run",
@@ -3963,34 +3965,41 @@ describe("beat-game run lifecycle", () => {
         ).length;
         yield* run.events.pipe(
           Stream.filter((event) =>
-            event.type === "items-recovered"
-            && event.detail
-              === "Abandoned a valuable distant corpse after eight bounded preparation attempts"
+            event.type === "diagnostic"
+            && event.message
+              === "Keeping a valuable corpse pending after failed recovery attempts"
+            && event.data?.recoveryFailures === 3
           ),
           Stream.runHead,
-          Effect.timeout("5 seconds"),
+          Effect.timeout("10 seconds"),
         );
         const boundedSearches = driver.tasks.filter((task) =>
           task.type === "collect-blocks"
         ).length;
+        const directRecoveryAttempts = driver.paths.filter(({ position }) =>
+          position.x === deathPosition.x
+          && position.y === deathPosition.y
+          && position.z === deathPosition.z
+          && position.dimension === deathPosition.dimension
+        ).length;
         yield* run.stop;
         yield* run.awaitCompletion.pipe(Effect.either);
-        return { boundedSearches, earlySearches };
+        return {
+          boundedSearches,
+          directRecoveryAttempts,
+          earlySearches,
+        };
       }),
     ));
 
-    expect(equipmentSearches).toEqual({
-      earlySearches: 4,
-      boundedSearches: 8,
-    });
-    expect(driver.paths).not.toContainEqual(expect.objectContaining({
-      position: deathPosition,
-    }));
+    expect(recoveryActivity.earlySearches).toBe(4);
+    expect(recoveryActivity.boundedSearches).toBeGreaterThanOrEqual(10);
+    expect(recoveryActivity.directRecoveryAttempts).toBeGreaterThanOrEqual(6);
     const saved = await Effect.runPromise(
       store.load("bounded-corpse-equipment-run"),
     );
-    expect(saved?.memory.deathPositions).toHaveLength(0);
-  }, 15_000);
+    expect(saved?.memory.deathPositions).toHaveLength(1);
+  }, 25_000);
 
   it("searches for corpse recovery supplies along the recovery route", async () => {
     const driver = new FakeBeatGameDriver();
@@ -4220,18 +4229,16 @@ describe("beat-game run lifecycle", () => {
       }).pipe(
         Effect.flatMap((run) =>
           Effect.gen(function* () {
-            yield* Effect.gen(function* () {
-              while (
-                (yield* store.load("staged-corpse-recovery-run"))
-                    ?.memory.deathPositions.length !== 0
-              ) {
-                yield* Effect.sleep(1);
-              }
-            }).pipe(Effect.timeoutFail({
-              duration: "5 seconds",
-              onTimeout: () =>
-                new Error("The staged corpse recovery did not finish"),
-            }));
+            yield* run.events.pipe(
+              Stream.filter((event) =>
+                event.type === "diagnostic"
+                && event.message
+                  === "Keeping a valuable corpse pending after failed recovery attempts"
+                && event.data?.recoveryFailures === 3
+              ),
+              Stream.runHead,
+              Effect.timeout("15 seconds"),
+            );
             yield* run.stop;
             yield* run.awaitCompletion.pipe(Effect.either);
           })
@@ -4247,7 +4254,11 @@ describe("beat-game run lifecycle", () => {
     );
     expect(driver.xzPaths.length).toBeGreaterThanOrEqual(4);
     expect(corpsePaths).toHaveLength(3);
-  });
+    const saved = await Effect.runPromise(
+      store.load("staged-corpse-recovery-run"),
+    );
+    expect(saved?.memory.deathPositions).toHaveLength(1);
+  }, 20_000);
 
   it("keeps an incomplete food bootstrap active until direct recovery is safe", async () => {
     const driver = new FakeBeatGameDriver();

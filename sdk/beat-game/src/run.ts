@@ -1526,26 +1526,36 @@ function executeDecision(
                     preparationFailures
                       >= MAX_VALUABLE_DEATH_RECOVERY_PREPARATION_FAILURES
                   ) {
-                    return yield* abandonPendingDeath(
-                      state,
-                      pendingDeath,
-                      current,
-                      "Abandoned a valuable distant corpse after eight bounded preparation attempts",
-                    );
+                    yield* emit(state, {
+                      type: "diagnostic",
+                      message:
+                        "Attempting valuable corpse recovery after bounded preparation",
+                      data: {
+                        preparationFailures,
+                        reason: preparationPending,
+                      },
+                    });
+                  } else {
+                    yield* emit(state, {
+                      type: "diagnostic",
+                      message:
+                        "Continuing preparation for a valuable distant corpse",
+                      data: {
+                        preparationFailures,
+                        reason: preparationPending,
+                      },
+                    });
                   }
-                  yield* emit(state, {
-                    type: "diagnostic",
-                    message:
-                      "Continuing preparation for a valuable distant corpse",
-                    data: {
-                      preparationFailures,
-                      reason: preparationPending,
-                    },
-                  });
                 }
-                return {
-                  replanReason: preparationPending,
-                } satisfies ActionResult;
+                if (
+                  recoveryClass !== "valuable"
+                  || preparationFailures
+                    < MAX_VALUABLE_DEATH_RECOVERY_PREPARATION_FAILURES
+                ) {
+                  return {
+                    replanReason: preparationPending,
+                  } satisfies ActionResult;
+                }
               }
               respawned = yield* observeDriverFresh(state);
               yield* retreatAndRecover(
@@ -1630,13 +1640,34 @@ function executeDecision(
               pendingDeath.observedAt,
               "pickup",
             );
-            if (recoveryFailures >= MAX_SAFE_DEATH_RECOVERY_FAILURES) {
+            const recoveryClass = classifyDeathRecoveryInventory(
+              pendingDeath.inventoryCounts,
+            );
+            if (
+              recoveryFailures >= MAX_SAFE_DEATH_RECOVERY_FAILURES
+              && recoveryClass !== "valuable"
+            ) {
               return yield* abandonPendingDeath(
                 state,
                 pendingDeath,
                 current,
                 "Abandoned an unrecoverable corpse after three safe recovery attempts",
               );
+            }
+            if (
+              recoveryFailures >= MAX_SAFE_DEATH_RECOVERY_FAILURES
+              && recoveryClass === "valuable"
+            ) {
+              yield* emit(state, {
+                type: "diagnostic",
+                message:
+                  "Keeping a valuable corpse pending after failed recovery attempts",
+                data: {
+                  closeEnoughToInspectDrops,
+                  recoveryFailures,
+                  remainingDrops: remainingCorpseDrops.length,
+                },
+              });
             }
             if (
               (yield* needsOverworldSurfaceRecovery(
