@@ -3716,6 +3716,88 @@ describe("beat-game run lifecycle", () => {
       .toBe(16);
   });
 
+  it("keeps gathering food when a distant recovery has only a small reserve", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const deathPosition = {
+      x: 700,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    const observedAt = new Date().toISOString();
+    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
+      runId: "buffered-corpse-food-run",
+      teamId: "buffered-corpse-food-team",
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        deathPositions: [{
+          key: `death:${observedAt}`,
+          value: {
+            ...deathPosition,
+            inventoryCounts: { "minecraft:iron_ingot": 7 },
+          },
+          observedAt,
+          confidence: 1,
+        }],
+      },
+    }, undefined));
+    driver.currentObservation = observation({
+      counts: {
+        "minecraft:beef": 3,
+        "minecraft:dirt": 16,
+        "minecraft:oak_log": 12,
+        "minecraft:wooden_sword": 1,
+      },
+    });
+    const cow = {
+      connectionEpoch: "epoch-1",
+      networkId: 41,
+      entityType: "minecraft:cow",
+      position: {
+        x: 2,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 10,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    driver.entityQueryResolver = (query) =>
+      query.selector.entityTypes?.includes("minecraft:cow") ? [cow] : [];
+    driver.taskResolver = (task) => {
+      driver.tasks.push(task);
+      return task.type === "attack-entity" ? Effect.never : Effect.void;
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        runId: "buffered-corpse-food-run",
+        team: { teamId: "buffered-corpse-food-team" },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some((task) => task.type === "attack-entity")) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+      target: expect.objectContaining({ networkId: cow.networkId }),
+    }));
+    expect(driver.paths).not.toContainEqual(expect.objectContaining({
+      position: deathPosition,
+    }));
+  });
+
   it("abandons distant recovery after three bounded food searches", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
@@ -4869,7 +4951,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks.filter((task) => task.type === "flee")).toHaveLength(1);
   });
 
-  it("keeps a corpse recovery flee route alive when a zombie hits again", async () => {
+  it("knocks back a zombie that catches a corpse recovery flee route", async () => {
     const driver = new FakeBeatGameDriver();
     const deathPosition = {
       x: 24,
@@ -4954,11 +5036,17 @@ describe("beat-game run lifecycle", () => {
     ));
 
     expect(stateBeforeStop).toEqual({
-      interruptedEscapes: 0,
+      interruptedEscapes: 1,
       fleeTasks: 1,
     });
     const fleeIndex = driver.tasks.findIndex((task) => task.type === "flee");
     expect(driver.taskPolicies[fleeIndex]?.allowMining).toBe(false);
+    expect(driver.actions).toContainEqual({
+      type: "attack-entity",
+      connectionEpoch: zombie.connectionEpoch,
+      networkId: zombie.networkId,
+      sprinting: true,
+    });
   }, 10_000);
 
   it("keeps monitoring for new attackers after resuming item recovery", async () => {
@@ -8936,7 +9024,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
   }, 10_000);
 
-  it("engages an armed close pursuer despite an unshielded melee group", async () => {
+  it("flees an unshielded melee group when unable to regenerate", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
       health: 14,
@@ -8968,24 +9056,13 @@ describe("beat-game run lifecycle", () => {
     ];
     driver.entityQueryResolver = (query) =>
       query.selector.categories?.includes(2) ? driver.entityResults : [];
-    driver.taskObserver = (task) => {
-      if (task.type === "attack-entity") {
-        driver.entityResults = [];
-      }
-    };
-
     await Effect.runPromise(Effect.scoped(
       beatGameWithDriver(driver, {
         strategy: { observationPollMs: 1 },
       }).pipe(
         Effect.flatMap((run) =>
           Effect.gen(function* () {
-            let attempts = 3_000;
-            while (
-              !driver.tasks.some((task) => task.type === "attack-entity")
-              && attempts > 0
-            ) {
-              attempts -= 1;
+            while (!driver.tasks.some((task) => task.type === "flee")) {
               yield* Effect.sleep(1);
             }
             yield* run.stop;
@@ -8995,15 +9072,12 @@ describe("beat-game run lifecycle", () => {
       ),
     ));
 
+    expect(driver.tasks.some((task) => task.type === "attack-entity"))
+      .toBe(false);
     expect(driver.tasks).toContainEqual(expect.objectContaining({
-      type: "attack-entity",
-      target: expect.objectContaining({
-        connectionEpoch: zombie.connectionEpoch,
-        networkId: zombie.networkId,
-      }),
-      selectBestWeapon: true,
+      type: "flee",
+      selector: { categories: [2], alive: true },
     }));
-    expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
   }, 10_000);
 
   it("flees an unshielded ranged ambush before taking a hit", async () => {
@@ -9644,7 +9718,7 @@ describe("beat-game run lifecycle", () => {
       .toBe(false);
   }, 10_000);
 
-  it("turns on a close zombie that catches an armed escape", async () => {
+  it("turns on a close zombie that catches a healthy armed escape", async () => {
     const driver = new FakeBeatGameDriver();
     const zombie = {
       connectionEpoch: "epoch-1",
@@ -9703,6 +9777,11 @@ describe("beat-game run lifecycle", () => {
               ...zombie,
               position: { ...zombie.position, x: 2 },
             }];
+            driver.currentObservation = observation({
+              health: 18,
+              food: 14,
+              counts: { "minecraft:wooden_sword": 1 },
+            });
             while (!driver.tasks.some((task) =>
               task.type === "attack-entity"
             )) {

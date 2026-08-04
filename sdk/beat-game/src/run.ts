@@ -164,8 +164,7 @@ const CORPSE_DROP_MATCH_RADIUS = 16;
 const EMERGENCY_ARMAMENT_LOG_COUNT = 2;
 const DEATH_RECOVERY_BOOTSTRAP_LOG_COUNT = 12;
 const DEATH_RECOVERY_BOOTSTRAP_BLOCK_COUNT = 16;
-const DEATH_RECOVERY_BOOTSTRAP_FOOD_COUNT = 8;
-const DEATH_RECOVERY_MINIMUM_FOOD_COUNT = 3;
+const DEATH_RECOVERY_FOOD_RESERVE_COUNT = 8;
 const DEATH_RECOVERY_AQUATIC_FALLBACK_EXPLORATION_LEGS = 2;
 const DEATH_RECOVERY_FOOD_SEARCH_TIMEOUT_MS = 60_000;
 const DEATH_RECOVERY_FOOD_SEARCH_PENDING =
@@ -636,7 +635,7 @@ const DEATH_OBSERVATION_DEDUPLICATION_WINDOW_MS = 5_000;
 const BAREHANDED_DEFENSE_MINIMUM_HEALTH = 18;
 const MELEE_DISENGAGE_HEALTH = 16;
 const LETHAL_MELEE_DISENGAGE_HEALTH = 7;
-const CAUGHT_MELEE_COMMIT_MINIMUM_HEALTH = 10;
+const CAUGHT_MELEE_COMMIT_MINIMUM_HEALTH = MELEE_DISENGAGE_HEALTH;
 const THREAT_ESCAPE_SAFE_DISTANCE = 24;
 const SINGLE_THREAT_MAXIMUM_ESCAPES = 4;
 const DURABLE_DEATH_RECOVERY_WINDOW_MS = 8 * 60 * 60 * 1_000;
@@ -2409,9 +2408,10 @@ function monitorObservedSafety(
     && observation.player.food <= state.strategy.eatBelowFood
     && hasUsableFood(observation)
     && (
-      observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
+      observation.player.health < state.strategy.minimumHealth
+      || observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
       || deathRecoveryTravelFoodCount(observation)
-        > DEATH_RECOVERY_MINIMUM_FOOD_COUNT
+        >= DEATH_RECOVERY_FOOD_RESERVE_COUNT
     )
     && (
       previousObservation.player.food > state.strategy.eatBelowFood
@@ -12888,7 +12888,7 @@ function prepareForDistantDeathRecovery(
       BeatGameError | BeatGameDriverError
     > => {
       const food = travelFoodCount(value);
-      if (food >= DEATH_RECOVERY_MINIMUM_FOOD_COUNT) {
+      if (food >= DEATH_RECOVERY_FOOD_RESERVE_COUNT) {
         return Effect.succeed(value);
       }
       const needsUrgentAquaticFood =
@@ -12906,7 +12906,7 @@ function prepareForDistantDeathRecovery(
           ),
           alive: true,
         },
-        DEATH_RECOVERY_BOOTSTRAP_FOOD_COUNT - food,
+        DEATH_RECOVERY_FOOD_RESERVE_COUNT - food,
         "prepare-corpse-recovery-food",
         {
           preferredEntityTypes: HIGH_YIELD_FOOD_ANIMAL_TYPES,
@@ -12998,10 +12998,10 @@ function prepareForDistantDeathRecovery(
         current.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
         || current.player.health < state.strategy.minimumHealth
       )
-      && travelFoodCount(current) < DEATH_RECOVERY_MINIMUM_FOOD_COUNT
+      && travelFoodCount(current) < DEATH_RECOVERY_FOOD_RESERVE_COUNT
     ) {
       current = yield* ensureTravelFood(current);
-      if (travelFoodCount(current) < DEATH_RECOVERY_MINIMUM_FOOD_COUNT) {
+      if (travelFoodCount(current) < DEATH_RECOVERY_FOOD_RESERVE_COUNT) {
         return DEATH_RECOVERY_FOOD_SEARCH_PENDING;
       }
     }
@@ -13040,10 +13040,10 @@ function prepareForDistantDeathRecovery(
         current.player.food <= state.strategy.eatBelowFood
         || current.player.health < state.strategy.minimumHealth
       )
-      && travelFoodCount(current) < DEATH_RECOVERY_MINIMUM_FOOD_COUNT
+      && travelFoodCount(current) < DEATH_RECOVERY_FOOD_RESERVE_COUNT
     ) {
       current = yield* ensureTravelFood(current);
-      if (travelFoodCount(current) < DEATH_RECOVERY_MINIMUM_FOOD_COUNT) {
+      if (travelFoodCount(current) < DEATH_RECOVERY_FOOD_RESERVE_COUNT) {
         return DEATH_RECOVERY_FOOD_SEARCH_PENDING;
       }
     }
@@ -13126,10 +13126,10 @@ function prepareForDistantDeathRecovery(
     }
 
     const food = travelFoodCount(current);
-    if (food < DEATH_RECOVERY_MINIMUM_FOOD_COUNT) {
+    if (food < DEATH_RECOVERY_FOOD_RESERVE_COUNT) {
       current = yield* ensureTravelFood(current);
     }
-    if (travelFoodCount(current) < DEATH_RECOVERY_MINIMUM_FOOD_COUNT) {
+    if (travelFoodCount(current) < DEATH_RECOVERY_FOOD_RESERVE_COUNT) {
       return DEATH_RECOVERY_FOOD_SEARCH_PENDING;
     }
     current = yield* ensureBuildingMaterials(current);
