@@ -872,6 +872,81 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("recovers visible valuable corpse drops before sheltering", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const observedAt = new Date(Date.now() - 15 * 60 * 1_000).toISOString();
+    const deathPosition = {
+      x: 24,
+      y: 64,
+      z: -12,
+      dimension: "minecraft:overworld",
+    };
+    const runId = "visible-night-recovery-run";
+    const teamId = "visible-night-recovery-team";
+    const initial = checkpoint(BeatGamePhase.ENTER_NETHER, { runId, teamId });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        deathPositions: [{
+          key: `death:${observedAt}`,
+          value: {
+            ...deathPosition,
+            inventoryCounts: { "minecraft:iron_pickaxe": 1 },
+          },
+          observedAt,
+          confidence: 1,
+        }],
+      },
+    }, undefined));
+    driver.currentEnvironment = { gameTime: 16_000n };
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(6)
+        ? [{
+          connectionEpoch: "epoch-1",
+          networkId: 91,
+          entityType: "minecraft:item",
+          itemId: "minecraft:iron_pickaxe",
+          position: deathPosition,
+          velocity: { x: 0, y: 0, z: 0 },
+          alive: true,
+          health: 5,
+          observedAt: new Date().toISOString(),
+        }]
+        : [];
+    let recoveryAttempts = 0;
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        runId,
+        team: { teamId },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+        hooks: {
+          recoverDeath: () =>
+            Effect.sync(() => {
+              recoveryAttempts += 1;
+            }).pipe(Effect.zipRight(Effect.never)),
+        },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (recoveryAttempts === 0) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(recoveryAttempts).toBe(1);
+    expect(driver.actions.some((action) => action.type === "dig-block"))
+      .toBe(false);
+  });
+
   it("prioritizes a fresh corpse over night shelter", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();

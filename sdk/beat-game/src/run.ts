@@ -1298,6 +1298,9 @@ function shouldTakeNightShelter(
     if (!isHostileNight(environment.gameTime)) {
       return false;
     }
+    if (yield* hasVisibleValuableCorpseDrops(state, observation)) {
+      return false;
+    }
     if (yield* isSafelyBelowOverworldSurface(state.driver, observation)) {
       return false;
     }
@@ -2331,7 +2334,8 @@ function executeDecision(
                 deathPosition: pendingDeath.position,
                 path: {
                   ...state.strategy.path,
-                  allowMining: hasMiningPickaxe(respawned),
+                  allowMining: nearbyCorpseDrops !== undefined
+                    || hasMiningPickaxe(respawned),
                   avoidFluids: false,
                   additionalPlaceItemIds:
                     DEATH_RECOVERY_ADDITIONAL_PLACE_ITEM_IDS,
@@ -13446,6 +13450,33 @@ function inspectNearbyCorpseDrops(
       )
     ),
   );
+}
+
+function hasVisibleValuableCorpseDrops(
+  state: RunState,
+  observation: BeatGameObservation,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  return Effect.gen(function* () {
+    const pendingDeaths = yield* Ref.get(state.pendingDeaths);
+    for (const pendingDeath of pendingDeaths) {
+      if (
+        !pendingDeath.recoverItems
+        || classifyDeathRecoveryInventory(pendingDeath.inventoryCounts)
+          !== "valuable"
+      ) {
+        continue;
+      }
+      const drops = yield* inspectNearbyCorpseDrops(
+        state,
+        pendingDeath,
+        observation,
+      );
+      if (drops !== undefined && drops.length > 0) {
+        return true;
+      }
+    }
+    return false;
+  });
 }
 
 function forgetDeathPosition(
