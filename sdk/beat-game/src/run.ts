@@ -3024,7 +3024,6 @@ function escapeFromTarget(
         target,
         latest,
         options.continueEscapingWhenHit ?? false,
-        directEscapeSucceeded,
       ),
     );
     if (outcome.type === "unsafe-air") {
@@ -3090,7 +3089,6 @@ function monitorEscapeSafety(
   target: BeatGameEntityObservation,
   previousObservation: BeatGameObservation,
   continueEscapingWhenHit: boolean,
-  directEscapeSucceeded: boolean,
 ): Effect.Effect<
   | { readonly type: "dead" | "safe" | "unsafe-air" }
   | {
@@ -3144,10 +3142,7 @@ function monitorEscapeSafety(
                   ) <= CREEPER_EMERGENCY_REEVASION_RADIUS ** 2
             ? currentTarget
             : undefined;
-          if (
-            directEscapeSucceeded
-            && urgentCreeper !== undefined
-          ) {
+          if (urgentCreeper !== undefined) {
             return Effect.succeed({
               type: "escape",
               target: urgentCreeper,
@@ -3254,7 +3249,6 @@ function monitorEscapeSafety(
                 : currentTarget,
               observation,
               continueEscapingWhenHit,
-              directEscapeSucceeded,
             );
           }
           return findNearbyAttackThreat(state, observation).pipe(
@@ -3265,7 +3259,6 @@ function monitorEscapeSafety(
                   currentTarget,
                   observation,
                   continueEscapingWhenHit,
-                  directEscapeSucceeded,
                 );
               }
               if (
@@ -3293,7 +3286,6 @@ function monitorEscapeSafety(
                     target,
                     observation,
                     continueEscapingWhenHit,
-                    directEscapeSucceeded,
                   );
               }
               const caughtByCloseMeleePursuer =
@@ -3325,7 +3317,6 @@ function monitorEscapeSafety(
                     currentTarget,
                     observation,
                     continueEscapingWhenHit,
-                    directEscapeSucceeded,
                   );
                 }
                 return Effect.succeed({
@@ -3358,7 +3349,6 @@ function monitorEscapeSafety(
                   currentTarget,
                   observation,
                   continueEscapingWhenHit,
-                  directEscapeSucceeded,
                 );
               }
               return Effect.succeed({
@@ -3485,6 +3475,10 @@ function knockBackAndSprintAway(
       };
     const projectedIntoFluid = threat.entityType !== "minecraft:creeper"
       && (yield* isPlayerInFluid(state.driver, projectedPosition));
+    const emergencyBlindCreeperSprint =
+      threat.entityType === "minecraft:creeper"
+      && distance <= CREEPER_EMERGENCY_REEVASION_RADIUS
+      && nearbyLava.length === 0;
     return yield* state.driver.withControl(Effect.gen(function* () {
       if (distance <= EMERGENCY_KNOCKBACK_RANGE) {
         yield* performKnockbackStrike(state, observation, threat);
@@ -3492,7 +3486,11 @@ function knockBackAndSprintAway(
       if (
         nearbyLava.length > 0
         || (projectedIntoFluid && !directAquaticEvasion)
-        || (direction === undefined && !directAquaticEvasion)
+        || (
+          direction === undefined
+          && !directAquaticEvasion
+          && !emergencyBlindCreeperSprint
+        )
       ) {
         return false;
       }

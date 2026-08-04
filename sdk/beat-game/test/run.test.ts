@@ -5211,6 +5211,70 @@ describe("beat-game run lifecycle", () => {
     expect(driver.currentObservation.player.health).toBe(20);
   }, 10_000);
 
+  it("blind-sprints from a closing creeper when flee replanning stalls", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({ health: 6, food: 13 });
+    const distantCreeper = {
+      connectionEpoch: "epoch-1",
+      networkId: 41,
+      entityType: "minecraft:creeper",
+      position: {
+        x: 8,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:01.000Z",
+    } as const;
+    const closingCreeper = {
+      ...distantCreeper,
+      position: { ...distantCreeper.position, x: 5 },
+      observedAt: "2026-01-01T00:00:02.000Z",
+    } as const;
+    driver.entityResults = [distantCreeper];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (task.type === "flee") {
+          driver.entityResults = [closingCreeper];
+        }
+      }).pipe(
+        Effect.zipRight(task.type === "flee" ? Effect.never : Effect.void),
+      );
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.actions.some((action) =>
+        action.type === "set-movement"
+        && action.forward === true
+        && action.jump === true
+        && action.sprint === true
+      )) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    })));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "flee",
+      selector: { networkId: distantCreeper.networkId, alive: true },
+    }));
+    expect(driver.actions).toContainEqual({
+      type: "set-movement",
+      forward: true,
+      jump: true,
+      sprint: true,
+    });
+    expect(driver.tasks).not.toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+    }));
+  }, 10_000);
+
   it("allows a submerged escape route to reach dry land", async () => {
     const driver = new FakeBeatGameDriver();
     driver.entityResults = [{
