@@ -317,10 +317,27 @@ describe("smoke environment diagnostics", () => {
       clocks: [],
       gameTime: 36_500n,
       dayTime: 12_500,
+      dayPhase: "dusk",
       isDay: false,
-      isNight: true,
+      isNight: false,
+      isHostileNight: false,
       raining: true,
       rainLevel: 0.75,
+    });
+  });
+
+  it("distinguishes dawn from the hostile night window", () => {
+    expect(summarizeSmokeEnvironment({
+      clocks: new Map(),
+      gameTime: 47_945n,
+    })).toEqual({
+      clocks: [],
+      gameTime: 47_945n,
+      dayTime: 23_945,
+      dayPhase: "dawn",
+      isDay: false,
+      isNight: false,
+      isHostileNight: false,
     });
   });
 });

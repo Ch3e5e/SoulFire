@@ -679,14 +679,25 @@ export function summarizeSmokeEnvironment(
   const dayTime = gameTime === undefined
     ? undefined
     : Number((gameTime % 24_000n + 24_000n) % 24_000n);
+  const dayPhase = dayTime === undefined
+    ? undefined
+    : dayTime < 12_000
+    ? "day" as const
+    : dayTime < 13_000
+    ? "dusk" as const
+    : dayTime < 23_000
+    ? "night" as const
+    : "dawn" as const;
   return {
     ...(gameTime === undefined ? {} : { gameTime }),
     ...(dayTime === undefined
       ? {}
       : {
         dayTime,
-        isDay: dayTime < 12_000,
-        isNight: dayTime >= 12_000,
+        dayPhase,
+        isDay: dayPhase === "day",
+        isNight: dayPhase === "night",
+        isHostileNight: dayPhase === "night",
       }),
     ...(environment.raining === undefined
       ? {}
