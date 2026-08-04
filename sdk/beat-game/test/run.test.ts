@@ -2283,9 +2283,7 @@ describe("beat-game run lifecycle", () => {
         entityType: salmon.entityType,
       }),
     }));
-    expect(driver.paths).toContainEqual(expect.objectContaining({
-      position: salmon.position,
-    }));
+    expect(driver.paths).toHaveLength(0);
   });
 
   it("recovers a nearby corpse before preparing at low health", async () => {
@@ -16692,12 +16690,15 @@ describe("beat-game run lifecycle", () => {
           replaceable: true,
         })]
         : [];
-    let firstPursuit = true;
-    driver.pathResolver = (position, radius, policy) =>
-      Effect.suspend(() => {
-        driver.paths.push({ position, radius, policy });
-        if (position.x === salmon.position.x && firstPursuit) {
-          firstPursuit = false;
+    let pursuits = 0;
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (task.type !== "attack-entity") {
+          return false;
+        }
+        pursuits += 1;
+        if (pursuits === 1) {
           driver.currentObservation = observation({
             food: 5,
             health: 8,
@@ -16710,10 +16711,15 @@ describe("beat-game run lifecycle", () => {
             },
             counts: { "minecraft:wooden_sword": 1 },
           });
-          return Effect.never;
+          return true;
         }
-        return Effect.void;
-      });
+        driver.entityResults = [];
+        return false;
+      }).pipe(
+        Effect.flatMap((awaitAirRecovery) =>
+          awaitAirRecovery ? Effect.never : Effect.void
+        ),
+      );
     driver.actionObserver = (action) => {
       if (
         action.type !== "set-movement"
@@ -16735,19 +16741,14 @@ describe("beat-game run lifecycle", () => {
         counts: { "minecraft:wooden_sword": 1 },
       });
     };
-    driver.taskResolver = (task) =>
-      Effect.sync(() => {
-        driver.tasks.push(task);
-        if (task.type === "attack-entity") {
-          driver.entityResults = [];
-        }
-      });
-
     await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const run = yield* beatGameWithDriver(driver, {
         strategy: { observationPollMs: 1 },
       });
-      while (!driver.tasks.some((task) => task.type === "attack-entity")) {
+      while (
+        driver.tasks.filter((task) => task.type === "attack-entity").length
+          < 2
+      ) {
         yield* Effect.sleep(1);
       }
       yield* run.stop;
@@ -16761,7 +16762,7 @@ describe("beat-game run lifecycle", () => {
       type: "attack-entity",
       target: expect.objectContaining({ networkId: salmon.networkId }),
     }));
-    expect(driver.paths).toHaveLength(1);
+    expect(driver.paths).toHaveLength(0);
     expect(driver.surfaceQueries.every(({ radius }) => radius === 4)).toBe(
       true,
     );
@@ -16873,10 +16874,6 @@ describe("beat-game run lifecycle", () => {
       },
     } as const;
     driver.entityResults = [deepSalmon, shallowSalmon];
-    driver.pathResolver = (position, radius, policy) =>
-      Effect.sync(() => {
-        driver.paths.push({ position, radius, policy });
-      });
     await Effect.runPromise(Effect.scoped(
       beatGameWithDriver(driver, {
         strategy: { observationPollMs: 1 },
@@ -16897,10 +16894,7 @@ describe("beat-game run lifecycle", () => {
       type: "attack-entity",
       target: expect.objectContaining({ networkId: shallowSalmon.networkId }),
     }));
-    expect(driver.paths).toContainEqual(expect.objectContaining({
-      position: shallowSalmon.position,
-      radius: 4,
-    }));
+    expect(driver.paths).toHaveLength(0);
     const attackIndex = driver.tasks.findIndex(
       (task) => task.type === "attack-entity",
     );
@@ -16950,17 +16944,6 @@ describe("beat-game run lifecycle", () => {
       health: 1,
     } as const;
     driver.entityResults = [healthyCod, woundedCod];
-    driver.pathResolver = (position, radius, policy) =>
-      Effect.sync(() => {
-        driver.paths.push({ position, radius, policy });
-        driver.currentObservation = observation({
-          position,
-          health: 20,
-          food: 6,
-          counts: driver.currentObservation.inventory.counts,
-        });
-      });
-
     await Effect.runPromise(Effect.scoped(
       beatGameWithDriver(driver, {
         strategy: { observationPollMs: 1 },
@@ -16981,10 +16964,7 @@ describe("beat-game run lifecycle", () => {
       type: "attack-entity",
       target: expect.objectContaining({ networkId: woundedCod.networkId }),
     }));
-    expect(driver.paths).toContainEqual(expect.objectContaining({
-      position: woundedCod.position,
-      radius: 4,
-    }));
+    expect(driver.paths).toHaveLength(0);
   }, 10_000);
 
   it("retries the same fish after a bounded aquatic chase expires", async () => {
@@ -17390,10 +17370,7 @@ describe("beat-game run lifecycle", () => {
       type: "attack-entity",
       target: expect.objectContaining({ networkId: salmon.networkId }),
     }));
-    expect(driver.paths).toContainEqual(expect.objectContaining({
-      position: salmon.position,
-      radius: 4,
-    }));
+    expect(driver.paths).toHaveLength(0);
   });
 
   it("buffers shallow fish after a healthy dry land search is exhausted", async () => {
