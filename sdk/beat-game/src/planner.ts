@@ -17,7 +17,7 @@ import {
   requirementsForPhase,
 } from "./requirements.js";
 
-const FOOD_RESERVE_REFILL_TOLERANCE = 2;
+const FOOD_RESERVE_REFILL_TOLERANCE = 3;
 const DEEP_WORK_MINIMUM_FOOD_RESERVE = 3;
 const PRACTICAL_OVERWORLD_FOOD_REFILL_MINIMUM_Y = 50;
 

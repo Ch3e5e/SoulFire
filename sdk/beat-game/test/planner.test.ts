@@ -141,6 +141,30 @@ describe("beat-game planner", () => {
     });
   });
 
+  it("secures iron before topping up a useful surface food reserve", () => {
+    const decision = decideBeatGameAction({
+      checkpoint: checkpoint(BeatGamePhase.PREPARE_OVERWORLD),
+      observation: observation({
+        counts: {
+          "minecraft:cooked_beef": 5,
+          "minecraft:spruce_log": 8,
+          "minecraft:cobblestone": 20,
+          "minecraft:stone_sword": 1,
+          "minecraft:stone_pickaxe": 1,
+        },
+        food: 20,
+        position: { y: 76 },
+      }),
+      strategy: defaultBeatGameStrategy,
+    });
+
+    expect(decision).toMatchObject({
+      type: "satisfy-requirement",
+      action: "satisfy:iron",
+      requirement: { key: "iron" },
+    });
+  });
+
   it("tops up a deferred food reserve before entering the Nether", () => {
     const decision = decideBeatGameAction({
       checkpoint: checkpoint(BeatGamePhase.ENTER_NETHER),
