@@ -21,6 +21,7 @@ import com.soulfiremc.mod.mixin.soulfire.BlockStatePredictionHandlerAccessor;
 import com.soulfiremc.mod.mixin.soulfire.ClientLevelAccessor;
 import com.soulfiremc.server.util.SFBlockHelpers;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.state.BlockState;
 
 public final class BlockPredictionSupport {
@@ -55,7 +56,7 @@ public final class BlockPredictionSupport {
     int replacementRetries,
     int maximumReplacementRetries
   ) {
-    if (SFBlockHelpers.isEmptyBlock(currentState.getBlock())) {
+    if (isClearedBreakTarget(currentState)) {
       return breakAttempted && pendingPrediction
         ? BreakReconciliation.AWAIT_CONFIRMATION
         : BreakReconciliation.COMPLETE;
@@ -73,5 +74,10 @@ public final class BlockPredictionSupport {
       return BreakReconciliation.RETRY_REPLACEMENT;
     }
     return BreakReconciliation.REJECTED;
+  }
+
+  public static boolean isClearedBreakTarget(BlockState state) {
+    return SFBlockHelpers.isEmptyBlock(state.getBlock())
+      || state.getBlock() instanceof LiquidBlock;
   }
 }

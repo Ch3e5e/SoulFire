@@ -98,7 +98,6 @@ import net.minecraft.world.item.component.WritableBookContent;
 import net.minecraft.world.item.component.WrittenBookContent;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.block.BedBlock;
-import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.SignBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.Property;
@@ -1913,11 +1912,11 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
       var pendingPrediction =
         BlockPredictionSupport.hasPendingPrediction(bot, position);
       var currentState = level.getBlockState(position);
-      if (!started && (currentState.isAir() || currentState.getBlock() instanceof LiquidBlock)) {
+      if (!started && BlockPredictionSupport.isClearedBreakTarget(currentState)) {
         done = true;
         return;
       }
-      if (currentState.isAir() && started) {
+      if (started && BlockPredictionSupport.isClearedBreakTarget(currentState)) {
         predictedBroken = true;
       }
       var reconciliation = BlockPredictionSupport.reconcileBreak(
@@ -1964,7 +1963,7 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
         return;
       }
       if (!gameMode.continueDestroyBlock(position, face)) {
-        if (level.getBlockState(position).isAir()) {
+        if (BlockPredictionSupport.isClearedBreakTarget(level.getBlockState(position))) {
           predictedBroken = true;
           done = !BlockPredictionSupport.hasPendingPrediction(bot, position);
           return;
@@ -1975,7 +1974,7 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
       }
       player.swing(InteractionHand.MAIN_HAND);
       ticks++;
-      if (level.getBlockState(position).isAir()) {
+      if (BlockPredictionSupport.isClearedBreakTarget(level.getBlockState(position))) {
         predictedBroken = true;
         done = !BlockPredictionSupport.hasPendingPrediction(bot, position);
       } else if (ticks >= DIG_ACTION_TIMEOUT.toSeconds() * 20) {

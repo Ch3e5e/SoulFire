@@ -23,7 +23,6 @@ import com.soulfiremc.server.pathfinding.SFVec3i;
 import com.soulfiremc.server.pathfinding.cost.Costs;
 import com.soulfiremc.server.pathfinding.graph.BlockFace;
 import com.soulfiremc.server.pathfinding.graph.actions.movement.MovementMiningCost;
-import com.soulfiremc.server.util.SFBlockHelpers;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import net.minecraft.world.InteractionHand;
@@ -65,8 +64,8 @@ public final class BlockBreakAction implements WorldAction {
   public boolean isCompleted(BotConnection connection) {
     var level = connection.minecraft().level;
     var position = blockPosition.toBlockPos();
-    var blockType = level.getBlockState(position).getBlock();
-    if (!SFBlockHelpers.isEmptyBlock(blockType)) {
+    var state = level.getBlockState(position);
+    if (!BlockPredictionSupport.isClearedBreakTarget(state)) {
       return false;
     }
     if (!breakAttempted) {
@@ -156,7 +155,7 @@ public final class BlockBreakAction implements WorldAction {
       log.warn("Block at {} is not loaded!", blockPosition);
       return;
     }
-    if (SFBlockHelpers.isEmptyBlock(optionalBlock.getBlock())) {
+    if (BlockPredictionSupport.isClearedBreakTarget(optionalBlock)) {
       predictedBroken |= BlockPredictionSupport.hasPendingPrediction(
         connection,
         blockPosition.toBlockPos()
@@ -186,8 +185,9 @@ public final class BlockBreakAction implements WorldAction {
     }
 
     if (gameMode.continueDestroyBlock(target, direction)) {
-      predictedBroken |=
-        SFBlockHelpers.isEmptyBlock(level.getBlockState(target).getBlock());
+      predictedBroken |= BlockPredictionSupport.isClearedBreakTarget(
+        level.getBlockState(target)
+      );
       clientEntity.swing(InteractionHand.MAIN_HAND);
     }
   }

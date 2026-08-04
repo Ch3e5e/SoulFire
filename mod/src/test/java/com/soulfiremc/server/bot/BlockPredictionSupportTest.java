@@ -40,6 +40,18 @@ final class BlockPredictionSupportTest {
   }
 
   @Test
+  void completesWhenBreakingAPlantRestoresItsFluid() {
+    assertEquals(
+      AWAIT_CONFIRMATION,
+      reconcile(Blocks.WATER, Blocks.KELP_PLANT, true, true, true, 0)
+    );
+    assertEquals(
+      COMPLETE,
+      reconcile(Blocks.WATER, Blocks.KELP_PLANT, true, true, false, 0)
+    );
+  }
+
+  @Test
   void retriesWhenGravityReplacesAConfirmedBreak() {
     assertEquals(
       RETRY_REPLACEMENT,
