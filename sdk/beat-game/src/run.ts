@@ -349,6 +349,7 @@ const DIRECTED_HUNT_MAXIMUM_DETOUR = 32;
 const DIRECTED_HUNT_DESTINATION_REACHED_RADIUS = 3;
 const URGENT_AQUATIC_HUNT_MAXIMUM_HORIZONTAL_DISTANCE = 64;
 const URGENT_AQUATIC_HUNT_MAXIMUM_VERTICAL_DISTANCE = 4;
+const LAND_HUNT_CHASE_TIMEOUT_MS = 20_000;
 const AQUATIC_HUNT_CHASE_TIMEOUT_MS = 30_000;
 const AQUATIC_HUNT_MINIMUM_AIR_TICKS = 120;
 const HUNT_DROP_RECOVERY_RADIUS = 48;
@@ -1581,13 +1582,13 @@ function executeDecision(
               );
               yield* respawnAndRecover(state.driver, {
                 deathPosition: pendingDeath.position,
-                retryThroughFluids: true,
                 path: {
                   ...state.strategy.path,
                   allowMining: hasMiningPickaxe(respawned),
-                  avoidFluids: true,
+                  avoidFluids: false,
                   additionalPlaceItemIds:
                     DEATH_RECOVERY_ADDITIONAL_PLACE_ITEM_IDS,
+                  sprint: false,
                 },
               });
             } else if (pendingDeath.recoverItems) {
@@ -9576,26 +9577,33 @@ function huntOrExplore(
         sprinting: true,
         path: targetHuntingPath,
       });
+      const timedAttack = attack.pipe(
+        Effect.timeoutFail({
+          duration: aquaticTarget
+            ? AQUATIC_HUNT_CHASE_TIMEOUT_MS
+            : LAND_HUNT_CHASE_TIMEOUT_MS,
+          onTimeout: () => new BeatGameDriverError({
+            operation: "task.attack-entity",
+            code: aquaticTarget
+              ? "aquatic_chase_timeout"
+              : "land_chase_timeout",
+            retryable: true,
+            message: aquaticTarget
+              ? `Stopped chasing moving aquatic target ${target.networkId}`
+              : `Stopped chasing moving land target ${target.networkId}`,
+          }),
+        }),
+      );
       const boundedAttack = aquaticTarget
         ? Effect.raceFirst(
-          attack.pipe(
-            Effect.timeoutFail({
-              duration: AQUATIC_HUNT_CHASE_TIMEOUT_MS,
-              onTimeout: () => new BeatGameDriverError({
-                operation: "task.attack-entity",
-                code: "aquatic_chase_timeout",
-                retryable: true,
-                message:
-                  `Stopped chasing moving aquatic target ${target.networkId}`,
-              }),
-            }),
-          ),
+          timedAttack,
           waitForUnsafeAquaticHunt(state),
         )
-        : attack;
+        : timedAttack;
       const defeated = yield* boundedAttack.pipe(
         Effect.tapError((cause) =>
           cause.code === "aquatic_chase_timeout"
+              || cause.code === "land_chase_timeout"
               || cause.code === "aquatic_air_low"
             ? Effect.void
             : persist(state, (current) => ({

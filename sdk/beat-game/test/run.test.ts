@@ -734,6 +734,10 @@ describe("beat-game run lifecycle", () => {
     expect(driver.paths).toContainEqual(expect.objectContaining({
       position: deathPosition,
       radius: 2,
+      policy: expect.objectContaining({
+        avoidFluids: false,
+        sprint: false,
+      }),
     }));
     expect(driver.tasks).toContainEqual(expect.objectContaining({
       type: "auto-eat",
@@ -23707,6 +23711,80 @@ describe("beat-game run lifecycle", () => {
         networkId: cow.networkId,
       }),
     }));
+  });
+
+  it("retargets after a moving land animal exceeds its chase budget", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      health: 20,
+      food: 6,
+      counts: {
+        "minecraft:cobblestone": 20,
+        "minecraft:oak_log": 8,
+        "minecraft:wooden_sword": 1,
+      },
+    });
+    const rabbit = {
+      connectionEpoch: "epoch-1",
+      networkId: 43,
+      entityType: "minecraft:rabbit",
+      position: {
+        x: 2,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 3,
+      observedAt: "2026-01-01T00:00:01.000Z",
+    } as const;
+    const cow = {
+      ...rabbit,
+      networkId: 44,
+      entityType: "minecraft:cow",
+      position: { ...rabbit.position, x: 4 },
+      health: 10,
+    } as const;
+    driver.entityResults = [rabbit];
+    driver.taskResolver = (task) =>
+      Effect.suspend(() => {
+        driver.tasks.push(task);
+        if (task.type !== "attack-entity") {
+          return Effect.void;
+        }
+        if (task.target.networkId !== rabbit.networkId) {
+          return Effect.never;
+        }
+        driver.entityResults = [cow];
+        return Effect.fail(new BeatGameDriverError({
+          operation: "task.attack-entity",
+          code: "land_chase_timeout",
+          retryable: true,
+          message: "The rabbit kept moving out of reach",
+        }));
+      });
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (
+        driver.tasks.filter((task) => task.type === "attack-entity").length < 2
+      ) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    }).pipe(Effect.timeout("5 seconds"))));
+
+    expect(
+      driver.tasks
+        .filter((task) => task.type === "attack-entity")
+        .slice(0, 2)
+        .map((task) => task.type === "attack-entity"
+          ? task.target.networkId
+          : undefined),
+    ).toEqual([rabbit.networkId, cow.networkId]);
   });
 
   it("eats raw food for emergency recovery when no furnace is available", async () => {
