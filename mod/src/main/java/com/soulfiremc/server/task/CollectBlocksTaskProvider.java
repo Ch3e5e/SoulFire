@@ -293,6 +293,13 @@ public final class CollectBlocksTaskProvider
       || lineOfSight.getAsBoolean();
   }
 
+  static boolean shouldIncludeOccludedReachGoals(
+    boolean requireLineOfSight,
+    int consecutiveStalledPaths
+  ) {
+    return !requireLineOfSight && consecutiveStalledPaths == 0;
+  }
+
   static Set<GoalScorer> collectionGoals(
     BlockGetter level,
     Vec3 eyePosition,
@@ -441,7 +448,10 @@ public final class CollectBlocksTaskProvider
           level,
           player.getEyePosition(),
           candidates,
-          !requireLineOfSight,
+          shouldIncludeOccludedReachGoals(
+            requireLineOfSight,
+            consecutiveStalledPaths
+          ),
           rejectedAdjacentPositions
         )),
         constraint

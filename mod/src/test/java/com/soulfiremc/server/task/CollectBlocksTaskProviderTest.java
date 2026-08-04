@@ -224,6 +224,19 @@ final class CollectBlocksTaskProviderTest {
   }
 
   @Test
+  void forcesAllOccludedTargetsToUseBreakGoalsAfterAStalledRoute() {
+    assertTrue(
+      CollectBlocksTaskProvider.shouldIncludeOccludedReachGoals(false, 0)
+    );
+    assertFalse(
+      CollectBlocksTaskProvider.shouldIncludeOccludedReachGoals(false, 1)
+    );
+    assertFalse(
+      CollectBlocksTaskProvider.shouldIncludeOccludedReachGoals(true, 0)
+    );
+  }
+
+  @Test
   void restrictsCollectionToTheRequestedElevationRange() {
     var range = IntRange.newBuilder()
       .setMinimum(60)
