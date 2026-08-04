@@ -56,6 +56,7 @@ const SUBMERGED_DROP_PICKUP_MINIMUM_AIR_RATIO = 0.35;
 const PORTAL_CASTING_LAVA_SIGHT_CLEARING_BLOCKS = 4;
 const PORTAL_CASTING_LAVA_COLLECTION_POLLS = 10;
 const PORTAL_CASTING_WATER_RECOVERY_ATTEMPTS = 3;
+const PORTAL_CASTING_BUCKET_FACE_INSET = 1 / 64;
 const PORTAL_CASTING_SUPPORT_SCAFFOLD_RADIUS = 4.9;
 const PORTAL_CASTING_SUPPORT_SCAFFOLD_MAXIMUM_RESULTS = 1_000;
 const STAIRCASE_INITIAL_LANDING_ATTEMPTS = 4;
@@ -4829,6 +4830,7 @@ function castNetherPortalFromLavaPool(
             driver,
             below(target),
             ["minecraft:lava_bucket"],
+            options.path,
           );
           yield* waitForExactBlockState(
             driver,
@@ -4869,6 +4871,7 @@ function castNetherPortalFromLavaPool(
             driver,
             below(water),
             ["minecraft:water_bucket"],
+            options.path,
           );
         }));
         yield* waitForExactBlockState(
@@ -5491,6 +5494,7 @@ function placeBucketOnTopOf(
   driver: BeatGameDriver,
   support: BeatGameBlockPosition,
   itemIds: readonly string[],
+  path?: Partial<BeatGamePathPolicy>,
   attemptsRemaining = 3,
 ): Effect.Effect<void, BeatGameDriverError> {
   const target = { ...support, y: support.y + 1 };
@@ -5520,16 +5524,15 @@ function placeBucketOnTopOf(
               && block?.properties.waterlogged === "true"
             )
             ? Effect.void
-            : cause.code === "failed_precondition" && attemptsRemaining > 1
-            ? Effect.sleep(100).pipe(
-              Effect.zipRight(placeBucketOnTopOf(
-                driver,
-                support,
-                itemIds,
-                attemptsRemaining - 1,
-              )),
+            : retryPortalBucketPlacement(
+              driver,
+              support,
+              itemIds,
+              path,
+              attemptsRemaining,
+              cause,
+              cause.code === "failed_precondition",
             )
-            : Effect.fail(cause)
         ),
       )
     ),
@@ -5552,21 +5555,58 @@ function placeBucketOnTopOf(
             && block?.properties.waterlogged === "true"
           )
         ? Effect.void
-        : attemptsRemaining > 1
-        ? Effect.sleep(100).pipe(
-          Effect.zipRight(placeBucketOnTopOf(
-            driver,
-            support,
-            itemIds,
-            attemptsRemaining - 1,
-          )),
-        )
-        : Effect.fail(behaviorError(
+        : retryPortalBucketPlacement(
           driver,
-          `Bucket placement missed ${positionKey(target)}`,
-        ))
+          support,
+          itemIds,
+          path,
+          attemptsRemaining,
+          behaviorError(
+            driver,
+            `Bucket placement missed ${positionKey(target)}`,
+          ),
+          true,
+        )
     ),
   );
+}
+
+function retryPortalBucketPlacement(
+  driver: BeatGameDriver,
+  support: BeatGameBlockPosition,
+  itemIds: readonly string[],
+  path: Partial<BeatGamePathPolicy> | undefined,
+  attemptsRemaining: number,
+  failure: BeatGameDriverError,
+  retryWithFilledBucket: boolean,
+): Effect.Effect<void, BeatGameDriverError> {
+  if (attemptsRemaining <= 1) {
+    return Effect.fail(failure);
+  }
+  const target = { ...support, y: support.y + 1 };
+  return Effect.gen(function* () {
+    const observation = yield* driver.observe;
+    const hasFilledBucket = itemIds.some((itemId) =>
+      (observation.inventory.counts[itemId] ?? 0) > 0
+    );
+    if (!hasFilledBucket) {
+      if (itemIds.includes("minecraft:lava_bucket")) {
+        yield* collectPortalCastingLava(driver, 1, path);
+      } else {
+        yield* recoverPortalCastingWaterBucket(driver, target, path);
+      }
+    } else if (!retryWithFilledBucket) {
+      return yield* Effect.fail(failure);
+    }
+    yield* Effect.sleep(100);
+    yield* placeBucketOnTopOf(
+      driver,
+      support,
+      itemIds,
+      path,
+      attemptsRemaining - 1,
+    );
+  });
 }
 
 function exposePortalBucketSupport(
@@ -5688,7 +5728,7 @@ function topFaceCenter(position: BeatGameBlockPosition): BeatGamePosition {
   return {
     ...position,
     x: position.x + 0.5,
-    y: position.y + 1,
+    y: position.y + 1 - PORTAL_CASTING_BUCKET_FACE_INSET,
     z: position.z + 0.5,
   };
 }

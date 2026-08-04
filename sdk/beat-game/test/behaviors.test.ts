@@ -3667,7 +3667,7 @@ describe("beat-game behavior programs", () => {
     expect(driver.activeControlScopes).toBe(0);
   });
 
-  it("clears underground portal casting cells before placing liquids", async () => {
+  it("clears casting cells and recovers lava placed in the wrong cell", async () => {
     const driver = new FakeBeatGameDriver();
     const origin = {
       x: 0,
@@ -3683,6 +3683,7 @@ describe("beat-game behavior programs", () => {
       throw new Error("Expected a portal frame target");
     }
     const water = { ...target, z: target.z - 1 };
+    const misplacedLava = { ...target, x: target.x + 1, z: target.z + 1 };
     const interior = frame.interior[0];
     const replaceableInterior = frame.interior[1];
     if (interior === undefined || replaceableInterior === undefined) {
@@ -3759,9 +3760,12 @@ describe("beat-game behavior programs", () => {
     });
     let conversionPending = false;
     let conversionQueries = 0;
+    let misplacedLavaAvailable = false;
     driver.blockQueryResolver = ({ center, selector }) => {
       if (selector.blockIds?.includes("minecraft:lava") === true) {
-        return [];
+        return misplacedLavaAvailable
+          ? [blocks.get(key(misplacedLava))!]
+          : [];
       }
       if (selector.blockIds?.includes("minecraft:obsidian") === true) {
         return [...blocks.values()].filter(({ blockId }) =>
@@ -3790,6 +3794,7 @@ describe("beat-game behavior programs", () => {
     };
     let selectedItemId = "";
     let pendingLavaTarget: typeof target | undefined;
+    let misplacedLavaPlacements = 0;
     let rejectedLavaPlacement = false;
     let rejectedWaterPickup = false;
     const updateInventory = (
@@ -3841,6 +3846,19 @@ describe("beat-game behavior programs", () => {
           delete counts["minecraft:lava_bucket"];
           counts["minecraft:bucket"] = (counts["minecraft:bucket"] ?? 0) + 1;
         });
+        if (misplacedLavaPlacements === 0) {
+          misplacedLavaPlacements += 1;
+          misplacedLavaAvailable = true;
+          blocks.set(
+            key(misplacedLava),
+            blockObservation(misplacedLava, {
+              blockId: "minecraft:lava",
+              properties: { level: "0" },
+              replaceable: true,
+            }),
+          );
+          return;
+        }
         pendingLavaTarget = target;
         blocks.set(
           key(target),
@@ -3871,6 +3889,18 @@ describe("beat-game behavior programs", () => {
         return;
       }
       if (selectedItemId === "minecraft:bucket") {
+        if (misplacedLavaAvailable) {
+          updateInventory((counts) => {
+            counts["minecraft:bucket"] = Math.max(
+              0,
+              (counts["minecraft:bucket"] ?? 0) - 1,
+            );
+            counts["minecraft:lava_bucket"] = 1;
+          });
+          misplacedLavaAvailable = false;
+          blocks.delete(key(misplacedLava));
+          return;
+        }
         updateInventory((counts) => {
           counts["minecraft:bucket"] = Math.max(
             0,
@@ -3898,6 +3928,7 @@ describe("beat-game behavior programs", () => {
       if (
         action.type === "use-item"
         && selectedItemId === "minecraft:bucket"
+        && !misplacedLavaAvailable
         && !rejectedWaterPickup
       ) {
         rejectedWaterPickup = true;
@@ -3984,7 +4015,7 @@ describe("beat-game behavior programs", () => {
       {
         ...target,
         x: target.x + 0.5,
-        y: target.y,
+        y: target.y - 1 / 64,
         z: target.z + 0.5,
       },
     );
@@ -3996,11 +4027,13 @@ describe("beat-game behavior programs", () => {
     expect(water.z).toBeGreaterThan(castingStand.z);
     expect(water.z).toBeLessThan(target.z);
     expect(blocks.get(key(target))?.blockId).toBe("minecraft:obsidian");
+    expect(blocks.has(key(misplacedLava))).toBe(false);
+    expect(misplacedLavaPlacements).toBe(1);
     expect(conversionQueries).toBe(3);
     expect(driver.actions.filter(({ type }) => type === "use-item"))
-      .toHaveLength(2);
+      .toHaveLength(3);
     expect(driver.actions.filter(({ type }) => type === "interact-block"))
-      .toHaveLength(2);
+      .toHaveLength(3);
     expect(driver.actions).toContainEqual({
       type: "interact-block",
       position: { ...target, y: target.y - 1 },
@@ -4009,6 +4042,10 @@ describe("beat-game behavior programs", () => {
     });
     expect(rejectedLavaPlacement).toBe(false);
     expect(rejectedWaterPickup).toBe(true);
+    expect(driver.paths).toContainEqual(expect.objectContaining({
+      position: misplacedLava,
+      radius: 3,
+    }));
     expect(driver.paths).toContainEqual({
       position: water,
       radius: 1.25,
