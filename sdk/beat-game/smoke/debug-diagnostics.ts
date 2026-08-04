@@ -446,6 +446,15 @@ export function buildSmokeStuckDiagnostics(
   const actionAgeMs = actionStarted === undefined
     ? undefined
     : Math.max(0, capturedAtMs - actionStarted.observedAtMs);
+  const intentionalWait = input.currentAction === "survive:night-shelter"
+    ? activity.findLast((entry) =>
+      entry.kind === "intentional-wait"
+      && (
+        actionStarted === undefined
+        || entry.observedAtMs >= actionStarted.observedAtMs
+      )
+    )
+    : undefined;
 
   if (
     input.activePath !== undefined
@@ -511,7 +520,11 @@ export function buildSmokeStuckDiagnostics(
       && capturedAtMs - entry.observedAtMs <= 5 * 60_000
   );
   const repeatedFailure = mostRepeatedDetail(actionFailures);
-  if (repeatedFailure !== undefined && repeatedFailure.count >= 3) {
+  if (
+    intentionalWait === undefined
+    && repeatedFailure !== undefined
+    && repeatedFailure.count >= 3
+  ) {
     findings.push({
       code: "repeated-replan-reason",
       severity: "warning",
@@ -547,6 +560,7 @@ export function buildSmokeStuckDiagnostics(
       || entry.kind === "path-completed"
       || entry.kind === "primitive-completed"
       || entry.kind === "action-succeeded"
+      || entry.kind === "intentional-wait"
   );
   const lastProgressAgeMs = lastProgress === undefined
     ? undefined
@@ -610,6 +624,12 @@ export function buildSmokeStuckDiagnostics(
     lastProgressAt: lastProgress?.observedAt,
     lastProgressAgeMs,
     expectedQuietWindowMs,
+    intentionalWait: intentionalWait === undefined
+      ? undefined
+      : {
+        observedAt: intentionalWait.observedAt,
+        message: intentionalWait.message,
+      },
     findings,
   } as const;
 }
@@ -813,6 +833,7 @@ interface SmokeProgressActivity {
     | "action-failed"
     | "action-started"
     | "action-succeeded"
+    | "intentional-wait"
     | "path-completed"
     | "path-failed"
     | "primitive-completed"
@@ -838,6 +859,21 @@ function parseSmokeProgressActivity(
   }
   if (input.kind === "beat-game-event" && isRecord(input.event)) {
     const event = input.event;
+    if (
+      event.type === "diagnostic"
+      && typeof event.message === "string"
+      && (
+        event.message === "Waiting in a sealed shelter until morning"
+        || event.message === "Waiting under existing cover until morning"
+      )
+    ) {
+      return [{
+        observedAt: input.observedAt,
+        observedAtMs,
+        kind: "intentional-wait",
+        message: event.message,
+      }];
+    }
     if (
       event.type !== "action-started"
       && event.type !== "action-succeeded"

@@ -601,6 +601,52 @@ describe("smoke stuck diagnostics", () => {
       findings: [],
     });
   });
+
+  it("clears historical shelter retries once the current shelter is sealed", () => {
+    const failedShelterAttempt = (second: number) => ({
+      observedAt: `2026-08-03T10:00:${String(second).padStart(2, "0")}.000Z`,
+      kind: "beat-game-event",
+      event: {
+        type: "action-failed",
+        action: "survive:night-shelter",
+        detail: "The shelter attempt ended before morning",
+      },
+    });
+    const diagnostics = buildSmokeStuckDiagnostics({
+      capturedAt: "2026-08-03T10:08:00.000Z",
+      currentAction: "survive:night-shelter",
+      activity: [
+        failedShelterAttempt(10),
+        failedShelterAttempt(20),
+        failedShelterAttempt(30),
+        {
+          observedAt: "2026-08-03T10:01:00.000Z",
+          kind: "beat-game-event",
+          event: {
+            type: "action-started",
+            action: "survive:night-shelter",
+          },
+        },
+        {
+          observedAt: "2026-08-03T10:01:05.000Z",
+          kind: "beat-game-event",
+          event: {
+            type: "diagnostic",
+            message: "Waiting in a sealed shelter until morning",
+          },
+        },
+      ],
+    });
+
+    expect(diagnostics).toMatchObject({
+      status: "progressing",
+      intentionalWait: {
+        observedAt: "2026-08-03T10:01:05.000Z",
+        message: "Waiting in a sealed shelter until morning",
+      },
+      findings: [],
+    });
+  });
 });
 
 function block(
