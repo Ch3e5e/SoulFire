@@ -397,6 +397,10 @@ export function buildSmokeStuckDiagnostics(
     && lastTaskProgress !== undefined
     && latestTaskProgress.length >= 2
     && lastTaskProgress.observedAtMs - firstTaskProgress.observedAtMs >= 10_000
+    && (
+      lastTaskProgress.taskCurrent !== undefined
+      || lastTaskProgress.taskTotal !== undefined
+    )
     && lastTaskProgress.taskCurrent === firstTaskProgress.taskCurrent
     && lastTaskProgress.taskFraction === firstTaskProgress.taskFraction
   ) {

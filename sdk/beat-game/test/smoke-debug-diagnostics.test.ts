@@ -371,6 +371,33 @@ describe("smoke stuck diagnostics", () => {
       lastProgressAgeMs: 1_000,
     });
   });
+
+  it("does not treat an unquantified entity chase as frozen progress", () => {
+    const progress = (observedAt: string) => ({
+      observedAt,
+      kind: "task-progress-observed",
+      task: {
+        taskId: "attack-1",
+        progress: { fraction: 0, message: "Chasing entity" },
+      },
+    });
+    const diagnostics = buildSmokeStuckDiagnostics({
+      capturedAt: "2026-08-03T10:00:20.000Z",
+      currentAction: "satisfy:food",
+      activity: [
+        {
+          observedAt: "2026-08-03T10:00:00.000Z",
+          kind: "beat-game-event",
+          event: { type: "action-started", action: "satisfy:food" },
+        },
+        progress("2026-08-03T10:00:02.000Z"),
+        progress("2026-08-03T10:00:18.000Z"),
+      ],
+    });
+
+    expect(diagnostics.status).toBe("progressing");
+    expect(diagnostics.findings).toEqual([]);
+  });
 });
 
 function block(
