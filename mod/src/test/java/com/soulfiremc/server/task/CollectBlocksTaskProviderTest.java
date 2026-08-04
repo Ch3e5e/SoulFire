@@ -163,6 +163,7 @@ final class CollectBlocksTaskProviderTest {
       blocks.build(),
       eyePosition,
       List.of(visibleTarget, buriedTarget),
+      false,
       Map.of()
     );
 
@@ -177,6 +178,28 @@ final class CollectBlocksTaskProviderTest {
         .map(WithinBlockReachGoal::block)
         .collect(Collectors.toSet())
     );
+  }
+
+  @Test
+  void usesReachGoalsForOccludedTargetsWhenVisibilityIsOptional() {
+    var blocks = new TestBlockAccessorBuilder();
+    var eyePosition = new Vec3(0.5D, 65.62D, 0.5D);
+    var target = new SFVec3i(0, 70, 0);
+    blocks.setBlockAt(0, 70, 0, Blocks.OAK_LOG);
+    blocks.setBlockAt(0, 68, 0, Blocks.OAK_LEAVES);
+
+    var goals = CollectBlocksTaskProvider.collectionGoals(
+      blocks.build(),
+      eyePosition,
+      List.of(target),
+      true,
+      Map.of()
+    );
+
+    assertTrue(goals.stream()
+      .filter(WithinBlockReachGoal.class::isInstance)
+      .map(WithinBlockReachGoal.class::cast)
+      .anyMatch(goal -> goal.block().equals(target)));
   }
 
   @Test

@@ -294,12 +294,16 @@ public final class CollectBlocksTaskProvider
     BlockGetter level,
     Vec3 eyePosition,
     List<SFVec3i> candidates,
+    boolean includeOccludedReachGoals,
     Map<SFVec3i, Set<SFVec3i>> rejectedAdjacentPositions
   ) {
     return candidates.stream()
       .<GoalScorer>mapMulti((candidate, goals) -> {
         goals.accept(new BreakBlockPosGoal(candidate));
-        if (hasLineOfSight(level, eyePosition, candidate.toBlockPos())) {
+        if (
+          includeOccludedReachGoals
+            || hasLineOfSight(level, eyePosition, candidate.toBlockPos())
+        ) {
           goals.accept(new WithinBlockReachGoal(
             candidate,
             rejectedAdjacentPositions.getOrDefault(candidate, Set.of())
@@ -423,6 +427,7 @@ public final class CollectBlocksTaskProvider
           level,
           player.getEyePosition(),
           candidates,
+          !requireLineOfSight,
           rejectedAdjacentPositions
         )),
         constraint
