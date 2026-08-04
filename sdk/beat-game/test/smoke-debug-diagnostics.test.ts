@@ -4,6 +4,7 @@ import {
   buildSmokeActivePathDiagnostics,
   buildSmokeDecisionDiagnostics,
   buildSmokeSpatialDiagnostics,
+  summarizeSmokeEnvironment,
   summarizeSmokeSpatialDiagnostics,
 } from "../smoke/debug-diagnostics.js";
 import {
@@ -229,6 +230,25 @@ describe("smoke decision diagnostics", () => {
         key: "death-1",
         position: { x: 100, y: 63, z: -20 },
       }],
+    });
+  });
+});
+
+describe("smoke environment diagnostics", () => {
+  it("reports the current day phase and weather without losing game time", () => {
+    expect(summarizeSmokeEnvironment({
+      clocks: new Map(),
+      gameTime: 36_500n,
+      raining: true,
+      rainLevel: 0.75,
+    })).toEqual({
+      clocks: [],
+      gameTime: 36_500n,
+      dayTime: 12_500,
+      isDay: false,
+      isNight: true,
+      raining: true,
+      rainLevel: 0.75,
     });
   });
 });

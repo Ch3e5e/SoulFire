@@ -1,3 +1,5 @@
+import type { BotEnvironmentState } from "@soulfiremc/sdk";
+
 import type {
   BeatGameBlockObservation,
   BeatGameCheckpoint,
@@ -379,6 +381,43 @@ export function summarizeSmokeSpatialDiagnostics(
       maximumY: diagnostics.surface.maximumY,
       byBlockId: diagnostics.surface.byBlockId,
     },
+  };
+}
+
+export function summarizeSmokeEnvironment(
+  environment: BotEnvironmentState | undefined,
+) {
+  if (environment === undefined) {
+    return undefined;
+  }
+  const gameTime = environment.gameTime;
+  const dayTime = gameTime === undefined
+    ? undefined
+    : Number((gameTime % 24_000n + 24_000n) % 24_000n);
+  return {
+    ...(gameTime === undefined ? {} : { gameTime }),
+    ...(dayTime === undefined
+      ? {}
+      : {
+        dayTime,
+        isDay: dayTime < 12_000,
+        isNight: dayTime >= 12_000,
+      }),
+    ...(environment.raining === undefined
+      ? {}
+      : { raining: environment.raining }),
+    ...(environment.rainLevel === undefined
+      ? {}
+      : { rainLevel: environment.rainLevel }),
+    ...(environment.thunderLevel === undefined
+      ? {}
+      : { thunderLevel: environment.thunderLevel }),
+    clocks: [...environment.clocks.values()].map((clock) => ({
+      clockId: clock.clockId,
+      totalTicks: clock.totalTicks,
+      partialTick: clock.partialTick,
+      rate: clock.rate,
+    })),
   };
 }
 

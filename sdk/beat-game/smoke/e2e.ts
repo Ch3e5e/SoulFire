@@ -26,7 +26,10 @@ import {
   SettingsNamespace_SettingsEntrySchema,
   SettingsNamespaceSchema,
 } from "@soulfiremc/sdk/generated/soulfire/common_pb";
-import { goals, type SoulFireBot } from "@soulfiremc/sdk";
+import {
+  goals,
+  type SoulFireBot,
+} from "@soulfiremc/sdk";
 import { SoulFire } from "@soulfiremc/sdk/node";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import { execFile as execFileCallback } from "node:child_process";
@@ -69,6 +72,7 @@ import {
   buildSmokeActivePathDiagnostics,
   buildSmokeDecisionDiagnostics,
   buildSmokeSpatialDiagnostics,
+  summarizeSmokeEnvironment,
   summarizeSmokeSpatialDiagnostics,
   type SmokeActivePathTrace,
 } from "./debug-diagnostics.ts";
@@ -655,6 +659,18 @@ const program = Effect.scoped(Effect.gen(function* () {
   );
   const baseDriver = makeSoulFireBeatGameDriver(bot);
   yield* baseDriver.waitForChunks(4, 60_000);
+  const debugSession = debugApiEnabled
+    ? yield* Effect.acquireRelease(
+      bot.observe(),
+      (session) => session.close().pipe(Effect.ignore),
+    )
+    : undefined;
+  if (debugSession !== undefined) {
+    yield* debugSession.waitFor(
+      (_event, state) => state.environment.gameTime !== undefined,
+      { timeoutMs: 5_000 },
+    ).pipe(Effect.ignore);
+  }
   yield* Fiber.interrupt(startupAirGuard);
   yield* bot.resetMovement().pipe(Effect.ignore);
   yield* record("bot-chunks-ready", { radiusChunks: 4 });
@@ -676,7 +692,7 @@ const program = Effect.scoped(Effect.gen(function* () {
     policy: BeatGamePathPolicy,
     details: Readonly<Record<string, unknown>>,
     execute: () => ReturnType<typeof baseDriver.pathfind>,
-  ) => {
+  ) => Effect.suspend(() => {
     const pathId = randomUUID();
     const startedAt = new Date().toISOString();
     const owner = currentDebugActionContext();
@@ -687,6 +703,8 @@ const program = Effect.scoped(Effect.gen(function* () {
       trace = {
         pathId,
         startedAt,
+        fiberId,
+        owner,
         origin: observation.player.position,
         goal,
         policy,
@@ -761,7 +779,7 @@ const program = Effect.scoped(Effect.gen(function* () {
         }
       })),
     );
-  };
+  });
   const driver = {
     ...baseDriver,
     observe: baseDriver.observe.pipe(
@@ -889,7 +907,7 @@ const program = Effect.scoped(Effect.gen(function* () {
       task: Parameters<typeof baseDriver.runTask>[0],
       policy: Parameters<typeof baseDriver.runTask>[1],
       execution: Parameters<typeof baseDriver.runTask>[2],
-    ) => {
+    ) => Effect.suspend(() => {
       const operationId = randomUUID();
       const startedAt = new Date().toISOString();
       const owner = currentDebugActionContext();
@@ -933,49 +951,50 @@ const program = Effect.scoped(Effect.gen(function* () {
           }),
         );
       });
-    },
-    act: (action: Parameters<typeof baseDriver.act>[0]) => {
-      const operationId = randomUUID();
-      const startedAt = new Date().toISOString();
-      const owner = currentDebugActionContext();
-      return Effect.gen(function* () {
-        const fiberId = FiberId.threadName(yield* Effect.fiberId);
-        yield* record("primitive-started", {
-          operationId,
-          startedAt,
-          fiberId,
-          owner,
-          action,
-        }).pipe(Effect.orDie);
-        return yield* baseDriver.act(action).pipe(
-          Effect.onExit((exit) => {
-            const completedAt = new Date().toISOString();
-            if (Exit.isSuccess(exit)) {
-              return record("primitive-completed", {
+    }),
+    act: (action: Parameters<typeof baseDriver.act>[0]) =>
+      Effect.suspend(() => {
+        const operationId = randomUUID();
+        const startedAt = new Date().toISOString();
+        const owner = currentDebugActionContext();
+        return Effect.gen(function* () {
+          const fiberId = FiberId.threadName(yield* Effect.fiberId);
+          yield* record("primitive-started", {
+            operationId,
+            startedAt,
+            fiberId,
+            owner,
+            action,
+          }).pipe(Effect.orDie);
+          return yield* baseDriver.act(action).pipe(
+            Effect.onExit((exit) => {
+              const completedAt = new Date().toISOString();
+              if (Exit.isSuccess(exit)) {
+                return record("primitive-completed", {
+                  operationId,
+                  startedAt,
+                  completedAt,
+                  durationMs: elapsedMilliseconds(startedAt, completedAt),
+                  owner,
+                  action,
+                }).pipe(Effect.orDie);
+              }
+              const status = Exit.isInterrupted(exit)
+                ? "interrupted"
+                : "failed";
+              return record(`primitive-${status}`, {
                 operationId,
                 startedAt,
                 completedAt,
                 durationMs: elapsedMilliseconds(startedAt, completedAt),
                 owner,
                 action,
+                ...debugExitFailure(exit),
               }).pipe(Effect.orDie);
-            }
-            const status = Exit.isInterrupted(exit)
-              ? "interrupted"
-              : "failed";
-            return record(`primitive-${status}`, {
-              operationId,
-              startedAt,
-              completedAt,
-              durationMs: elapsedMilliseconds(startedAt, completedAt),
-              owner,
-              action,
-              ...debugExitFailure(exit),
-            }).pipe(Effect.orDie);
-          }),
-        );
-      });
-    },
+            }),
+          );
+        });
+      }),
   };
   const beatGameStrategy = {
     ...defaultBeatGameStrategy,
@@ -1007,6 +1026,9 @@ const program = Effect.scoped(Effect.gen(function* () {
           activePath: activePathTrace,
           bot,
           driver,
+          environment: () => summarizeSmokeEnvironment(
+            debugSession?.state.environment,
+          ),
           input,
           lastPathOutcome,
           run,
@@ -1099,6 +1121,9 @@ const program = Effect.scoped(Effect.gen(function* () {
               },
               player: observation.player,
               inventory: observation.inventory,
+              environment: summarizeSmokeEnvironment(
+                debugSession?.state.environment,
+              ),
               nearby: spatial,
               pathfinding: {
                 active: activePathTrace === undefined
@@ -1163,6 +1188,9 @@ const program = Effect.scoped(Effect.gen(function* () {
                 planner.currentAction,
                 250,
               ),
+              environment: summarizeSmokeEnvironment(
+                debugSession?.state.environment,
+              ),
             };
           }),
       },
@@ -1176,6 +1204,9 @@ const program = Effect.scoped(Effect.gen(function* () {
             beatGame: run.snapshot,
             player: bot.world.player(),
             inventory: bot.inventory.snapshot(),
+            environment: Effect.sync(() => summarizeSmokeEnvironment(
+              debugSession?.state.environment,
+            )),
           }, { concurrency: "unbounded" }),
       },
       {
@@ -2235,6 +2266,7 @@ function captureSmokeDiagnostics(options: Readonly<{
   activePath: SmokeActivePathTrace | undefined;
   bot: SoulFireBot;
   driver: BeatGameDriver;
+  environment: () => unknown;
   input: unknown;
   lastPathOutcome: SmokePathOutcome | undefined;
   run: BeatGameRun;
@@ -2302,6 +2334,7 @@ function captureSmokeDiagnostics(options: Readonly<{
       },
       player: observation.player,
       inventory: observation.inventory,
+      environment: options.environment(),
       decision: {
         ...buildSmokeDecisionDiagnostics({
           checkpoint: snapshot.checkpoint,
