@@ -631,6 +631,7 @@ const RANGED_THREAT_ESCAPE_TRIGGER_RADIUS = 24;
 const RANGED_THREAT_ESCAPE_SAFE_DISTANCE = 32;
 const ENDERMAN_WATER_ESCAPE_RADIUS = 16;
 const DEFENSIVE_PURSUIT_MAX_DISTANCE = 12;
+const STALLED_RANGED_PURSUIT_MAXIMUM_PROGRESS = 2;
 const EMERGENCY_KNOCKBACK_RANGE = 3.5;
 const EMERGENCY_ESCAPE_SPRINT_MS = 1_250;
 const RANGED_ESCAPE_SPRINT_MS = 2_500;
@@ -3626,6 +3627,7 @@ function escapeFromTarget(
         avoidFluids: !(
           currentlyInFluid
           || fluidFallbackAllowed
+          || rangedThreat
         ),
         maxFallDistance: Math.min(
           escapePath.maxFallDistance,
@@ -6098,11 +6100,14 @@ function defendAgainstTarget(
   state: RunState,
   target: BeatGameEntityObservation,
 ): Effect.Effect<void, BeatGameDriverError> {
+  const isRangedTarget = PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(
+    target.entityType,
+  );
   const defensivePath = {
     ...state.strategy.path,
     allowMining: false,
     allowPlacing: false,
-    avoidFluids: true,
+    avoidFluids: !isRangedTarget,
     maxSearchTimeMs: Math.min(
       state.strategy.path.maxSearchTimeMs,
       3_000,
@@ -6166,7 +6171,9 @@ function defendAgainstTarget(
           {
             commitThroughWound,
             enforcePursuitLeash:
-              PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType),
+              isRangedTarget,
+            disengageStalledShieldedRangedPursuit:
+              canBlockWithShield && isRangedTarget,
           },
         ),
       ).pipe(
@@ -6197,6 +6204,7 @@ function monitorDefenseHealth(
   options: {
     readonly commitThroughWound?: boolean;
     readonly enforcePursuitLeash?: boolean;
+    readonly disengageStalledShieldedRangedPursuit?: boolean;
   } = {},
 ): Effect.Effect<"disengage" | "unsafe-air", BeatGameDriverError> {
   return Effect.sleep(
@@ -6223,6 +6231,16 @@ function monitorDefenseHealth(
         return Effect.succeed("disengage" as const);
       }
       if (observation.player.health <= LETHAL_MELEE_DISENGAGE_HEALTH) {
+        return Effect.succeed("disengage" as const);
+      }
+      if (
+        options.disengageStalledShieldedRangedPursuit === true
+        && observation.player.health < engagementHealth
+        && horizontalDistanceSquared(
+            observation.player.position,
+            engagementPosition,
+          ) < STALLED_RANGED_PURSUIT_MAXIMUM_PROGRESS ** 2
+      ) {
         return Effect.succeed("disengage" as const);
       }
       return state.driver.queryEntities({

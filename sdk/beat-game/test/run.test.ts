@@ -9850,6 +9850,76 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
   });
 
+  it("retreats when a shielded ranged pursuit is wounded without progress", async () => {
+    const driver = new FakeBeatGameDriver();
+    const skeleton = {
+      connectionEpoch: "epoch-1",
+      networkId: 161,
+      entityType: "minecraft:skeleton",
+      position: {
+        x: 10,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    const counts = {
+      "minecraft:shield": 1,
+      "minecraft:stone_sword": 1,
+    };
+    driver.currentObservation = observation({ health: 20, counts });
+    driver.entityResults = [skeleton];
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2)
+          || query.selector.networkId === skeleton.networkId
+        ? driver.entityResults
+        : [];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (task.type === "attack-entity") {
+          driver.currentObservation = observation({ health: 15, counts });
+        }
+        if (task.type === "flee") {
+          driver.entityResults = [];
+        }
+      }).pipe(
+        Effect.zipRight(
+          task.type === "attack-entity" ? Effect.never : Effect.void,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some((task) => task.type === "flee")) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+    })));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+      useOffhandShield: true,
+    }));
+    const attackIndex = driver.tasks.findIndex((task) =>
+      task.type === "attack-entity"
+    );
+    expect(driver.taskPolicies[attackIndex]).toMatchObject({
+      avoidFluids: false,
+    });
+    const fleeIndex = driver.tasks.findIndex((task) => task.type === "flee");
+    expect(fleeIndex).toBeGreaterThan(-1);
+    expect(driver.taskPolicies[fleeIndex]).toMatchObject({
+      avoidFluids: false,
+    });
+  }, 10_000);
+
   it("retreats from a shielded ranged fight before a lethal hit", async () => {
     const driver = new FakeBeatGameDriver();
     const skeleton = {
@@ -10169,7 +10239,7 @@ describe("beat-game run lifecycle", () => {
         z: 0.5,
         dimension: "minecraft:overworld",
       },
-      radius: 1.5,
+      radius: 0.75,
       policy: expect.objectContaining({
         allowMining: true,
         allowPlacing: true,
