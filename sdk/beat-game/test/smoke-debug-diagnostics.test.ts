@@ -236,7 +236,72 @@ describe("smoke decision diagnostics", () => {
       recoveryCandidate: {
         key: "death-1",
         inventoryItemCount: 1,
+        status: "active",
+        sameDimension: true,
+        reason: "Corpse recovery is the active planner action",
       },
+    });
+  });
+
+  it("explains when a valuable corpse is deferred for survival needs", () => {
+    const playerObservation = observation({
+      food: 8,
+      position: origin,
+    });
+    const requirement = {
+      key: "food-supply",
+      itemIds: ["minecraft:cooked_beef"],
+      tags: [],
+      targetCount: 4,
+      currentCount: 0,
+      priority: 112,
+      satisfied: false,
+    } as const;
+    const state = checkpoint(BeatGamePhase.ENTER_NETHER, {
+      planner: {
+        ...checkpoint(BeatGamePhase.ENTER_NETHER).planner,
+        currentAction: "satisfy:food-supply",
+        requirements: [requirement],
+      },
+      memory: {
+        ...checkpoint(BeatGamePhase.ENTER_NETHER).memory,
+        deathPositions: [{
+          key: "valuable-death",
+          value: {
+            x: 40,
+            y: -20,
+            z: -44,
+            dimension: "minecraft:overworld",
+            inventoryCounts: {
+              "minecraft:iron_pickaxe": 1,
+              "minecraft:cobblestone": 64,
+            },
+          },
+          observedAt: "2026-08-03T10:00:00.000Z",
+          confidence: 1,
+        }],
+      },
+    });
+
+    const diagnostics = buildSmokeDecisionDiagnostics({
+      checkpoint: state,
+      observation: playerObservation,
+      strategy: defaultBeatGameStrategy,
+      nextIfReplanned: {
+        type: "satisfy-requirement",
+        action: "satisfy:food-supply",
+        requirement,
+      },
+    });
+
+    expect(diagnostics.blockers.recoveryCandidate).toMatchObject({
+      key: "valuable-death",
+      status: "deferred",
+      sameDimension: true,
+      horizontalDistance: 50,
+      verticalDistance: -84,
+      reason:
+        "Corpse recovery is deferred while food 8 is at or below the eating threshold 14",
     });
   });
 });

@@ -298,9 +298,50 @@ export function buildSmokeDecisionDiagnostics(
         entry.value.inventoryCounts ?? {},
       ).reduce((total, count) => total + Math.max(0, count), 0),
     }));
-  const recoveryCandidate = planner.currentAction === "recover-death"
-    ? rememberedDeaths[0]
-    : undefined;
+  const rememberedRecoveryCandidate = rememberedDeaths.find(
+    ({ inventoryItemCount }) => inventoryItemCount > 0,
+  );
+  const recoveryCandidate = rememberedRecoveryCandidate === undefined
+    ? undefined
+    : {
+      ...rememberedRecoveryCandidate,
+      status: planner.currentAction === "recover-death"
+        ? "active" as const
+        : "deferred" as const,
+      sameDimension:
+        rememberedRecoveryCandidate.position.dimension
+          === observation.player.position.dimension,
+      distance: rememberedRecoveryCandidate.position.dimension
+          === observation.player.position.dimension
+        ? distance(
+          observation.player.position,
+          rememberedRecoveryCandidate.position,
+        )
+        : undefined,
+      horizontalDistance:
+        rememberedRecoveryCandidate.position.dimension
+            === observation.player.position.dimension
+          ? Math.hypot(
+            rememberedRecoveryCandidate.position.x
+              - observation.player.position.x,
+            rememberedRecoveryCandidate.position.z
+              - observation.player.position.z,
+          )
+          : undefined,
+      verticalDistance:
+        rememberedRecoveryCandidate.position.dimension
+            === observation.player.position.dimension
+          ? rememberedRecoveryCandidate.position.y
+            - observation.player.position.y
+          : undefined,
+      reason: explainRecoveryDisposition(
+        planner.currentAction,
+        rememberedRecoveryCandidate.position,
+        observation,
+        strategy,
+        nextIfReplanned,
+      ),
+    };
   const activeAction = planner.currentAction === undefined
     ? undefined
     : {
@@ -351,6 +392,42 @@ export function buildSmokeDecisionDiagnostics(
       recentlyCompletedActions: planner.completedActions.slice(-12),
     },
   };
+}
+
+function explainRecoveryDisposition(
+  currentAction: string | undefined,
+  deathPosition: BeatGamePosition,
+  observation: BeatGameObservation,
+  strategy: BeatGameStrategy,
+  nextIfReplanned: BeatGamePlannerDecision,
+): string {
+  if (currentAction === "recover-death") {
+    return "Corpse recovery is the active planner action";
+  }
+  if (observation.player.dead) {
+    return "Corpse recovery is waiting for the death and respawn flow";
+  }
+  if (deathPosition.dimension !== observation.player.position.dimension) {
+    return `Corpse recovery is deferred because the player is in ${
+      observation.player.position.dimension
+    } and the corpse is in ${deathPosition.dimension}`;
+  }
+  if (observation.player.health < strategy.minimumHealth) {
+    return `Corpse recovery is deferred while health ${
+      observation.player.health
+    } is below the safety threshold ${strategy.minimumHealth}`;
+  }
+  if (observation.player.food <= strategy.eatBelowFood) {
+    return `Corpse recovery is deferred while food ${
+      observation.player.food
+    } is at or below the eating threshold ${strategy.eatBelowFood}`;
+  }
+  const nextAction = "action" in nextIfReplanned
+    ? nextIfReplanned.action
+    : nextIfReplanned.type;
+  return currentAction === undefined
+    ? `Corpse recovery is remembered but a fresh replan currently chooses ${nextAction}`
+    : `Corpse recovery is remembered while ${currentAction} runs; a fresh replan currently chooses ${nextAction}`;
 }
 
 export function buildSmokeStuckDiagnostics(
