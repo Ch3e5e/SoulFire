@@ -4785,7 +4785,11 @@ function castNetherPortalFromLavaPool(
           }).pipe(
             Effect.catchTag("BeatGameDriverError", (cause) =>
               cause.code === "not_found"
-                ? recoverPortalCastingWaterBucket(driver, water).pipe(
+                ? recoverPortalCastingWaterBucket(
+                  driver,
+                  water,
+                  options.path,
+                ).pipe(
                   Effect.zipRight(driver.act({
                     type: "select-item",
                     selector: { itemIds: ["minecraft:water_bucket"] },
@@ -4818,7 +4822,11 @@ function castNetherPortalFromLavaPool(
               ))
           ),
         );
-        yield* recoverPortalCastingWaterBucket(driver, water);
+        yield* recoverPortalCastingWaterBucket(
+          driver,
+          water,
+          options.path,
+        );
       }
       for (const support of temporarySupports) {
         if (samePosition(support, castingStandSupport)) {
@@ -5006,6 +5014,7 @@ function isPortalCastingPlayerStabilityBlock(
 function recoverPortalCastingWaterBucket(
   driver: BeatGameDriver,
   expectedWater: BeatGameBlockPosition,
+  path?: Partial<BeatGamePathPolicy>,
 ): Effect.Effect<void, BeatGameDriverError> {
   return Effect.gen(function* () {
     let lastSource: BeatGameBlockObservation | undefined;
@@ -5042,6 +5051,15 @@ function recoverPortalCastingWaterBucket(
         continue;
       }
       lastSource = source;
+      if (attempt > 0) {
+        yield* driver.pathfind(source.position, 1.25, {
+          ...mergePathPolicy(path),
+          allowMining: false,
+          allowPlacing: false,
+          avoidFluids: true,
+          maxFallDistance: 1,
+        }).pipe(Effect.ignore);
+      }
       const pickup = yield* driver.act({
         type: "select-item",
         selector: { itemIds: ["minecraft:bucket"] },

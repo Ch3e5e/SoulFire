@@ -3781,6 +3781,16 @@ describe("beat-game behavior programs", () => {
       .toHaveLength(5);
     expect(rejectedLavaPlacement).toBe(true);
     expect(rejectedWaterPickup).toBe(true);
+    expect(driver.paths).toContainEqual({
+      position: water,
+      radius: 1.25,
+      policy: expect.objectContaining({
+        allowMining: false,
+        allowPlacing: false,
+        avoidFluids: true,
+        maxFallDistance: 1,
+      }),
+    });
     expect(driver.actions.some(({ type }) => type === "interact-block"))
       .toBe(false);
     expect(driver.tasks).toHaveLength(0);
