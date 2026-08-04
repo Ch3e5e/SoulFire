@@ -2211,12 +2211,18 @@ function executeDecision(
                   );
               if (preparationPending !== undefined) {
                 const current = yield* state.driver.observe;
-                const preparationFailures =
+                const foodReserveStillMissing =
+                  preparationPending === DEATH_RECOVERY_FOOD_SEARCH_PENDING
+                  && deathRecoveryTravelFoodCount(current)
+                    < DEATH_RECOVERY_FOOD_RESERVE_COUNT;
+                const madeMeaningfulApproach =
                   madeMeaningfulDeathRecoveryApproach(
-                      pendingDeath.position,
-                      respawned.player.position,
-                      current.player.position,
-                    )
+                    pendingDeath.position,
+                    respawned.player.position,
+                    current.player.position,
+                  );
+                const preparationFailures =
+                  madeMeaningfulApproach && !foodReserveStillMissing
                     ? yield* clearDeathRecoveryFailure(
                       state,
                       pendingDeath.observedAt,
@@ -2230,10 +2236,6 @@ function executeDecision(
                 const recoveryClass = classifyDeathRecoveryInventory(
                   pendingDeath.inventoryCounts,
                 );
-                const foodReserveStillMissing =
-                  preparationPending === DEATH_RECOVERY_FOOD_SEARCH_PENDING
-                  && deathRecoveryTravelFoodCount(current)
-                    < DEATH_RECOVERY_FOOD_RESERVE_COUNT;
                 const boundedValuableRecoveryReady =
                   recoveryClass === "valuable"
                   && preparationFailures
@@ -2263,8 +2265,7 @@ function executeDecision(
                   );
                 }
                 if (
-                  preparationFailures >= MAX_SAFE_DEATH_RECOVERY_FAILURES
-                  && recoveryClass === "valuable"
+                  recoveryClass === "valuable"
                 ) {
                   if (
                     preparationFailures
@@ -2293,6 +2294,7 @@ function executeDecision(
                         preparationFailures,
                         reason: preparationPending,
                         foodReserveStillMissing,
+                        madeMeaningfulApproach,
                       },
                     });
                   }

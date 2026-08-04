@@ -5087,6 +5087,18 @@ describe("beat-game run lifecycle", () => {
       },
     }, undefined));
     driver.currentObservation = observation({ health: 15, food: 16 });
+    driver.xzPathResolver = (x, z, dimension, radius, policy) =>
+      Effect.sync(() => {
+        driver.xzPaths.push({ x, z, dimension, radius, policy });
+        driver.currentObservation = observation({
+          health: 15,
+          food: 16,
+          position: {
+            ...driver.currentObservation.player.position,
+            x: driver.currentObservation.player.position.x + 10,
+          },
+        });
+      });
 
     await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const run = yield* beatGameWithDriver(driver, {
@@ -5109,6 +5121,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.paths).toContainEqual(expect.objectContaining({
       position: deathPosition,
     }));
+    expect(driver.xzPaths).not.toHaveLength(0);
   }, 15_000);
 
   it("abandons distant recovery after three bounded food searches", async () => {
