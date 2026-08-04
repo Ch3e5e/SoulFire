@@ -728,6 +728,102 @@ describe("beat-game behavior programs", () => {
     expect(driver.actions.at(-1)).toEqual({ type: "reset-movement" });
   });
 
+  it("clears a shallow cover block to collect a submerged drop", async () => {
+    const driver = new FakeBeatGameDriver();
+    const position = {
+      x: 4.5,
+      y: 63,
+      z: -2.5,
+      dimension: "minecraft:overworld",
+    };
+    const drop = {
+      connectionEpoch: "epoch-1",
+      networkId: 15,
+      entityType: "minecraft:item",
+      itemId: "minecraft:salmon",
+      position: {
+        x: 4.5,
+        y: 61.75,
+        z: -2.5,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    const cover = {
+      x: 4,
+      y: 62,
+      z: -3,
+      dimension: "minecraft:overworld",
+    } as const;
+    let coverCleared = false;
+    driver.currentObservation = observation({ position });
+    driver.entityQueryResolver = () =>
+      driver.actions.some((action) =>
+          action.type === "set-movement" && action.forward === true
+        )
+        ? []
+        : [drop];
+    driver.blockQueryResolver = ({ center }) => {
+      const blockPosition = {
+        x: Math.floor(center.x),
+        y: Math.floor(center.y),
+        z: Math.floor(center.z),
+        dimension: center.dimension,
+      };
+      if (blockPosition.y === 61) {
+        return [blockObservation(blockPosition, {
+          blockId: "minecraft:water",
+          replaceable: true,
+          solid: false,
+        })];
+      }
+      if (blockPosition.y === cover.y) {
+        return [blockObservation(blockPosition, coverCleared
+          ? {
+            blockId: "minecraft:water",
+            replaceable: true,
+            solid: false,
+          }
+          : {
+            blockId: "minecraft:ice",
+            replaceable: false,
+            solid: false,
+          })];
+      }
+      return [blockObservation(blockPosition, {
+        blockId: "minecraft:air",
+        replaceable: true,
+        solid: false,
+      })];
+    };
+    driver.actionObserver = (action) => {
+      if (action.type === "dig-block") {
+        coverCleared = true;
+      }
+    };
+
+    await Effect.runPromise(collectNearbyDrops(driver, {
+      itemIds: ["minecraft:salmon"],
+      settleDelayMs: 0,
+      path: { allowMining: true, avoidFluids: false },
+    }));
+
+    expect(driver.actions).toContainEqual({
+      type: "dig-block",
+      position: cover,
+    });
+    expect(driver.actions).toContainEqual({
+      type: "set-movement",
+      forward: true,
+      sprint: false,
+      jump: false,
+      sneak: false,
+    });
+    expect(driver.actions.at(-1)).toEqual({ type: "reset-movement" });
+  });
+
   it("limits a drop sweep to requested resource items", async () => {
     const driver = new FakeBeatGameDriver();
     const position = {

@@ -9406,7 +9406,11 @@ function huntOrExplore(
         maximumDrops: 16,
         settleDelayMs: 500,
         path: shouldCrossFluidsForFoodDrops
-          ? { ...targetHuntingPath, avoidFluids: false }
+          ? {
+            ...targetHuntingPath,
+            allowMining: true,
+            avoidFluids: false,
+          }
           : targetHuntingPath,
       });
       attacked += 1;

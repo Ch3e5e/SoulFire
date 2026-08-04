@@ -331,9 +331,20 @@ export function collectNearbyDrops(
           continue;
         }
         if (
-          yield* tryDirectDropPickup(
+          dropInFluid
+          && pickupPath.allowMining
+        ) {
+          yield* clearSubmergedDropCover(
             driver,
             latestObservation,
+            refreshedDrop,
+          );
+        }
+        const pickupObservation = yield* driver.observe;
+        if (
+          yield* tryDirectDropPickup(
+            driver,
+            pickupObservation,
             refreshedDrop,
             dropInFluid,
           )
@@ -349,6 +360,61 @@ export function collectNearbyDrops(
       }
     }
   }));
+}
+
+function clearSubmergedDropCover(
+  driver: BeatGameDriver,
+  observation: BeatGameObservation,
+  drop: BeatGameEntityObservation,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  const playerPosition = observation.player.position;
+  if (
+    playerPosition.dimension !== drop.position.dimension
+    || drop.position.y >= playerPosition.y - 0.25
+    || Math.hypot(
+        drop.position.x - playerPosition.x,
+        drop.position.z - playerPosition.z,
+      ) > SUBMERGED_DROP_PICKUP_MAXIMUM_HORIZONTAL_DISTANCE
+  ) {
+    return Effect.succeed(false);
+  }
+
+  const maximumY = Math.floor(playerPosition.y) - 1;
+  const minimumY = Math.floor(drop.position.y) + 1;
+  if (minimumY > maximumY) {
+    return Effect.succeed(false);
+  }
+
+  return Effect.gen(function* () {
+    for (let y = maximumY; y >= minimumY; y -= 1) {
+      const position = {
+        x: Math.floor(drop.position.x),
+        y,
+        z: Math.floor(drop.position.z),
+        dimension: drop.position.dimension,
+      };
+      const block = yield* observeExactBlock(driver, position);
+      if (block === undefined) {
+        return false;
+      }
+      if (block.replaceable) {
+        continue;
+      }
+      if (!block.diggable) {
+        return false;
+      }
+      yield* driver.act({ type: "dig-block", position });
+      const cleared = yield* waitForExactBlockState(
+        driver,
+        position,
+        (current) => current === undefined || current.replaceable,
+        10,
+        50,
+      );
+      return cleared === undefined || cleared.replaceable;
+    }
+    return false;
+  });
 }
 
 function tryDirectDropPickup(
