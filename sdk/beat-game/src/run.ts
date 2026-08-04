@@ -724,7 +724,6 @@ interface RunState {
   readonly observation: Ref.Ref<BeatGameObservation>;
   readonly lastLivingObservation: Ref.Ref<BeatGameObservation>;
   readonly pendingDeaths: Ref.Ref<readonly PendingDeath[]>;
-  readonly deathRecoveryFailures: Ref.Ref<ReadonlyMap<string, number>>;
   readonly explorationFrontiers: Ref.Ref<
     Readonly<Record<string, BeatGameExplorationFrontier>>
   >;
@@ -864,9 +863,6 @@ export function beatGameWithDriver(
         ? []
         : restorePendingDeaths(stored, observation),
     );
-    const deathRecoveryFailures = yield* Ref.make<ReadonlyMap<string, number>>(
-      new Map(),
-    );
     const explorationFrontiers = yield* Ref.make<
       Readonly<Record<string, BeatGameExplorationFrontier>>
     >(stored.memory.explorationFrontiers ?? {});
@@ -890,7 +886,6 @@ export function beatGameWithDriver(
       observation: observationRef,
       lastLivingObservation,
       pendingDeaths,
-      deathRecoveryFailures,
       explorationFrontiers,
       checkedRecoveryContainers,
       paused,
@@ -13314,13 +13309,25 @@ function recordDeathRecoveryFailure(
   state: RunState,
   observedAt: string,
   stage: "pickup" | "preparation",
-): Effect.Effect<number> {
-  return Ref.modify(state.deathRecoveryFailures, (failures) => {
+): Effect.Effect<number, BeatGameError> {
+  return Effect.gen(function* () {
     const key = `${observedAt}:${stage}`;
-    const nextFailureCount = (failures.get(key) ?? 0) + 1;
-    const updatedFailures = new Map(failures);
-    updatedFailures.set(key, nextFailureCount);
-    return [nextFailureCount, updatedFailures] as const;
+    let nextFailureCount = 0;
+    yield* persist(state, (checkpoint) => {
+      const failures = checkpoint.memory.deathRecoveryFailures ?? {};
+      nextFailureCount = (failures[key] ?? 0) + 1;
+      return {
+        ...checkpoint,
+        memory: {
+          ...checkpoint.memory,
+          deathRecoveryFailures: {
+            ...failures,
+            [key]: nextFailureCount,
+          },
+        },
+      };
+    });
+    return nextFailureCount;
   });
 }
 
@@ -13328,15 +13335,25 @@ function clearDeathRecoveryFailure(
   state: RunState,
   observedAt: string,
   stage: "pickup" | "preparation",
-): Effect.Effect<void> {
-  return Ref.update(state.deathRecoveryFailures, (failures) => {
+): Effect.Effect<void, BeatGameError> {
+  return Effect.gen(function* () {
     const key = `${observedAt}:${stage}`;
-    if (!failures.has(key)) {
-      return failures;
+    const checkpoint = yield* Ref.get(state.checkpoint);
+    const failures = checkpoint.memory.deathRecoveryFailures ?? {};
+    if (failures[key] === undefined) {
+      return;
     }
-    const updatedFailures = new Map(failures);
-    updatedFailures.delete(key);
-    return updatedFailures;
+    yield* persist(state, (current) => {
+      const { [key]: _cleared, ...remainingFailures } =
+        current.memory.deathRecoveryFailures ?? {};
+      return {
+        ...current,
+        memory: {
+          ...current.memory,
+          deathRecoveryFailures: remainingFailures,
+        },
+      };
+    });
   });
 }
 
@@ -13361,26 +13378,13 @@ function completePendingDeath(
   state: RunState,
   observedAt: string,
 ): Effect.Effect<void> {
-  return Effect.all([
-    Ref.update(
-      state.pendingDeaths,
-      (pendingDeaths) =>
-        pendingDeaths.filter((pendingDeath) =>
-          pendingDeath.observedAt !== observedAt
-        ),
-    ),
-    Ref.update(state.deathRecoveryFailures, (failures) => {
-      const preparationKey = `${observedAt}:preparation`;
-      const pickupKey = `${observedAt}:pickup`;
-      if (!failures.has(preparationKey) && !failures.has(pickupKey)) {
-        return failures;
-      }
-      const updatedFailures = new Map(failures);
-      updatedFailures.delete(preparationKey);
-      updatedFailures.delete(pickupKey);
-      return updatedFailures;
-    }),
-  ], { discard: true });
+  return Ref.update(
+    state.pendingDeaths,
+    (pendingDeaths) =>
+      pendingDeaths.filter((pendingDeath) =>
+        pendingDeath.observedAt !== observedAt
+      ),
+  );
 }
 
 function abandonPendingDeath(
@@ -13448,12 +13452,17 @@ function forgetDeathPosition(
   checkpoint: BeatGameCheckpoint,
   observedAt: string,
 ): BeatGameCheckpoint {
+  const failureKeyPrefix = `${observedAt}:`;
   return {
     ...checkpoint,
     memory: {
       ...checkpoint.memory,
       deathPositions: checkpoint.memory.deathPositions.filter(
         (entry) => entry.observedAt !== observedAt,
+      ),
+      deathRecoveryFailures: Object.fromEntries(
+        Object.entries(checkpoint.memory.deathRecoveryFailures ?? {})
+          .filter(([key]) => !key.startsWith(failureKeyPrefix)),
       ),
     },
   };

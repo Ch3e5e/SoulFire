@@ -5071,7 +5071,7 @@ describe("beat-game run lifecycle", () => {
     }));
   }, 15_000);
 
-  it("attempts a nearby valuable corpse after bounded low-health food searches", async () => {
+  it("resumes bounded low-health food searches for a nearby valuable corpse", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const deathPosition = {
@@ -5091,6 +5091,9 @@ describe("beat-game run lifecycle", () => {
       ...initial,
       memory: {
         ...initial.memory,
+        deathRecoveryFailures: {
+          [`${observedAt}:preparation`]: 7,
+        },
         deathPositions: [{
           key: `death:${observedAt}`,
           value: {
@@ -5137,7 +5140,11 @@ describe("beat-game run lifecycle", () => {
     expect(driver.paths).toContainEqual(expect.objectContaining({
       position: deathPosition,
     }));
-    expect(driver.xzPaths).not.toHaveLength(0);
+    expect(driver.xzPaths.length).toBeLessThan(8);
+    const saved = await Effect.runPromise(store.load(runId));
+    expect(saved?.memory.deathRecoveryFailures?.[
+      `${observedAt}:preparation`
+    ]).toBe(8);
   }, 15_000);
 
   it("abandons distant recovery after three bounded food searches", async () => {

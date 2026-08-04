@@ -265,6 +265,7 @@ export interface BeatGameWorldMemory {
   readonly explorationFrontiers?: Readonly<
     Record<string, BeatGameExplorationFrontier>
   >;
+  readonly deathRecoveryFailures?: Readonly<Record<string, number>>;
   readonly latestDeath?: BeatGameMemoryEntry<BeatGamePosition>;
   readonly strongholdEstimate?: BeatGamePosition;
 }
