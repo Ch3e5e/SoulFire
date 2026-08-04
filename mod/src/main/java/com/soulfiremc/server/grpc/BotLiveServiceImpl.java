@@ -1875,6 +1875,7 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
 
   private static final class DigBlockTask implements ControlTask {
     private static final int MAXIMUM_BLOCK_REPLACEMENT_RETRIES = 16;
+    private static final int CLEARED_STATE_SETTLE_TICKS = 4;
 
     private final BotConnection bot;
     private final BlockPos position;
@@ -1886,6 +1887,7 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
     private boolean done;
     private int ticks;
     private int blockReplacementRetries;
+    private int clearedStateTicks;
 
     private DigBlockTask(BotConnection bot, BlockPos position, boolean cancel) {
       this.bot = bot;
@@ -1930,10 +1932,13 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
       );
       switch (reconciliation) {
         case COMPLETE -> {
-          done = true;
+          if (!started || ++clearedStateTicks >= CLEARED_STATE_SETTLE_TICKS) {
+            done = true;
+          }
           return;
         }
         case AWAIT_CONFIRMATION -> {
+          clearedStateTicks = 0;
           return;
         }
         case RETRY_REPLACEMENT -> {
@@ -1941,12 +1946,14 @@ public final class BotLiveServiceImpl extends BotLiveServiceGrpc.BotLiveServiceI
           started = false;
           predictedBroken = false;
           attemptedState = null;
+          clearedStateTicks = 0;
           blockReplacementRetries++;
         }
         case REJECTED -> throw Status.FAILED_PRECONDITION
           .withDescription("The server rejected breaking the target block")
           .asRuntimeException();
         case CONTINUE -> {
+          clearedStateTicks = 0;
         }
       }
       requireReach(player, position);

@@ -32,6 +32,7 @@ import net.minecraft.world.level.block.state.BlockState;
 @Slf4j
 public final class BlockBreakAction implements WorldAction {
   private static final int MAXIMUM_BLOCK_REPLACEMENT_RETRIES = 16;
+  private static final int CLEARED_STATE_SETTLE_TICKS = 4;
 
   @Getter
   private final SFVec3i blockPosition;
@@ -43,6 +44,7 @@ public final class BlockBreakAction implements WorldAction {
   private int totalTicks = -1;
   private int allowedTicks;
   private int blockReplacementRetries;
+  private int clearedStateTicks;
   private double fluidAnchorY = Double.NaN;
 
   public BlockBreakAction(
@@ -66,6 +68,7 @@ public final class BlockBreakAction implements WorldAction {
     var position = blockPosition.toBlockPos();
     var state = level.getBlockState(position);
     if (!BlockPredictionSupport.isClearedBreakTarget(state)) {
+      clearedStateTicks = 0;
       return false;
     }
     if (!breakAttempted) {
@@ -78,9 +81,10 @@ public final class BlockBreakAction implements WorldAction {
     );
     predictedBroken |= pendingPrediction;
     if (pendingPrediction) {
+      clearedStateTicks = 0;
       return false;
     }
-    return true;
+    return ++clearedStateTicks >= CLEARED_STATE_SETTLE_TICKS;
   }
 
   public boolean isRejected(BotConnection connection) {
@@ -103,6 +107,7 @@ public final class BlockBreakAction implements WorldAction {
       putInHand = false;
       attemptedState = null;
       totalTicks = -1;
+      clearedStateTicks = 0;
       blockReplacementRetries++;
       return false;
     }
