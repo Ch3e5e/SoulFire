@@ -5966,6 +5966,16 @@ function craftItemDependencies(
           }
         }
         craftability = yield* driver.canCraft(recipe.recipeId, operations);
+        if (!craftability.canCraft) {
+          return yield* craftItemDependencies(
+            driver,
+            resultItemId,
+            requestedCount,
+            options,
+            ancestors,
+            remainingDepth - 1,
+          );
+        }
       }
       if (!craftability.canCraft) {
         continue;

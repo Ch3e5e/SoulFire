@@ -2484,6 +2484,130 @@ describe("beat-game behavior programs", () => {
     ]);
   });
 
+  it("re-expands dependencies consumed by another recipe ingredient", async () => {
+    const driver = new FakeBeatGameDriver();
+    let logs = 2;
+    let planks = 0;
+    let sticks = 0;
+    const recipe = (
+      recipeId: string,
+      resultItemId: string,
+      resultCount: number,
+      ingredients: readonly {
+        readonly itemIds: readonly string[];
+        readonly count: number;
+      }[],
+    ) => ({
+      recipeId,
+      recipeType: "crafting",
+      resultItemId,
+      resultCount,
+      ingredients: ingredients.map((ingredient) => ({
+        ...ingredient,
+        tags: [],
+      })),
+    });
+    driver.recipeResolver = (resultItemId) => {
+      if (resultItemId === "minecraft:wooden_pickaxe") {
+        return [recipe("pickaxe", resultItemId, 1, [
+          { itemIds: ["minecraft:oak_planks"], count: 3 },
+          { itemIds: ["minecraft:stick"], count: 2 },
+        ])];
+      }
+      if (resultItemId === "minecraft:oak_planks") {
+        return [recipe("planks", resultItemId, 4, [
+          { itemIds: ["minecraft:oak_log"], count: 1 },
+        ])];
+      }
+      if (resultItemId === "minecraft:stick") {
+        return [recipe("sticks", resultItemId, 4, [
+          { itemIds: ["minecraft:oak_planks"], count: 2 },
+        ])];
+      }
+      return [];
+    };
+    driver.craftabilityResolver = (recipeId) => {
+      if (recipeId === "planks") {
+        return logs >= 1
+          ? { canCraft: true, maximumCraftCount: logs, missing: [] }
+          : {
+            canCraft: false,
+            maximumCraftCount: 0,
+            missing: [{
+              itemIds: ["minecraft:oak_log"],
+              tags: [],
+              available: logs,
+              missing: 1,
+            }],
+          };
+      }
+      if (recipeId === "sticks") {
+        return planks >= 2
+          ? {
+            canCraft: true,
+            maximumCraftCount: Math.floor(planks / 2),
+            missing: [],
+          }
+          : {
+            canCraft: false,
+            maximumCraftCount: 0,
+            missing: [{
+              itemIds: ["minecraft:oak_planks"],
+              tags: [],
+              available: planks,
+              missing: 2 - planks,
+            }],
+          };
+      }
+      const missing = [
+        ...(planks >= 3 ? [] : [{
+          itemIds: ["minecraft:oak_planks"],
+          tags: [],
+          available: planks,
+          missing: 3 - planks,
+        }]),
+        ...(sticks >= 2 ? [] : [{
+          itemIds: ["minecraft:stick"],
+          tags: [],
+          available: sticks,
+          missing: 2 - sticks,
+        }]),
+      ];
+      return {
+        canCraft: missing.length === 0,
+        maximumCraftCount: missing.length === 0 ? 1 : 0,
+        missing,
+      };
+    };
+    driver.taskObserver = (task) => {
+      if (task.type !== "craft") {
+        return;
+      }
+      if (task.recipeId === "planks") {
+        logs -= 1;
+        planks += 4;
+      } else if (task.recipeId === "sticks") {
+        planks -= 2;
+        sticks += 4;
+      } else if (task.recipeId === "pickaxe") {
+        planks -= 3;
+        sticks -= 2;
+      }
+    };
+
+    await Effect.runPromise(craftItem(driver, {
+      resultItemId: "minecraft:wooden_pickaxe",
+      count: 1,
+    }));
+
+    expect(driver.tasks.filter(({ type }) => type === "craft")).toEqual([
+      { type: "craft", recipeId: "planks", count: 1 },
+      { type: "craft", recipeId: "sticks", count: 1 },
+      { type: "craft", recipeId: "planks", count: 1 },
+      { type: "craft", recipeId: "pickaxe", count: 1 },
+    ]);
+  });
+
   it("classifies unavailable recipe ingredients as resource exhaustion", async () => {
     const driver = new FakeBeatGameDriver();
     driver.recipeResolver = (resultItemId) =>
