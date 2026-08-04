@@ -354,7 +354,7 @@ describe("beat-game run lifecycle", () => {
       .toHaveLength(1);
   }, 10_000);
 
-  it("moves to solid ground before digging a night shelter", async () => {
+  it("moves away from a night shelter shaft that would flood", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentEnvironment = { gameTime: 14_000n };
     driver.currentObservation = observation({
@@ -393,20 +393,36 @@ describe("beat-game run lifecycle", () => {
       };
       const blockKey = key(position.x, position.y, position.z);
       const unstableShaft = position.x === 0 && position.z === 0;
+      const unstableShaftSupport = position.x === -1
+        && position.y === 63
+        && position.z === 0;
+      const floodingShaftNeighbor = position.x === 1
+        && position.y === 62
+        && position.z === 0;
       const stableShaft = position.x === 4 && position.z === 0;
       const stableSeal = stableShaft && position.y === 63;
       const stableSealSupport = position.x === 5
         && position.y === 63
         && position.z === 0;
       const solidUnstableFloor = unstableShaft
-        && (position.y === 63 || position.y === 62);
+        && position.y >= 61
+        && position.y <= 63;
       const solidStableFloor = stableShaft
         && position.y >= 61
         && position.y <= 63
         && !removedBlocks.has(blockKey);
+      if (floodingShaftNeighbor) {
+        return [blockObservation(position, {
+          blockId: "minecraft:water",
+          diggable: false,
+          replaceable: true,
+          solid: false,
+        })];
+      }
       if (
         stableSeal && sealPlaced
         || stableSealSupport
+        || unstableShaftSupport
         || solidUnstableFloor
         || solidStableFloor
       ) {

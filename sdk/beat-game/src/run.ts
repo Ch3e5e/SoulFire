@@ -1663,10 +1663,11 @@ function isViableNightShelterColumn(
   };
   return Effect.gen(function* () {
     for (let depth = 1; depth <= NIGHT_SHELTER_DEPTH; depth += 1) {
-      const block = yield* queryExactBlock(driver, {
+      const excavationPosition = {
         ...shaft,
         y: startingY - depth,
-      });
+      };
+      const block = yield* queryExactBlock(driver, excavationPosition);
       if (
         block === undefined
         || block.replaceable
@@ -1674,6 +1675,20 @@ function isViableNightShelterColumn(
         || block.properties.waterlogged === "true"
       ) {
         return false;
+      }
+      for (const neighbor of [
+        { ...excavationPosition, x: excavationPosition.x + 1 },
+        { ...excavationPosition, x: excavationPosition.x - 1 },
+        { ...excavationPosition, z: excavationPosition.z + 1 },
+        { ...excavationPosition, z: excavationPosition.z - 1 },
+      ]) {
+        const neighboringBlock = yield* queryExactBlock(driver, neighbor);
+        if (
+          neighboringBlock !== undefined
+          && isPlayerFluidBlock(neighboringBlock.blockId)
+        ) {
+          return false;
+        }
       }
     }
     const sealY = startingY - 1;
