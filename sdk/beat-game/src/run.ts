@@ -1399,6 +1399,33 @@ function shelterUntilMorning(
       }
       shelterObservation = yield* state.driver.observe;
     }
+    const initialPlayerBlock = {
+      x: Math.floor(shelterObservation.player.position.x),
+      y: Math.floor(shelterObservation.player.position.y),
+      z: Math.floor(shelterObservation.player.position.z),
+      dimension: shelterObservation.player.position.dimension,
+    };
+    const initialOverhead = yield* queryExactBlock(state.driver, {
+      ...initialPlayerBlock,
+      y: initialPlayerBlock.y + 2,
+    });
+    const stableShelterObservation =
+      initialOverhead !== undefined && !initialOverhead.replaceable
+        ? shelterObservation
+        : yield* prepareStableNightShelterSite(
+          state,
+          shelterObservation,
+        );
+    if (stableShelterObservation === undefined) {
+      yield* emit(state, {
+        type: "diagnostic",
+        message: "Could not find a stable column for a night shelter",
+        data: { position: shelterObservation.player.position },
+      });
+      yield* Effect.sleep(NIGHT_SHELTER_POLL_MS);
+      return;
+    }
+    shelterObservation = stableShelterObservation;
     const surfaceOrigin = shelterObservation.player.position;
     const playerBlock = {
       x: Math.floor(surfaceOrigin.x),
@@ -1479,6 +1506,131 @@ function shelterUntilMorning(
         },
       ).pipe(Effect.ignore);
     }
+  });
+}
+
+function prepareStableNightShelterSite(
+  state: RunState,
+  observation: BeatGameObservation,
+): Effect.Effect<BeatGameObservation | undefined, BeatGameDriverError> {
+  return Effect.gen(function* () {
+    if (
+      yield* isViableNightShelterColumn(
+        state.driver,
+        observation.player.position,
+      )
+    ) {
+      return observation;
+    }
+    const columns = yield* state.driver.sampleSurface(
+      observation.player.position,
+      AIR_ESCAPE_SURFACE_SEARCH_RADIUS,
+      1,
+    );
+    const candidates = selectStableSurfaceEscapeColumns(
+      columns,
+      observation.player.position,
+    );
+    for (const candidate of candidates) {
+      const target = {
+        x: candidate.x + 0.5,
+        y: candidate.surfaceY + 1,
+        z: candidate.z + 0.5,
+        dimension: observation.player.position.dimension,
+      };
+      if (!(yield* isViableNightShelterColumn(state.driver, target))) {
+        continue;
+      }
+      const pathResult = yield* state.driver.pathfind(
+        target,
+        0.25,
+        {
+          ...survivalPathPolicy(
+            state.strategy.path,
+            observation.player.health,
+            state.strategy.minimumHealth,
+          ),
+          allowMining: false,
+          allowPlacing: false,
+          avoidFluids: true,
+          sprint: observation.player.food > CRITICAL_HUNGER_FOOD_LEVEL,
+          maxFallDistance: Math.min(
+            state.strategy.path.maxFallDistance,
+            MAXIMUM_DAMAGE_FREE_FALL_DISTANCE,
+          ),
+          maxSearchTimeMs: Math.min(
+            state.strategy.path.maxSearchTimeMs,
+            15_000,
+          ),
+        },
+      ).pipe(Effect.either);
+      if (pathResult._tag === "Left") {
+        continue;
+      }
+      const current = yield* state.driver.observe;
+      if (
+        current.player.dead
+        || Math.floor(current.player.position.x) !== candidate.x
+        || Math.floor(current.player.position.z) !== candidate.z
+        || (yield* isPlayerInFluid(
+          state.driver,
+          current.player.position,
+        ))
+        || !(yield* isViableNightShelterColumn(
+          state.driver,
+          current.player.position,
+        ))
+      ) {
+        continue;
+      }
+      return current;
+    }
+    return undefined;
+  });
+}
+
+function isViableNightShelterColumn(
+  driver: BeatGameDriver,
+  position: BeatGamePosition,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  const startingY = Math.floor(position.y);
+  const shaft = {
+    x: Math.floor(position.x),
+    z: Math.floor(position.z),
+    dimension: position.dimension,
+  };
+  return Effect.gen(function* () {
+    for (let depth = 1; depth <= NIGHT_SHELTER_DEPTH; depth += 1) {
+      const block = yield* queryExactBlock(driver, {
+        ...shaft,
+        y: startingY - depth,
+      });
+      if (
+        block === undefined
+        || block.replaceable
+        || !block.diggable
+        || block.properties.waterlogged === "true"
+      ) {
+        return false;
+      }
+    }
+    const sealY = startingY - 1;
+    for (const support of [
+      { ...shaft, x: shaft.x + 1, y: sealY },
+      { ...shaft, x: shaft.x - 1, y: sealY },
+      { ...shaft, z: shaft.z + 1, y: sealY },
+      { ...shaft, z: shaft.z - 1, y: sealY },
+    ]) {
+      const block = yield* queryExactBlock(driver, support);
+      if (
+        block !== undefined
+        && !block.replaceable
+        && block.properties.waterlogged !== "true"
+      ) {
+        return true;
+      }
+    }
+    return false;
   });
 }
 
