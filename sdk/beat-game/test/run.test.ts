@@ -16343,6 +16343,12 @@ describe("beat-game run lifecycle", () => {
     }));
     expect(driver.tasks.some((task) => task.type === "collect-blocks"))
       .toBe(false);
+    const attackIndex = driver.tasks.findIndex(
+      (task) => task.type === "attack-entity",
+    );
+    expect(driver.taskPolicies[attackIndex]).toMatchObject({
+      maxFallDistance: 2,
+    });
   });
 
   it("keeps searching on land after repeated dry food searches", async () => {
@@ -20009,7 +20015,7 @@ describe("beat-game run lifecycle", () => {
         allowMining: false,
         allowPlacing: false,
         avoidFluids: true,
-        maxFallDistance: 3,
+        maxFallDistance: 2,
         sprint: false,
       }),
     }));

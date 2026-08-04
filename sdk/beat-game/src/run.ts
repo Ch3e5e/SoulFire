@@ -359,6 +359,7 @@ const WOUNDED_AQUATIC_FALLBACK_FOOD_LEVEL = 16;
 const AQUATIC_WATER_ENTRY_SEARCH_RADIUS = 3;
 const AQUATIC_WATER_ENTRY_ATTEMPTS = 12;
 const MAXIMUM_DAMAGE_FREE_FALL_DISTANCE = 3;
+const WOUNDED_LAND_HUNT_MAXIMUM_FALL_DISTANCE = 2;
 const HUNT_DROP_ITEM_IDS_BY_ENTITY_TYPE: Readonly<
   Record<string, readonly string[]>
 > = {
@@ -9118,6 +9119,14 @@ function huntOrExplore(
           allowPlacing: false,
           avoidFluids: false,
           sprint: true,
+        }
+        : recoveringHealth
+        ? {
+          ...huntingPath,
+          maxFallDistance: Math.min(
+            huntingPath.maxFallDistance,
+            WOUNDED_LAND_HUNT_MAXIMUM_FALL_DISTANCE,
+          ),
         }
         : huntingPath;
       const targetExplorationPath = {
