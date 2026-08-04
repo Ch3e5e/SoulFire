@@ -161,7 +161,6 @@ const artifactRuns = positiveIntegerEnvironment(
 const debugTimeline = new SmokeDebugTimeline(debugApiTimelineEntries);
 const debugTimelineOmittedKinds = new Set([
   "inventory-observed",
-  "task-progress-observed",
 ]);
 const eventLog = new BoundedLog(
   path.join(artifactDirectory, "events.ndjson"),
@@ -920,6 +919,15 @@ const program = Effect.scoped(Effect.gen(function* () {
                   "pathfind-xz-failed",
                 ].join(","),
                 limit: 50,
+              }),
+              taskActivity: queryDebugTimeline({
+                kind: [
+                  "task-started",
+                  "task-progress-observed",
+                  "task-completed",
+                  "task-failed",
+                ].join(","),
+                limit: 100,
               }),
               decisionActivity: queryDebugTimeline({
                 kind: "beat-game-event,task-started,task-completed,task-failed,primitive-started,primitive-failed",
