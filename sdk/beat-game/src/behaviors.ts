@@ -56,7 +56,7 @@ const SUBMERGED_DROP_PICKUP_MINIMUM_AIR_RATIO = 0.35;
 const PORTAL_CASTING_LAVA_SIGHT_CLEARING_BLOCKS = 4;
 const PORTAL_CASTING_LAVA_COLLECTION_POLLS = 10;
 const PORTAL_CASTING_WATER_RECOVERY_ATTEMPTS = 3;
-const PORTAL_CASTING_BUCKET_FACE_INSET = 1 / 64;
+const PORTAL_CASTING_BUCKET_FACE_AIM_HEIGHT = 1 / 64;
 const PORTAL_CASTING_SUPPORT_SCAFFOLD_RADIUS = 4.9;
 const PORTAL_CASTING_SUPPORT_SCAFFOLD_MAXIMUM_RESULTS = 1_000;
 const STAIRCASE_INITIAL_LANDING_ATTEMPTS = 4;
@@ -5650,7 +5650,7 @@ function exposePortalBucketSupport(
       );
       const obstruction = (yield* driver.raycast({
         direction,
-        maximumDistance: distance + 0.05,
+        maximumDistance: distance + 0.25,
         includeFluids: false,
       })).block;
       if (
@@ -5728,7 +5728,10 @@ function topFaceCenter(position: BeatGameBlockPosition): BeatGamePosition {
   return {
     ...position,
     x: position.x + 0.5,
-    y: position.y + 1 - PORTAL_CASTING_BUCKET_FACE_INSET,
+    // Aim just above the face. The vanilla item-use ray continues past this
+    // point and crosses the top surface. A point inside the support can hit
+    // its side instead when the player is standing at a shallow angle.
+    y: position.y + 1 + PORTAL_CASTING_BUCKET_FACE_AIM_HEIGHT,
     z: position.z + 0.5,
   };
 }

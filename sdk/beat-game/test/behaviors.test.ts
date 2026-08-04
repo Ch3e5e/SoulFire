@@ -4015,7 +4015,7 @@ describe("beat-game behavior programs", () => {
       {
         ...target,
         x: target.x + 0.5,
-        y: target.y - 1 / 64,
+        y: target.y + 1 / 64,
         z: target.z + 0.5,
       },
     );
