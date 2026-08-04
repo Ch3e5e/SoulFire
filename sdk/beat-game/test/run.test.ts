@@ -13602,7 +13602,7 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
-  it("continues descending when visible deep lava has no reachable stand", async () => {
+  it("descends before probing stands around substantially deeper lava", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const start = {
@@ -13742,12 +13742,8 @@ describe("beat-game run lifecycle", () => {
       yield* run.awaitCompletion.pipe(Effect.either);
     })));
 
-    expect(driver.paths).toContainEqual(expect.objectContaining({
+    expect(driver.paths).not.toContainEqual(expect.objectContaining({
       radius: 0.75,
-      policy: expect.objectContaining({
-        allowMining: false,
-        avoidFluids: true,
-      }),
     }));
     expect(driver.actions).toContainEqual(expect.objectContaining({
       type: "dig-block",
