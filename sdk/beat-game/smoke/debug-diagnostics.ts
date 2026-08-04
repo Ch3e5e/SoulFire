@@ -553,6 +553,8 @@ export function buildSmokeStuckDiagnostics(
     : Math.max(0, capturedAtMs - lastProgress.observedAtMs);
   const expectedQuietWindowMs = lastTaskProgress?.message === "Smelting"
     ? 4 * 60_000
+    : input.currentAction === "survive:night-shelter"
+    ? 10 * 60_000
     : 30_000;
   if (
     input.currentAction !== undefined
@@ -734,6 +736,9 @@ function explainCurrentAction(
       : `The action is processing the newest eligible corpse; ${remembered} death location${
         remembered === 1 ? " remains" : "s remain"
       } in checkpoint memory`;
+  }
+  if (action === "survive:night-shelter") {
+    return "The bot is deliberately sheltered while hostile-night travel would be unsafe";
   }
   if (action.startsWith("satisfy:")) {
     const key = action.slice("satisfy:".length);

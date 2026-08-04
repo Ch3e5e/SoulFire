@@ -652,6 +652,7 @@ const NIGHT_SHELTER_MINIMUM_SURFACE_COVER = 3;
 const NIGHT_SHELTER_POLL_MS = 1_000;
 const NIGHT_SHELTER_DESCENT_ATTEMPTS = 30;
 const NIGHT_SHELTER_DAYLIGHT_CONFIRMATIONS = 3;
+const NIGHT_SHELTER_ACTION = "survive:night-shelter";
 const NIGHT_SHELTER_BLOCK_ITEM_IDS = [
   "minecraft:dirt",
   "minecraft:coarse_dirt",
@@ -1189,7 +1190,7 @@ function runLoop(
       if (nightShelterNeeded) {
         yield* cancellable(
           state,
-          shelterUntilMorning(state, liveObservation).pipe(
+          runNightShelterAction(state, liveObservation).pipe(
             Effect.catchAll((error) =>
               emit(state, {
                 type: "diagnostic",
@@ -1231,6 +1232,55 @@ function runLoop(
         : markFailed(state, error).pipe(
           Effect.zipRight(Effect.fail(error)),
         )
+    ),
+  );
+}
+
+function runNightShelterAction(
+  state: RunState,
+  observation: BeatGameObservation,
+): Effect.Effect<void, BeatGameError | BeatGameDriverError> {
+  return Effect.gen(function* () {
+    yield* persist(state, (checkpoint) => ({
+      ...checkpoint,
+      planner: {
+        ...checkpoint.planner,
+        currentAction: NIGHT_SHELTER_ACTION,
+        currentActionId: crypto.randomUUID(),
+        retryCount: 0,
+        updatedAt: new Date().toISOString(),
+      },
+    }));
+    yield* emit(state, {
+      type: "action-started",
+      action: NIGHT_SHELTER_ACTION,
+      attempt: 1,
+    });
+    const reachedMorning = yield* shelterUntilMorning(state, observation);
+    yield* emit(state, {
+      type: reachedMorning ? "action-succeeded" : "action-failed",
+      action: NIGHT_SHELTER_ACTION,
+      attempt: 1,
+      ...(
+        reachedMorning
+          ? {}
+          : { detail: "The shelter attempt ended before morning" }
+      ),
+    });
+  }).pipe(
+    Effect.ensuring(
+      persist(state, (checkpoint) =>
+        checkpoint.planner.currentAction !== NIGHT_SHELTER_ACTION
+          ? checkpoint
+          : {
+            ...checkpoint,
+            planner: withoutCurrentAction({
+              ...checkpoint.planner,
+              retryCount: 0,
+              updatedAt: new Date().toISOString(),
+            }),
+          }
+      ).pipe(Effect.ignore),
     ),
   );
 }
@@ -1292,7 +1342,7 @@ function isSafelyBelowOverworldSurface(
 function shelterUntilMorning(
   state: RunState,
   observation: BeatGameObservation,
-): Effect.Effect<void, BeatGameDriverError> {
+): Effect.Effect<boolean, BeatGameDriverError> {
   return Effect.gen(function* () {
     let shelterObservation = observation;
     const nearbyThreats = yield* state.driver.queryEntities({
@@ -1342,7 +1392,7 @@ function shelterUntilMorning(
       });
       shelterObservation = yield* state.driver.observe;
       if (shelterObservation.player.dead) {
-        return;
+        return false;
       }
       const remainingThreats = yield* state.driver.queryEntities({
         origin: {
@@ -1367,7 +1417,7 @@ function shelterUntilMorning(
             threat: remainingThreats[0],
           },
         });
-        return;
+        return false;
       }
     }
     if (
@@ -1400,7 +1450,7 @@ function shelterUntilMorning(
           ),
         );
         yield* Effect.sleep(NIGHT_SHELTER_POLL_MS);
-        return;
+        return false;
       }
       shelterObservation = yield* state.driver.observe;
     }
@@ -1428,7 +1478,7 @@ function shelterUntilMorning(
         data: { position: shelterObservation.player.position },
       });
       yield* Effect.sleep(NIGHT_SHELTER_POLL_MS);
-      return;
+      return false;
     }
     shelterObservation = stableShelterObservation;
     const surfaceOrigin = shelterObservation.player.position;
@@ -1467,7 +1517,7 @@ function shelterUntilMorning(
         },
       ).pipe(Effect.ignore);
       yield* Effect.sleep(NIGHT_SHELTER_POLL_MS);
-      return;
+      return false;
     }
     yield* emit(state, {
       type: "diagnostic",
@@ -1485,7 +1535,7 @@ function shelterUntilMorning(
         : 0;
       const current = yield* state.driver.observe;
       if (current.player.dead) {
-        return;
+        return false;
       }
       if (daylightConfirmations < NIGHT_SHELTER_DAYLIGHT_CONFIRMATIONS) {
         yield* Effect.sleep(NIGHT_SHELTER_POLL_MS);
@@ -1515,6 +1565,7 @@ function shelterUntilMorning(
         },
       ).pipe(Effect.ignore);
     }
+    return true;
   });
 }
 

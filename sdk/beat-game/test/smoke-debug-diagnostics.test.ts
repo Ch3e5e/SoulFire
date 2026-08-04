@@ -158,6 +158,45 @@ describe("smoke spatial diagnostics", () => {
 });
 
 describe("smoke decision diagnostics", () => {
+  it("explains when night sheltering overrides the next planner decision", () => {
+    const requirement = {
+      key: "logs",
+      itemIds: ["minecraft:oak_log"],
+      tags: [],
+      targetCount: 4,
+      currentCount: 0,
+      priority: 120,
+      satisfied: false,
+    } as const;
+    const state = checkpoint(BeatGamePhase.ENTER_NETHER, {
+      planner: {
+        ...checkpoint(BeatGamePhase.ENTER_NETHER).planner,
+        currentAction: "survive:night-shelter",
+        currentActionId: "shelter-1",
+        requirements: [requirement],
+      },
+    });
+
+    const diagnostics = buildSmokeDecisionDiagnostics({
+      checkpoint: state,
+      observation: observation(),
+      strategy: defaultBeatGameStrategy,
+      nextIfReplanned: {
+        type: "satisfy-requirement",
+        action: "satisfy:logs",
+        requirement,
+      },
+    });
+
+    expect(diagnostics.activeAction).toEqual({
+      action: "survive:night-shelter",
+      actionId: "shelter-1",
+      retryCount: 0,
+      reason:
+        "The bot is deliberately sheltered while hostile-night travel would be unsafe",
+    });
+  });
+
   it("explains an active recovery and the action a fresh replan would choose", () => {
     const playerObservation = observation({ food: 18 });
     const requirement = {
@@ -538,6 +577,27 @@ describe("smoke stuck diagnostics", () => {
     expect(diagnostics).toMatchObject({
       status: "progressing",
       expectedQuietWindowMs: 240_000,
+      findings: [],
+    });
+  });
+
+  it("does not diagnose an intentional night shelter wait as stalled", () => {
+    const diagnostics = buildSmokeStuckDiagnostics({
+      capturedAt: "2026-08-03T10:08:00.000Z",
+      currentAction: "survive:night-shelter",
+      activity: [{
+        observedAt: "2026-08-03T10:00:00.000Z",
+        kind: "beat-game-event",
+        event: {
+          type: "action-started",
+          action: "survive:night-shelter",
+        },
+      }],
+    });
+
+    expect(diagnostics).toMatchObject({
+      status: "progressing",
+      expectedQuietWindowMs: 600_000,
       findings: [],
     });
   });
