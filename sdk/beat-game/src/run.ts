@@ -1251,31 +1251,7 @@ function shouldTakeNightShelter(
     if (protectedForNightTravel) {
       return false;
     }
-    const playerBlock = {
-      x: Math.floor(observation.player.position.x),
-      y: Math.floor(observation.player.position.y),
-      z: Math.floor(observation.player.position.z),
-      dimension: observation.player.position.dimension,
-    };
-    const overhead = yield* queryExactBlock(state.driver, {
-      ...playerBlock,
-      y: playerBlock.y + 2,
-    });
-    const alreadyCovered = overhead !== undefined && !overhead.replaceable;
-    const nearbyThreats = yield* state.driver.queryEntities({
-      origin: {
-        ...observation.player.position,
-        y: observation.player.position.y + 1.62,
-      },
-      radius: THREAT_ESCAPE_SAFE_DISTANCE,
-      selector: {
-        categories: [2],
-        alive: true,
-        requireLineOfSight: true,
-      },
-      maximumResults: 1,
-    });
-    return nearbyThreats.length === 0;
+    return true;
   });
 }
 
@@ -1285,6 +1261,81 @@ function shelterUntilMorning(
 ): Effect.Effect<void, BeatGameDriverError> {
   return Effect.gen(function* () {
     let shelterObservation = observation;
+    const nearbyThreats = yield* state.driver.queryEntities({
+      origin: {
+        ...shelterObservation.player.position,
+        y: shelterObservation.player.position.y + 1.62,
+      },
+      radius: THREAT_ESCAPE_SAFE_DISTANCE,
+      selector: {
+        categories: [2],
+        alive: true,
+        requireLineOfSight: true,
+      },
+      maximumResults: 1,
+    });
+    if (nearbyThreats.length > 0) {
+      yield* emit(state, {
+        type: "diagnostic",
+        message: "Creating distance from nearby hostiles before sheltering",
+        data: {
+          position: shelterObservation.player.position,
+          threat: nearbyThreats[0],
+        },
+      });
+      yield* flee(state.driver, {
+        selector: {
+          categories: [2],
+          alive: true,
+          requireLineOfSight: true,
+        },
+        triggerRadius: THREAT_ESCAPE_SAFE_DISTANCE,
+        safeDistance: RANGED_THREAT_ESCAPE_SAFE_DISTANCE,
+        safeSeconds: 1,
+        completeWhenSafe: true,
+        maximumEscapes: SINGLE_THREAT_MAXIMUM_ESCAPES,
+        path: {
+          ...state.strategy.path,
+          allowMining: false,
+          allowPlacing: false,
+          avoidFluids: true,
+          sprint: true,
+          maxFallDistance: Math.min(
+            state.strategy.path.maxFallDistance,
+            MAXIMUM_DAMAGE_FREE_FALL_DISTANCE,
+          ),
+        },
+      });
+      shelterObservation = yield* state.driver.observe;
+      if (shelterObservation.player.dead) {
+        return;
+      }
+      const remainingThreats = yield* state.driver.queryEntities({
+        origin: {
+          ...shelterObservation.player.position,
+          y: shelterObservation.player.position.y + 1.62,
+        },
+        radius: THREAT_ESCAPE_SAFE_DISTANCE,
+        selector: {
+          categories: [2],
+          alive: true,
+          requireLineOfSight: true,
+        },
+        maximumResults: 1,
+      });
+      if (remainingThreats.length > 0) {
+        yield* emit(state, {
+          type: "diagnostic",
+          message:
+            "A nearby hostile still prevents safe shelter construction",
+          data: {
+            position: shelterObservation.player.position,
+            threat: remainingThreats[0],
+          },
+        });
+        return;
+      }
+    }
     if (
       yield* isPlayerInFluid(
         state.driver,

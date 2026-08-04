@@ -208,6 +208,75 @@ describe("beat-game run lifecycle", () => {
     }));
   }, 10_000);
 
+  it("creates distance from visible hostiles before sheltering", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentEnvironment = { gameTime: 14_000n };
+    driver.currentObservation = observation({
+      counts: { "minecraft:dirt": 1 },
+      health: 4,
+      food: 8,
+    });
+    driver.entityResults = [{
+      connectionEpoch: "epoch",
+      networkId: 42,
+      entityType: "minecraft:zombie",
+      position: {
+        x: 8,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-08-03T10:00:00.000Z",
+    }];
+    driver.blockQueryResolver = ({ center, selector }) =>
+      selector.blockIds?.includes("minecraft:water") === true
+        ? []
+        : [blockObservation({
+          x: Math.floor(center.x),
+          y: Math.floor(center.y),
+          z: Math.floor(center.z),
+          dimension: center.dimension,
+        }, {
+          blockId: "minecraft:air",
+          diggable: false,
+          replaceable: true,
+          solid: false,
+        })];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some(({ type }) => type === "flee")) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    expect(driver.tasks[0]).toMatchObject({
+      type: "flee",
+      selector: {
+        categories: [2],
+        alive: true,
+        requireLineOfSight: true,
+      },
+      triggerRadius: 24,
+      safeDistance: 32,
+      completeWhenSafe: true,
+    });
+    expect(driver.tasks).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "collect-blocks" }),
+    ]));
+  }, 10_000);
+
   it("routes from water to dry ground before digging a night shelter", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentEnvironment = { gameTime: 14_000n };
