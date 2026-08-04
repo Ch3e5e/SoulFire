@@ -2638,6 +2638,15 @@ function shouldCommitToUndergroundRangedFight(
     && observation.player.food > CRITICAL_HUNGER_FOOD_LEVEL;
 }
 
+function shouldCommitToShieldedUndergroundRangedFight(
+  observation: BeatGameObservation,
+  target: BeatGameEntityObservation,
+): boolean {
+  return observation.player.position.y <= OVERWORLD_LOW_GROUND_MAX_Y
+    && PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(target.entityType)
+    && (observation.inventory.counts["minecraft:shield"] ?? 0) > 0;
+}
+
 function shouldCommitToCloseRangedFight(
   observation: BeatGameObservation,
   target: BeatGameEntityObservation,
@@ -5018,6 +5027,10 @@ function defendAgainstTarget(
       const commitThroughLethalWound =
         shouldCommitToCloseRangedFight(observation, target)
         || shouldCommitToCaughtRangedFight(observation, target)
+        || shouldCommitToShieldedUndergroundRangedFight(
+          observation,
+          target,
+        )
         || shouldCommitToFastMeleePursuerFight(observation, target);
       const guardedAttack = Effect.raceFirst(
         attack.pipe(Effect.as("defended" as const)),

@@ -7851,6 +7851,76 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("keeps blocking a ranged attacker in a confined underground fight", async () => {
+    const driver = new FakeBeatGameDriver();
+    const undergroundPosition = {
+      x: 0,
+      y: 24,
+      z: 0,
+      dimension: "minecraft:overworld",
+    } as const;
+    const skeleton = {
+      connectionEpoch: "epoch-1",
+      networkId: 171,
+      entityType: "minecraft:skeleton",
+      position: {
+        ...undergroundPosition,
+        x: undergroundPosition.x + 6,
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const;
+    const counts = {
+      "minecraft:shield": 1,
+      "minecraft:stone_sword": 1,
+    };
+    driver.currentObservation = observation({
+      health: 20,
+      position: undergroundPosition,
+      counts,
+    });
+    driver.entityResults = [skeleton];
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2)
+          || query.selector.networkId === skeleton.networkId
+        ? driver.entityResults
+        : [];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (task.type === "attack-entity") {
+          driver.currentObservation = observation({
+            health: 5,
+            position: undergroundPosition,
+            counts,
+          });
+        }
+      }).pipe(
+        Effect.zipRight(
+          task.type === "attack-entity" ? Effect.never : Effect.void,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some((task) => task.type === "attack-entity")) {
+        yield* Effect.sleep(1);
+      }
+      yield* Effect.sleep(20);
+      yield* run.stop;
+    })));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+      useOffhandShield: true,
+    }));
+    expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
+  });
+
   it("flees after a shielded ranged attack route fails", async () => {
     const driver = new FakeBeatGameDriver();
     const skeleton = {
