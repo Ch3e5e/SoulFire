@@ -5039,7 +5039,7 @@ describe("beat-game run lifecycle", () => {
     ).toHaveLength(2);
   });
 
-  it("sprints and dynamically flees the selected creeper", async () => {
+  it("sprints and dynamically flees the hostile group around a creeper", async () => {
     const driver = new FakeBeatGameDriver();
     driver.surfaceColumns = Array.from({ length: 18 }, (_, index) => ({
       x: -(index + 1),
@@ -5066,6 +5066,30 @@ describe("beat-game run lifecycle", () => {
       health: 20,
       observedAt: "2026-01-01T00:00:01.000Z",
     }];
+    let moving = false;
+    driver.actionObserver = (action) => {
+      if (action.type === "set-movement" && action.forward === true) {
+        moving = true;
+      } else if (action.type === "reset-movement") {
+        moving = false;
+      }
+    };
+    driver.observationResolver = () =>
+      Effect.sync(() => {
+        if (moving) {
+          driver.currentObservation = {
+            ...driver.currentObservation,
+            player: {
+              ...driver.currentObservation.player,
+              position: {
+                ...driver.currentObservation.player.position,
+                x: driver.currentObservation.player.position.x - 0.8,
+              },
+            },
+          };
+        }
+        return driver.currentObservation;
+      });
     driver.taskResolver = (task) =>
       Effect.sync(() => {
         driver.tasks.push(task);
@@ -5099,7 +5123,7 @@ describe("beat-game run lifecycle", () => {
     const fleeIndex = driver.tasks.findIndex((task) => task.type === "flee");
     expect(driver.tasks[fleeIndex]).toEqual(expect.objectContaining({
       type: "flee",
-      selector: { networkId: 41, alive: true },
+      selector: { categories: [2], alive: true },
       triggerRadius: 12,
       safeDistance: 24,
     }));
@@ -5198,17 +5222,86 @@ describe("beat-game run lifecycle", () => {
     const sprintLooks = driver.actions.filter((action) =>
       action.type === "look" && action.pitch === 0
     );
-    expect(sprintLooks).toHaveLength(2);
-    for (const look of sprintLooks) {
-      if (look.type !== "look") {
-        continue;
-      }
-      expect(Math.abs(Math.abs(look.yaw) - 90)).toBeGreaterThan(45);
+    expect(sprintLooks.length).toBeGreaterThanOrEqual(2);
+    const firstSprintLook = sprintLooks[0];
+    if (firstSprintLook?.type === "look") {
+      expect(Math.abs(Math.abs(firstSprintLook.yaw) - 90))
+        .toBeGreaterThanOrEqual(45);
     }
     expect(driver.tasks.filter((task) => task.type === "flee")).toHaveLength(
       1,
     );
     expect(driver.currentObservation.player.health).toBe(20);
+  }, 10_000);
+
+  it("changes direction when an emergency creeper sprint is blocked", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.surfaceColumns = Array.from({ length: 37 * 37 }, (_, index) => ({
+      x: index % 37 - 18,
+      z: Math.floor(index / 37) - 18,
+      loaded: true,
+      surfaceY: 63,
+      blockId: "minecraft:grass_block",
+      biomeId: "minecraft:plains",
+      skyLight: 15,
+      blockLight: 0,
+    }));
+    driver.entityResults = [{
+      connectionEpoch: "epoch-1",
+      networkId: 41,
+      entityType: "minecraft:creeper",
+      position: {
+        x: 2,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:01.000Z",
+    }];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (
+              driver.actions.filter((action) =>
+                action.type === "look" && action.pitch === 0
+              ).length < 3
+            ) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    const escapeLooks = driver.actions.filter((action) =>
+      action.type === "look" && action.pitch === 0
+    );
+    expect(escapeLooks).toHaveLength(3);
+    expect(escapeLooks[1]).toEqual(expect.objectContaining({ type: "look" }));
+    expect(escapeLooks[2]).toEqual(expect.objectContaining({ type: "look" }));
+    if (escapeLooks[1]?.type === "look" && escapeLooks[2]?.type === "look") {
+      expect(Math.abs(escapeLooks[1].yaw - escapeLooks[2].yaw))
+        .toBeGreaterThanOrEqual(45);
+      expect(-Math.sin(escapeLooks[1].yaw * Math.PI / 180)).toBeLessThan(-0.2);
+      expect(-Math.sin(escapeLooks[2].yaw * Math.PI / 180)).toBeLessThan(-0.2);
+    }
+    expect(driver.surfaceQueries.length).toBeGreaterThanOrEqual(2);
+    expect(driver.actions.filter((action) =>
+      action.type === "set-movement" && action.forward === true
+    )).toHaveLength(1);
   }, 10_000);
 
   it("blind-sprints from a closing creeper when flee replanning stalls", async () => {
@@ -5262,7 +5355,7 @@ describe("beat-game run lifecycle", () => {
 
     expect(driver.tasks).toContainEqual(expect.objectContaining({
       type: "flee",
-      selector: { networkId: distantCreeper.networkId, alive: true },
+      selector: { categories: [2], alive: true },
     }));
     expect(driver.actions).toContainEqual({
       type: "set-movement",

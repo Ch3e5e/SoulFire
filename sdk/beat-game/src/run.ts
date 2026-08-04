@@ -627,6 +627,9 @@ const FAST_PURSUER_ADDITIONAL_DIRECT_ESCAPE_ATTEMPTS = 2;
 const EMERGENCY_ESCAPE_FLUID_PROJECTION_DISTANCE = 2;
 const EMERGENCY_ESCAPE_SURFACE_PROJECTION_DISTANCE = 10;
 const CREEPER_ESCAPE_SPRINT_MS = 2_500;
+const CREEPER_ESCAPE_SPRINT_SEGMENT_MS = 350;
+const CREEPER_ESCAPE_MINIMUM_SEGMENT_DISTANCE = 0.5;
+const CREEPER_ESCAPE_MINIMUM_AWAY_ALIGNMENT = 0.25;
 const CREEPER_ESCAPE_SURFACE_PROJECTION_DISTANCE = 18;
 const EMERGENCY_ESCAPE_LAVA_CHECK_RADIUS = 4;
 const DEATH_OBSERVATION_DEDUPLICATION_WINDOW_MS = 5_000;
@@ -2643,10 +2646,7 @@ function escapeThreatSelector(
   target: BeatGameEntityObservation,
   includeHostileGroup = false,
 ): BeatGameEntitySelector {
-  if (
-    target.entityType === "minecraft:creeper"
-    || !includeHostileGroup
-  ) {
+  if (!includeHostileGroup) {
     return { networkId: target.networkId, alive: true };
   }
   const escapeFromHostileGroup =
@@ -3574,6 +3574,11 @@ function knockBackAndSprintAway(
       escapeThreats,
       directSprintDistance,
       PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(threat.entityType) ? 2 : 0,
+      {
+        minimumPreferredAlignment: threat.entityType === "minecraft:creeper"
+          ? CREEPER_ESCAPE_MINIMUM_AWAY_ALIGNMENT
+          : -1,
+      },
     );
     const direction = dryDirection
       ?? (threat.entityType === "minecraft:creeper"
@@ -3584,7 +3589,10 @@ function knockBackAndSprintAway(
           escapeThreats,
           directSprintDistance,
           0,
-          true,
+          {
+            allowSwimmableSurface: true,
+            minimumPreferredAlignment: CREEPER_ESCAPE_MINIMUM_AWAY_ALIGNMENT,
+          },
         )
         : undefined);
     const projectedPosition = direction === undefined
@@ -3627,16 +3635,22 @@ function knockBackAndSprintAway(
       const escapeDirection = direction ?? normalizeHorizontalDirection(
         preferredDirection,
       );
-      const rotation = rotationToward(playerPosition, {
-        x: playerPosition.x + escapeDirection.x,
-        y: playerPosition.y,
-        z: playerPosition.z + escapeDirection.z,
-      });
-      yield* state.driver.act({
-        type: "look",
-        yaw: rotation.yaw,
-        pitch: 0,
-      });
+      let currentEscapeDirection = escapeDirection;
+      const lookAlongEscapeDirection = (
+        position: BeatGamePosition,
+      ): Effect.Effect<unknown, BeatGameDriverError> => {
+        const rotation = rotationToward(position, {
+          x: position.x + currentEscapeDirection.x,
+          y: position.y,
+          z: position.z + currentEscapeDirection.z,
+        });
+        return state.driver.act({
+          type: "look",
+          yaw: rotation.yaw,
+          pitch: 0,
+        });
+      };
+      yield* lookAlongEscapeDirection(playerPosition);
       yield* state.driver.act({
         type: "set-movement",
         forward: true,
@@ -3656,6 +3670,95 @@ function knockBackAndSprintAway(
             right: !left,
           });
           yield* Effect.sleep(strafeDuration);
+        }
+      } else if (threat.entityType === "minecraft:creeper") {
+        let remainingSprintMs = sprintDuration;
+        let segmentOrigin = playerPosition;
+        const blockedDirections: Array<
+          Readonly<{ x: number; z: number }>
+        > = [];
+        while (remainingSprintMs > 0) {
+          const segmentDuration = Math.min(
+            CREEPER_ESCAPE_SPRINT_SEGMENT_MS,
+            remainingSprintMs,
+          );
+          yield* Effect.sleep(segmentDuration);
+          remainingSprintMs -= segmentDuration;
+          const current = yield* state.driver.observe;
+          if (current.player.dead) {
+            return true;
+          }
+          const segmentDistanceSquared = horizontalDistanceSquared(
+            segmentOrigin,
+            current.player.position,
+          );
+          if (
+            segmentDistanceSquared
+              >= CREEPER_ESCAPE_MINIMUM_SEGMENT_DISTANCE ** 2
+          ) {
+            segmentOrigin = current.player.position;
+            continue;
+          }
+          if (remainingSprintMs === 0) {
+            break;
+          }
+
+          blockedDirections.push(currentEscapeDirection);
+          const refreshedSurface = yield* state.driver.sampleSurface(
+            current.player.position,
+            directSprintDistance,
+            1,
+          );
+          const refreshedThreats = yield* state.driver.queryEntities({
+            origin: current.player.position,
+            radius: THREAT_ESCAPE_SAFE_DISTANCE,
+            selector: { categories: [2], alive: true },
+            maximumResults: 32,
+          });
+          const refreshedThreat = refreshedThreats.find((candidate) =>
+            isSameEntityTarget(candidate, threat)
+          ) ?? threat;
+          const refreshedPreferredTarget = surfaceEscapeTarget(
+            current.player.position,
+            refreshedThreat.position,
+          );
+          const refreshedPreferredDirection = {
+            x: refreshedPreferredTarget.x - current.player.position.x,
+            z: refreshedPreferredTarget.z - current.player.position.z,
+          };
+          const alternateDirection = selectSafeDirectEscapeDirection(
+            refreshedSurface,
+            current.player.position,
+            refreshedPreferredDirection,
+            deduplicateEntityTargets([refreshedThreat, ...refreshedThreats]),
+            directSprintDistance,
+            0,
+            {
+              allowSwimmableSurface: true,
+              excludedDirections: blockedDirections,
+              minimumPreferredAlignment:
+                CREEPER_ESCAPE_MINIMUM_AWAY_ALIGNMENT,
+            },
+          );
+          yield* emit(state, {
+            type: "diagnostic",
+            message: alternateDirection === undefined
+              ? "Emergency creeper sprint stalled with no direct alternate"
+              : "Emergency creeper sprint stalled; changing direction",
+            data: {
+              blockedDirections: blockedDirections.length,
+              position: current.player.position,
+              remainingSprintMs,
+              segmentDistance: Math.sqrt(segmentDistanceSquared),
+              threatNetworkId: threat.networkId,
+            },
+          });
+          if (alternateDirection === undefined) {
+            return false;
+          }
+          currentEscapeDirection = alternateDirection;
+          segmentOrigin = current.player.position;
+          yield* lookAlongEscapeDirection(current.player.position);
         }
       } else {
         yield* Effect.sleep(sprintDuration);
@@ -3715,9 +3818,19 @@ function selectSafeDirectEscapeDirection(
   threats: readonly BeatGameEntityObservation[],
   distance: number,
   lateralHalfWidth: number,
-  allowSwimmableSurface = false,
+  options: {
+    readonly allowSwimmableSurface?: boolean;
+    readonly excludedDirections?: readonly Readonly<{
+      x: number;
+      z: number;
+    }>[];
+    readonly minimumPreferredAlignment?: number;
+  } = {},
 ): Readonly<{ x: number; z: number }> | undefined {
   const preferred = normalizeHorizontalDirection(preferredDirection);
+  const allowSwimmableSurface = options.allowSwimmableSurface ?? false;
+  const excludedDirections = options.excludedDirections ?? [];
+  const minimumPreferredAlignment = options.minimumPreferredAlignment ?? -1;
   const directions = [
     preferred,
     ...Array.from({ length: 32 }, (_, index) => {
@@ -3733,6 +3846,18 @@ function selectSafeDirectEscapeDirection(
     }
     | undefined;
   for (const direction of directions) {
+    const preferredAlignment = direction.x * preferred.x
+      + direction.z * preferred.z;
+    if (preferredAlignment < minimumPreferredAlignment) {
+      continue;
+    }
+    if (excludedDirections.some((excludedDirection) => {
+      const excluded = normalizeHorizontalDirection(excludedDirection);
+      return direction.x * excluded.x + direction.z * excluded.z
+        >= Math.SQRT1_2;
+    })) {
+      continue;
+    }
     if (
       !hasSafeDirectEscapeCorridor(
         columns,
@@ -3756,8 +3881,6 @@ function selectSafeDirectEscapeDirection(
       : Math.min(...threats.map((candidate) =>
         distanceSquared(endpoint, candidate.position)
       ));
-    const preferredAlignment = direction.x * preferred.x
-      + direction.z * preferred.z;
     if (
       best === undefined
       || minimumThreatDistanceSquared
