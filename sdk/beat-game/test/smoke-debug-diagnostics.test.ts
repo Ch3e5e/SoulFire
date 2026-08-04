@@ -2,8 +2,15 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildSmokeActivePathDiagnostics,
+  buildSmokeDecisionDiagnostics,
   buildSmokeSpatialDiagnostics,
+  summarizeSmokeSpatialDiagnostics,
 } from "../smoke/debug-diagnostics.js";
+import {
+  BeatGamePhase,
+  defaultBeatGameStrategy,
+} from "../src/index.js";
+import { checkpoint, observation } from "./fixtures.js";
 
 const origin = {
   x: 10,
@@ -100,6 +107,19 @@ describe("smoke spatial diagnostics", () => {
       minimumY: 62,
       maximumY: 66,
     });
+
+    const summary = summarizeSmokeSpatialDiagnostics(diagnostics);
+    expect(summary.blocks.closest.map(({ blockId }) => blockId)).toEqual([
+      "minecraft:stone",
+      "minecraft:stone",
+      "minecraft:water",
+    ]);
+    expect(summary.entities).toMatchObject({
+      observed: 3,
+      hostileCount: 1,
+      itemCount: 1,
+      otherCount: 1,
+    });
   });
 
   it("measures active path progress against the exact traced goal", () => {
@@ -131,6 +151,72 @@ describe("smoke spatial diagnostics", () => {
       elapsedMs: 1_250,
       displacementFromOrigin: 6,
       distanceToGoal: 2,
+    });
+  });
+});
+
+describe("smoke decision diagnostics", () => {
+  it("explains an active recovery and the action a fresh replan would choose", () => {
+    const playerObservation = observation({ food: 18 });
+    const requirement = {
+      key: "logs",
+      itemIds: ["minecraft:oak_log"],
+      tags: [],
+      targetCount: 4,
+      currentCount: 0,
+      priority: 120,
+      satisfied: false,
+    } as const;
+    const state = checkpoint(BeatGamePhase.ENTER_NETHER, {
+      planner: {
+        ...checkpoint(BeatGamePhase.ENTER_NETHER).planner,
+        currentAction: "recover-death",
+        currentActionId: "recovery-1",
+        requirements: [requirement],
+      },
+      memory: {
+        ...checkpoint(BeatGamePhase.ENTER_NETHER).memory,
+        deathPositions: [{
+          key: "death-1",
+          value: {
+            x: 100,
+            y: 63,
+            z: -20,
+            dimension: "minecraft:overworld",
+            inventoryCounts: { "minecraft:iron_pickaxe": 1 },
+          },
+          observedAt: "2026-01-01T00:01:00.000Z",
+          confidence: 1,
+        }],
+      },
+    });
+
+    const diagnostics = buildSmokeDecisionDiagnostics({
+      checkpoint: state,
+      observation: playerObservation,
+      strategy: defaultBeatGameStrategy,
+      nextIfReplanned: {
+        type: "satisfy-requirement",
+        action: "satisfy:logs",
+        requirement,
+      },
+    });
+
+    expect(diagnostics.activeAction).toMatchObject({
+      action: "recover-death",
+      actionId: "recovery-1",
+      reason: "The action is recovering 1 remembered death location",
+    });
+    expect(diagnostics.nextIfReplanned).toMatchObject({
+      reason:
+        "logs is the highest-priority actionable requirement: 4 missing (0/4, priority 120)",
+    });
+    expect(diagnostics.blockers).toMatchObject({
+      pendingRequirements: [{ key: "logs", missingCount: 4 }],
+      rememberedDeaths: [{
+        key: "death-1",
+        position: { x: 100, y: 63, z: -20 },
+      }],
     });
   });
 });

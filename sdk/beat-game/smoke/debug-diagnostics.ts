@@ -1,9 +1,13 @@
 import type {
   BeatGameBlockObservation,
+  BeatGameCheckpoint,
   BeatGameEntityObservation,
+  BeatGameObservation,
   BeatGamePathPolicy,
   BeatGamePosition,
+  BeatGameStrategy,
 } from "../src/model.js";
+import type { BeatGamePlannerDecision } from "../src/planner.js";
 import type { BeatGameSurfaceColumn } from "../src/driver.js";
 
 interface DebugVector {
@@ -46,6 +50,13 @@ export interface SmokeSpatialDiagnosticsInput {
   readonly blocks: readonly BeatGameBlockObservation[];
   readonly entities: readonly BeatGameEntityObservation[];
   readonly surface: readonly BeatGameSurfaceColumn[];
+}
+
+export interface SmokeDecisionDiagnosticsInput {
+  readonly checkpoint: BeatGameCheckpoint;
+  readonly observation: BeatGameObservation;
+  readonly strategy: BeatGameStrategy;
+  readonly nextIfReplanned: BeatGamePlannerDecision;
 }
 
 const HOSTILE_ENTITY_TYPES = new Set([
@@ -227,6 +238,210 @@ export function buildSmokeActivePathDiagnostics(
       : undefined,
     distanceToGoal,
   };
+}
+
+export function buildSmokeDecisionDiagnostics(
+  input: SmokeDecisionDiagnosticsInput,
+) {
+  const { checkpoint, observation, strategy, nextIfReplanned } = input;
+  const { planner } = checkpoint;
+  const pendingRequirements = planner.requirements
+    .filter(({ satisfied }) => !satisfied)
+    .map((requirement) => ({
+      key: requirement.key,
+      priority: requirement.priority,
+      currentCount: requirement.currentCount,
+      targetCount: requirement.targetCount,
+      missingCount: Math.max(
+        0,
+        requirement.targetCount - requirement.currentCount,
+      ),
+    }));
+  const rememberedDeaths = [...checkpoint.memory.deathPositions]
+    .sort((left, right) =>
+      Date.parse(right.observedAt) - Date.parse(left.observedAt)
+    )
+    .map((entry) => ({
+      key: entry.key,
+      observedAt: entry.observedAt,
+      position: {
+        x: entry.value.x,
+        y: entry.value.y,
+        z: entry.value.z,
+        dimension: entry.value.dimension,
+      },
+      inventoryCounts: entry.value.inventoryCounts ?? {},
+    }));
+  const activeAction = planner.currentAction === undefined
+    ? undefined
+    : {
+      action: planner.currentAction,
+      ...(planner.currentActionId === undefined
+        ? {}
+        : { actionId: planner.currentActionId }),
+      retryCount: planner.retryCount,
+      reason: explainCurrentAction(
+        planner.currentAction,
+        checkpoint,
+        observation,
+        strategy,
+        nextIfReplanned,
+      ),
+    };
+
+  return {
+    phase: {
+      current: planner.phase,
+      objective: planner.objective,
+      status: planner.status,
+    },
+    activeAction,
+    nextIfReplanned: {
+      decision: nextIfReplanned,
+      reason: explainDecision(nextIfReplanned, checkpoint, observation, strategy),
+    },
+    signals: {
+      dead: observation.player.dead,
+      health: observation.player.health,
+      minimumHealth: strategy.minimumHealth,
+      food: observation.player.food,
+      eatBelowFood: strategy.eatBelowFood,
+      air: observation.player.air,
+      maxAir: observation.player.maxAir,
+      dimension: observation.player.position.dimension,
+      inventoryRevision: observation.inventory.revision,
+      observationRevision: observation.player.revision,
+    },
+    blockers: {
+      pendingRequirements,
+      rememberedDeaths,
+    },
+    progress: {
+      lastStableAction: checkpoint.lastStableAction,
+      recentlyCompletedActions: planner.completedActions.slice(-12),
+    },
+  };
+}
+
+export function summarizeSmokeSpatialDiagnostics(
+  diagnostics: ReturnType<typeof buildSmokeSpatialDiagnostics>,
+) {
+  return {
+    capture: diagnostics.capture,
+    blocks: {
+      radius: diagnostics.blocks.radius,
+      observed: diagnostics.blocks.observed,
+      air: diagnostics.blocks.air,
+      fluids: diagnostics.blocks.fluids,
+      solid: diagnostics.blocks.solid,
+      byBlockId: diagnostics.blocks.byBlockId,
+      closest: diagnostics.blocks.observations
+        .filter(({ blockId }) => blockId !== "minecraft:air")
+        .slice(0, 24),
+    },
+    entities: {
+      radius: diagnostics.entities.radius,
+      observed: diagnostics.entities.observed,
+      hostileCount: diagnostics.entities.hostile.length,
+      itemCount: diagnostics.entities.items.length,
+      otherCount: diagnostics.entities.other.length,
+      closestHostile: diagnostics.entities.hostile.slice(0, 12),
+      closestItems: diagnostics.entities.items.slice(0, 12),
+      closestOther: diagnostics.entities.other.slice(0, 12),
+    },
+    surface: {
+      radius: diagnostics.surface.radius,
+      observed: diagnostics.surface.observed,
+      unloaded: diagnostics.surface.unloaded,
+      minimumY: diagnostics.surface.minimumY,
+      maximumY: diagnostics.surface.maximumY,
+      byBlockId: diagnostics.surface.byBlockId,
+    },
+  };
+}
+
+function explainCurrentAction(
+  action: string,
+  checkpoint: BeatGameCheckpoint,
+  observation: BeatGameObservation,
+  strategy: BeatGameStrategy,
+  nextIfReplanned: BeatGamePlannerDecision,
+): string {
+  if ("action" in nextIfReplanned && nextIfReplanned.action === action) {
+    return explainDecision(nextIfReplanned, checkpoint, observation, strategy);
+  }
+  if (action === "recover-death") {
+    const remembered = checkpoint.memory.deathPositions.length;
+    return observation.player.dead
+      ? "The player is dead and must respawn before recovery can continue"
+      : `The action is recovering ${remembered} remembered death location${
+        remembered === 1 ? "" : "s"
+      }`;
+  }
+  if (action.startsWith("satisfy:")) {
+    const key = action.slice("satisfy:".length);
+    const requirement = checkpoint.planner.requirements.find((candidate) =>
+      candidate.key === key
+    );
+    if (requirement !== undefined) {
+      return requirementReason(requirement);
+    }
+  }
+  return `The planner is still executing ${action}; a fresh replan would choose ${
+    "action" in nextIfReplanned ? nextIfReplanned.action : nextIfReplanned.type
+  }`;
+}
+
+function explainDecision(
+  decision: BeatGamePlannerDecision,
+  checkpoint: BeatGameCheckpoint,
+  observation: BeatGameObservation,
+  strategy: BeatGameStrategy,
+): string {
+  switch (decision.type) {
+    case "advance-phase":
+      return `The ${decision.from} objective is complete, so the planner can advance to ${decision.to}`;
+    case "recover-death":
+      return observation.player.dead
+        ? "The player is dead and must respawn before continuing"
+        : `The planner remembers ${checkpoint.memory.deathPositions.length} death location${
+          checkpoint.memory.deathPositions.length === 1 ? "" : "s"
+        } with potentially recoverable items`;
+    case "eat":
+      return `Food is ${observation.player.food}, at or below the configured eating threshold of ${strategy.eatBelowFood}, and edible food is available`;
+    case "retreat":
+      return `Health is ${observation.player.health}, below the configured safety threshold of ${strategy.minimumHealth}`;
+    case "satisfy-requirement":
+      return requirementReason(decision.requirement);
+    case "prepare-equipment":
+      return "The Overworld resource requirements are satisfied, but equipment preparation has not completed";
+    case "build-and-enter-nether":
+      return "The Nether entry requirements are satisfied and the player is still in the Overworld";
+    case "return-through-portal":
+      return "The Nether resource requirements are satisfied and the player must return to the Overworld";
+    case "throw-eye":
+      return "The stronghold is not estimated yet and the eye supply requirement is satisfied";
+    case "search-stronghold":
+      return "A stronghold estimate is available and the planner is ready to search it";
+    case "activate-end-portal":
+      return "The End portal requirements are satisfied and the player has not entered the End";
+    case "fight-ender-dragon":
+      return "The dragon-fight requirements are satisfied and the fight remains incomplete";
+    case "collect-dragon-egg":
+      return "The dragon egg is not in inventory and all collection tools are available";
+    case "exit-end":
+      return "The dragon egg has been collected and the player remains in the End";
+  }
+}
+
+function requirementReason(
+  requirement: BeatGameCheckpoint["planner"]["requirements"][number],
+): string {
+  const missing = Math.max(
+    0,
+    requirement.targetCount - requirement.currentCount,
+  );
+  return `${requirement.key} is the highest-priority actionable requirement: ${missing} missing (${requirement.currentCount}/${requirement.targetCount}, priority ${requirement.priority})`;
 }
 
 function countsBy<T>(

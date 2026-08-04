@@ -64,7 +64,9 @@ import {
 } from "./debug-server.ts";
 import {
   buildSmokeActivePathDiagnostics,
+  buildSmokeDecisionDiagnostics,
   buildSmokeSpatialDiagnostics,
+  summarizeSmokeSpatialDiagnostics,
   type SmokeActivePathTrace,
 } from "./debug-diagnostics.ts";
 
@@ -946,21 +948,45 @@ const program = Effect.scoped(Effect.gen(function* () {
               run.snapshot,
               driver.observe,
             ], { concurrency: "unbounded" });
-            const [solidBlocks, entities] = yield* Effect.all([
+            const capturedAt = new Date().toISOString();
+            const origin = observation.player.position;
+            const [blocks, entities, surface] = yield* Effect.all([
               driver.queryBlocks({
-                center: observation.player.position,
-                radius: 16,
-                selector: { solid: true },
-                maximumResults: 256,
+                center: origin,
+                radius: 8,
+                selector: {},
+                maximumResults: 768,
               }),
               driver.queryEntities({
-                origin: observation.player.position,
+                origin,
                 radius: 48,
                 selector: {},
                 maximumResults: 128,
               }),
+              driver.sampleSurface(origin, 12, 2),
             ], { concurrency: "unbounded" });
+            const finalPlayer = yield* bot.world.player();
             const planner = snapshot.checkpoint.planner;
+            const nextIfReplanned = decideBeatGameAction({
+              checkpoint: snapshot.checkpoint,
+              observation,
+              strategy: beatGameStrategy,
+            });
+            const spatial = summarizeSmokeSpatialDiagnostics(
+              buildSmokeSpatialDiagnostics({
+                origin,
+                originVelocity: observation.player.velocity,
+                finalPosition: finalPlayer.position ?? origin,
+                localBlockRadius: 8,
+                entityRadius: 48,
+                surfaceRadius: 12,
+                startedAt: capturedAt,
+                completedAt: new Date().toISOString(),
+                blocks,
+                entities,
+                surface,
+              }),
+            );
             return {
               run: {
                 runId: snapshot.checkpoint.runId,
@@ -972,26 +998,32 @@ const program = Effect.scoped(Effect.gen(function* () {
                 retryCount: planner.retryCount,
                 pendingRequirements: planner.requirements.filter(
                   (requirement) => !requirement.satisfied,
-                ),
+                ).map((requirement) => ({
+                  key: requirement.key,
+                  currentCount: requirement.currentCount,
+                  targetCount: requirement.targetCount,
+                  missingCount: Math.max(
+                    0,
+                    requirement.targetCount - requirement.currentCount,
+                  ),
+                })),
                 lastStableAction: snapshot.checkpoint.lastStableAction,
               },
               decision: {
-                activeAction: planner.currentAction,
-                activeActionId: planner.currentActionId,
-                nextIfReplanned: decideBeatGameAction({
+                ...buildSmokeDecisionDiagnostics({
                   checkpoint: snapshot.checkpoint,
                   observation,
                   strategy: beatGameStrategy,
+                  nextIfReplanned,
                 }),
+                activity: queryCurrentDecisionActivity(
+                  planner.currentAction,
+                  30,
+                ),
               },
               player: observation.player,
               inventory: observation.inventory,
-              nearby: {
-                solidBlockRadius: 16,
-                solidBlocks,
-                entityRadius: 48,
-                entities,
-              },
+              nearby: spatial,
               pathfinding: {
                 active: activePathTrace === undefined
                   ? undefined
@@ -1011,7 +1043,7 @@ const program = Effect.scoped(Effect.gen(function* () {
                   "pathfind-xz-completed",
                   "pathfind-xz-failed",
                 ].join(","),
-                limit: 50,
+                limit: 12,
               }),
               taskActivity: queryDebugTimeline({
                 kind: [
@@ -1020,12 +1052,38 @@ const program = Effect.scoped(Effect.gen(function* () {
                   "task-completed",
                   "task-failed",
                 ].join(","),
-                limit: 100,
+                limit: 20,
               }),
-              decisionActivity: queryDebugTimeline({
-                kind: "beat-game-event,task-started,task-completed,task-failed,primitive-started,primitive-failed",
-                limit: 100,
+            };
+          }),
+      },
+      {
+        method: "GET",
+        path: "/decision/trace",
+        description:
+          "Explain the active planner decision, its blockers, live signals, and correlated execution activity",
+        execute: () =>
+          Effect.gen(function* () {
+            const [snapshot, observation] = yield* Effect.all([
+              run.snapshot,
+              driver.observe,
+            ], { concurrency: "unbounded" });
+            const planner = snapshot.checkpoint.planner;
+            return {
+              ...buildSmokeDecisionDiagnostics({
+                checkpoint: snapshot.checkpoint,
+                observation,
+                strategy: beatGameStrategy,
+                nextIfReplanned: decideBeatGameAction({
+                  checkpoint: snapshot.checkpoint,
+                  observation,
+                  strategy: beatGameStrategy,
+                }),
               }),
+              activity: queryCurrentDecisionActivity(
+                planner.currentAction,
+                250,
+              ),
             };
           }),
       },
@@ -2144,6 +2202,11 @@ function captureSmokeDiagnostics(options: Readonly<{
     const completedAt = new Date().toISOString();
     const planner = snapshot.checkpoint.planner;
     const finalPosition = finalPlayer.position ?? origin;
+    const nextIfReplanned = decideBeatGameAction({
+      checkpoint: snapshot.checkpoint,
+      observation,
+      strategy: options.strategy,
+    });
     return {
       run: {
         runId: snapshot.checkpoint.runId,
@@ -2161,17 +2224,16 @@ function captureSmokeDiagnostics(options: Readonly<{
       player: observation.player,
       inventory: observation.inventory,
       decision: {
-        activeAction: planner.currentAction,
-        activeActionId: planner.currentActionId,
-        retryCount: planner.retryCount,
-        latestActionEvent: latestDebugTimelineEntry([
-          "beat-game-event",
-        ], (entry) => isBeatGameActionEvent(entry)),
-        nextIfReplanned: decideBeatGameAction({
+        ...buildSmokeDecisionDiagnostics({
           checkpoint: snapshot.checkpoint,
           observation,
           strategy: options.strategy,
+          nextIfReplanned,
         }),
+        latestActionEvent: latestDebugTimelineEntry([
+          "beat-game-event",
+        ], (entry) => isBeatGameActionEvent(entry)),
+        activity: queryCurrentDecisionActivity(planner.currentAction, 100),
       },
       spatial: buildSmokeSpatialDiagnostics({
         origin,
@@ -2284,6 +2346,86 @@ function querySignificantDebugActivity(limit: number): readonly unknown[] {
         "team-claim-changed",
       ].includes(event.type);
   }).slice(-limit);
+}
+
+function queryCurrentDecisionActivity(
+  currentAction: string | undefined,
+  limit: number,
+) {
+  const activity = debugTimeline.query({
+    kinds: [
+      "beat-game-event",
+      "entity-query",
+      "pathfind-started",
+      "pathfind-completed",
+      "pathfind-failed",
+      "pathfind-xz-started",
+      "pathfind-xz-completed",
+      "pathfind-xz-failed",
+      "player-vitals-observed",
+      "primitive-started",
+      "primitive-completed",
+      "primitive-failed",
+      "task-started",
+      "task-progress-observed",
+      "task-completed",
+      "task-failed",
+    ],
+    limit: debugApiTimelineEntries,
+  });
+  if (currentAction === undefined) {
+    return {
+      action: undefined,
+      correlatedSince: undefined,
+      entries: [],
+      recentActionOutcomes: recentActionOutcomes(activity),
+    };
+  }
+  const started = activity.findLast((entry) => {
+    if (!isDebugRecord(entry) || entry.kind !== "beat-game-event") {
+      return false;
+    }
+    const event = entry.event;
+    return isDebugRecord(event)
+      && event.type === "action-started"
+      && event.action === currentAction;
+  });
+  const correlatedSince = debugObservedAt(started);
+  return {
+    action: currentAction,
+    correlatedSince,
+    correlation: correlatedSince === undefined
+      ? "No matching action-start event remains in the bounded timeline"
+      : "Entries are correlated from the latest matching action-start event",
+    entries: activity.filter((entry) => {
+      const observedAt = debugObservedAt(entry);
+      return correlatedSince === undefined
+        || observedAt === undefined
+        || observedAt >= correlatedSince;
+    }).slice(-limit),
+    recentActionOutcomes: recentActionOutcomes(activity),
+  };
+}
+
+function recentActionOutcomes(
+  activity: readonly unknown[],
+): readonly unknown[] {
+  return activity.filter((entry) => {
+    if (!isDebugRecord(entry) || entry.kind !== "beat-game-event") {
+      return false;
+    }
+    const event = entry.event;
+    return isDebugRecord(event)
+      && typeof event.type === "string"
+      && ["action-succeeded", "action-failed"].includes(event.type);
+  }).slice(-12);
+}
+
+function debugObservedAt(entry: unknown): string | undefined {
+  if (!isDebugRecord(entry)) {
+    return undefined;
+  }
+  return typeof entry.observedAt === "string" ? entry.observedAt : undefined;
 }
 
 function isDebugRecord(value: unknown): value is Readonly<Record<string, unknown>> {
