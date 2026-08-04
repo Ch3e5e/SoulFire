@@ -73,6 +73,7 @@ import {
   buildSmokeActivePathDiagnostics,
   buildSmokeDecisionDiagnostics,
   buildSmokeSpatialDiagnostics,
+  buildSmokeStuckDiagnostics,
   summarizeSmokeEnvironment,
   summarizeSmokeSpatialDiagnostics,
   type SmokeActivePathTrace,
@@ -1048,6 +1049,73 @@ const program = Effect.scoped(Effect.gen(function* () {
           run,
           strategy: beatGameStrategy,
         }),
+      },
+      {
+        method: "GET",
+        path: "/diagnostics/stuck",
+        description:
+          "Detect stalled paths, frozen task progress, repeated replans, and path failure loops with supporting live context",
+        execute: () =>
+          Effect.gen(function* () {
+            const capturedAt = new Date().toISOString();
+            const [snapshot, observation, finalPlayer] = yield* Effect.all([
+              run.snapshot,
+              driver.observe,
+              bot.world.player(),
+            ], { concurrency: "unbounded" });
+            const planner = snapshot.checkpoint.planner;
+            const currentPosition = finalPlayer.position
+              ?? observation.player.position;
+            const activePath = activePathTrace === undefined
+              ? undefined
+              : buildSmokeActivePathDiagnostics(
+                activePathTrace,
+                currentPosition,
+                capturedAt,
+              );
+            const activity = debugTimeline.query({
+              kinds: [
+                "beat-game-event",
+                "pathfind-completed",
+                "pathfind-failed",
+                "pathfind-interrupted",
+                "pathfind-xz-completed",
+                "pathfind-xz-failed",
+                "pathfind-xz-interrupted",
+                "primitive-completed",
+                "task-progress-observed",
+              ],
+              limit: debugApiTimelineEntries,
+            });
+            return {
+              analysis: buildSmokeStuckDiagnostics({
+                capturedAt,
+                currentAction: planner.currentAction,
+                activePath,
+                activity,
+              }),
+              decision: buildSmokeDecisionDiagnostics({
+                checkpoint: snapshot.checkpoint,
+                observation,
+                strategy: beatGameStrategy,
+                nextIfReplanned: decideBeatGameAction({
+                  checkpoint: snapshot.checkpoint,
+                  observation,
+                  strategy: beatGameStrategy,
+                }),
+              }),
+              player: observation.player,
+              inventory: observation.inventory,
+              environment: summarizeSmokeEnvironment(
+                debugSession?.state.environment,
+              ),
+              pathfinding: {
+                active: activePath,
+                lastOutcome: lastPathOutcome,
+              },
+              recentActivity: querySignificantDebugActivity(40),
+            };
+          }),
       },
       {
         method: "GET",

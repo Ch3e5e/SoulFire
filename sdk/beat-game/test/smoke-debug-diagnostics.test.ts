@@ -4,6 +4,7 @@ import {
   buildSmokeActivePathDiagnostics,
   buildSmokeDecisionDiagnostics,
   buildSmokeSpatialDiagnostics,
+  buildSmokeStuckDiagnostics,
   summarizeSmokeEnvironment,
   summarizeSmokeSpatialDiagnostics,
 } from "../smoke/debug-diagnostics.js";
@@ -249,6 +250,125 @@ describe("smoke environment diagnostics", () => {
       isNight: true,
       raining: true,
       rainLevel: 0.75,
+    });
+  });
+});
+
+describe("smoke stuck diagnostics", () => {
+  it("distinguishes a stalled path and repeated replan loop from slow progress", () => {
+    const capturedAt = "2026-08-03T10:05:00.000Z";
+    const repeatedFailure = (seconds: number) => ({
+      observedAt: `2026-08-03T10:04:${String(seconds).padStart(2, "0")}.000Z`,
+      kind: "beat-game-event",
+      event: {
+        type: "action-failed",
+        action: "recover-death",
+        detail: "still searching for enough travel food",
+      },
+    });
+
+    const diagnostics = buildSmokeStuckDiagnostics({
+      capturedAt,
+      currentAction: "recover-death",
+      activePath: {
+        pathId: "path-1",
+        elapsedMs: 20_000,
+        displacementFromOrigin: 0.25,
+        distanceToGoal: 18,
+      },
+      activity: [
+        {
+          observedAt: "2026-08-03T10:03:00.000Z",
+          kind: "beat-game-event",
+          event: { type: "action-started", action: "recover-death" },
+        },
+        repeatedFailure(10),
+        repeatedFailure(20),
+        repeatedFailure(30),
+      ],
+    });
+
+    expect(diagnostics.status).toBe("stuck");
+    expect(diagnostics.action).toMatchObject({
+      name: "recover-death",
+      ageMs: 120_000,
+    });
+    expect(diagnostics.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "path-no-displacement" }),
+      expect.objectContaining({ code: "repeated-replan-reason" }),
+    ]));
+  });
+
+  it("detects task progress that remains frozen across observations", () => {
+    const taskProgress = (observedAt: string) => ({
+      observedAt,
+      kind: "task-progress-observed",
+      task: {
+        taskId: "task-1",
+        progress: {
+          current: "4",
+          total: "20",
+          fraction: 0.2,
+          message: "Following route",
+        },
+      },
+    });
+    const diagnostics = buildSmokeStuckDiagnostics({
+      capturedAt: "2026-08-03T10:00:20.000Z",
+      currentAction: "satisfy:logs",
+      activity: [
+        {
+          observedAt: "2026-08-03T10:00:00.000Z",
+          kind: "beat-game-event",
+          event: { type: "action-started", action: "satisfy:logs" },
+        },
+        taskProgress("2026-08-03T10:00:02.000Z"),
+        taskProgress("2026-08-03T10:00:18.000Z"),
+      ],
+    });
+
+    expect(diagnostics.status).toBe("stuck");
+    expect(diagnostics.latestTask).toMatchObject({
+      taskId: "task-1",
+      current: "4",
+      total: "20",
+    });
+    expect(diagnostics.findings).toContainEqual(expect.objectContaining({
+      code: "task-progress-stalled",
+    }));
+  });
+
+  it("reports a moving active route as progressing", () => {
+    const diagnostics = buildSmokeStuckDiagnostics({
+      capturedAt: "2026-08-03T10:00:08.000Z",
+      currentAction: "satisfy:logs",
+      activePath: {
+        pathId: "path-2",
+        elapsedMs: 8_000,
+        displacementFromOrigin: 7,
+        distanceToGoal: 3,
+      },
+      activity: [
+        {
+          observedAt: "2026-08-03T10:00:00.000Z",
+          kind: "beat-game-event",
+          event: { type: "action-started", action: "satisfy:logs" },
+        },
+        {
+          observedAt: "2026-08-03T10:00:07.000Z",
+          kind: "task-progress-observed",
+          task: {
+            taskId: "task-2",
+            progress: { current: "7", total: "10", fraction: 0.7 },
+          },
+        },
+      ],
+    });
+
+    expect(diagnostics).toMatchObject({
+      status: "progressing",
+      findings: [],
+      lastProgressAgeMs: 1_000,
     });
   });
 });

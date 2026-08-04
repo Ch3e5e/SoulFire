@@ -63,6 +63,25 @@ export interface SmokeDecisionDiagnosticsInput {
   readonly nextIfReplanned: BeatGamePlannerDecision;
 }
 
+export interface SmokeStuckDiagnosticsInput {
+  readonly capturedAt: string;
+  readonly currentAction?: string | undefined;
+  readonly activePath?: Readonly<{
+    readonly pathId: string;
+    readonly elapsedMs: number;
+    readonly displacementFromOrigin?: number | undefined;
+    readonly distanceToGoal?: number | undefined;
+  }> | undefined;
+  readonly activity: readonly unknown[];
+}
+
+export interface SmokeStuckFinding {
+  readonly code: string;
+  readonly severity: "warning" | "error";
+  readonly summary: string;
+  readonly evidence: Readonly<Record<string, unknown>>;
+}
+
 const HOSTILE_ENTITY_TYPES = new Set([
   "minecraft:blaze",
   "minecraft:bogged",
@@ -327,6 +346,176 @@ export function buildSmokeDecisionDiagnostics(
   };
 }
 
+export function buildSmokeStuckDiagnostics(
+  input: SmokeStuckDiagnosticsInput,
+) {
+  const capturedAtMs = Date.parse(input.capturedAt);
+  const activity = input.activity
+    .flatMap(parseSmokeProgressActivity)
+    .filter((entry) => entry.observedAtMs <= capturedAtMs)
+    .sort((left, right) => left.observedAtMs - right.observedAtMs);
+  const findings: SmokeStuckFinding[] = [];
+  const actionStarted = activity.findLast((entry) =>
+    entry.kind === "action-started"
+      && entry.action === input.currentAction
+  );
+  const actionAgeMs = actionStarted === undefined
+    ? undefined
+    : Math.max(0, capturedAtMs - actionStarted.observedAtMs);
+
+  if (
+    input.activePath !== undefined
+    && input.activePath.elapsedMs >= 10_000
+    && (input.activePath.displacementFromOrigin ?? 0) < 0.75
+  ) {
+    findings.push({
+      code: "path-no-displacement",
+      severity: "error",
+      summary: "The active path has not produced meaningful movement",
+      evidence: {
+        pathId: input.activePath.pathId,
+        elapsedMs: input.activePath.elapsedMs,
+        displacementFromOrigin:
+          input.activePath.displacementFromOrigin,
+        distanceToGoal: input.activePath.distanceToGoal,
+      },
+    });
+  }
+
+  const latestTaskId = activity.findLast((entry) =>
+    entry.kind === "task-progress"
+  )?.taskId;
+  const latestTaskProgress = latestTaskId === undefined
+    ? []
+    : activity.filter((entry) =>
+      entry.kind === "task-progress" && entry.taskId === latestTaskId
+    );
+  const firstTaskProgress = latestTaskProgress.at(0);
+  const lastTaskProgress = latestTaskProgress.at(-1);
+  if (
+    firstTaskProgress !== undefined
+    && lastTaskProgress !== undefined
+    && latestTaskProgress.length >= 2
+    && lastTaskProgress.observedAtMs - firstTaskProgress.observedAtMs >= 10_000
+    && lastTaskProgress.taskCurrent === firstTaskProgress.taskCurrent
+    && lastTaskProgress.taskFraction === firstTaskProgress.taskFraction
+  ) {
+    findings.push({
+      code: "task-progress-stalled",
+      severity: "error",
+      summary: "The current task keeps reporting the same progress",
+      evidence: {
+        taskId: latestTaskId,
+        durationMs:
+          lastTaskProgress.observedAtMs - firstTaskProgress.observedAtMs,
+        samples: latestTaskProgress.length,
+        current: lastTaskProgress.taskCurrent,
+        total: lastTaskProgress.taskTotal,
+        fraction: lastTaskProgress.taskFraction,
+        message: lastTaskProgress.message,
+      },
+    });
+  }
+
+  const actionFailures = activity.filter((entry) =>
+    entry.kind === "action-failed"
+      && entry.action === input.currentAction
+      && capturedAtMs - entry.observedAtMs <= 5 * 60_000
+  );
+  const repeatedFailure = mostRepeatedDetail(actionFailures);
+  if (repeatedFailure !== undefined && repeatedFailure.count >= 3) {
+    findings.push({
+      code: "repeated-replan-reason",
+      severity: "warning",
+      summary: "The active action is repeatedly replanning for the same reason",
+      evidence: {
+        action: input.currentAction,
+        count: repeatedFailure.count,
+        reason: repeatedFailure.detail,
+        windowMs: 5 * 60_000,
+      },
+    });
+  }
+
+  const pathFailures = activity.filter((entry) =>
+    entry.kind === "path-failed"
+      && capturedAtMs - entry.observedAtMs <= 2 * 60_000
+  );
+  if (pathFailures.length >= 3) {
+    findings.push({
+      code: "repeated-path-failure",
+      severity: "warning",
+      summary: "Several path attempts have failed in a short period",
+      evidence: {
+        count: pathFailures.length,
+        windowMs: 2 * 60_000,
+        latestCause: pathFailures.at(-1)?.detail,
+      },
+    });
+  }
+
+  const lastProgress = activity.findLast((entry) =>
+    entry.kind === "task-progress"
+      || entry.kind === "path-completed"
+      || entry.kind === "primitive-completed"
+      || entry.kind === "action-succeeded"
+  );
+  const lastProgressAgeMs = lastProgress === undefined
+    ? undefined
+    : Math.max(0, capturedAtMs - lastProgress.observedAtMs);
+  if (
+    input.currentAction !== undefined
+    && actionAgeMs !== undefined
+    && actionAgeMs >= 30_000
+    && (lastProgressAgeMs === undefined || lastProgressAgeMs >= 30_000)
+  ) {
+    findings.push({
+      code: "no-recent-progress",
+      severity: "warning",
+      summary: "The active action has no recent progress signal",
+      evidence: {
+        action: input.currentAction,
+        actionAgeMs,
+        lastProgressAgeMs,
+      },
+    });
+  }
+
+  const status = findings.some(({ severity }) => severity === "error")
+    ? "stuck"
+    : findings.length > 0
+    ? "degraded"
+    : input.currentAction === undefined
+    ? "idle"
+    : "progressing";
+
+  return {
+    status,
+    capturedAt: input.capturedAt,
+    action: input.currentAction === undefined
+      ? undefined
+      : {
+        name: input.currentAction,
+        startedAt: actionStarted?.observedAt,
+        ageMs: actionAgeMs,
+      },
+    activePath: input.activePath,
+    latestTask: lastTaskProgress === undefined
+      ? undefined
+      : {
+        taskId: lastTaskProgress.taskId,
+        observedAt: lastTaskProgress.observedAt,
+        current: lastTaskProgress.taskCurrent,
+        total: lastTaskProgress.taskTotal,
+        fraction: lastTaskProgress.taskFraction,
+        message: lastTaskProgress.message,
+      },
+    lastProgressAt: lastProgress?.observedAt,
+    lastProgressAgeMs,
+    findings,
+  } as const;
+}
+
 function summarizeDecision(decision: BeatGamePlannerDecision) {
   if (decision.type !== "satisfy-requirement") {
     return decision;
@@ -503,6 +692,129 @@ function requirementReason(
     requirement.targetCount - requirement.currentCount,
   );
   return `${requirement.key} is the highest-priority actionable requirement: ${missing} missing (${requirement.currentCount}/${requirement.targetCount}, priority ${requirement.priority})`;
+}
+
+interface SmokeProgressActivity {
+  readonly observedAt: string;
+  readonly observedAtMs: number;
+  readonly kind:
+    | "action-failed"
+    | "action-started"
+    | "action-succeeded"
+    | "path-completed"
+    | "path-failed"
+    | "primitive-completed"
+    | "task-progress";
+  readonly action?: string;
+  readonly detail?: string;
+  readonly taskId?: string;
+  readonly taskCurrent?: string;
+  readonly taskTotal?: string;
+  readonly taskFraction?: number;
+  readonly message?: string;
+}
+
+function parseSmokeProgressActivity(
+  input: unknown,
+): readonly SmokeProgressActivity[] {
+  if (!isRecord(input) || typeof input.observedAt !== "string") {
+    return [];
+  }
+  const observedAtMs = Date.parse(input.observedAt);
+  if (!Number.isFinite(observedAtMs) || typeof input.kind !== "string") {
+    return [];
+  }
+  if (input.kind === "beat-game-event" && isRecord(input.event)) {
+    const event = input.event;
+    if (
+      event.type !== "action-started"
+      && event.type !== "action-succeeded"
+      && event.type !== "action-failed"
+    ) {
+      return [];
+    }
+    return [{
+      observedAt: input.observedAt,
+      observedAtMs,
+      kind: event.type,
+      ...(typeof event.action === "string" ? { action: event.action } : {}),
+      ...(typeof event.detail === "string" ? { detail: event.detail } : {}),
+    }];
+  }
+  if (input.kind === "task-progress-observed" && isRecord(input.task)) {
+    const task = input.task;
+    const progress = isRecord(task.progress) ? task.progress : undefined;
+    return [{
+      observedAt: input.observedAt,
+      observedAtMs,
+      kind: "task-progress",
+      ...(typeof task.taskId === "string" ? { taskId: task.taskId } : {}),
+      ...(typeof progress?.current === "string"
+        ? { taskCurrent: progress.current }
+        : {}),
+      ...(typeof progress?.total === "string"
+        ? { taskTotal: progress.total }
+        : {}),
+      ...(typeof progress?.fraction === "number"
+        ? { taskFraction: progress.fraction }
+        : {}),
+      ...(typeof progress?.message === "string"
+        ? { message: progress.message }
+        : {}),
+    }];
+  }
+  if (
+    input.kind === "pathfind-completed"
+    || input.kind === "pathfind-xz-completed"
+  ) {
+    return [{
+      observedAt: input.observedAt,
+      observedAtMs,
+      kind: "path-completed",
+    }];
+  }
+  if (
+    input.kind === "pathfind-failed"
+    || input.kind === "pathfind-interrupted"
+    || input.kind === "pathfind-xz-failed"
+    || input.kind === "pathfind-xz-interrupted"
+  ) {
+    return [{
+      observedAt: input.observedAt,
+      observedAtMs,
+      kind: "path-failed",
+      ...(typeof input.cause === "string" ? { detail: input.cause } : {}),
+    }];
+  }
+  if (input.kind === "primitive-completed") {
+    return [{
+      observedAt: input.observedAt,
+      observedAtMs,
+      kind: "primitive-completed",
+    }];
+  }
+  return [];
+}
+
+function mostRepeatedDetail(
+  entries: readonly SmokeProgressActivity[],
+): Readonly<{ detail: string; count: number }> | undefined {
+  const counts = new Map<string, number>();
+  for (const entry of entries) {
+    if (entry.detail !== undefined) {
+      counts.set(entry.detail, (counts.get(entry.detail) ?? 0) + 1);
+    }
+  }
+  return [...counts]
+    .map(([detail, count]) => ({ detail, count }))
+    .sort((left, right) =>
+      right.count - left.count || left.detail.localeCompare(right.detail)
+    )
+    .at(0);
+}
+
+function isRecord(input: unknown): input is Readonly<Record<string, unknown>> {
+  return typeof input === "object" && input !== null && !Array.isArray(input);
 }
 
 function countsBy<T>(
