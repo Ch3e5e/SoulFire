@@ -4042,10 +4042,6 @@ describe("beat-game behavior programs", () => {
     });
     expect(rejectedLavaPlacement).toBe(false);
     expect(rejectedWaterPickup).toBe(true);
-    expect(driver.paths).toContainEqual(expect.objectContaining({
-      position: misplacedLava,
-      radius: 3,
-    }));
     expect(driver.paths).toContainEqual({
       position: water,
       radius: 1.25,

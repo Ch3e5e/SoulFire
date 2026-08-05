@@ -23413,7 +23413,7 @@ describe("beat-game run lifecycle", () => {
     )).toBe(false);
   });
 
-  it("recognizes a two-block-deep sealed pocket as underground", async () => {
+  it("climbs a two-block-deep sealed pocket by a bounded staircase", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentObservation = observation({
       position: {
@@ -23438,35 +23438,109 @@ describe("beat-game run lifecycle", () => {
       skyLight: 15,
       blockLight: 0,
     }];
-    driver.pathResolver = (position, radius, policy) =>
-      Effect.sync(() => {
+    const blocks = new Map<string, ReturnType<typeof blockObservation>>();
+    const setBlock = (
+      position: BeatGameBlockPosition,
+      overrides: Parameters<typeof blockObservation>[1] = {},
+    ) => {
+      blocks.set(
+        `${position.x}:${position.y}:${position.z}`,
+        blockObservation(position, overrides),
+      );
+    };
+    for (let rise = 1; rise <= 3; rise += 1) {
+      setBlock({
+        x: rise,
+        y: 60 + rise - 1,
+        z: 0,
+        dimension: "minecraft:overworld",
+      });
+      for (const y of [60 + rise, 61 + rise]) {
+        setBlock({
+          x: rise,
+          y,
+          z: 0,
+          dimension: "minecraft:overworld",
+        });
+      }
+    }
+    driver.blockQueryResolver = ({ center, radius, selector }) => {
+      if (selector.blockIds?.includes("minecraft:water") === true) {
+        return [];
+      }
+      if (radius > 0.25 || Object.keys(selector).length > 0) {
+        return [];
+      }
+      const block = blocks.get(
+        `${Math.floor(center.x)}:${Math.floor(center.y)}:${
+          Math.floor(center.z)
+        }`,
+      );
+      return block === undefined ? [] : [block];
+    };
+    driver.actionObserver = (action) => {
+      if (action.type !== "dig-block") {
+        return;
+      }
+      setBlock(action.position, {
+        blockId: "minecraft:air",
+        diggable: false,
+        replaceable: true,
+        solid: false,
+      });
+    };
+    driver.pathResolver = (position, radius, policy) => {
+      const record = Effect.sync(() => {
         driver.paths.push({ position, radius, policy });
-      }).pipe(Effect.zipRight(Effect.never));
+      });
+      if (radius !== 0.35) {
+        return record.pipe(Effect.zipRight(Effect.never));
+      }
+      return record.pipe(Effect.tap(() => Effect.sync(() => {
+        driver.currentObservation = {
+          ...driver.currentObservation,
+          player: {
+            ...driver.currentObservation.player,
+            position,
+          },
+        };
+      })));
+    };
 
     await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const run = yield* beatGameWithDriver(driver, {
         strategy: { observationPollMs: 1 },
       });
       yield* Effect.gen(function* () {
-        while (driver.paths.length === 0) {
+        while (driver.currentObservation.player.position.y < 63) {
           yield* Effect.sleep(1);
         }
       }).pipe(Effect.timeout("5 seconds"));
       yield* run.stop;
     })));
 
-    expect(driver.paths[0]).toEqual(expect.objectContaining({
-      position: {
-        x: 0.5,
-        y: 63,
-        z: 0.5,
-        dimension: "minecraft:overworld",
-      },
-      policy: expect.objectContaining({
-        allowMining: true,
-        allowPlacing: true,
+    expect(driver.paths.map(({ position, radius, policy }) => ({
+      position,
+      radius,
+      policy,
+    }))).toEqual([
+      expect.objectContaining({
+        position: expect.objectContaining({ x: 1.5, y: 61, z: 0.5 }),
+        radius: 0.35,
+        policy: expect.objectContaining({
+          allowMining: false,
+          allowPlacing: false,
+        }),
       }),
-    }));
+      expect.objectContaining({
+        position: expect.objectContaining({ x: 2.5, y: 62, z: 0.5 }),
+        radius: 0.35,
+      }),
+      expect.objectContaining({
+        position: expect.objectContaining({ x: 3.5, y: 63, z: 0.5 }),
+        radius: 0.35,
+      }),
+    ]);
     expect(driver.tasks.some((task) =>
       task.type === "collect-blocks"
       && task.blockIds.includes("minecraft:oak_log")

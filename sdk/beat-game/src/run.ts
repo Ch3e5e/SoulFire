@@ -155,7 +155,7 @@ const REQUIREMENT_NO_PROGRESS_REPLAN_DELAY_MS = 1_000;
 const LOCAL_NAVIGATION_RECOVERY_MINIMUM_DISTANCE = 3;
 const LOCAL_NAVIGATION_RECOVERY_MAX_SEARCH_TIME_MS = 5_000;
 const LOCAL_NAVIGATION_RECOVERY_TIMEOUT_MS = 15_000;
-const DRY_SHAFT_RECOVERY_MAXIMUM_RISE = 8;
+const DRY_SHAFT_RECOVERY_MAXIMUM_RISE = 16;
 const DRY_SHAFT_RECOVERY_STEP_RADIUS = 0.35;
 const DRY_SHAFT_RECOVERY_STEP_TIMEOUT_MS = 10_000;
 const EXPLORATION_MAXIMUM_LEG_DISTANCE = 32;
@@ -10614,11 +10614,21 @@ function returnToOverworldSurface(
       z: surface.z + 0.5,
       dimension: position.dimension,
     }));
-    yield* prepareSurfaceEscapePickaxe(state, position, targets);
     const startingInFluid = yield* isPlayerInFluid(
       state.driver,
       position,
     );
+    if (
+      !startingInFluid
+      && (yield* excavateDryShaftRecoveryStaircase(
+        state,
+        position,
+        targets.map(({ y }) => y),
+      ))
+    ) {
+      return;
+    }
+    yield* prepareSurfaceEscapePickaxe(state, position, targets);
     yield* pathfindToFirstReachableSurface(
       state,
       targets,
