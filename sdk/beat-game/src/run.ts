@@ -171,6 +171,8 @@ const STALE_CORPSE_SCOUT_MAXIMUM_VERTICAL_DISTANCE = 12;
 const STALE_CORPSE_SCOUT_GOAL_RADIUS = 24;
 const DEEP_CORPSE_EXCAVATION_MINIMUM_DEPTH = 32;
 const DISTANT_CORPSE_EXCAVATION_MINIMUM_HORIZONTAL_DISTANCE = 64;
+const DEATH_RECOVERY_PICKAXE_DURABILITY_BUFFER = 24;
+const DEATH_RECOVERY_PICKAXE_DURABILITY_PER_DESCENT_LEVEL = 1;
 const CORPSE_DROP_INSPECTION_DISTANCE = 32;
 const CORPSE_DROP_MATCH_RADIUS = 16;
 const DEATH_RECOVERY_PREPARATION_STAGING_DISTANCE = 256;
@@ -6038,6 +6040,25 @@ function hasMiningPickaxe(observation: BeatGameObservation): boolean {
   );
 }
 
+function hasMiningPickaxeReserve(
+  observation: BeatGameObservation,
+  itemIds: readonly string[],
+  minimumRemainingDurability: number,
+): boolean {
+  const availableItemIds = itemIds.filter((itemId) =>
+    (observation.inventory.counts[itemId] ?? 0) > 0
+  );
+  if (availableItemIds.length === 0) {
+    return false;
+  }
+  const reportedDurability = observation.inventory.remainingDurability;
+  return reportedDurability === undefined
+    || availableItemIds.reduce(
+        (total, itemId) => total + (reportedDurability[itemId] ?? 0),
+        0,
+      ) >= minimumRemainingDurability;
+}
+
 function swimUpOneLevel(
   state: RunState,
   startingY: number,
@@ -8396,16 +8417,11 @@ function ensureMiningPickaxe(
   usableItemIds: readonly string[],
   minimumRemainingDurability = 1,
 ): Effect.Effect<void, BeatGameDriverError> {
-  const availableItemIds = usableItemIds.filter((itemId) =>
-    (observation.inventory.counts[itemId] ?? 0) > 0
-  );
-  const reportedDurability = observation.inventory.remainingDurability;
-  const hasDurabilityReserve = reportedDurability === undefined
-    || availableItemIds.reduce(
-        (total, itemId) => total + (reportedDurability[itemId] ?? 0),
-        0,
-      ) >= minimumRemainingDurability;
-  return availableItemIds.length > 0 && hasDurabilityReserve
+  return hasMiningPickaxeReserve(
+      observation,
+      usableItemIds,
+      minimumRemainingDurability,
+    )
     ? Effect.void
     : craftWithTable(state, observation, resultItemId, 1);
 }
@@ -14099,6 +14115,23 @@ function prepareForDistantDeathRecovery(
         || horizontalRecoveryDistanceSquared
           > DISTANT_CORPSE_EXCAVATION_MINIMUM_HORIZONTAL_DISTANCE ** 2
       );
+    const requiredPickaxeDurability = Math.min(
+      STONE_PICKAXE_MAXIMUM_DURABILITY,
+      Math.ceil(
+        Math.max(
+          0,
+          current.player.position.y - pendingDeath.position.y,
+        ) * DEATH_RECOVERY_PICKAXE_DURABILITY_PER_DESCENT_LEVEL,
+      ) + DEATH_RECOVERY_PICKAXE_DURABILITY_BUFFER,
+    );
+    const hasPreparedExcavationPickaxe = (
+      value: BeatGameObservation,
+    ): boolean =>
+      hasMiningPickaxeReserve(
+        value,
+        STONE_OR_BETTER_MINING_PICKAXE_ITEM_IDS,
+        requiredPickaxeDurability,
+      );
     const canRaceActiveCorpse =
       current.player.health >= state.strategy.minimumHealth
       && (
@@ -14108,7 +14141,7 @@ function prepareForDistantDeathRecovery(
       )
       && (
         !recoveryRequiresPreparedExcavation
-        || hasMiningPickaxe(current)
+        || hasPreparedExcavationPickaxe(current)
       )
       && (
         hasMeleeWeapon(current)
@@ -14201,8 +14234,12 @@ function prepareForDistantDeathRecovery(
     }
     if (
       recoveryRequiresExcavation
-      && !MINING_PICKAXE_ITEM_IDS.some((itemId) =>
-        (current.inventory.counts[itemId] ?? 0) > 0
+      && (
+        !hasMiningPickaxe(current)
+        || (
+          recoveryRequiresPreparedExcavation
+          && !hasPreparedExcavationPickaxe(current)
+        )
       )
     ) {
       let additionalLogs = additionalLogsForWoodenPickaxe(current);
@@ -14228,20 +14265,65 @@ function prepareForDistantDeathRecovery(
         additionalLogs = additionalLogsForWoodenPickaxe(current);
       }
       if (additionalLogs === 0) {
-        yield* craftWithTable(
-          state,
-          current,
-          "minecraft:wooden_pickaxe",
-          1,
-        );
-        current = yield* state.driver.observe;
+        if (!hasMiningPickaxe(current)) {
+          yield* craftWithTable(
+            state,
+            current,
+            "minecraft:wooden_pickaxe",
+            1,
+          );
+          current = yield* state.driver.observe;
+        }
+        if (
+          recoveryRequiresPreparedExcavation
+          && !hasPreparedExcavationPickaxe(current)
+        ) {
+          const useIronPickaxe =
+            (current.inventory.counts["minecraft:iron_ingot"] ?? 0) >= 3;
+          const cobblestone =
+            current.inventory.counts["minecraft:cobblestone"] ?? 0;
+          if (!useIronPickaxe && cobblestone < 3) {
+            yield* collectBlocksOrExplore(state, current, {
+              blockIds: ["minecraft:stone"],
+              count: 3 - cobblestone,
+              progressItemIds: ["minecraft:cobblestone"],
+              purpose: "prepare-corpse-recovery-stone-pickaxe",
+              avoidSubmergedTargets: true,
+              avoidFluids: true,
+              path: protectedRecoveryPath,
+              explorationTarget: preparationTarget(current),
+              prepareAttempt: (value) =>
+                ensureMiningPickaxe(
+                  state,
+                  value,
+                  "minecraft:wooden_pickaxe",
+                  MINING_PICKAXE_ITEM_IDS,
+                  4,
+                ),
+            });
+            current = yield* state.driver.observe;
+          }
+          yield* ensureMiningPickaxe(
+            state,
+            current,
+            useIronPickaxe
+              ? "minecraft:iron_pickaxe"
+              : "minecraft:stone_pickaxe",
+            useIronPickaxe
+              ? DURABLE_MINING_PICKAXE_ITEM_IDS
+              : STONE_OR_BETTER_MINING_PICKAXE_ITEM_IDS,
+            requiredPickaxeDurability,
+          );
+          current = yield* state.driver.observe;
+        }
       }
     }
     if (
       recoveryDistanceSquared
         <= DISTANT_DEATH_RECOVERY_BOOTSTRAP_DISTANCE ** 2
     ) {
-      return !recoveryRequiresPreparedExcavation || hasMiningPickaxe(current)
+      return !recoveryRequiresPreparedExcavation
+          || hasPreparedExcavationPickaxe(current)
         ? undefined
         : "still gathering enough wood to craft a deep corpse recovery pickaxe";
     }
@@ -14265,8 +14347,10 @@ function prepareForDistantDeathRecovery(
       !hasMeleeWeapon(current)
       || (
         recoveryRequiresExcavation
-        && !MINING_PICKAXE_ITEM_IDS.some((itemId) =>
-          (current.inventory.counts[itemId] ?? 0) > 0
+        && (
+          recoveryRequiresPreparedExcavation
+            ? !hasPreparedExcavationPickaxe(current)
+            : !hasMiningPickaxe(current)
         )
       )
       || buildingMaterialCount(current)

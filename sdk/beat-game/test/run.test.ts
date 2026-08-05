@@ -6860,17 +6860,17 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
-  it("crafts a pickaxe before recovering a corpse directly below the surface", async () => {
+  it("replaces a worn stone pickaxe before a deep corpse recovery", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const deathPosition = {
-      x: 0,
-      y: 24,
+      x: 100,
+      y: -38,
       z: 0,
       dimension: "minecraft:overworld",
     };
     const observedAt = new Date().toISOString();
-    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
+    const initial = checkpoint(BeatGamePhase.ENTER_NETHER, {
       runId: "excavation-corpse-run",
       teamId: "excavation-corpse-team",
     });
@@ -6891,33 +6891,28 @@ describe("beat-game run lifecycle", () => {
     }, undefined));
     driver.currentObservation = observation({
       counts: {
+        "minecraft:cobblestone": 3,
         "minecraft:crafting_table": 1,
         "minecraft:dirt": 16,
+        "minecraft:oak_log": 12,
         "minecraft:oak_planks": 3,
         "minecraft:stick": 2,
+        "minecraft:stone_pickaxe": 1,
         "minecraft:wooden_sword": 1,
-        "minecraft:cooked_beef": 3,
+        "minecraft:cooked_beef": 8,
+      },
+      remainingDurability: {
+        "minecraft:stone_pickaxe": 50,
       },
     });
     driver.recipeResolver = (resultItemId) =>
-      resultItemId === "minecraft:wooden_pickaxe"
+      resultItemId === "minecraft:stone_pickaxe"
         ? [{
-          recipeId: "wooden-pickaxe",
+          recipeId: "stone-pickaxe",
           recipeType: "minecraft:crafting_shaped",
           resultItemId,
           resultCount: 1,
-          ingredients: [
-            {
-              itemIds: ["minecraft:oak_planks"],
-              tags: [],
-              count: 3,
-            },
-            {
-              itemIds: ["minecraft:stick"],
-              tags: [],
-              count: 2,
-            },
-          ],
+          ingredients: [],
         }]
         : [];
     driver.craftabilityResolver = () => ({
@@ -6935,25 +6930,13 @@ describe("beat-game run lifecycle", () => {
           dimension: "minecraft:overworld",
         }, { blockId: "minecraft:crafting_table" })]
         : [];
-    const resolveTask = driver.taskResolver;
-    driver.taskResolver = (task, execution) =>
-      resolveTask(task, execution).pipe(
-        Effect.tap(() =>
-          Effect.sync(() => {
-            if (
-              task.type === "craft"
-              && task.recipeId === "wooden-pickaxe"
-            ) {
-              driver.currentObservation = observation({
-                counts: {
-                  ...driver.currentObservation.inventory.counts,
-                  "minecraft:wooden_pickaxe": 1,
-                },
-              });
-            }
-          })
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(
+        Effect.zipRight(
+          task.type === "craft" ? Effect.never : Effect.void,
         ),
-        Effect.zipRight(Effect.sleep(1)),
       );
 
     await Effect.runPromise(Effect.scoped(
@@ -6966,10 +6949,8 @@ describe("beat-game run lifecycle", () => {
         Effect.flatMap((run) =>
           Effect.gen(function* () {
             while (
-              !driver.paths.some(({ position }) =>
-                position.x === deathPosition.x
-                && position.y === deathPosition.y
-                && position.z === deathPosition.z
+              !driver.tasks.some((task) =>
+                task.type === "craft" && task.recipeId === "stone-pickaxe"
               )
             ) {
               yield* Effect.sleep(1);
@@ -6981,13 +6962,128 @@ describe("beat-game run lifecycle", () => {
       ),
     ));
 
+    expect(driver.tasks).not.toContainEqual(expect.objectContaining({
+      type: "craft",
+      recipeId: "wooden-pickaxe",
+    }));
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "craft",
+      recipeId: "stone-pickaxe",
+    }));
     expect(driver.paths).not.toContainEqual(expect.objectContaining({
       position: deathPosition,
-      policy: expect.objectContaining({ allowMining: false }),
     }));
-    expect(driver.paths).toContainEqual(expect.objectContaining({
+  });
+
+  it("replaces a worn wooden pickaxe before a deep corpse recovery", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const deathPosition = {
+      x: 100,
+      y: -38,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    const observedAt = new Date().toISOString();
+    const runId = "durable-excavation-corpse-run";
+    const teamId = "durable-excavation-corpse-team";
+    const initial = checkpoint(BeatGamePhase.ENTER_NETHER, {
+      runId,
+      teamId,
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        deathPositions: [{
+          key: `death:${observedAt}`,
+          value: {
+            ...deathPosition,
+            inventoryCounts: { "minecraft:iron_pickaxe": 1 },
+          },
+          observedAt,
+          confidence: 1,
+        }],
+      },
+    }, undefined));
+    driver.currentObservation = observation({
+      counts: {
+        "minecraft:cobblestone": 3,
+        "minecraft:cooked_beef": 8,
+        "minecraft:crafting_table": 1,
+        "minecraft:dirt": 16,
+        "minecraft:oak_log": 12,
+        "minecraft:wooden_pickaxe": 1,
+        "minecraft:wooden_sword": 1,
+      },
+      remainingDurability: {
+        "minecraft:wooden_pickaxe": 3,
+      },
+    });
+    driver.recipeResolver = (resultItemId) =>
+      resultItemId === "minecraft:stone_pickaxe"
+        ? [{
+          recipeId: "stone-pickaxe",
+          recipeType: "minecraft:crafting_shaped",
+          resultItemId,
+          resultCount: 1,
+          ingredients: [],
+        }]
+        : [];
+    driver.craftabilityResolver = () => ({
+      canCraft: true,
+      maximumCraftCount: 1,
+      requiredStation: "minecraft:crafting_table",
+      missing: [],
+    });
+    driver.blockQueryResolver = (query) =>
+      query.selector.blockIds?.includes("minecraft:crafting_table") === true
+        ? [blockObservation({
+          x: 2,
+          y: 64,
+          z: 0,
+          dimension: "minecraft:overworld",
+        }, { blockId: "minecraft:crafting_table" })]
+        : [];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(
+        Effect.zipRight(
+          task.type === "craft" ? Effect.never : Effect.void,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        runId,
+        team: { teamId },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (
+              !driver.tasks.some((task) =>
+                task.type === "craft" && task.recipeId === "stone-pickaxe"
+              )
+            ) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+        Effect.timeout("5 seconds"),
+      ),
+    ));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "craft",
+      recipeId: "stone-pickaxe",
+    }));
+    expect(driver.paths).not.toContainEqual(expect.objectContaining({
       position: deathPosition,
-      policy: expect.objectContaining({ allowMining: true }),
     }));
   });
 
