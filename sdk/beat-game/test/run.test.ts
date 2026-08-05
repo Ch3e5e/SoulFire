@@ -735,6 +735,115 @@ describe("beat-game run lifecycle", () => {
     ]));
   }, 10_000);
 
+  it("interrupts night shelter relocation to defend against a hostile", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentEnvironment = { gameTime: 14_000n };
+    driver.currentObservation = observation({
+      counts: {
+        "minecraft:dirt": 8,
+        "minecraft:wooden_sword": 1,
+      },
+      position: { x: 0.5, y: 64, z: 0.5 },
+    });
+    driver.surfaceColumns = [-1, 0, 1].flatMap((deltaX) =>
+      [-1, 0, 1].map((deltaZ) => ({
+        x: 4 + deltaX,
+        z: deltaZ,
+        loaded: true,
+        surfaceY: 63,
+        blockId: "minecraft:grass_block",
+        biomeId: "minecraft:plains",
+        skyLight: 15,
+        blockLight: 0,
+      }))
+    );
+    driver.blockQueryResolver = ({ center, selector }) => {
+      if (selector.blockIds?.includes("minecraft:water") === true) {
+        return [];
+      }
+      const position = {
+        x: Math.floor(center.x),
+        y: Math.floor(center.y),
+        z: Math.floor(center.z),
+        dimension: center.dimension,
+      };
+      const stableGround = position.x >= 3
+        && position.x <= 5
+        && position.z >= -1
+        && position.z <= 1
+        && position.y <= 63;
+      return [blockObservation(position, stableGround
+        ? { blockId: "minecraft:stone" }
+        : {
+          blockId: "minecraft:air",
+          diggable: false,
+          replaceable: true,
+          solid: false,
+        })];
+    };
+    const zombie = {
+      connectionEpoch: "epoch-1",
+      networkId: 42,
+      entityType: "minecraft:zombie",
+      position: {
+        x: 2,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const satisfies BeatGameEntityObservation;
+    driver.entityQueryResolver = (query) =>
+      driver.paths.length > 0 && query.selector.categories?.includes(2)
+        ? [zombie]
+        : [];
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(
+        Effect.zipRight(
+          task.type === "attack-entity" || task.type === "flee"
+            ? Effect.never
+            : Effect.void,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (
+        !driver.tasks.some(({ type }) =>
+          type === "attack-entity" || type === "flee"
+        )
+      ) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    expect(driver.paths[0]).toEqual(expect.objectContaining({
+      radius: 0.25,
+      policy: expect.objectContaining({
+        allowMining: false,
+        allowPlacing: false,
+        avoidFluids: true,
+      }),
+    }));
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+      target: expect.objectContaining({ networkId: zombie.networkId }),
+    }));
+  }, 10_000);
+
   it("creates distance from visible hostiles before sheltering", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentEnvironment = { gameTime: 14_000n };

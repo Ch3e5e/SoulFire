@@ -1638,30 +1638,45 @@ function prepareStableNightShelterSite(
       if (!(yield* isViableNightShelterColumn(state.driver, target))) {
         continue;
       }
-      const pathResult = yield* state.driver.pathfind(
-        target,
-        0.25,
-        {
-          ...survivalPathPolicy(
-            state.strategy.path,
-            observation.player.health,
-            state.strategy.minimumHealth,
-          ),
-          allowMining: false,
-          allowPlacing: false,
-          avoidFluids: true,
-          sprint: observation.player.food > CRITICAL_HUNGER_FOOD_LEVEL,
-          maxFallDistance: Math.min(
-            state.strategy.path.maxFallDistance,
-            MAXIMUM_DAMAGE_FREE_FALL_DISTANCE,
-          ),
-          maxSearchTimeMs: Math.min(
-            state.strategy.path.maxSearchTimeMs,
-            15_000,
-          ),
-        },
-      ).pipe(Effect.either);
-      if (pathResult._tag === "Left") {
+      const pathOutcome = yield* Effect.raceFirst(
+        state.driver.pathfind(
+          target,
+          0.25,
+          {
+            ...survivalPathPolicy(
+              state.strategy.path,
+              observation.player.health,
+              state.strategy.minimumHealth,
+            ),
+            allowMining: false,
+            allowPlacing: false,
+            avoidFluids: true,
+            sprint: observation.player.food > CRITICAL_HUNGER_FOOD_LEVEL,
+            maxFallDistance: Math.min(
+              state.strategy.path.maxFallDistance,
+              MAXIMUM_DAMAGE_FREE_FALL_DISTANCE,
+            ),
+            maxSearchTimeMs: Math.min(
+              state.strategy.path.maxSearchTimeMs,
+              15_000,
+            ),
+          },
+        ).pipe(
+          Effect.either,
+          Effect.map((result) => ({ type: "path" as const, result })),
+        ),
+        waitForNightShelterTravelThreat(state).pipe(
+          Effect.map((threat) => ({ type: "threat" as const, threat })),
+        ),
+      );
+      if (pathOutcome.type === "threat") {
+        yield* respondToNightShelterTravelThreat(
+          state,
+          pathOutcome.threat,
+        );
+        return undefined;
+      }
+      if (pathOutcome.result._tag === "Left") {
         continue;
       }
       const current = yield* state.driver.observe;
@@ -1684,6 +1699,54 @@ function prepareStableNightShelterSite(
     }
     return undefined;
   });
+}
+
+function waitForNightShelterTravelThreat(
+  state: RunState,
+): Effect.Effect<ImmediateThreat, BeatGameDriverError> {
+  const poll = (): Effect.Effect<ImmediateThreat, BeatGameDriverError> =>
+    Effect.sleep(Math.max(100, state.strategy.observationPollMs)).pipe(
+      Effect.zipRight(state.driver.observe),
+      Effect.flatMap((observation) =>
+        observation.player.dead
+          ? Effect.fail(new BeatGameDriverError({
+            operation: "night-shelter-travel",
+            code: "bot-dead",
+            retryable: true,
+            message: "The bot died while relocating to a night shelter",
+          }))
+          : findImmediateThreat(state, observation).pipe(
+            Effect.flatMap((threat) =>
+              threat === undefined
+                ? Effect.suspend(poll)
+                : Effect.succeed(threat)
+            ),
+          )
+      ),
+    );
+  return Effect.suspend(poll);
+}
+
+function respondToNightShelterTravelThreat(
+  state: RunState,
+  threat: ImmediateThreat,
+): Effect.Effect<void, BeatGameDriverError> {
+  return emit(state, {
+    type: "diagnostic",
+    message: "Interrupted night shelter relocation for a nearby hostile",
+    data: {
+      response: threat.response,
+      target: threat.target,
+    },
+  }).pipe(
+    Effect.zipRight(
+      threat.response === "flee"
+        ? escapeFromTarget(state, threat.target, {
+          continueEscapingWhenHit: true,
+        })
+        : defendAndRecover(state, threat.target),
+    ),
+  );
 }
 
 function isViableNightShelterColumn(
