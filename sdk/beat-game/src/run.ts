@@ -1307,7 +1307,7 @@ function shouldTakeNightShelter(
       return false;
     }
     const protectedForNightTravel =
-      (observation.inventory.counts["minecraft:shield"] ?? 0) > 0
+      hasItemInInventoryOrEquipment(observation, "minecraft:shield")
       && hasMeleeWeapon(observation)
       && observation.player.health >= state.strategy.minimumHealth
       && observation.player.food > URGENT_HUNGER_FOOD_LEVEL
@@ -12971,8 +12971,16 @@ function hasMeaningfulRecoveryInventory(
 
 function hasMeleeWeapon(observation: BeatGameObservation): boolean {
   return MELEE_WEAPON_ITEM_IDS.some((itemId) =>
-    (observation.inventory.counts[itemId] ?? 0) > 0
+    hasItemInInventoryOrEquipment(observation, itemId)
   );
+}
+
+function hasItemInInventoryOrEquipment(
+  observation: BeatGameObservation,
+  itemId: string,
+): boolean {
+  return (observation.inventory.counts[itemId] ?? 0) > 0
+    || Object.values(observation.player.equipment).includes(itemId);
 }
 
 function resetAfterCatastrophicInventoryLoss(

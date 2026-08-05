@@ -119,6 +119,71 @@ describe("beat-game run lifecycle", () => {
     expect(failures).toEqual([]);
   });
 
+  it("recognizes equipped protection while a container is open", async () => {
+    const driver = new FakeBeatGameDriver();
+    const protectedObservation = observation({
+      counts: {
+        "minecraft:shield": 1,
+        "minecraft:stone_sword": 1,
+        "minecraft:cooked_beef": 4,
+      },
+      equipment: {
+        mainhand: "minecraft:stone_sword",
+        offhand: "minecraft:shield",
+      },
+    });
+    const containerObservation = observation({
+      counts: { "minecraft:cooked_beef": 4 },
+      equipment: protectedObservation.player.equipment,
+    });
+    driver.currentEnvironment = { gameTime: 14_000n };
+    driver.currentObservation = protectedObservation;
+    let actionStarted = false;
+    let safetyObservations = 0;
+    driver.observationResolver = () =>
+      Effect.sync(() => {
+        if (!actionStarted) {
+          return protectedObservation;
+        }
+        safetyObservations += 1;
+        return containerObservation;
+      });
+    const failures: string[] = [];
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+        hooks: {
+          satisfyRequirement: () =>
+            Effect.sync(() => {
+              actionStarted = true;
+            }).pipe(Effect.zipRight(Effect.never)),
+        },
+      });
+      yield* run.events.pipe(
+        Stream.runForEach((event) =>
+          event.type === "action-failed"
+              && event.detail?.includes(
+                "night fell while the bot was under-equipped",
+              ) === true
+            ? Effect.sync(() => {
+              failures.push(event.detail ?? "");
+            })
+            : Effect.void
+        ),
+        Effect.forkScoped,
+      );
+      while (safetyObservations < 3) {
+        yield* Effect.sleep(1);
+      }
+      yield* Effect.sleep(5);
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    expect(failures).toEqual([]);
+  });
+
   it("keeps working at night while safely below the surface", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentEnvironment = { gameTime: 14_000n };
