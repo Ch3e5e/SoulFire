@@ -899,6 +899,21 @@ const program = Effect.scoped(Effect.gen(function* () {
           );
         }),
       ),
+    raycast: (query: Parameters<typeof baseDriver.raycast>[0]) =>
+      Effect.gen(function* () {
+        const observation = yield* baseDriver.observe;
+        const result = yield* baseDriver.raycast(query);
+        yield* record("raycast-query", {
+          owner: currentDebugActionContext(),
+          origin: {
+            ...observation.player.position,
+            y: observation.player.position.y + 1.62,
+          },
+          query,
+          result,
+        }).pipe(Effect.orDie);
+        return result;
+      }),
     pathfind: (
       position: Parameters<typeof baseDriver.pathfind>[0],
       radius: number,
@@ -1284,7 +1299,7 @@ const program = Effect.scoped(Effect.gen(function* () {
                 limit: 12,
               }),
               worldActivity: debugTimeline.query({
-                kinds: ["block-query", "entity-query"],
+                kinds: ["block-query", "entity-query", "raycast-query"],
                 limit: 12,
               }).map(compactDecisionActivityEntry),
               taskActivity: queryDebugTimeline({
