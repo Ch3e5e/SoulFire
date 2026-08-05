@@ -1267,6 +1267,7 @@ const program = Effect.scoped(Effect.gen(function* () {
                     observation.player.position,
                     new Date().toISOString(),
                   ),
+                taskRoute: latestSmokeTaskRoute(),
                 lastOutcome: lastPathOutcome,
               },
               pathActivity: queryDebugTimeline({
@@ -1434,6 +1435,7 @@ const program = Effect.scoped(Effect.gen(function* () {
           bot,
           includePlan: false,
           lastPathOutcome,
+          taskRoute: latestSmokeTaskRoute(),
         }),
       },
       {
@@ -1451,6 +1453,7 @@ const program = Effect.scoped(Effect.gen(function* () {
               bot,
               includePlan,
               lastPathOutcome,
+              taskRoute: latestSmokeTaskRoute(),
             })),
           ),
       },
@@ -3056,10 +3059,12 @@ function captureSmokeActivePath(options: Readonly<{
   bot: SoulFireBot;
   includePlan: boolean;
   lastPathOutcome: SmokePathOutcome | undefined;
+  taskRoute: ReturnType<typeof latestSmokeTaskRoute>;
 }>): Effect.Effect<unknown, unknown> {
   if (options.activePath === undefined) {
     return Effect.succeed({
-      status: "idle",
+      status: options.taskRoute === undefined ? "idle" : "task-active",
+      taskRoute: options.taskRoute,
       lastOutcome: options.lastPathOutcome,
     });
   }
@@ -3080,6 +3085,7 @@ function captureSmokeActivePath(options: Readonly<{
     if (!options.includePlan) {
       return {
         ...diagnostics,
+        taskRoute: options.taskRoute,
         lastOutcome: options.lastPathOutcome,
       };
     }
@@ -3101,10 +3107,36 @@ function captureSmokeActivePath(options: Readonly<{
     );
     return {
       ...diagnostics,
+      taskRoute: options.taskRoute,
       plan,
       lastOutcome: options.lastPathOutcome,
     };
   });
+}
+
+function latestSmokeTaskRoute() {
+  const capturedAt = new Date().toISOString();
+  const activity = debugTimeline.query({
+    kinds: [
+      "task-started",
+      "task-progress-observed",
+      "task-completed",
+      "task-failed",
+      "task-interrupted",
+    ],
+    limit: debugApiTimelineEntries,
+  });
+  const latest = activity.at(-1);
+  if (
+    !isDebugRecord(latest)
+    || latest.kind !== "task-progress-observed"
+  ) {
+    return undefined;
+  }
+  return buildSmokeStuckDiagnostics({
+    capturedAt,
+    activity,
+  }).latestTask;
 }
 
 function pathfinderOptions(policy: BeatGamePathPolicy) {
