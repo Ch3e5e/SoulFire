@@ -96,6 +96,26 @@ describe("beat-game planner", () => {
     });
   });
 
+  it("cooks an existing raw-food reserve before an urgent hunt", () => {
+    const decision = decideBeatGameAction({
+      checkpoint: checkpoint(BeatGamePhase.ENTER_NETHER),
+      observation: observation({
+        counts: {
+          "minecraft:oak_log": defaultBeatGameStrategy.targetLogCount,
+          "minecraft:porkchop": 3,
+        },
+        food: 10,
+      }),
+      strategy: defaultBeatGameStrategy,
+    });
+
+    expect(decision).toMatchObject({
+      type: "satisfy-requirement",
+      action: "satisfy:food",
+      requirement: { key: "food" },
+    });
+  });
+
   it("gathers cooking prerequisites before preparing raw food while healthy", () => {
     const decision = decideBeatGameAction({
       checkpoint: checkpoint(BeatGamePhase.PREPARE_OVERWORLD),
