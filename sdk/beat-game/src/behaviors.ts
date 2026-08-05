@@ -4749,7 +4749,9 @@ function castNetherPortalFromLavaPool(
       }
       return frame;
     }
-    const castingStand = portalCastingStand(frame);
+    const castingStands = targets.map((target) =>
+      portalCastingStand(frame, target)
+    );
     yield* clearPortalInterior(driver, frame, options.path);
     yield* clearPortalCastingCells(
       driver,
@@ -4758,8 +4760,10 @@ function castNetherPortalFromLavaPool(
           target,
           castingWaterPosition(frame, target),
         ]),
-        castingStand,
-        { ...castingStand, y: castingStand.y + 1 },
+        ...castingStands.flatMap((stand) => [
+          stand,
+          { ...stand, y: stand.y + 1 },
+        ]),
       ]),
       options.path,
     );
@@ -4785,14 +4789,15 @@ function castNetherPortalFromLavaPool(
       ));
     }
     const frameKeys = new Set(frame.blocks.map(positionKey));
-    const castingStandSupport = below(castingStand);
+    const finalCastingStand = castingStands.at(-1);
+    if (finalCastingStand === undefined) {
+      return yield* Effect.fail(behaviorError(
+        driver,
+        "Portal casting has no stand for its remaining frame targets",
+      ));
+    }
+    const finalCastingStandSupport = below(finalCastingStand);
     const temporarySupports: BeatGameBlockPosition[] = [];
-    temporarySupports.push(...(yield* buildTemporaryPortalCastingSupports(
-      driver,
-      frame,
-      [castingStandSupport],
-      options.path,
-    )));
     yield* driver.withControl(Effect.gen(function* () {
       for (const [index, target] of targets.entries()) {
         const current = yield* driver.observe;
@@ -4803,6 +4808,7 @@ function castNetherPortalFromLavaPool(
             options.path,
           );
         }
+        const castingStand = portalCastingStand(frame, target);
         const targetSupport = below(target);
         const water = castingWaterPosition(frame, target);
         temporarySupports.push(...(yield* buildTemporaryPortalCastingSupports(
@@ -4813,6 +4819,7 @@ function castNetherPortalFromLavaPool(
               ? []
               : [targetSupport]),
             below(water),
+            below(castingStand),
           ]),
           options.path,
         )));
@@ -4899,7 +4906,7 @@ function castNetherPortalFromLavaPool(
         );
       }
       for (const support of temporarySupports) {
-        if (samePosition(support, castingStandSupport)) {
+        if (samePosition(support, finalCastingStandSupport)) {
           continue;
         }
         yield* driver.pathfind(
@@ -5701,10 +5708,17 @@ function topFaceCenter(position: BeatGameBlockPosition): BeatGamePosition {
   };
 }
 
-function portalCastingStand(frame: PortalFrame): BeatGameBlockPosition {
+function portalCastingStand(
+  frame: PortalFrame,
+  target: BeatGameBlockPosition,
+): BeatGameBlockPosition {
   return {
     x: frame.origin.x + (frame.axis === "x" ? 1 : -2),
-    y: frame.origin.y + 1,
+    // Bucket items perform their own vanilla raycast after the SDK supplies
+    // the requested block interaction. Keep the player's eyes above the
+    // support top so the fallback ray hits UP instead of spilling the bucket
+    // against the side of higher frame rows.
+    y: Math.max(frame.origin.y + 1, target.y - 1),
     z: frame.origin.z + (frame.axis === "z" ? 1 : -2),
     dimension: frame.origin.dimension,
   };

@@ -4379,6 +4379,168 @@ describe("beat-game behavior programs", () => {
     expect(driver.activeControlScopes).toBe(0);
   });
 
+  it("raises the casting stand above supports for upper portal rows", async () => {
+    const driver = new FakeBeatGameDriver();
+    const origin = {
+      x: 0,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    const frame = createNetherPortalFrame(origin);
+    const target = [...frame.blocks].sort((left, right) =>
+      right.y - left.y || left.x - right.x || left.z - right.z
+    )[0];
+    if (target === undefined) {
+      throw new Error("Expected an upper portal frame target");
+    }
+    const water = { ...target, z: target.z - 1 };
+    const castingStand = {
+      ...origin,
+      x: origin.x + 1,
+      y: target.y - 1,
+      z: origin.z - 2,
+    };
+    const key = (position: BeatGameBlockPosition) =>
+      `${position.dimension}:${position.x}:${position.y}:${position.z}`;
+    const blocks = new Map(frame.blocks
+      .filter((position) => key(position) !== key(target))
+      .map((position) => [
+        key(position),
+        blockObservation(position, { blockId: "minecraft:obsidian" }),
+      ]));
+    for (const support of [
+      { ...target, y: target.y - 1 },
+      { ...water, y: water.y - 1 },
+      { ...castingStand, y: castingStand.y - 1 },
+    ]) {
+      blocks.set(key(support), blockObservation(support, {
+        blockId: "minecraft:cobblestone",
+      }));
+    }
+    driver.currentObservation = observation({
+      counts: {
+        "minecraft:bucket": 1,
+        "minecraft:lava_bucket": 1,
+        "minecraft:water_bucket": 1,
+      },
+      position: origin,
+    });
+    driver.blockQueryResolver = ({ center, radius, selector }) => {
+      if (selector.blockIds?.includes("minecraft:obsidian") === true) {
+        return [...blocks.values()].filter(({ blockId }) =>
+          blockId === "minecraft:obsidian"
+        );
+      }
+      if (radius === 3 && Object.keys(selector).length === 0) {
+        return [...blocks.values()];
+      }
+      const position = queriedBlockPosition(center);
+      return [blocks.get(key(position)) ?? blockObservation(position, {
+        blockId: "minecraft:air",
+        replaceable: true,
+      })];
+    };
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+        driver.currentObservation = observation({
+          counts: driver.currentObservation.inventory.counts,
+          position,
+          rotation: driver.currentObservation.player.rotation,
+        });
+      });
+    let selectedItemId = "";
+    const updateInventory = (
+      update: (counts: Record<string, number>) => void,
+    ) => {
+      const counts = { ...driver.currentObservation.inventory.counts };
+      update(counts);
+      driver.currentObservation = observation({
+        counts,
+        position: driver.currentObservation.player.position,
+        rotation: driver.currentObservation.player.rotation,
+      });
+    };
+    driver.actionObserver = (action) => {
+      if (action.type === "select-item") {
+        selectedItemId = action.selector.itemIds?.[0] ?? "";
+        return;
+      }
+      if (action.type === "look") {
+        driver.currentObservation = observation({
+          counts: driver.currentObservation.inventory.counts,
+          position: driver.currentObservation.player.position,
+          rotation: { yaw: action.yaw, pitch: action.pitch },
+        });
+        return;
+      }
+      if (action.type === "interact-block") {
+        if (selectedItemId === "minecraft:lava_bucket") {
+          blocks.set(key(target), blockObservation(target, {
+            blockId: "minecraft:lava",
+            replaceable: true,
+          }));
+          updateInventory((counts) => {
+            delete counts["minecraft:lava_bucket"];
+            counts["minecraft:bucket"] = 2;
+          });
+        } else if (selectedItemId === "minecraft:water_bucket") {
+          blocks.set(key(target), blockObservation(target, {
+            blockId: "minecraft:obsidian",
+          }));
+          blocks.set(key(water), blockObservation(water, {
+            blockId: "minecraft:water",
+            properties: { level: "0" },
+            replaceable: true,
+          }));
+          updateInventory((counts) => {
+            delete counts["minecraft:water_bucket"];
+            counts["minecraft:bucket"] = 3;
+          });
+        }
+        return;
+      }
+      if (action.type === "use-item" && selectedItemId === "minecraft:bucket") {
+        blocks.delete(key(water));
+        updateInventory((counts) => {
+          counts["minecraft:bucket"] = Math.max(
+            0,
+            (counts["minecraft:bucket"] ?? 0) - 1,
+          );
+          counts["minecraft:water_bucket"] = 1;
+        });
+      }
+    };
+
+    await Effect.runPromise(castNetherPortal(driver, {
+      origin,
+      ignite: false,
+    }));
+
+    expect(driver.paths).toContainEqual(expect.objectContaining({
+      position: castingStand,
+      radius: 0,
+    }));
+    const lavaSelectionIndex = driver.actions.findIndex((action) =>
+      action.type === "select-item"
+      && action.selector.itemIds?.includes("minecraft:lava_bucket") === true
+    );
+    const lavaLook = driver.actions.slice(lavaSelectionIndex + 1).find(
+      (action) => action.type === "look",
+    );
+    expect(lavaLook).toEqual(expect.objectContaining({
+      type: "look",
+      pitch: expect.any(Number),
+    }));
+    if (lavaLook?.type !== "look") {
+      throw new Error("Expected a lava placement look action");
+    }
+    expect(lavaLook.pitch).toBeGreaterThan(0);
+    expect(blocks.get(key(target))?.blockId).toBe("minecraft:obsidian");
+    expect(driver.activeControlScopes).toBe(0);
+  });
+
   it("does not mine cast obsidian to expose another lava source", async () => {
     const driver = new FakeBeatGameDriver();
     const origin = {
