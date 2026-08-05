@@ -690,14 +690,32 @@ describe("smoke stuck diagnostics", () => {
     const diagnostics = buildSmokeStuckDiagnostics({
       capturedAt: "2026-08-03T10:08:00.000Z",
       currentAction: "survive:night-shelter",
-      activity: [{
-        observedAt: "2026-08-03T10:00:00.000Z",
-        kind: "beat-game-event",
-        event: {
-          type: "action-started",
-          action: "survive:night-shelter",
+      activity: [
+        {
+          observedAt: "2026-08-03T09:50:00.000Z",
+          kind: "task-progress-observed",
+          task: {
+            taskId: "completed-recovery-path",
+            progress: { current: "0", fraction: 0 },
+          },
         },
-      }],
+        {
+          observedAt: "2026-08-03T09:57:00.000Z",
+          kind: "task-progress-observed",
+          task: {
+            taskId: "completed-recovery-path",
+            progress: { current: "0", fraction: 0 },
+          },
+        },
+        {
+          observedAt: "2026-08-03T10:00:00.000Z",
+          kind: "beat-game-event",
+          event: {
+            type: "action-started",
+            action: "survive:night-shelter",
+          },
+        },
+      ],
     });
 
     expect(diagnostics).toMatchObject({

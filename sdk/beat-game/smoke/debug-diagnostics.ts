@@ -488,11 +488,20 @@ export function buildSmokeStuckDiagnostics(
 
   const latestTaskId = activity.findLast((entry) =>
     entry.kind === "task-progress"
+      && (
+        actionStartedAtMs === undefined
+        || entry.observedAtMs >= actionStartedAtMs
+      )
   )?.taskId;
   const latestTaskProgress = latestTaskId === undefined
     ? []
     : activity.filter((entry) =>
-      entry.kind === "task-progress" && entry.taskId === latestTaskId
+      entry.kind === "task-progress"
+        && entry.taskId === latestTaskId
+        && (
+          actionStartedAtMs === undefined
+          || entry.observedAtMs >= actionStartedAtMs
+        )
     );
   const firstTaskProgress = latestTaskProgress.at(0);
   const lastTaskProgress = latestTaskProgress.at(-1);
