@@ -19,6 +19,15 @@ const LIQUID_SOURCE_CLUSTER_RADIUS = 8;
 const PREFERRED_LIQUID_SOURCE_CLUSTER_SIZE = 9;
 const LIQUID_INTERACTION_VOLUME_RADIUS = 4.9;
 const LIQUID_INTERACTION_VOLUME_MAXIMUM_RESULTS = 500;
+const LIQUID_SOURCE_ROOF_CLEARING_BLOCKS = 4;
+const LIQUID_SOURCE_DIG_TOOL_IDS = [
+  "minecraft:netherite_pickaxe",
+  "minecraft:diamond_pickaxe",
+  "minecraft:iron_pickaxe",
+  "minecraft:stone_pickaxe",
+  "minecraft:wooden_pickaxe",
+  "minecraft:golden_pickaxe",
+] as const;
 const FLUID_BLOCK_IDS = new Set([
   "minecraft:water",
   "minecraft:bubble_column",
@@ -113,6 +122,10 @@ export function approachLiquidSourceFromSide(
           attemptedDryStands.has(key)
           || options.requireTargetableSource === true
             && candidate.sightlineObstructions.length > 0
+            && !canClearLiquidSourceRoofSightline(
+              prepared.source.position,
+              candidate.sightlineObstructions,
+            )
         ) {
           continue;
         }
@@ -142,6 +155,14 @@ export function approachLiquidSourceFromSide(
           );
           if (targetable !== undefined) {
             return targetable;
+          }
+          const exposed = yield* exposeLiquidSourceThroughRoof(
+            driver,
+            prepared.source,
+            nearbySources,
+          );
+          if (exposed !== undefined) {
+            return exposed;
           }
         }
       }
@@ -259,6 +280,110 @@ function targetableLiquidSourceFromCurrentPosition(
       sameBlockPosition(obstruction.position, source.position)
     );
   });
+}
+
+function exposeLiquidSourceThroughRoof(
+  driver: BeatGameDriver,
+  aimedSource: BeatGameBlockObservation,
+  acceptableSources: readonly BeatGameBlockObservation[],
+): Effect.Effect<BeatGameBlockObservation | undefined, BeatGameDriverError> {
+  return Effect.gen(function* () {
+    for (
+      let clearedBlocks = 0;
+      clearedBlocks <= LIQUID_SOURCE_ROOF_CLEARING_BLOCKS;
+      clearedBlocks += 1
+    ) {
+      const current = yield* driver.observe;
+      const eyePosition = {
+        ...current.player.position,
+        y: current.player.position.y + 1.62,
+      };
+      const sourceCenter = blockCenter(aimedSource.position);
+      const direction = {
+        x: sourceCenter.x - eyePosition.x,
+        y: sourceCenter.y - eyePosition.y,
+        z: sourceCenter.z - eyePosition.z,
+      };
+      const sourceDistance = Math.sqrt(distanceSquared(
+        eyePosition,
+        sourceCenter,
+      ));
+      if (sourceDistance > LIQUID_INTERACTION_REACH) {
+        return undefined;
+      }
+      const obstruction = (yield* driver.raycast({
+        direction,
+        maximumDistance: Math.min(
+          LIQUID_INTERACTION_REACH,
+          sourceDistance + 0.05,
+        ),
+        includeFluids: true,
+      })).block;
+      if (obstruction === undefined) {
+        return undefined;
+      }
+      const targetable = acceptableSources.find((source) =>
+        sameBlockPosition(obstruction.position, source.position)
+      );
+      if (targetable !== undefined) {
+        return targetable;
+      }
+      if (
+        clearedBlocks === LIQUID_SOURCE_ROOF_CLEARING_BLOCKS
+        || obstruction.position.y <= aimedSource.position.y
+        || !obstruction.diggable
+        || obstruction.blockId === "minecraft:obsidian"
+        || isGravityAffectedBlockId(obstruction.blockId)
+        || isPlayerStabilityBlock(
+          current.player.position,
+          obstruction.position,
+        )
+      ) {
+        return undefined;
+      }
+      const digTool = LIQUID_SOURCE_DIG_TOOL_IDS.find((itemId) =>
+        (current.inventory.counts[itemId] ?? 0) > 0
+      );
+      if (digTool !== undefined) {
+        yield* driver.act({
+          type: "select-item",
+          selector: { itemIds: [digTool] },
+        });
+      }
+      yield* driver.act({
+        type: "dig-block",
+        position: obstruction.position,
+      });
+    }
+    return undefined;
+  });
+}
+
+function canClearLiquidSourceRoofSightline(
+  source: BeatGameBlockPosition,
+  obstructions: readonly BeatGameBlockObservation[],
+): boolean {
+  return obstructions.length <= LIQUID_SOURCE_ROOF_CLEARING_BLOCKS
+    && obstructions.every((obstruction) =>
+      obstruction.position.y > source.y
+      && obstruction.diggable
+      && obstruction.blockId !== "minecraft:obsidian"
+      && !isGravityAffectedBlockId(obstruction.blockId)
+    );
+}
+
+function isPlayerStabilityBlock(
+  player: BeatGamePosition,
+  block: BeatGameBlockPosition,
+): boolean {
+  if (player.dimension !== block.dimension) {
+    return false;
+  }
+  const body = floorBlockPosition(player);
+  return block.x === body.x
+    && block.z === body.z
+    && block.y >= body.y - 1
+    && block.y <= body.y + 1;
 }
 
 function queryLiquidInteractionVolume(

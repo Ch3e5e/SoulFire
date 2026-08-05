@@ -365,6 +365,100 @@ describe("lava interaction positioning", () => {
     })]);
   });
 
+  it("opens a buried source through its roof from a dry stand", async () => {
+    const driver = new FakeBeatGameDriver();
+    const source = blockObservation({
+      x: 0,
+      y: -52,
+      z: 0,
+      dimension: "minecraft:overworld",
+    }, {
+      blockId: "minecraft:lava",
+      properties: { level: "0" },
+      replaceable: true,
+    });
+    const roof = blockObservation({
+      ...source.position,
+      y: source.position.y + 1,
+    });
+    const stand = {
+      x: 2,
+      y: -50,
+      z: 0,
+      dimension: "minecraft:overworld",
+    } as const;
+    const standBlocks = [
+      blockObservation(stand, {
+        blockId: "minecraft:air",
+        replaceable: true,
+      }),
+      blockObservation({ ...stand, y: stand.y + 1 }, {
+        blockId: "minecraft:air",
+        replaceable: true,
+      }),
+      blockObservation({ ...stand, y: stand.y - 1 }),
+      roof,
+    ];
+    driver.currentObservation = observation({
+      counts: { "minecraft:stone_pickaxe": 1 },
+      position: {
+        x: 8.5,
+        y: -50,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+    });
+    driver.blockQueryResolver = ({ center, radius, selector }) =>
+      Object.keys(selector).length === 0 && radius === 4.9
+        ? standBlocks
+        : Object.keys(selector).length === 0 && radius === 0.25
+        ? standBlocks.filter((block) =>
+          block.position.x === Math.floor(center.x)
+          && block.position.y === Math.floor(center.y)
+          && block.position.z === Math.floor(center.z)
+        )
+        : [];
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+        driver.currentObservation = observation({
+          counts: driver.currentObservation.inventory.counts,
+          position,
+        });
+      });
+    let roofCleared = false;
+    driver.raycastResolver = () => ({
+      block: roofCleared ? source : roof,
+      distance: 2,
+    });
+    driver.actionObserver = (action) => {
+      if (
+        action.type === "dig-block"
+        && action.position.x === roof.position.x
+        && action.position.y === roof.position.y
+        && action.position.z === roof.position.z
+      ) {
+        roofCleared = true;
+      }
+    };
+
+    const selected = await Effect.runPromise(approachLiquidSourceFromSide(
+      driver,
+      driver.currentObservation,
+      [source],
+      {
+        path: defaultBeatGameStrategy.path,
+        requireTargetableSource: true,
+      },
+    ));
+
+    expect(selected.position).toEqual(source.position);
+    expect(driver.actions).toContainEqual({
+      type: "dig-block",
+      position: roof.position,
+    });
+  });
+
   it("excavates a sealed stand when that clears its lava sightline", async () => {
     const driver = new FakeBeatGameDriver();
     const source = blockObservation({
