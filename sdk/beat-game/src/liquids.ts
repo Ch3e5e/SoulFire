@@ -60,6 +60,11 @@ export function approachLavaSourceFromSide(
       || distanceSquared(observation.player.position, left.position)
       - distanceSquared(observation.player.position, right.position)
     );
+    for (const source of nearbySources) {
+      if (yield* isLavaSourceExposableFromCurrentPosition(driver, source)) {
+        return source;
+      }
+    }
     const preparedSources = yield* Effect.forEach(
       nearbySources,
       (source) =>

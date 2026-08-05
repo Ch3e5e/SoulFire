@@ -14,6 +14,42 @@ import {
 } from "./fixtures.js";
 
 describe("lava interaction positioning", () => {
+  it("uses a visible source from the current position without replanning", async () => {
+    const driver = new FakeBeatGameDriver();
+    const source = blockObservation({
+      x: 2,
+      y: 63,
+      z: 0,
+      dimension: "minecraft:overworld",
+    }, {
+      blockId: "minecraft:lava",
+      properties: { level: "0" },
+      replaceable: true,
+    });
+    driver.currentObservation = observation({
+      position: {
+        x: 0.5,
+        y: 64,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+    });
+
+    const selected = await Effect.runPromise(approachLavaSourceFromSide(
+      driver,
+      driver.currentObservation,
+      [source],
+      {
+        path: defaultBeatGameStrategy.path,
+        requireExposableSource: true,
+      },
+    ));
+
+    expect(selected.position).toEqual(source.position);
+    expect(driver.paths).toHaveLength(0);
+    expect(driver.raycasts).toHaveLength(1);
+  });
+
   it("skips stands whose sampled sightline is already obstructed", async () => {
     const driver = new FakeBeatGameDriver();
     const blockedSource = blockObservation({
