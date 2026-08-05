@@ -4830,7 +4830,13 @@ function castNetherPortalFromLavaPool(
         yield* driver.pathfind(
           castingStand,
           0,
-          mergePathPolicy(options.path),
+          {
+            ...mergePathPolicy(options.path),
+            allowMining: false,
+            allowPlacing: false,
+            avoidFluids: true,
+            maxFallDistance: 1,
+          },
         );
         yield* Effect.uninterruptible(Effect.gen(function* () {
           yield* driver.act({

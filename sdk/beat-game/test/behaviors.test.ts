@@ -4006,10 +4006,16 @@ describe("beat-game behavior programs", () => {
         || key(action.position) === key(water)
       )
     )).toBeLessThan(liquidPlacementIndex);
-    expect(driver.paths).toContainEqual(expect.objectContaining({
+    expect(driver.paths).toContainEqual({
       position: castingStand,
       radius: 0,
-    }));
+      policy: expect.objectContaining({
+        allowMining: false,
+        allowPlacing: false,
+        avoidFluids: true,
+        maxFallDistance: 1,
+      }),
+    });
     const lavaSelectionIndex = driver.actions.findIndex((action) =>
       action.type === "select-item"
       && action.selector.itemIds?.includes("minecraft:lava_bucket") === true
