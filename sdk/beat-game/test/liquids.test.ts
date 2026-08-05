@@ -326,4 +326,74 @@ describe("lava interaction positioning", () => {
       }),
     }]);
   });
+
+  it("accepts a safe adjacent arrival when the exact stand is unreachable", async () => {
+    const driver = new FakeBeatGameDriver();
+    const source = blockObservation({
+      x: 0,
+      y: -52,
+      z: 0,
+      dimension: "minecraft:overworld",
+    }, {
+      blockId: "minecraft:lava",
+      properties: { level: "0" },
+      replaceable: true,
+    });
+    const stand = {
+      x: 2,
+      y: -50,
+      z: 0,
+      dimension: "minecraft:overworld",
+    } as const;
+    const standBlocks = [
+      blockObservation(stand, {
+        blockId: "minecraft:air",
+        replaceable: true,
+      }),
+      blockObservation({ ...stand, y: stand.y + 1 }, {
+        blockId: "minecraft:air",
+        replaceable: true,
+      }),
+      blockObservation({ ...stand, y: stand.y - 1 }),
+    ];
+    driver.currentObservation = observation({
+      position: {
+        x: 4.5,
+        y: -50,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+    });
+    driver.blockQueryResolver = ({ radius, selector }) =>
+      Object.keys(selector).length === 0
+          && (radius === 4.9 || radius === 0.25)
+        ? standBlocks
+        : [];
+    driver.pathResolver = (position, radius, policy) => {
+      driver.paths.push({ position, radius, policy });
+      if (radius === 0.75) {
+        return Effect.fail(new BeatGameDriverError({
+          operation: "pathfind",
+          code: "unreachable",
+          retryable: true,
+          message: "The precise stand center is unreachable",
+        }));
+      }
+      driver.currentObservation = observation({ position });
+      return Effect.void;
+    };
+
+    const selected = await Effect.runPromise(approachLavaSourceFromSide(
+      driver,
+      driver.currentObservation,
+      [source],
+      {
+        path: defaultBeatGameStrategy.path,
+        requireExposableSource: true,
+      },
+    ));
+
+    expect(selected.position).toEqual(source.position);
+    expect(driver.paths.map(({ radius }) => radius)).toEqual([0.75, 1.1]);
+  });
 });

@@ -16443,7 +16443,10 @@ describe("beat-game run lifecycle", () => {
 
     expect(driver.paths.filter(({ policy }) =>
       policy.allowMining === false
-    )).toEqual([expect.objectContaining({ position: stand })]);
+    )).toEqual([
+      expect.objectContaining({ position: stand, radius: 0.75 }),
+      expect.objectContaining({ position: stand, radius: 1.1 }),
+    ]);
     expect(driver.paths.filter(({ policy }) =>
       policy.allowMining === true
     )).toEqual([expect.objectContaining({ position: stand })]);

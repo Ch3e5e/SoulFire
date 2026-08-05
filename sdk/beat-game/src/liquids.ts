@@ -14,6 +14,7 @@ import type {
 export const LIQUID_INTERACTION_REACH = 4;
 export const LIQUID_INTERACTION_STAND_RADIUS = 0.75;
 
+const LIQUID_INTERACTION_FALLBACK_STAND_RADIUS = 1.1;
 const LAVA_SOURCE_CLUSTER_RADIUS = 8;
 const PREFERRED_LAVA_SOURCE_CLUSTER_SIZE = 9;
 const LAVA_INTERACTION_VOLUME_RADIUS = 4.9;
@@ -308,17 +309,19 @@ function pathfindToLavaInteractionStand(
   path: BeatGamePathPolicy,
   allowMining: boolean,
 ): Effect.Effect<boolean, BeatGameDriverError> {
-  return driver.pathfind(
-    candidate,
-    LIQUID_INTERACTION_STAND_RADIUS,
-    {
-      ...path,
-      allowMining,
-      avoidFluids: true,
-      maxFallDistance: Math.min(path.maxFallDistance, 1),
-    },
-  ).pipe(
-    Effect.as(true),
+  const policy = {
+    ...path,
+    allowMining,
+    avoidFluids: true,
+    maxFallDistance: Math.min(path.maxFallDistance, 1),
+  };
+  const attempt = (radius: number) =>
+    driver.pathfind(candidate, radius, policy).pipe(Effect.as(true));
+  return attempt(LIQUID_INTERACTION_STAND_RADIUS).pipe(
+    Effect.catchTag(
+      "BeatGameDriverError",
+      () => attempt(LIQUID_INTERACTION_FALLBACK_STAND_RADIUS),
+    ),
     Effect.catchTag("BeatGameDriverError", () => Effect.succeed(false)),
   );
 }
