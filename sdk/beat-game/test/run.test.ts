@@ -17127,6 +17127,144 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("continues lava search after relocating a flooded surface descent", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const start = {
+      x: 0.5,
+      y: 64,
+      z: 0.5,
+      dimension: "minecraft:overworld",
+    } as const;
+    driver.currentObservation = observation({
+      position: start,
+      counts: {
+        "minecraft:bucket": 1,
+        "minecraft:cobblestone": 120,
+        "minecraft:cooked_beef": 12,
+        "minecraft:flint_and_steel": 1,
+        "minecraft:iron_ingot": 10,
+        "minecraft:iron_pickaxe": 1,
+        "minecraft:oak_log": 12,
+        "minecraft:shield": 1,
+        "minecraft:stone_sword": 1,
+        "minecraft:water_bucket": 1,
+      },
+    });
+    driver.surfaceColumns = [-1, 0, 1].flatMap((x) =>
+      [-1, 0, 1].map((z) => ({
+        x,
+        z,
+        loaded: true,
+        surfaceY: 63,
+        blockId: "minecraft:grass_block",
+        biomeId: "minecraft:plains",
+        skyLight: 15,
+        blockLight: 0,
+      }))
+    );
+    driver.blockQueryResolver = ({ center, selector }) => {
+      if (selector.blockIds !== undefined) {
+        return [];
+      }
+      const position = {
+        x: Math.floor(center.x),
+        y: Math.floor(center.y),
+        z: Math.floor(center.z),
+        dimension: center.dimension,
+      };
+      if (position.x === 0 && position.y === 63 && position.z === 0) {
+        return [blockObservation(position)];
+      }
+      return [blockObservation(position, {
+        blockId: "minecraft:water",
+        replaceable: true,
+        solid: false,
+      })];
+    };
+    let resolveRelocation!: () => void;
+    const relocated = new Promise<void>((resolve) => {
+      resolveRelocation = resolve;
+    });
+    let relocationCount = 0;
+    driver.xzPathResolver = (x, z, dimension, radius, policy) => {
+      relocationCount += 1;
+      driver.xzPaths.push({ x, z, dimension, radius, policy });
+      if (relocationCount > 1) {
+        return Effect.never;
+      }
+      return Effect.sync(() => {
+        driver.currentObservation = observation({
+          position: {
+            ...driver.currentObservation.player.position,
+            x,
+            z,
+            dimension,
+          },
+          counts: driver.currentObservation.inventory.counts,
+        });
+        resolveRelocation();
+      });
+    };
+    await Effect.runPromise(store.save(checkpoint(
+      BeatGamePhase.ENTER_NETHER,
+      {
+        runId: "surface-lava-relocation-run",
+        teamId: "surface-lava-relocation-team",
+      },
+    ), undefined));
+    const actionEvents: string[] = [];
+    let resolveSearchContinued!: () => void;
+    const searchContinued = new Promise<void>((resolve) => {
+      resolveSearchContinued = resolve;
+    });
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        runId: "surface-lava-relocation-run",
+        team: { teamId: "surface-lava-relocation-team" },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      });
+      yield* run.events.pipe(
+        Stream.runForEach((event) =>
+          "action" in event && event.action === "satisfy:lava-bucket"
+            ? Effect.sync(() => {
+              actionEvents.push(
+                `${event.type}:${"detail" in event ? event.detail ?? "" : ""}`,
+              );
+              if (event.type === "action-succeeded") {
+                resolveSearchContinued();
+              }
+            })
+            : Effect.void
+        ),
+        Effect.forkScoped,
+      );
+      yield* Effect.promise(() => relocated).pipe(
+        Effect.timeoutFail({
+          duration: "5 seconds",
+          onTimeout: () => new Error("Timed out waiting for relocation"),
+        }),
+      );
+      yield* Effect.promise(() => searchContinued).pipe(
+        Effect.timeoutFail({
+          duration: "5 seconds",
+          onTimeout: () =>
+            new Error("Timed out waiting for lava search continuation"),
+        }),
+      );
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    expect(driver.xzPaths).toContainEqual(expect.objectContaining({
+      dimension: "minecraft:overworld",
+      policy: expect.objectContaining({ avoidFluids: true }),
+    }));
+    expect(actionEvents).toContain("action-succeeded:");
+  }, 15_000);
+
   it("searches for a lava pool before casting with a lone source", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();

@@ -8576,11 +8576,14 @@ function fillLiquidBucket(
               DEEP_LAVA_SEARCH_Y,
               Math.floor(beforeDescent.y) - DEEP_LAVA_DESCENT_STEP,
             );
-            yield* excavateResourceSearchStaircase(
+            const descended = yield* excavateResourceSearchStaircase(
               state,
               beforeDescent,
               targetY,
             );
+            if (!descended) {
+              return;
+            }
             current = yield* state.driver.observe;
             if (current.player.position.y > beforeDescent.y + 0.5) {
               return;
@@ -9086,7 +9089,7 @@ function excavateResourceSearchStaircase(
   state: RunState,
   position: BeatGamePosition,
   targetY: number,
-): Effect.Effect<void, BeatGameDriverError> {
+): Effect.Effect<boolean, BeatGameDriverError> {
   return Effect.gen(function* () {
     const origin = yield* findStableResourceSearchStaircaseOrigin(
       state,
@@ -9096,31 +9099,30 @@ function excavateResourceSearchStaircase(
       if (origin.left.operation !== "find-resource-staircase-origin") {
         return yield* Effect.fail(origin.left);
       }
-      yield* escapeToOverworldSurface(state, position);
-      const surfaced = yield* state.driver.observe;
-      yield* advanceExplorationFrontier(
-        state,
-        surfaced.player.position,
-        explorationPurpose(
-          "avoid-unstable-resource-staircase",
-          surfaced.player.position,
-        ),
-        24,
-        {
-          ...state.strategy.path,
-          avoidFluids: true,
-        },
-        true,
-        false,
-      );
-      return;
+      yield* relocateResourceSearchStaircase(state, position, "unstable");
+      return false;
     }
     const from = origin.right;
-    const to = yield* selectResourceSearchStaircaseDestination(
+    const destination = yield* selectResourceSearchStaircaseDestination(
       state.driver,
       from,
       targetY,
-    );
+    ).pipe(Effect.either);
+    if (destination._tag === "Left") {
+      if (
+        destination.left.operation
+          !== "find-resource-staircase-destination"
+      ) {
+        return yield* Effect.fail(destination.left);
+      }
+      yield* relocateResourceSearchStaircase(
+        state,
+        position,
+        "blocked",
+      );
+      return false;
+    }
+    const to = destination.right;
     const excavation = yield* excavateStaircase(state.driver, {
       from,
       to,
@@ -9130,17 +9132,32 @@ function excavateResourceSearchStaircase(
       },
     }).pipe(Effect.either);
     if (excavation._tag === "Right") {
-      return;
+      return true;
     }
     if (excavation.left.code !== "fluid_exposed") {
       return yield* Effect.fail(excavation.left);
     }
 
-    const floodedApproach = yield* state.driver.observe;
-    yield* emergencyAirAscent(
-      state,
-      floodedApproach.player.position,
-    );
+    yield* relocateResourceSearchStaircase(state, position, "flooded");
+    return false;
+  });
+}
+
+function relocateResourceSearchStaircase(
+  state: RunState,
+  position: BeatGamePosition,
+  reason: "blocked" | "flooded" | "unstable",
+): Effect.Effect<void, BeatGameDriverError> {
+  return Effect.gen(function* () {
+    const current = yield* state.driver.observe;
+    if (
+      yield* isPlayerInFluid(
+        state.driver,
+        current.player.position,
+      )
+    ) {
+      yield* emergencyAirAscent(state, current.player.position);
+    }
     const recovered = yield* state.driver.observe;
     yield* escapeToOverworldSurface(state, recovered.player.position);
     const surfaced = yield* state.driver.observe;
@@ -9148,10 +9165,10 @@ function excavateResourceSearchStaircase(
       state,
       surfaced.player.position,
       explorationPurpose(
-        "avoid-flooded-resource-staircase",
-        surfaced.player.position,
+        `avoid-${reason}-resource-staircase`,
+        position,
       ),
-      24,
+      64,
       {
         ...state.strategy.path,
         avoidFluids: true,
@@ -9271,25 +9288,28 @@ function selectResourceSearchStaircaseDestination(
       { x: 0, z: -1 },
     ] as const;
     for (const direction of directions) {
-      const firstStep = {
-        ...from,
-        x: from.x + direction.x,
-        y: from.y - 1,
-        z: from.z + direction.z,
-      };
-      const [head, tread, support] = yield* Effect.all([
-        queryExactBlockAt(driver, { ...firstStep, y: firstStep.y + 1 }),
-        queryExactBlockAt(driver, firstStep),
-        queryExactBlockAt(driver, { ...firstStep, y: firstStep.y - 1 }),
-      ]);
-      if (
-        head === undefined
-        || tread === undefined
-        || support === undefined
-        || [head, tread, support].some(({ blockId }) =>
-          isPlayerFluidBlock(blockId)
+      const corridor = yield* Effect.all(
+        Array.from({ length: depth }, (_, index) => {
+          const stepDepth = index + 1;
+          const tread = {
+            ...from,
+            x: from.x + direction.x * stepDepth,
+            y: from.y - stepDepth,
+            z: from.z + direction.z * stepDepth,
+          };
+          return Effect.all([
+            queryExactBlockAt(driver, { ...tread, y: tread.y + 1 }),
+            queryExactBlockAt(driver, tread),
+            queryExactBlockAt(driver, { ...tread, y: tread.y - 1 }),
+          ]);
+        }),
+        { concurrency: "unbounded" },
+      );
+      if (corridor.some((section) =>
+        section.some((block) =>
+          block === undefined || isPlayerFluidBlock(block.blockId)
         )
-      ) {
+      )) {
         continue;
       }
       return {
@@ -9299,11 +9319,13 @@ function selectResourceSearchStaircaseDestination(
         z: from.z + direction.z * depth,
       };
     }
-    return {
-      ...from,
-      x: from.x + depth,
-      y: targetY,
-    };
+    return yield* Effect.fail(new BeatGameDriverError({
+      operation: "find-resource-staircase-destination",
+      code: "unreachable",
+      retryable: true,
+      message:
+        "No fully loaded fluid-free corridor is available for a resource-search staircase",
+    }));
   });
 }
 
