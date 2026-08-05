@@ -758,6 +758,7 @@ interface ActionResult {
   readonly defenseTarget?: BeatGameEntityObservation;
   readonly escapeTarget?: BeatGameEntityObservation;
   readonly airEscapePosition?: BeatGamePosition;
+  readonly environmentalEscapePosition?: BeatGamePosition;
   readonly travelMealRequested?: boolean;
   readonly completedPendingDeath?: string;
 }
@@ -2853,6 +2854,11 @@ function executeDecision(
               ),
           },
         )
+        : result.environmentalEscapePosition !== undefined
+        ? escapeEnvironmentalDamage(
+          state,
+          result.environmentalEscapePosition,
+        )
         : result.escapeTarget !== undefined
         ? decision.type === "recover-death"
           ? escapeFromTarget(state, result.escapeTarget, {
@@ -2883,6 +2889,7 @@ function executeDecision(
         : Effect.void;
       const interruptedForSafety =
         result.airEscapePosition !== undefined
+        || result.environmentalEscapePosition !== undefined
         || result.escapeTarget !== undefined
         || result.defenseTarget !== undefined
         || result.travelMealRequested === true;
@@ -3111,15 +3118,19 @@ function monitorObservedSafety(
     && observation.player.health < previousObservation.player.health
   ) {
     return findNearbyAttackThreat(state, observation).pipe(
-      Effect.flatMap((threat) => {
+      Effect.flatMap((threat): Effect.Effect<
+        ActionResult,
+        BeatGameError | BeatGameDriverError
+      > => {
         if (threat === undefined) {
-          if (decision.type === "recover-death") {
-            return Effect.succeed({
-              replanReason:
-                "environmental damage was observed without a nearby attacker",
-            } satisfies ActionResult);
+          if (decision.type === "eat") {
+            return Effect.suspend(() => monitor(observation));
           }
-          return Effect.suspend(() => monitor(observation));
+          return Effect.succeed({
+            replanReason:
+              "environmental damage was observed without a nearby attacker",
+            environmentalEscapePosition: observation.player.position,
+          } satisfies ActionResult);
         }
         const response = threat.response;
         return Effect.succeed({
@@ -10749,6 +10760,55 @@ function climbToHigherOverworldGround(
         )
     ),
   );
+}
+
+function escapeEnvironmentalDamage(
+  state: RunState,
+  position: BeatGamePosition,
+): Effect.Effect<void, BeatGameDriverError> {
+  const playerBlock = {
+    x: Math.floor(position.x),
+    y: Math.floor(position.y),
+    z: Math.floor(position.z),
+    dimension: position.dimension,
+  };
+  const occupiedPositions = [
+    { ...playerBlock, y: playerBlock.y + 1 },
+    playerBlock,
+  ];
+  return Effect.gen(function* () {
+    const occupiedBlocks = yield* Effect.all(
+      occupiedPositions.map((occupiedPosition) =>
+        queryExactBlock(state.driver, occupiedPosition)
+      ),
+      { concurrency: "unbounded" },
+    );
+    const diggableObstructions = occupiedBlocks.filter(
+      (block): block is BeatGameBlockObservation =>
+        block !== undefined
+        && !block.replaceable
+        && block.diggable,
+    );
+    if (diggableObstructions.length > 0) {
+      yield* state.driver.withControl(Effect.gen(function* () {
+        const observation = yield* state.driver.observe;
+        if (hasMiningPickaxe(observation)) {
+          yield* state.driver.act({
+            type: "select-item",
+            selector: { itemIds: MINING_PICKAXE_ITEM_IDS },
+          });
+        }
+        for (const obstruction of diggableObstructions) {
+          yield* state.driver.act({
+            type: "dig-block",
+            position: obstruction.position,
+          });
+        }
+      }));
+      return;
+    }
+    yield* recoverLocalNavigationTrap(state, position).pipe(Effect.asVoid);
+  });
 }
 
 function recoverLocalNavigationTrap(

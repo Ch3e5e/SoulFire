@@ -1902,6 +1902,84 @@ describe("beat-game run lifecycle", () => {
     expect(corpsePathInterrupted).toBe(true);
   });
 
+  it("digs out when repeated environmental damage has no attacker", async () => {
+    const driver = new FakeBeatGameDriver();
+    const counts = { "minecraft:wooden_pickaxe": 1 };
+    const headPosition = {
+      x: 0,
+      y: 65,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    let actionStarted = false;
+    let obstructed = true;
+    let health = 20;
+    driver.currentObservation = observation({ counts, health });
+    driver.observationResolver = () =>
+      Effect.sync(() => {
+        if (actionStarted && obstructed) {
+          health = Math.max(0, health - 1);
+        }
+        driver.currentObservation = observation({ counts, health });
+        return driver.currentObservation;
+      });
+    driver.blockQueryResolver = (query) =>
+      obstructed
+          && query.center.x === 0.5
+          && query.center.y === 65.5
+          && query.center.z === 0.5
+        ? [blockObservation(headPosition, {
+          blockId: "minecraft:gravel",
+        })]
+        : [];
+    driver.actionResolver = (action) =>
+      Effect.sync(() => {
+        if (
+          action.type === "dig-block"
+          && action.position.x === headPosition.x
+          && action.position.y === headPosition.y
+          && action.position.z === headPosition.z
+        ) {
+          obstructed = false;
+        }
+        return {};
+      });
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+        hooks: {
+          satisfyRequirement: () =>
+            Effect.sync(() => {
+              actionStarted = true;
+            }).pipe(Effect.zipRight(Effect.never)),
+        },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (!driver.actions.some((action) =>
+              action.type === "dig-block"
+            )) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          }).pipe(Effect.timeoutFail({
+            duration: "2 seconds",
+            onTimeout: () =>
+              new Error("Timed out waiting for the environmental escape"),
+          }))
+        ),
+      ),
+    ));
+
+    expect(driver.actions).toContainEqual({
+      type: "dig-block",
+      position: headPosition,
+    });
+    expect(health).toBeGreaterThan(0);
+  });
+
   it("does not restart an in-progress corpse recovery meal", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
@@ -12585,7 +12663,7 @@ describe("beat-game run lifecycle", () => {
             driver.entityResults = [attacker];
             driver.currentObservation = observation({ health: 19 });
             while (
-              !driver.tasks.some((task) => task.type === "attack-nearest")
+              !driver.tasks.some((task) => task.type === "attack-entity")
             ) {
               yield* Effect.sleep(1);
             }
@@ -12606,20 +12684,19 @@ describe("beat-game run lifecycle", () => {
       maximumResults: 32,
     }));
     expect(driver.tasks).toContainEqual(expect.objectContaining({
-      type: "attack-nearest",
-      selector: {
-        categories: [2],
-        alive: true,
-      },
-      maximumTargets: 1,
+      type: "attack-entity",
+      target: expect.objectContaining({
+        connectionEpoch: attacker.connectionEpoch,
+        networkId: attacker.networkId,
+      }),
       selectBestWeapon: true,
     }));
     const defensiveAttack = driver.tasks.find((task) =>
-      task.type === "attack-nearest"
+      task.type === "attack-entity"
     );
     expect(defensiveAttack).not.toHaveProperty("maximumAttacks");
     const attackIndex = driver.tasks.findIndex((task) =>
-      task.type === "attack-nearest"
+      task.type === "attack-entity"
     );
     expect(driver.taskPolicies[attackIndex]).toEqual(expect.objectContaining({
       allowMining: false,
@@ -12713,7 +12790,7 @@ describe("beat-game run lifecycle", () => {
     }));
   }, 10_000);
 
-  it("interrupts work to fight multiple attackers after taking damage", async () => {
+  it("interrupts work to evade multiple attackers after taking damage", async () => {
     const driver = new FakeBeatGameDriver();
     const attackers = [
       {
@@ -12761,7 +12838,7 @@ describe("beat-game run lifecycle", () => {
         ),
       );
     driver.taskObserver = (task) => {
-      if (task.type === "attack-nearest") {
+      if (task.type === "flee") {
         driver.entityResults = [];
       }
     };
@@ -12780,7 +12857,7 @@ describe("beat-game run lifecycle", () => {
             driver.entityResults = [...attackers];
             driver.currentObservation = observation({ health: 19 });
             while (
-              !driver.tasks.some((task) => task.type === "attack-nearest")
+              !driver.tasks.some((task) => task.type === "flee")
             ) {
               yield* Effect.sleep(1);
             }
@@ -12792,14 +12869,13 @@ describe("beat-game run lifecycle", () => {
     ));
 
     expect(driver.tasks).toContainEqual(expect.objectContaining({
-      type: "attack-nearest",
-      selector: {
-        categories: [2],
-        alive: true,
-      },
-      selectBestWeapon: true,
+      type: "flee",
+      selector: { categories: [2], alive: true },
+      triggerRadius: 12,
+      safeDistance: 24,
     }));
-    expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
+    expect(driver.tasks.some((task) => task.type === "attack-entity"))
+      .toBe(false);
   });
 
   it("leaves a nearby neutral Enderman alone", async () => {
