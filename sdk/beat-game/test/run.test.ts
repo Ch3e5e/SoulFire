@@ -419,6 +419,84 @@ describe("beat-game run lifecycle", () => {
       .toHaveLength(1);
   }, 10_000);
 
+  it("leaves a resumed sealed shelter after morning", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentEnvironment = { gameTime: 14_000n };
+    driver.currentObservation = observation({
+      position: {
+        x: 0.5,
+        y: 60,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+      counts: {
+        "minecraft:stone_pickaxe": 1,
+        "minecraft:wooden_sword": 1,
+      },
+    });
+    driver.surfaceColumns = [{
+      x: 0,
+      z: 0,
+      loaded: true,
+      surfaceY: 62,
+      blockId: "minecraft:grass_block",
+      biomeId: "minecraft:plains",
+      skyLight: 15,
+      blockLight: 0,
+    }];
+    let environmentObservations = 0;
+    driver.environmentResolver = () =>
+      Effect.sync(() => {
+        environmentObservations += 1;
+        return environmentObservations === 1
+          ? { gameTime: 14_000n }
+          : { gameTime: 1_000n };
+      });
+    driver.blockQueryResolver = ({ center, selector }) => {
+      if (selector.blockIds?.includes("minecraft:water") === true) {
+        return [];
+      }
+      const position = {
+        x: Math.floor(center.x),
+        y: Math.floor(center.y),
+        z: Math.floor(center.z),
+        dimension: center.dimension,
+      };
+      return [blockObservation(position, position.y === 62
+        ? { blockId: "minecraft:oak_log" }
+        : {
+          blockId: "minecraft:air",
+          diggable: false,
+          replaceable: true,
+          solid: false,
+        })];
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (driver.paths.length === 0) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    expect(driver.paths[0]).toMatchObject({
+      position: {
+        x: 0.5,
+        y: 63,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+      policy: {
+        allowMining: true,
+        allowPlacing: true,
+      },
+    });
+  }, 10_000);
+
   it("moves away from a night shelter shaft that would flood", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentEnvironment = { gameTime: 14_000n };
@@ -23328,6 +23406,66 @@ describe("beat-game run lifecycle", () => {
         z: 0.5,
         dimension: "minecraft:overworld",
       },
+    }));
+    expect(driver.tasks.some((task) =>
+      task.type === "collect-blocks"
+      && task.blockIds.includes("minecraft:oak_log")
+    )).toBe(false);
+  });
+
+  it("recognizes a two-block-deep sealed pocket as underground", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      position: {
+        x: 0.5,
+        y: 60,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+      counts: {
+        "minecraft:oak_log": 3,
+        "minecraft:stone_pickaxe": 1,
+        "minecraft:wooden_sword": 1,
+      },
+    });
+    driver.surfaceColumns = [{
+      x: 0,
+      z: 0,
+      loaded: true,
+      surfaceY: 62,
+      blockId: "minecraft:grass_block",
+      biomeId: "minecraft:plains",
+      skyLight: 15,
+      blockLight: 0,
+    }];
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      yield* Effect.gen(function* () {
+        while (driver.paths.length === 0) {
+          yield* Effect.sleep(1);
+        }
+      }).pipe(Effect.timeout("5 seconds"));
+      yield* run.stop;
+    })));
+
+    expect(driver.paths[0]).toEqual(expect.objectContaining({
+      position: {
+        x: 0.5,
+        y: 63,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+      policy: expect.objectContaining({
+        allowMining: true,
+        allowPlacing: true,
+      }),
     }));
     expect(driver.tasks.some((task) =>
       task.type === "collect-blocks"

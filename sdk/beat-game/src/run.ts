@@ -1566,6 +1566,17 @@ function shelterUntilMorning(
           ),
         },
       ).pipe(Effect.ignore);
+    } else if (alreadyCovered) {
+      const current = yield* state.driver.observe;
+      yield* emit(state, {
+        type: "diagnostic",
+        message: "Leaving a resumed night shelter after morning",
+        data: { position: current.player.position },
+      });
+      yield* returnToOverworldSurface(
+        state,
+        current.player.position,
+      );
     }
     return true;
   });
@@ -10569,7 +10580,8 @@ function needsOverworldSurfaceRecovery(
         ?? selectSwimmableSurfaceEscapeColumns(columns, position, 1)[0]
     ),
     Effect.map((surface) =>
-      surface !== undefined && surface.surfaceY - position.y > 2
+      surface !== undefined
+      && surface.surfaceY - Math.floor(position.y) >= 2
     ),
   );
 }
