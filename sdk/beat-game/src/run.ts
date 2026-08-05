@@ -9796,10 +9796,13 @@ function huntOrExplore(
       );
       current = yield* state.driver.observe;
       const checkpoint = yield* Ref.get(state.checkpoint);
-      const explorationLegs = completedExplorationLegs(
-        checkpoint,
-        current.player.position.dimension,
-        purpose,
+      const explorationLegs = Math.max(
+        explorationHops,
+        completedExplorationLegs(
+          checkpoint,
+          current.player.position.dimension,
+          purpose,
+        ),
       );
       const aquaticHuntAllowed = strandedAquaticFallback
         || shouldAllowAquaticHunt(

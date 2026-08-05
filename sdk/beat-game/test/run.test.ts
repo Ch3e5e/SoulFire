@@ -3506,13 +3506,6 @@ describe("beat-game run lifecycle", () => {
       ...initial,
       memory: {
         ...initial.memory,
-        explorationFrontiers: {
-          "minecraft:overworld:prepare-corpse-recovery-food": {
-            origin: driver.currentObservation.player.position,
-            nextIndex: 3,
-            lastPosition: driver.currentObservation.player.position,
-          },
-        },
         deathPositions: [{
           key: `death:${observedAt}`,
           value: {
@@ -3624,6 +3617,7 @@ describe("beat-game run lifecycle", () => {
       }),
     }));
     expect(driver.paths).toHaveLength(0);
+    expect(driver.xzPaths).toHaveLength(2);
   });
 
   it("recovers a nearby corpse before preparing at low health", async () => {
