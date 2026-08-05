@@ -499,6 +499,32 @@ describe("smoke stuck diagnostics", () => {
     });
   });
 
+  it("retains action age when the bounded timeline lost its start event", () => {
+    const diagnostics = buildSmokeStuckDiagnostics({
+      capturedAt: "2026-08-03T10:02:00.000Z",
+      currentAction: "build-and-enter-nether",
+      currentActionStartedAt: "2026-08-03T10:00:00.000Z",
+      activity: [{
+        observedAt: "2026-08-03T10:01:55.000Z",
+        kind: "task-progress-observed",
+        task: {
+          taskId: "portal-1",
+          progress: { fraction: 0.5, message: "Following route" },
+        },
+      }],
+    });
+
+    expect(diagnostics).toMatchObject({
+      status: "progressing",
+      action: {
+        name: "build-and-enter-nether",
+        startedAt: "2026-08-03T10:00:00.000Z",
+        ageMs: 120_000,
+      },
+      lastProgressAgeMs: 5_000,
+    });
+  });
+
   it("does not report intentionally interrupted routes as failures", () => {
     const interruptedPath = (seconds: number) => ({
       observedAt: `2026-08-03T10:00:${String(seconds).padStart(2, "0")}.000Z`,

@@ -10,6 +10,7 @@ import {
   type BeatGameBlockSelector,
   type BeatGameDriver,
   type BeatGameEntitySelector,
+  type BeatGameEvent,
   type BeatGamePathPolicy,
   type BeatGamePosition,
   type BeatGameQueryBlocks,
@@ -157,6 +158,7 @@ const debugApiTimelineEntries = positiveIntegerEnvironment(
   "SOULFIRE_E2E_DEBUG_TIMELINE_ENTRIES",
   4_000,
 );
+const debugBlockQueryResultLimit = 32;
 const verboseOutput = booleanEnvironment("SOULFIRE_E2E_VERBOSE", false);
 const minecraftPort = 25_565;
 const attachedMinecraftContainer = optionalEnvironment(
@@ -182,6 +184,7 @@ const debugTimeline = new SmokeDebugTimeline(debugApiTimelineEntries);
 const debugTimelineOmittedKinds = new Set([
   "inventory-observed",
 ]);
+let activeDebugActionContext: SmokeDebugActionContext | undefined;
 const eventLog = new BoundedLog(
   path.join(artifactDirectory, "events.ndjson"),
   {
@@ -856,12 +859,14 @@ const program = Effect.scoped(Effect.gen(function* () {
     queryBlocks: (query: Parameters<typeof baseDriver.queryBlocks>[0]) =>
       baseDriver.queryBlocks(query).pipe(
         Effect.tap((blocks) =>
-          query.radius <= 0.5
-            || query.selector.blockIds?.includes("minecraft:nether_portal")
-            || query.selector.blockIds?.includes(
-              "minecraft:end_portal_frame",
-            )
-            ? record("block-query", { query, blocks }).pipe(Effect.orDie)
+          shouldTraceBlockQuery(query)
+            ? record("block-query", {
+              owner: currentDebugActionContext(),
+              query,
+              resultCount: blocks.length,
+              resultsTruncated: blocks.length > debugBlockQueryResultLimit,
+              blocks: blocks.slice(0, debugBlockQueryResultLimit),
+            }).pipe(Effect.orDie)
             : Effect.void
         ),
       ),
@@ -1027,8 +1032,22 @@ const program = Effect.scoped(Effect.gen(function* () {
     team: { teamId: `${runId}-team` },
     strategy: beatGameStrategy,
   });
+  const initialRunSnapshot = yield* run.snapshot;
+  const initialPlanner = initialRunSnapshot.checkpoint.planner;
+  if (initialPlanner.currentAction !== undefined) {
+    activeDebugActionContext = {
+      action: initialPlanner.currentAction,
+      ...(initialPlanner.currentActionId === undefined
+        ? {}
+        : { actionId: initialPlanner.currentActionId }),
+      phase: initialPlanner.phase,
+      startedAt: initialPlanner.updatedAt,
+    };
+  }
   yield* Stream.runForEach(run.events, (event) =>
-    record("beat-game-event", { event })
+    Effect.sync(() => updateDebugActionContext(event)).pipe(
+      Effect.zipRight(record("beat-game-event", { event })),
+    )
   ).pipe(Effect.forkScoped);
   if (debugApiEnabled) {
     const debugOperations: SmokeDebugOperation[] = [
@@ -1091,6 +1110,8 @@ const program = Effect.scoped(Effect.gen(function* () {
               analysis: buildSmokeStuckDiagnostics({
                 capturedAt,
                 currentAction: planner.currentAction,
+                currentActionStartedAt:
+                  currentDebugActionContext()?.startedAt,
                 activePath,
                 activity,
               }),
@@ -1230,6 +1251,10 @@ const program = Effect.scoped(Effect.gen(function* () {
                 ].join(","),
                 limit: 12,
               }),
+              worldActivity: debugTimeline.query({
+                kinds: ["block-query", "entity-query"],
+                limit: 12,
+              }).map(compactDecisionActivityEntry),
               taskActivity: queryDebugTimeline({
                 kind: [
                   "task-started",
@@ -2562,6 +2587,7 @@ function queryCurrentDecisionActivity(
   const activity = debugTimeline.query({
     kinds: [
       "beat-game-event",
+      "block-query",
       "entity-query",
       "pathfind-started",
       "pathfind-completed",
@@ -2602,24 +2628,37 @@ function queryCurrentDecisionActivity(
       && event.action === currentAction;
   });
   const correlatedSince = debugObservedAt(started);
+  const activeContext = currentDebugActionContext();
+  const effectiveCorrelatedSince = correlatedSince
+    ?? (activeContext?.action === currentAction
+      ? activeContext.startedAt
+      : undefined);
   return {
     action: currentAction,
-    correlatedSince,
-    correlation: correlatedSince === undefined
-      ? "No matching action-start event remains in the bounded timeline"
+    correlatedSince: effectiveCorrelatedSince,
+    correlation: effectiveCorrelatedSince === undefined
+      ? "No active action start is available"
+      : correlatedSince === undefined
+      ? "Entries are correlated from the retained active action context"
       : "Entries are correlated from the latest matching action-start event",
     entries: activity.filter((entry) => {
       const observedAt = debugObservedAt(entry);
-      return correlatedSince === undefined
+      return effectiveCorrelatedSince === undefined
         || observedAt === undefined
-        || observedAt >= correlatedSince;
+        || observedAt >= effectiveCorrelatedSince;
     }).slice(-limit).map(compactDecisionActivityEntry),
     recentActionOutcomes: recentActionOutcomes(activity),
   };
 }
 
 function compactDecisionActivityEntry(entry: unknown): unknown {
-  if (!isDebugRecord(entry) || entry.kind !== "entity-query") {
+  if (!isDebugRecord(entry)) {
+    return entry;
+  }
+  if (entry.kind === "block-query") {
+    return compactBlockQueryActivity(entry);
+  }
+  if (entry.kind !== "entity-query") {
     return entry;
   }
   const entities = Array.isArray(entry.entities)
@@ -2654,6 +2693,58 @@ function compactDecisionActivityEntry(entry: unknown): unknown {
       })),
     },
   };
+}
+
+function compactBlockQueryActivity(
+  entry: Readonly<Record<string, unknown>>,
+): unknown {
+  const blocks = Array.isArray(entry.blocks)
+    ? entry.blocks.filter(isDebugRecord)
+    : [];
+  const byBlockId = new Map<string, number>();
+  for (const block of blocks) {
+    const blockId = typeof block.blockId === "string"
+      ? block.blockId
+      : "unknown";
+    byBlockId.set(blockId, (byBlockId.get(blockId) ?? 0) + 1);
+  }
+  const { blocks: _blocks, ...metadata } = entry;
+  return {
+    ...metadata,
+    result: {
+      count: typeof entry.resultCount === "number"
+        ? entry.resultCount
+        : blocks.length,
+      sampleTruncated: entry.resultsTruncated === true,
+      byBlockId: [...byBlockId]
+        .map(([blockId, count]) => ({ blockId, count }))
+        .sort((left, right) =>
+          right.count - left.count
+          || left.blockId.localeCompare(right.blockId)
+        ),
+      sample: blocks.slice(0, 16).map((block) => ({
+        blockId: block.blockId,
+        position: block.position,
+        properties: block.properties,
+        diggable: block.diggable,
+        replaceable: block.replaceable,
+        solid: block.solid,
+      })),
+    },
+  };
+}
+
+function shouldTraceBlockQuery(query: BeatGameQueryBlocks): boolean {
+  return query.radius <= 0.5
+    || Object.values(query.selector).some((value) =>
+      value !== undefined
+      && (!Array.isArray(value) || value.length > 0)
+      && (
+        typeof value !== "object"
+        || value === null
+        || Object.keys(value).length > 0
+      )
+    );
 }
 
 function recentActionOutcomes(
@@ -3300,14 +3391,19 @@ function record(
   });
 }
 
-function currentDebugActionContext():
-  | Readonly<{
-    action: string;
-    actionId?: string;
-    phase?: string;
-    sequence?: string;
-  }>
-  | undefined {
+interface SmokeDebugActionContext {
+  readonly action: string;
+  readonly actionId?: string;
+  readonly phase?: string;
+  readonly sequence?: string;
+  readonly attempt?: number;
+  readonly startedAt?: string;
+}
+
+function currentDebugActionContext(): SmokeDebugActionContext | undefined {
+  if (activeDebugActionContext !== undefined) {
+    return activeDebugActionContext;
+  }
   const latest = debugTimeline.query({
     kinds: ["beat-game-event"],
     limit: debugApiTimelineEntries,
@@ -3347,7 +3443,36 @@ function currentDebugActionContext():
     ...(typeof event.sequence === "string"
       ? { sequence: event.sequence }
       : {}),
+    ...(typeof event.attempt === "number" ? { attempt: event.attempt } : {}),
+    ...(typeof latest.observedAt === "string"
+      ? { startedAt: latest.observedAt }
+      : {}),
   };
+}
+
+function updateDebugActionContext(event: BeatGameEvent): void {
+  if (event.type === "action-started" || event.type === "action-retried") {
+    const existing = activeDebugActionContext?.action === event.action
+      ? activeDebugActionContext
+      : undefined;
+    activeDebugActionContext = {
+      action: event.action,
+      ...(existing?.actionId === undefined
+        ? {}
+        : { actionId: existing.actionId }),
+      phase: event.phase,
+      sequence: event.sequence.toString(),
+      attempt: event.attempt,
+      startedAt: existing?.startedAt ?? event.timestamp,
+    };
+    return;
+  }
+  if (
+    (event.type === "action-succeeded" || event.type === "action-failed")
+    && activeDebugActionContext?.action === event.action
+  ) {
+    activeDebugActionContext = undefined;
+  }
 }
 
 function debugExitFailure(

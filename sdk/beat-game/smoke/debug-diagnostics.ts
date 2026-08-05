@@ -66,6 +66,7 @@ export interface SmokeDecisionDiagnosticsInput {
 export interface SmokeStuckDiagnosticsInput {
   readonly capturedAt: string;
   readonly currentAction?: string | undefined;
+  readonly currentActionStartedAt?: string | undefined;
   readonly activePath?: Readonly<{
     readonly pathId: string;
     readonly elapsedMs: number;
@@ -443,15 +444,21 @@ export function buildSmokeStuckDiagnostics(
     entry.kind === "action-started"
       && entry.action === input.currentAction
   );
-  const actionAgeMs = actionStarted === undefined
+  const actionStartedAt = actionStarted?.observedAt
+    ?? input.currentActionStartedAt;
+  const actionStartedAtMs = actionStartedAt === undefined
     ? undefined
-    : Math.max(0, capturedAtMs - actionStarted.observedAtMs);
+    : Date.parse(actionStartedAt);
+  const actionAgeMs = actionStartedAtMs === undefined
+      || !Number.isFinite(actionStartedAtMs)
+    ? undefined
+    : Math.max(0, capturedAtMs - actionStartedAtMs);
   const intentionalWait = input.currentAction === "survive:night-shelter"
     ? activity.findLast((entry) =>
       entry.kind === "intentional-wait"
       && (
-        actionStarted === undefined
-        || entry.observedAtMs >= actionStarted.observedAtMs
+        actionStartedAtMs === undefined
+        || entry.observedAtMs >= actionStartedAtMs
       )
     )
     : undefined;
@@ -607,7 +614,7 @@ export function buildSmokeStuckDiagnostics(
       ? undefined
       : {
         name: input.currentAction,
-        startedAt: actionStarted?.observedAt,
+        startedAt: actionStartedAt,
         ageMs: actionAgeMs,
       },
     activePath: input.activePath,
