@@ -651,7 +651,7 @@ const EMERGENCY_ESCAPE_LAVA_CHECK_RADIUS = 4;
 const NIGHT_SHELTER_START_TICK = 13_000n;
 const NIGHT_SHELTER_END_TICK = 1_000n;
 const NIGHT_SHELTER_DEPTH = 3;
-const NIGHT_SHELTER_MINIMUM_SURFACE_COVER = 3;
+const NIGHT_SHELTER_MINIMUM_SURFACE_COVER = 8;
 const NIGHT_SHELTER_POLL_MS = 1_000;
 const NIGHT_SHELTER_DESCENT_ATTEMPTS = 30;
 const NIGHT_SHELTER_DAYLIGHT_CONFIRMATIONS = 3;
@@ -1336,10 +1336,17 @@ function isSafelyBelowOverworldSurface(
         && candidate.surfaceY !== undefined
       );
       return column?.surfaceY !== undefined
+        && !isTreeCanopySurface(column.blockId)
         && Math.floor(player.y) + NIGHT_SHELTER_MINIMUM_SURFACE_COVER
           <= column.surfaceY;
     }),
   );
+}
+
+function isTreeCanopySurface(blockId: string | undefined): boolean {
+  return blockId?.endsWith("_leaves") === true
+    || blockId?.endsWith("_log") === true
+    || blockId?.endsWith("_stem") === true;
 }
 
 function shelterUntilMorning(

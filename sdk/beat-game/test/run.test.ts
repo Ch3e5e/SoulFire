@@ -251,6 +251,69 @@ describe("beat-game run lifecycle", () => {
     ]));
   });
 
+  it("does not mistake a tree canopy for safe underground cover", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentEnvironment = { gameTime: 12_000n };
+    driver.currentObservation = observation({
+      position: {
+        x: 0.5,
+        y: 64,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+    });
+    driver.surfaceColumns = [{
+      x: 0,
+      z: 0,
+      loaded: true,
+      surfaceY: 76,
+      blockId: "minecraft:oak_leaves",
+      biomeId: "minecraft:plains",
+      skyLight: 15,
+      blockLight: 0,
+    }];
+    let actionStarted = false;
+    const failures: string[] = [];
+    driver.environmentResolver = () =>
+      Effect.succeed({ gameTime: actionStarted ? 14_000n : 12_000n });
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+        hooks: {
+          satisfyRequirement: () =>
+            Effect.sync(() => {
+              actionStarted = true;
+            }).pipe(Effect.zipRight(Effect.never)),
+        },
+      });
+      yield* run.events.pipe(
+        Stream.runForEach((event) =>
+          event.type === "action-failed"
+              && event.detail?.includes(
+                "night fell while the bot was under-equipped",
+              ) === true
+            ? Effect.sync(() => {
+              failures.push(event.detail ?? "");
+            })
+            : Effect.void
+        ),
+        Effect.forkScoped,
+      );
+      while (failures.length === 0) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    }).pipe(Effect.timeoutFail({
+      duration: "2 seconds",
+      onTimeout: () => new Error("Timed out waiting for night shelter"),
+    }))));
+
+    expect(actionStarted).toBe(true);
+    expect(failures).toHaveLength(1);
+  });
+
   it("keeps a night shelter sealed until daylight is confirmed", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentEnvironment = { gameTime: 12_900n };
