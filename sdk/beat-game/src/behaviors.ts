@@ -4935,75 +4935,39 @@ function collectPortalCastingLava(
       },
       maximumResults: Math.max(8, remainingTargets),
     });
-    const orderedSources = [...sources].sort((left, right) =>
-      distanceSquared(left.position, observation.player.position)
-      - distanceSquared(right.position, observation.player.position)
-    );
-    if (orderedSources.length === 0) {
+    if (sources.length === 0) {
       return yield* Effect.fail(behaviorError(
         driver,
         "No live lava source remained for the next portal casting step",
       ));
     }
-    let lastFailure: BeatGameDriverError | undefined;
-    for (const source of orderedSources) {
-      const attempt = yield* collectPortalCastingLavaSource(
-        driver,
-        source,
-        path,
-      ).pipe(Effect.either);
-      if (attempt._tag === "Right") {
-        return;
-      }
-      lastFailure = attempt.left;
-    }
-    return yield* Effect.fail(lastFailure ?? behaviorError(
+    const source = yield* approachLavaSourceFromSide(
       driver,
-      "No reachable lava source remained for the next portal casting step",
-    ));
+      observation,
+      sources,
+      {
+        path: mergePathPolicy(path),
+        requireExposableSource: true,
+      },
+    );
+    yield* collectApproachedPortalCastingLavaSource(
+      driver,
+      source,
+    );
   });
 }
 
-function collectPortalCastingLavaSource(
+function collectApproachedPortalCastingLavaSource(
   driver: BeatGameDriver,
   source: BeatGameBlockObservation,
-  path?: Partial<BeatGamePathPolicy>,
 ): Effect.Effect<void, BeatGameDriverError> {
   return Effect.gen(function* () {
-    yield* driver.pathfind(
-      source.position,
-      3,
-      mergePathPolicy(path),
-    );
-    let observation = yield* driver.observe;
-    const sourceCenter = blockCenter(source.position);
-    let obstruction = yield* portalCastingLavaSightline(
+    const observation = yield* driver.observe;
+    const obstruction = yield* portalCastingLavaSightline(
       driver,
       observation,
       source.position,
     );
-    if (
-      obstruction !== undefined
-      && !samePosition(obstruction.position, source.position)
-    ) {
-      const repositioned = yield* approachLavaSourceFromSide(
-        driver,
-        observation,
-        [source],
-        {
-          path: mergePathPolicy(path),
-          requireExposableSource: true,
-        },
-      ).pipe(Effect.either);
-      if (repositioned._tag === "Right") {
-        observation = yield* driver.observe;
-        obstruction = yield* portalCastingLavaSightline(
-          driver,
-          observation,
-          source.position,
-        );
-      }
-    }
     if (
       obstruction !== undefined
       && !samePosition(obstruction.position, source.position)
@@ -5015,6 +4979,7 @@ function collectPortalCastingLavaSource(
         } at ${positionKey(obstruction.position)}`,
       ));
     }
+    const sourceCenter = blockCenter(source.position);
     const liveSource = yield* driver.queryBlocks({
       center: sourceCenter,
       radius: 0.25,

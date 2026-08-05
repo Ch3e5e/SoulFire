@@ -4477,7 +4477,7 @@ describe("beat-game behavior programs", () => {
       origin,
       ignite: false,
     }))).rejects.toThrow(
-      "Could not safely collect the portal casting lava source",
+      "Could not reach, excavate, or expose a safe side-on stand",
     );
 
     expect(driver.actions).not.toContainEqual({
