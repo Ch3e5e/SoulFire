@@ -68,13 +68,14 @@ export function approachLavaSourceFromSide(
               source.position,
             ).map((position) => ({
               position,
-              sightlineObstructions: lavaSightlineObstructionCount(
+              sightlineObstructions: lavaSightlineObstructions(
                 blocks,
                 position,
                 source.position,
               ),
             })).sort((left, right) =>
-              left.sightlineObstructions - right.sightlineObstructions
+              left.sightlineObstructions.length
+                - right.sightlineObstructions.length
               || distanceSquared(
                 observation.player.position,
                 left.position,
@@ -97,7 +98,7 @@ export function approachLavaSourceFromSide(
         if (
           attemptedDryStands.has(key)
           || options.requireExposableSource === true
-            && candidate.sightlineObstructions > 0
+            && candidate.sightlineObstructions.length > 0
           || !isSafeLavaInteractionStand(
             prepared.blocks,
             candidate.position,
@@ -134,7 +135,10 @@ export function approachLavaSourceFromSide(
         if (
           attemptedExcavationStands.has(key)
           || options.requireExposableSource === true
-            && candidate.sightlineObstructions > 0
+            && !standExcavationClearsSightline(
+              candidate.position,
+              candidate.sightlineObstructions,
+            )
           || !isExcavatableLavaInteractionStand(
             prepared.source.position,
             prepared.blocks,
@@ -301,17 +305,17 @@ function lavaInteractionStandCandidates(
   return candidates;
 }
 
-function lavaSightlineObstructionCount(
+function lavaSightlineObstructions(
   blocks: ReadonlyMap<string, BeatGameBlockObservation>,
   candidate: BeatGamePosition,
   source: BeatGameBlockPosition,
-): number {
+): readonly BeatGameBlockObservation[] {
   const eye = { ...candidate, y: candidate.y + 1.62 };
   const target = blockCenter(source);
   const length = Math.sqrt(distanceSquared(eye, target));
   const samples = Math.max(1, Math.ceil(length * 5));
   const visited = new Set<string>();
-  let obstructions = 0;
+  const obstructions: BeatGameBlockObservation[] = [];
   for (let sample = 1; sample < samples; sample += 1) {
     const progress = sample / samples;
     const position = {
@@ -334,10 +338,22 @@ function lavaSightlineObstructionCount(
       && !block.replaceable
       && !isFluidBlock(block.blockId)
     ) {
-      obstructions += 1;
+      obstructions.push(block);
     }
   }
   return obstructions;
+}
+
+function standExcavationClearsSightline(
+  candidate: BeatGamePosition,
+  obstructions: readonly BeatGameBlockObservation[],
+): boolean {
+  const body = floorBlockPosition(candidate);
+  const head = { ...body, y: body.y + 1 };
+  return obstructions.every((block) =>
+    sameBlockPosition(block.position, body)
+    || sameBlockPosition(block.position, head)
+  );
 }
 
 function isSafeLavaInteractionStand(
