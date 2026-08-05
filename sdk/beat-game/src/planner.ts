@@ -105,7 +105,6 @@ export function decideBeatGameAction(
     && hasEdibleFood(observation)
     && (
       hasReadyFood(observation)
-      || phase !== BeatGamePhase.PREPARE_OVERWORLD
       || observation.player.food <= CRITICAL_HUNGER_FOOD_LEVEL
     )
   ) {
@@ -127,8 +126,7 @@ export function decideBeatGameAction(
     }
   }
   if (
-    phase === BeatGamePhase.PREPARE_OVERWORLD
-    && observation.player.food <= strategy.eatBelowFood
+    observation.player.food <= strategy.eatBelowFood
     && hasCookableRawFood(observation)
   ) {
     const food = requirements.find(({ key }) => key === "food");
