@@ -4863,6 +4863,170 @@ describe("beat-game run lifecycle", () => {
     expect(driver.paths).toHaveLength(0);
   });
 
+  it("collects urgent corpse recovery food before the outer air guard replans", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const deathPosition = {
+      x: 700,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    const observedAt = new Date().toISOString();
+    const initial = checkpoint(BeatGamePhase.PREPARE_OVERWORLD, {
+      runId: "corpse-food-drop-air-run",
+      teamId: "corpse-food-drop-air-team",
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        explorationFrontiers: {
+          "minecraft:overworld:prepare-corpse-recovery-food": {
+            origin: driver.currentObservation.player.position,
+            nextIndex: 3,
+            lastPosition: driver.currentObservation.player.position,
+          },
+        },
+        deathPositions: [{
+          key: `death:${observedAt}`,
+          value: {
+            ...deathPosition,
+            inventoryCounts: { "minecraft:iron_ingot": 7 },
+          },
+          observedAt,
+          confidence: 1,
+        }],
+      },
+    }, undefined));
+    const recoveryCounts = {
+      "minecraft:cod": 7,
+      "minecraft:dirt": 42,
+      "minecraft:oak_log": 8,
+      "minecraft:wooden_pickaxe": 1,
+      "minecraft:wooden_sword": 1,
+    };
+    const salmon = {
+      connectionEpoch: "epoch-1",
+      networkId: 51,
+      entityType: "minecraft:salmon",
+      position: {
+        x: 1,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 3,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const satisfies BeatGameEntityObservation;
+    const codDrop = {
+      connectionEpoch: "epoch-1",
+      networkId: 52,
+      entityType: "minecraft:item",
+      itemId: "minecraft:cod",
+      position: {
+        x: 3,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      observedAt: "2026-01-01T00:00:00.000Z",
+    } as const satisfies BeatGameEntityObservation;
+    let salmonAlive = true;
+    let dropAlive = false;
+    driver.currentObservation = observation({
+      food: 9,
+      counts: recoveryCounts,
+    });
+    driver.entityQueryResolver = (query) => {
+      if (query.selector.networkId === codDrop.networkId) {
+        return dropAlive ? [codDrop] : [];
+      }
+      if (query.selector.entityTypes?.includes("minecraft:item") === true) {
+        return dropAlive ? [codDrop] : [];
+      }
+      if (
+        query.selector.entityTypes?.includes("minecraft:salmon") === true
+      ) {
+        return salmonAlive ? [salmon] : [];
+      }
+      return [];
+    };
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (task.type !== "attack-entity") {
+          return;
+        }
+        salmonAlive = false;
+        dropAlive = true;
+        driver.currentObservation = observation({
+          air: 195,
+          food: 9,
+          counts: recoveryCounts,
+        });
+      });
+    const resolvePath = driver.pathResolver;
+    driver.pathResolver = (position, radius, policy) =>
+      resolvePath(position, radius, policy).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            if (
+              position.x !== codDrop.position.x
+              || position.y !== codDrop.position.y
+              || position.z !== codDrop.position.z
+            ) {
+              return;
+            }
+            dropAlive = false;
+            driver.currentObservation = observation({
+              air: 190,
+              food: 9,
+              position: codDrop.position,
+              counts: { ...recoveryCounts, "minecraft:cod": 8 },
+            });
+          })
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        runId: "corpse-food-drop-air-run",
+        team: { teamId: "corpse-food-drop-air-team" },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (
+              (driver.currentObservation.inventory.counts["minecraft:cod"]
+                ?? 0) < 8
+            ) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          }).pipe(Effect.timeoutFail({
+            duration: "5 seconds",
+            onTimeout: () =>
+              new Error("Timed out waiting for the urgent cod drop pickup"),
+          }))
+        ),
+      ),
+    ));
+
+    expect(driver.paths).toContainEqual(expect.objectContaining({
+      position: codDrop.position,
+    }));
+    expect(driver.currentObservation.inventory.counts["minecraft:cod"]).toBe(
+      8,
+    );
+  }, 10_000);
+
   it("ignores fish above critical hunger while searching for corpse food", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
