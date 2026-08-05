@@ -654,7 +654,6 @@ const NIGHT_SHELTER_MINIMUM_SURFACE_COVER = 8;
 const NIGHT_SHELTER_POLL_MS = 1_000;
 const NIGHT_SHELTER_DESCENT_ATTEMPTS = 30;
 const NIGHT_SHELTER_DAYLIGHT_CONFIRMATIONS = 3;
-const NIGHT_SHELTER_RECOVERY_MAXIMUM_MEALS = 4;
 const NIGHT_SHELTER_ACTION = "survive:night-shelter";
 const NIGHT_SHELTER_BLOCK_ITEM_IDS = [
   "minecraft:dirt",
@@ -1368,9 +1367,7 @@ function shelterUntilMorning(
       yield* eatWhenNeeded(state.driver, {
         foodItemIds: preferredUsableFoodItemIds(shelterObservation),
         foodLevel: 20,
-        maximumMeals: needsRecoveryMeal
-          ? NIGHT_SHELTER_RECOVERY_MAXIMUM_MEALS
-          : 1,
+        maximumMeals: 1,
         completeWhenNoFood: true,
         path: state.strategy.path,
       });
@@ -1571,6 +1568,19 @@ function shelterUntilMorning(
       const current = yield* state.driver.observe;
       if (current.player.dead) {
         return false;
+      }
+      if (
+        current.player.health < state.strategy.minimumHealth
+        && current.player.food < 18
+        && hasUsableFood(current)
+      ) {
+        yield* eatWhenNeeded(state.driver, {
+          foodItemIds: preferredUsableFoodItemIds(current),
+          foodLevel: 20,
+          maximumMeals: 1,
+          completeWhenNoFood: true,
+          path: state.strategy.path,
+        });
       }
       if (daylightConfirmations < NIGHT_SHELTER_DAYLIGHT_CONFIRMATIONS) {
         yield* Effect.sleep(NIGHT_SHELTER_POLL_MS);

@@ -998,10 +998,74 @@ describe("beat-game run lifecycle", () => {
       type: "auto-eat",
       foodItemIds: ["minecraft:salmon"],
       foodLevel: 20,
-      maximumMeals: 4,
+      maximumMeals: 1,
       completeWhenNoFood: true,
     }));
     expect(driver.paths).toHaveLength(0);
+  }, 10_000);
+
+  it("rechecks wounded hunger while waiting in a shelter", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentEnvironment = { gameTime: 14_000n };
+    driver.currentObservation = observation({
+      counts: {
+        "minecraft:salmon": 2,
+        "minecraft:wooden_sword": 1,
+      },
+      food: 17,
+      health: 10,
+    });
+    driver.blockQueryResolver = ({ center, selector }) => {
+      if (selector.blockIds?.includes("minecraft:water") === true) {
+        return [];
+      }
+      const position = {
+        x: Math.floor(center.x),
+        y: Math.floor(center.y),
+        z: Math.floor(center.z),
+        dimension: center.dimension,
+      };
+      return [blockObservation(position, position.y === 66
+        ? { blockId: "minecraft:stone" }
+        : {
+          blockId: "minecraft:air",
+          diggable: false,
+          replaceable: true,
+          solid: false,
+        })];
+    };
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(
+        Effect.zipRight(
+          task.type === "auto-eat"
+              && driver.tasks.filter(({ type }) => type === "auto-eat")
+                  .length >= 2
+            ? Effect.never
+            : Effect.void,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (
+        driver.tasks.filter(({ type }) => type === "auto-eat").length < 2
+      ) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    expect(driver.tasks.filter(({ type }) => type === "auto-eat"))
+      .toHaveLength(2);
+    expect(driver.tasks.filter(({ type }) => type === "auto-eat"))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ maximumMeals: 1 }),
+      ]));
   }, 10_000);
 
   it("accepts any dry landing while swimming toward a night shelter", async () => {
