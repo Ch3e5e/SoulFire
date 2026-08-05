@@ -99,11 +99,15 @@ export function approachLavaSourceFromSide(
           attemptedDryStands.has(key)
           || options.requireExposableSource === true
             && candidate.sightlineObstructions.length > 0
-          || !isSafeLavaInteractionStand(
-            prepared.blocks,
-            candidate.position,
-          )
         ) {
+          continue;
+        }
+        const liveBlocks = yield* queryLavaInteractionStandBlocks(
+          driver,
+          candidate.position,
+          prepared.blocks,
+        );
+        if (!isSafeLavaInteractionStand(liveBlocks, candidate.position)) {
           continue;
         }
         attemptedDryStands.add(key);
@@ -139,9 +143,18 @@ export function approachLavaSourceFromSide(
               candidate.position,
               candidate.sightlineObstructions,
             )
-          || !isExcavatableLavaInteractionStand(
+        ) {
+          continue;
+        }
+        const liveBlocks = yield* queryLavaInteractionStandBlocks(
+          driver,
+          candidate.position,
+          prepared.blocks,
+        );
+        if (
+          !isExcavatableLavaInteractionStand(
             prepared.source.position,
-            prepared.blocks,
+            liveBlocks,
             candidate.position,
           )
         ) {
@@ -243,6 +256,49 @@ function queryLavaInteractionVolume(
     Effect.map((blocks) =>
       new Map(blocks.map((block) => [positionKey(block.position), block]))
     ),
+  );
+}
+
+function queryLavaInteractionStandBlocks(
+  driver: BeatGameDriver,
+  candidate: BeatGamePosition,
+  fallback: ReadonlyMap<string, BeatGameBlockObservation>,
+): Effect.Effect<
+  ReadonlyMap<string, BeatGameBlockObservation>,
+  BeatGameDriverError
+> {
+  const body = floorBlockPosition(candidate);
+  const positions = [
+    { ...body, y: body.y - 1 },
+    body,
+    { ...body, y: body.y + 1 },
+  ];
+  return Effect.forEach(
+    positions,
+    (position) =>
+      driver.queryBlocks({
+        center: blockCenter(position),
+        radius: 0.25,
+        selector: {},
+        maximumResults: 1,
+      }).pipe(
+        Effect.map((blocks) =>
+          blocks.find((block) =>
+            sameBlockPosition(block.position, position)
+          )
+        ),
+      ),
+    { concurrency: "unbounded" },
+  ).pipe(
+    Effect.map((blocks) => {
+      const refreshed = new Map(fallback);
+      for (const block of blocks) {
+        if (block !== undefined) {
+          refreshed.set(positionKey(block.position), block);
+        }
+      }
+      return refreshed;
+    }),
   );
 }
 

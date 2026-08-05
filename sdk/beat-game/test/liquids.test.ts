@@ -65,6 +65,13 @@ describe("lava interaction positioning", () => {
         ? []
         : [blockObservation(obstruction, { blockId: "minecraft:stone" })]),
     ];
+    const blockedStandVolume = standVolume(blockedStand, {
+      x: 1,
+      y: -51,
+      z: 0,
+      dimension: blockedStand.dimension,
+    });
+    const clearStandVolume = standVolume(clearStand);
     driver.currentObservation = observation({
       position: {
         x: 4.5,
@@ -74,17 +81,18 @@ describe("lava interaction positioning", () => {
       },
     });
     driver.blockQueryResolver = ({ center, radius, selector }) => {
-      if (radius !== 4.9 || Object.keys(selector).length !== 0) {
-        return [];
+      if (Object.keys(selector).length === 0 && radius === 0.25) {
+        return [...blockedStandVolume, ...clearStandVolume].filter((block) =>
+          block.position.x === Math.floor(center.x)
+          && block.position.y === Math.floor(center.y)
+          && block.position.z === Math.floor(center.z)
+        );
       }
-      return Math.floor(center.x) === blockedSource.position.x
-        ? standVolume(blockedStand, {
-          x: 1,
-          y: -51,
-          z: 0,
-          dimension: blockedStand.dimension,
-        })
-        : standVolume(clearStand);
+      return radius === 4.9 && Object.keys(selector).length === 0
+        ? Math.floor(center.x) === blockedSource.position.x
+          ? blockedStandVolume
+          : clearStandVolume
+        : [];
     };
     driver.pathResolver = (position, radius, policy) =>
       Effect.sync(() => {
@@ -145,13 +153,16 @@ describe("lava interaction positioning", () => {
         dimension: "minecraft:overworld",
       },
     });
+    const standBlocks = [
+      blockObservation(stand),
+      blockObservation({ ...stand, y: stand.y + 1 }),
+      blockObservation({ ...stand, y: stand.y - 1 }),
+    ];
     driver.blockQueryResolver = ({ radius, selector }) =>
       radius === 4.9 && Object.keys(selector).length === 0
-        ? [
-          blockObservation(stand),
-          blockObservation({ ...stand, y: stand.y + 1 }),
-          blockObservation({ ...stand, y: stand.y - 1 }),
-        ]
+        ? standBlocks
+        : radius === 0.25 && Object.keys(selector).length === 0
+        ? standBlocks
         : [];
     driver.pathResolver = (position, radius, policy) => {
       driver.paths.push({ position, radius, policy });
@@ -192,5 +203,127 @@ describe("lava interaction positioning", () => {
         maxFallDistance: 1,
       }),
     });
+  });
+
+  it("skips a stand that fills with lava after candidate discovery", async () => {
+    const driver = new FakeBeatGameDriver();
+    const firstSource = blockObservation({
+      x: 0,
+      y: -52,
+      z: 0,
+      dimension: "minecraft:overworld",
+    }, {
+      blockId: "minecraft:lava",
+      properties: { level: "0" },
+      replaceable: true,
+    });
+    const secondSource = blockObservation({
+      x: 8,
+      y: -52,
+      z: 0,
+      dimension: "minecraft:overworld",
+    }, {
+      blockId: "minecraft:lava",
+      properties: { level: "0" },
+      replaceable: true,
+    });
+    const floodedStand = {
+      x: 2,
+      y: -50,
+      z: 0,
+      dimension: "minecraft:overworld",
+    } as const;
+    const safeStand = {
+      x: 6,
+      y: -50,
+      z: 0,
+      dimension: "minecraft:overworld",
+    } as const;
+    const discoveredVolume = (stand: BeatGameBlockPosition) => [
+      blockObservation(stand, {
+        blockId: "minecraft:air",
+        replaceable: true,
+      }),
+      blockObservation({ ...stand, y: stand.y + 1 }, {
+        blockId: "minecraft:air",
+        replaceable: true,
+      }),
+      blockObservation({ ...stand, y: stand.y - 1 }),
+    ];
+    const floodedStandVolume = discoveredVolume(floodedStand);
+    const safeStandVolume = discoveredVolume(safeStand);
+    driver.currentObservation = observation({
+      position: {
+        x: 4.5,
+        y: -50,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+    });
+    driver.blockQueryResolver = ({ center, radius, selector }) => {
+      if (Object.keys(selector).length !== 0) {
+        return [];
+      }
+      if (radius === 4.9) {
+        return Math.floor(center.x) === firstSource.position.x
+          ? floodedStandVolume
+          : safeStandVolume;
+      }
+      if (radius !== 0.25) {
+        return [];
+      }
+      const position = {
+        x: Math.floor(center.x),
+        y: Math.floor(center.y),
+        z: Math.floor(center.z),
+      };
+      if (
+        position.x === floodedStand.x
+        && position.y === floodedStand.y
+        && position.z === floodedStand.z
+      ) {
+        return [blockObservation(floodedStand, {
+          blockId: "minecraft:lava",
+          properties: { level: "1" },
+          replaceable: true,
+        })];
+      }
+      return [...floodedStandVolume, ...safeStandVolume].filter((block) =>
+        block.position.x === position.x
+        && block.position.y === position.y
+        && block.position.z === position.z
+      );
+    };
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+        driver.currentObservation = observation({ position });
+      });
+
+    const selected = await Effect.runPromise(approachLavaSourceFromSide(
+      driver,
+      driver.currentObservation,
+      [firstSource, secondSource],
+      {
+        path: defaultBeatGameStrategy.path,
+        requireExposableSource: true,
+      },
+    ));
+
+    expect(selected.position).toEqual(secondSource.position);
+    expect(driver.paths).toEqual([{
+      position: {
+        x: safeStand.x + 0.5,
+        y: safeStand.y,
+        z: safeStand.z + 0.5,
+        dimension: safeStand.dimension,
+      },
+      radius: 0.75,
+      policy: expect.objectContaining({
+        allowMining: false,
+        avoidFluids: true,
+        maxFallDistance: 1,
+      }),
+    }]);
   });
 });

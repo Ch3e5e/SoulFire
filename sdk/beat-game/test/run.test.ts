@@ -17504,6 +17504,19 @@ describe("beat-game run lifecycle", () => {
           z: Math.floor(center.z),
           dimension: center.dimension,
         };
+        if (
+          position.x === Math.floor(safeStand.x)
+          && position.z === Math.floor(safeStand.z)
+          && position.y >= safeStand.y - 1
+          && position.y <= safeStand.y + 1
+        ) {
+          return [blockObservation(position, position.y === safeStand.y - 1
+            ? {}
+            : {
+              blockId: "minecraft:air",
+              replaceable: true,
+            })];
+        }
         return [blockObservation({
           ...position,
         }, {

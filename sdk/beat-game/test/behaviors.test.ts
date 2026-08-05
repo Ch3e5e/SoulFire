@@ -4176,6 +4176,21 @@ describe("beat-game behavior programs", () => {
         blockId: "minecraft:cobblestone",
       }));
     }
+    for (const block of [
+      blockObservation(safeStand, {
+        blockId: "minecraft:air",
+        replaceable: true,
+      }),
+      blockObservation({ ...safeStand, y: safeStand.y + 1 }, {
+        blockId: "minecraft:air",
+        replaceable: true,
+      }),
+      blockObservation({ ...safeStand, y: safeStand.y - 1 }, {
+        blockId: "minecraft:stone",
+      }),
+    ]) {
+      blocks.set(key(block.position), block);
+    }
     driver.currentObservation = observation({
       counts: {
         "minecraft:bucket": 1,
