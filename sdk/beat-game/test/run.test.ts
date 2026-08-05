@@ -26961,8 +26961,12 @@ describe("beat-game run lifecycle", () => {
         ],
         diggable: true,
       },
-      maximumResults: 3,
+      maximumResults: 12,
     });
+    const coalTaskIndex = driver.tasks.findIndex((task) =>
+      task.type === "collect-blocks"
+      && task.blockIds.includes("minecraft:coal_ore")
+    );
     expect(driver.tasks).toContainEqual(expect.objectContaining({
       type: "collect-blocks",
       blockIds: [
@@ -26971,7 +26975,11 @@ describe("beat-game run lifecycle", () => {
       ],
       count: 3,
       searchRadius: 16,
+      avoidSubmergedTargets: true,
     }));
+    expect(driver.taskPolicies[coalTaskIndex]).toMatchObject({
+      avoidFluids: true,
+    });
     expect(driver.tasks.filter((task) => task.type === "smelt")).toEqual([
       expect.objectContaining({
         input: { itemIds: ["minecraft:cod"] },
@@ -26981,6 +26989,92 @@ describe("beat-game run lifecycle", () => {
         },
       }),
     ]);
+  });
+
+  it("uses wood instead of diving for submerged furnace coal", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      food: 14,
+      counts: {
+        "minecraft:oak_log": 4,
+        "minecraft:oak_planks": 1,
+        "minecraft:cobblestone": 20,
+        "minecraft:stone_sword": 1,
+        "minecraft:cod": 1,
+        "minecraft:iron_ingot": 7,
+        "minecraft:iron_pickaxe": 1,
+        "minecraft:water_bucket": 1,
+        "minecraft:flint_and_steel": 1,
+        "minecraft:shield": 1,
+      },
+    });
+    const coal = blockObservation({
+      x: 3,
+      y: 62,
+      z: 0,
+      dimension: "minecraft:overworld",
+    }, { blockId: "minecraft:coal_ore" });
+    driver.blockQueryResolver = ({ center, selector }) => {
+      if (selector.blockIds?.includes("minecraft:furnace") === true) {
+        return [blockObservation({
+          x: 1,
+          y: 64,
+          z: 0,
+          dimension: "minecraft:overworld",
+        }, { blockId: "minecraft:furnace" })];
+      }
+      if (selector.blockIds?.includes("minecraft:coal_ore") === true) {
+        return [coal];
+      }
+      if (
+        selector.blockIds?.includes("minecraft:water") === true
+        && Math.abs(center.x - (coal.position.x + 0.5)) < 0.1
+        && Math.abs(center.y - (coal.position.y + 0.5)) < 0.1
+      ) {
+        return [blockObservation({
+          ...coal.position,
+          y: coal.position.y + 1,
+        }, { blockId: "minecraft:water", replaceable: true })];
+      }
+      return [];
+    };
+    let resolveFoodSmelt!: () => void;
+    const foodSmeltStarted = new Promise<void>((resolve) => {
+      resolveFoodSmelt = resolve;
+    });
+    driver.taskResolver = (task) => {
+      driver.tasks.push(task);
+      if (
+        task.type === "smelt"
+        && task.input.itemIds?.includes("minecraft:cod")
+      ) {
+        resolveFoodSmelt();
+        return Effect.never;
+      }
+      return Effect.void;
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      yield* Effect.promise(() => foodSmeltStarted).pipe(
+        Effect.timeout("5 seconds"),
+      );
+      yield* run.stop;
+    })));
+
+    expect(driver.tasks.some((task) =>
+      task.type === "collect-blocks"
+      && task.blockIds.includes("minecraft:coal_ore")
+    )).toBe(false);
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "smelt",
+      input: { itemIds: ["minecraft:cod"] },
+      fuel: {
+        itemIds: expect.arrayContaining(["minecraft:oak_planks"]),
+      },
+    }));
   });
 
   it("runs custom Effect policy inside the normal planner lifecycle", async () => {

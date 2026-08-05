@@ -7926,8 +7926,30 @@ function queryNearbyCoal(
       blockIds: COAL_ORE_BLOCK_IDS,
       diggable: true,
     },
-    maximumResults,
-  });
+    maximumResults: Math.max(8, maximumResults * 4),
+  }).pipe(
+    Effect.flatMap((coal) =>
+      Effect.forEach(
+        coal,
+        (block) =>
+          state.driver.queryBlocks({
+            center: blockCenter(block.position),
+            radius: 1.1,
+            selector: { blockIds: PLAYER_FLUID_BLOCK_IDS },
+            maximumResults: 1,
+          }).pipe(
+            Effect.map((fluids) => ({ block, dry: fluids.length === 0 })),
+          ),
+        { concurrency: 4 },
+      )
+    ),
+    Effect.map((coal) =>
+      coal
+        .filter(({ dry }) => dry)
+        .map(({ block }) => block)
+        .slice(0, maximumResults)
+    ),
+  );
 }
 
 function ensureFurnaceForCooking(
@@ -8058,7 +8080,8 @@ function ensureEfficientFurnaceFuel(
         blockIds: COAL_ORE_BLOCK_IDS,
         count: bufferedCollectionCount("fuel", missingFuel),
         searchRadius: FURNACE_FUEL_SEARCH_RADIUS,
-        path: state.strategy.path,
+        avoidSubmergedTargets: true,
+        path: { ...state.strategy.path, avoidFluids: true },
       });
       yield* collectNearbyDrops(state.driver, {
         itemIds: FURNACE_FUEL_ITEM_IDS,
