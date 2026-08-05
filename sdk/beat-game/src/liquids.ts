@@ -70,7 +70,7 @@ export function approachLiquidSourceFromSide(
         return targetable;
       }
     }
-    const preparedSources = yield* Effect.forEach(
+    const preparedSources = (yield* Effect.forEach(
       nearbySources,
       (source) =>
         queryLiquidInteractionVolume(driver, source.position).pipe(
@@ -98,8 +98,11 @@ export function approachLiquidSourceFromSide(
             );
             return { source, blocks, candidates };
           }),
-        ),
+      ),
       { concurrency: 1 },
+    )).sort((left, right) =>
+      liquidSourceExposureCount(right.blocks, right.source.position)
+      - liquidSourceExposureCount(left.blocks, left.source.position)
     );
 
     const attemptedDryStands = new Set<string>();
@@ -379,6 +382,29 @@ function liquidInteractionStandCandidates(
     }
   }
   return candidates;
+}
+
+function liquidSourceExposureCount(
+  blocks: ReadonlyMap<string, BeatGameBlockObservation>,
+  source: BeatGameBlockPosition,
+): number {
+  return [
+    { x: 1, y: 0, z: 0 },
+    { x: -1, y: 0, z: 0 },
+    { x: 0, y: 1, z: 0 },
+    { x: 0, y: -1, z: 0 },
+    { x: 0, y: 0, z: 1 },
+    { x: 0, y: 0, z: -1 },
+  ].filter((offset) => {
+    const neighbor = blocks.get(positionKey({
+      ...source,
+      x: source.x + offset.x,
+      y: source.y + offset.y,
+      z: source.z + offset.z,
+    }));
+    return neighbor?.replaceable === true
+      && !isFluidBlock(neighbor.blockId);
+  }).length;
 }
 
 function liquidSightlineObstructions(

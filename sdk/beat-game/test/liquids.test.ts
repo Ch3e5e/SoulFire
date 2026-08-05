@@ -256,6 +256,115 @@ describe("lava interaction positioning", () => {
     expect(driver.paths).toHaveLength(1);
   });
 
+  it("tries an exposed pool boundary before a buried source", async () => {
+    const driver = new FakeBeatGameDriver();
+    const buriedSource = blockObservation({
+      x: 0,
+      y: -52,
+      z: 0,
+      dimension: "minecraft:overworld",
+    }, {
+      blockId: "minecraft:lava",
+      properties: { level: "0" },
+      replaceable: true,
+    });
+    const exposedSource = blockObservation({
+      x: 8,
+      y: -52,
+      z: 0,
+      dimension: "minecraft:overworld",
+    }, {
+      blockId: "minecraft:lava",
+      properties: { level: "0" },
+      replaceable: true,
+    });
+    const buriedStand = {
+      x: 2,
+      y: -50,
+      z: 0,
+      dimension: "minecraft:overworld",
+    } as const;
+    const exposedStand = {
+      x: 6,
+      y: -50,
+      z: 0,
+      dimension: "minecraft:overworld",
+    } as const;
+    const standVolume = (stand: BeatGameBlockPosition) => [
+      blockObservation(stand, {
+        blockId: "minecraft:air",
+        replaceable: true,
+      }),
+      blockObservation({ ...stand, y: stand.y + 1 }, {
+        blockId: "minecraft:air",
+        replaceable: true,
+      }),
+      blockObservation({ ...stand, y: stand.y - 1 }),
+    ];
+    const buriedVolume = standVolume(buriedStand);
+    const exposedVolume = [
+      ...standVolume(exposedStand),
+      blockObservation({ ...exposedSource.position, y: -51 }, {
+        blockId: "minecraft:air",
+        replaceable: true,
+      }),
+    ];
+    driver.currentObservation = observation({
+      position: {
+        x: 4.5,
+        y: -50,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+    });
+    driver.blockQueryResolver = ({ center, radius, selector }) => {
+      if (Object.keys(selector).length !== 0) {
+        return [];
+      }
+      const volume = Math.floor(center.x) === buriedSource.position.x
+        ? buriedVolume
+        : exposedVolume;
+      if (radius === 4.9) {
+        return volume;
+      }
+      return radius === 0.25
+        ? [...buriedVolume, ...exposedVolume].filter((block) =>
+          block.position.x === Math.floor(center.x)
+          && block.position.y === Math.floor(center.y)
+          && block.position.z === Math.floor(center.z)
+        )
+        : [];
+    };
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+        driver.currentObservation = observation({ position });
+      });
+    driver.raycastResolver = () =>
+      driver.currentObservation.player.position.x >= 6
+        ? { block: exposedSource, distance: 3 }
+        : { distance: 2 };
+
+    const selected = await Effect.runPromise(approachLiquidSourceFromSide(
+      driver,
+      driver.currentObservation,
+      [buriedSource, exposedSource],
+      {
+        path: defaultBeatGameStrategy.path,
+        requireTargetableSource: true,
+      },
+    ));
+
+    expect(selected.position).toEqual(exposedSource.position);
+    expect(driver.paths).toEqual([expect.objectContaining({
+      position: {
+        ...exposedStand,
+        x: exposedStand.x + 0.5,
+        z: exposedStand.z + 0.5,
+      },
+    })]);
+  });
+
   it("excavates a sealed stand when that clears its lava sightline", async () => {
     const driver = new FakeBeatGameDriver();
     const source = blockObservation({
