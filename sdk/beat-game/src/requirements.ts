@@ -413,7 +413,7 @@ function portalRequirements(
       "water-bucket",
       ["minecraft:water_bucket"],
       () => 1,
-      95,
+      101,
     ),
     itemRequirement(
       "ignition",

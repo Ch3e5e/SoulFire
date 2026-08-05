@@ -16400,6 +16400,84 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("returns to the surface before searching for portal water", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const runId = "deep-portal-water-run";
+    const teamId = "deep-portal-water-team";
+    driver.currentObservation = observation({
+      position: {
+        x: 0.5,
+        y: -53,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+      counts: {
+        "minecraft:bucket": 1,
+        "minecraft:cobblestone": 20,
+        "minecraft:cooked_beef": 8,
+        "minecraft:flint_and_steel": 1,
+        "minecraft:lava_bucket": 1,
+        "minecraft:oak_log": 4,
+        "minecraft:shield": 1,
+        "minecraft:stone_pickaxe": 1,
+        "minecraft:stone_sword": 1,
+        "minecraft:wooden_sword": 1,
+      },
+    });
+    driver.surfaceColumns = [{
+      x: 0,
+      z: 0,
+      loaded: true,
+      surfaceY: 64,
+      blockId: "minecraft:grass_block",
+      biomeId: "minecraft:plains",
+      skyLight: 15,
+      blockLight: 0,
+    }];
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+    await Effect.runPromise(store.save(checkpoint(
+      BeatGamePhase.ENTER_NETHER,
+      { runId, teamId },
+    ), undefined));
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        runId,
+        team: { teamId },
+        checkpointStore: store,
+        strategy: {
+          observationPollMs: 1,
+          portalStrategy: "CAST",
+        },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (!driver.paths.some(({ position }) => position.y >= 65)) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+        Effect.timeout("5 seconds"),
+      ),
+    ));
+
+    expect(driver.paths).toContainEqual(expect.objectContaining({
+      position: expect.objectContaining({ y: 65 }),
+      policy: expect.objectContaining({
+        allowMining: true,
+        allowPlacing: true,
+        avoidFluids: true,
+      }),
+    }));
+    expect(driver.tasks).toHaveLength(0);
+  });
+
   it("replaces a pickaxe broken on approach before exposing a fluid source", async () => {
     const driver = new FakeBeatGameDriver();
     const source = {

@@ -8838,6 +8838,19 @@ function fillLiquidBucket(
         }
       }
       if (source === undefined) {
+        if (
+          liquid === "water"
+          && (yield* needsOverworldSurfaceRecovery(
+            state,
+            current.player.position,
+          ))
+        ) {
+          yield* returnToOverworldSurface(
+            state,
+            current.player.position,
+          );
+          return;
+        }
         return yield* explore(state.driver, {
           origin: current.player.position,
           radius: discoveryHopRadius(

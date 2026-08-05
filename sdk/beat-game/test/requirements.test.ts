@@ -188,8 +188,8 @@ describe("beat-game requirements", () => {
       "food",
       "iron",
       "shield",
-      "obsidian",
       "water-bucket",
+      "obsidian",
       "ignition",
       "pickaxe",
     ]);
