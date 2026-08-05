@@ -5930,7 +5930,7 @@ describe("beat-game run lifecycle", () => {
       .toBe(16);
   });
 
-  it("keeps gathering food when a distant recovery has only a small reserve", async () => {
+  it("tops off a distant recovery reserve that is one item short", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const deathPosition = {
@@ -5961,7 +5961,7 @@ describe("beat-game run lifecycle", () => {
     }, undefined));
     driver.currentObservation = observation({
       counts: {
-        "minecraft:beef": 3,
+        "minecraft:beef": 7,
         "minecraft:dirt": 16,
         "minecraft:oak_log": 12,
         "minecraft:wooden_sword": 1,

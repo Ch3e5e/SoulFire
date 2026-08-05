@@ -178,7 +178,6 @@ const EMERGENCY_ARMAMENT_LOG_COUNT = 2;
 const DEATH_RECOVERY_BOOTSTRAP_LOG_COUNT = 12;
 const DEATH_RECOVERY_BOOTSTRAP_BLOCK_COUNT = 16;
 const DEATH_RECOVERY_FOOD_RESERVE_COUNT = 8;
-const DEATH_RECOVERY_FOOD_REFILL_THRESHOLD = 6;
 const DEATH_RECOVERY_AQUATIC_FALLBACK_EXPLORATION_LEGS = 2;
 const DEATH_RECOVERY_FOOD_SEARCH_TIMEOUT_MS = 60_000;
 const DEATH_RECOVERY_FOOD_SEARCH_PENDING =
@@ -14277,7 +14276,7 @@ function prepareForDistantDeathRecovery(
     }
 
     const food = travelFoodCount(current);
-    if (food <= DEATH_RECOVERY_FOOD_REFILL_THRESHOLD) {
+    if (food < DEATH_RECOVERY_FOOD_RESERVE_COUNT) {
       current = yield* ensureTravelFood(current);
     }
     if (travelFoodCount(current) < DEATH_RECOVERY_FOOD_RESERVE_COUNT) {
