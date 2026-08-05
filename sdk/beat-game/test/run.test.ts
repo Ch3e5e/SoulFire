@@ -16338,7 +16338,11 @@ describe("beat-game run lifecycle", () => {
     const store = new InMemoryBeatGameCheckpointStore();
     driver.currentObservation = observation({
       counts: {
+        "minecraft:cobblestone": 20,
+        "minecraft:cooked_beef": 8,
+        "minecraft:oak_log": 4,
         "minecraft:stone_pickaxe": 1,
+        "minecraft:stone_sword": 1,
         "minecraft:wooden_sword": 1,
       },
     });
