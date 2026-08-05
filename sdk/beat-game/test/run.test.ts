@@ -23069,7 +23069,11 @@ describe("beat-game run lifecycle", () => {
         z: 0.5,
         dimension: "minecraft:overworld",
       },
-      counts: { "minecraft:oak_log": 3 },
+      counts: {
+        "minecraft:oak_log": 3,
+        "minecraft:stone_pickaxe": 1,
+        "minecraft:wooden_sword": 1,
+      },
     });
     driver.surfaceColumns = [{
       x: 0,
@@ -23090,9 +23094,11 @@ describe("beat-game run lifecycle", () => {
       const run = yield* beatGameWithDriver(driver, {
         strategy: { observationPollMs: 1 },
       });
-      while (driver.paths.length === 0) {
-        yield* Effect.sleep(1);
-      }
+      yield* Effect.gen(function* () {
+        while (driver.paths.length === 0) {
+          yield* Effect.sleep(1);
+        }
+      }).pipe(Effect.timeout("5 seconds"));
       yield* run.stop;
     })));
 
@@ -23108,6 +23114,76 @@ describe("beat-game run lifecycle", () => {
       task.type === "collect-blocks"
       && task.blockIds.includes("minecraft:oak_log")
     )).toBe(false);
+  });
+
+  it("allows a surface recovery route to leave flowing water", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      position: {
+        x: 0.5,
+        y: 21,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+      counts: {
+        "minecraft:oak_log": 3,
+        "minecraft:stone_pickaxe": 1,
+        "minecraft:wooden_sword": 1,
+      },
+    });
+    driver.surfaceColumns = [{
+      x: 0,
+      z: 0,
+      loaded: true,
+      surfaceY: 63,
+      blockId: "minecraft:grass_block",
+      biomeId: "minecraft:plains",
+      skyLight: 15,
+      blockLight: 0,
+    }];
+    driver.blockQueryResolver = ({ center, selector }) =>
+      selector.blockIds?.includes("minecraft:water") === true
+          && Math.floor(center.x) === 0
+          && Math.floor(center.y) === 21
+          && Math.floor(center.z) === 0
+        ? [blockObservation({
+          x: 0,
+          y: 21,
+          z: 0,
+          dimension: "minecraft:overworld",
+        }, {
+          blockId: "minecraft:water",
+          replaceable: true,
+          solid: false,
+          properties: { level: "3" },
+        })]
+        : [];
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      yield* Effect.gen(function* () {
+        while (driver.paths.length === 0) {
+          yield* Effect.sleep(1);
+        }
+      }).pipe(Effect.timeout("5 seconds"));
+      yield* run.stop;
+    })));
+
+    expect(driver.paths[0]).toEqual(expect.objectContaining({
+      position: {
+        x: 0.5,
+        y: 64,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+      policy: expect.objectContaining({ avoidFluids: false }),
+    }));
   });
 
   it("keeps log collection dry while allowing frontier water crossings", async () => {

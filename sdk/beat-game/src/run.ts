@@ -10558,6 +10558,10 @@ function returnToOverworldSurface(
       dimension: position.dimension,
     }));
     yield* prepareSurfaceEscapePickaxe(state, position, targets);
+    const startingInFluid = yield* isPlayerInFluid(
+      state.driver,
+      position,
+    );
     yield* pathfindToFirstReachableSurface(
       state,
       targets,
@@ -10567,7 +10571,7 @@ function returnToOverworldSurface(
         ...state.strategy.path,
         allowMining: true,
         allowPlacing: true,
-        avoidFluids: drySurfaces.length > 0,
+        avoidFluids: drySurfaces.length > 0 && !startingInFluid,
       },
     );
   });
