@@ -4118,7 +4118,7 @@ describe("beat-game behavior programs", () => {
     expect(driver.activeControlScopes).toBe(0);
   });
 
-  it("repositions before refreshing and collecting portal lava", async () => {
+  it("retries a stale portal lava source after repositioning", async () => {
     const driver = new FakeBeatGameDriver();
     const origin = {
       x: 0,
@@ -4203,10 +4203,18 @@ describe("beat-game behavior programs", () => {
       position: origin,
     });
     let lavaQueryCount = 0;
+    let sourceVerificationCount = 0;
     let sourceCollected = false;
     driver.blockQueryResolver = ({ center, radius, selector }) => {
       if (selector.blockIds?.includes("minecraft:lava") === true) {
         lavaQueryCount += 1;
+        if (
+          radius === 0.25
+          && key(queriedBlockPosition(center)) === key(source.position)
+        ) {
+          sourceVerificationCount += 1;
+          return sourceVerificationCount === 1 ? [] : [source];
+        }
         return sourceCollected ? [] : [source];
       }
       if (selector.blockIds?.includes("minecraft:obsidian") === true) {
@@ -4238,18 +4246,40 @@ describe("beat-game behavior programs", () => {
     driver.pathResolver = (position, radius, policy) =>
       Effect.sync(() => {
         driver.paths.push({ position, radius, policy });
-        if (radius === 0.75) {
-          driver.currentObservation = observation({
-            counts: driver.currentObservation.inventory.counts,
-            position,
-            rotation: driver.currentObservation.player.rotation,
-          });
-        }
+        driver.currentObservation = observation({
+          counts: driver.currentObservation.inventory.counts,
+          position,
+          rotation: driver.currentObservation.player.rotation,
+        });
       });
-    driver.raycastResolver = ({ maximumDistance }) =>
-      maximumDistance > 4
-        && driver.currentObservation.player.position.x
-          !== safeStand.x + 0.5
+    driver.raycastResolver = ({
+      direction,
+      includeFluids,
+      maximumDistance,
+    }) => {
+      const player = driver.currentObservation.player.position;
+      const targetPosition = {
+        x: Math.floor(player.x + direction.x),
+        y: Math.floor(player.y + 1.62 + direction.y),
+        z: Math.floor(player.z + direction.z),
+        dimension: player.dimension,
+      };
+      const target = key(targetPosition) === key(source.position)
+        ? source
+        : blocks.get(key(targetPosition));
+      if (
+        includeFluids === true
+        && target !== undefined
+        && (
+          target.blockId === "minecraft:lava"
+          || target.blockId === "minecraft:water"
+        )
+      ) {
+        return { block: target, distance: maximumDistance };
+      }
+      return key(targetPosition) === key(source.position)
+          && maximumDistance > 4
+          && player.x !== safeStand.x + 0.5
         ? {
           block: blockObservation({
             x: 4,
@@ -4260,6 +4290,7 @@ describe("beat-game behavior programs", () => {
           distance: 4,
         }
         : { distance: maximumDistance };
+    };
     let selectedItemId = "";
     let activeTarget: BeatGameBlockPosition | undefined;
     const updateInventory = (
@@ -4362,7 +4393,8 @@ describe("beat-game behavior programs", () => {
 
     expect(blocks.get(key(firstTarget))?.blockId).toBe("minecraft:obsidian");
     expect(blocks.get(key(secondTarget))?.blockId).toBe("minecraft:obsidian");
-    expect(lavaQueryCount).toBeGreaterThanOrEqual(3);
+    expect(lavaQueryCount).toBeGreaterThanOrEqual(5);
+    expect(sourceVerificationCount).toBe(2);
     expect(sourceCollected).toBe(true);
     expect(driver.paths).toContainEqual({
       position: {

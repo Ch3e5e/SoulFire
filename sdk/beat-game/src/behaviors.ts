@@ -58,6 +58,7 @@ const SUBMERGED_DROP_PICKUP_STEERING_INTERVAL_POLLS = 2;
 const SUBMERGED_DROP_PICKUP_MINIMUM_AIR_RATIO = 0.35;
 const PORTAL_CASTING_LAVA_SIGHT_CLEARING_BLOCKS = 4;
 const PORTAL_CASTING_LAVA_COLLECTION_POLLS = 10;
+const PORTAL_CASTING_LAVA_SOURCE_ATTEMPTS = 8;
 const PORTAL_CASTING_WATER_RECOVERY_ATTEMPTS = 3;
 const PORTAL_CASTING_BUCKET_FACE_AIM_HEIGHT = 1 / 64;
 const PORTAL_CASTING_SUPPORT_SCAFFOLD_RADIUS = 4.9;
@@ -4935,35 +4936,56 @@ function collectPortalCastingLava(
   path?: Partial<BeatGamePathPolicy>,
 ): Effect.Effect<void, BeatGameDriverError> {
   return Effect.gen(function* () {
-    const observation = yield* driver.observe;
-    const sources = yield* driver.queryBlocks({
-      center: observation.player.position,
-      radius: defaultBeatGameStrategy.blockSearchRadius,
-      selector: {
-        blockIds: ["minecraft:lava"],
-        properties: { level: "0" },
-      },
-      maximumResults: Math.max(8, remainingTargets),
-    });
-    if (sources.length === 0) {
-      return yield* Effect.fail(behaviorError(
+    for (
+      let attempt = 0;
+      attempt < PORTAL_CASTING_LAVA_SOURCE_ATTEMPTS;
+      attempt += 1
+    ) {
+      const observation = yield* driver.observe;
+      const sources = yield* driver.queryBlocks({
+        center: observation.player.position,
+        radius: defaultBeatGameStrategy.blockSearchRadius,
+        selector: {
+          blockIds: ["minecraft:lava"],
+          properties: { level: "0" },
+        },
+        maximumResults: Math.max(8, remainingTargets),
+      });
+      if (sources.length === 0) {
+        return yield* Effect.fail(behaviorError(
+          driver,
+          "No live lava source remained for the next portal casting step",
+        ));
+      }
+      const source = yield* approachLiquidSourceFromSide(
         driver,
-        "No live lava source remained for the next portal casting step",
-      ));
+        observation,
+        sources,
+        {
+          path: mergePathPolicy(path),
+          requireTargetableSource: true,
+        },
+      );
+      const collected = yield* collectApproachedPortalCastingLavaSource(
+        driver,
+        source,
+      ).pipe(
+        Effect.as(true),
+        Effect.catchTag("BeatGameDriverError", (cause) =>
+          cause.code === "source-changed"
+            ? Effect.succeed(false)
+            : Effect.fail(cause)
+        ),
+      );
+      if (collected) {
+        return;
+      }
     }
-    const source = yield* approachLiquidSourceFromSide(
+    return yield* Effect.fail(behaviorError(
       driver,
-      observation,
-      sources,
-      {
-        path: mergePathPolicy(path),
-        requireTargetableSource: true,
-      },
-    );
-    yield* collectApproachedPortalCastingLavaSource(
-      driver,
-      source,
-    );
+      `Lava sources changed during ${PORTAL_CASTING_LAVA_SOURCE_ATTEMPTS} consecutive portal casting approaches`,
+      "source-changed",
+    ));
   });
 }
 
@@ -5007,6 +5029,7 @@ function collectApproachedPortalCastingLavaSource(
         `The portal casting lava source at ${
           positionKey(source.position)
         } changed while the bot approached it`,
+        "source-changed",
       ));
     }
     yield* driver.act({
