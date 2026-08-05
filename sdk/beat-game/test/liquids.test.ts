@@ -14,11 +14,11 @@ import {
 } from "./fixtures.js";
 
 describe("lava interaction positioning", () => {
-  it("uses a visible source from the current position without replanning", async () => {
+  it("uses a visible source beyond four blocks without replanning", async () => {
     const driver = new FakeBeatGameDriver();
     const source = blockObservation({
-      x: 2,
-      y: 63,
+      x: 3,
+      y: 62,
       z: 0,
       dimension: "minecraft:overworld",
     }, {

@@ -11,7 +11,7 @@ import type {
   BeatGamePosition,
 } from "./model.js";
 
-export const LIQUID_INTERACTION_REACH = 4;
+export const LIQUID_INTERACTION_REACH = 4.5;
 export const LIQUID_INTERACTION_STAND_RADIUS = 0.75;
 
 const LIQUID_INTERACTION_FALLBACK_STAND_RADIUS = 1.1;
