@@ -61,8 +61,13 @@ export function approachLiquidSourceFromSide(
       - distanceSquared(observation.player.position, right.position)
     );
     for (const source of nearbySources) {
-      if (yield* isLiquidSourceTargetableFromCurrentPosition(driver, source)) {
-        return source;
+      const targetable = yield* targetableLiquidSourceFromCurrentPosition(
+        driver,
+        source,
+        nearbySources,
+      );
+      if (targetable !== undefined) {
+        return targetable;
       }
     }
     const preparedSources = yield* Effect.forEach(
@@ -123,17 +128,18 @@ export function approachLiquidSourceFromSide(
           options.path,
           false,
         );
-        if (
-          reached
-          && (
-            options.requireTargetableSource !== true
-            || (yield* isLiquidSourceTargetableFromCurrentPosition(
-              driver,
-              prepared.source,
-            ))
-          )
-        ) {
-          return prepared.source;
+        if (reached) {
+          if (options.requireTargetableSource !== true) {
+            return prepared.source;
+          }
+          const targetable = yield* targetableLiquidSourceFromCurrentPosition(
+            driver,
+            prepared.source,
+            nearbySources,
+          );
+          if (targetable !== undefined) {
+            return targetable;
+          }
         }
       }
     }
@@ -173,17 +179,18 @@ export function approachLiquidSourceFromSide(
           options.path,
           true,
         );
-        if (
-          reached
-          && (
-            options.requireTargetableSource !== true
-            || (yield* isLiquidSourceTargetableFromCurrentPosition(
-              driver,
-              prepared.source,
-            ))
-          )
-        ) {
-          return prepared.source;
+        if (reached) {
+          if (options.requireTargetableSource !== true) {
+            return prepared.source;
+          }
+          const targetable = yield* targetableLiquidSourceFromCurrentPosition(
+            driver,
+            prepared.source,
+            nearbySources,
+          );
+          if (targetable !== undefined) {
+            return targetable;
+          }
         }
       }
     }
@@ -210,17 +217,18 @@ function liquidSourceClusterSize(
   ).length;
 }
 
-function isLiquidSourceTargetableFromCurrentPosition(
+function targetableLiquidSourceFromCurrentPosition(
   driver: BeatGameDriver,
-  source: BeatGameBlockObservation,
-): Effect.Effect<boolean, BeatGameDriverError> {
+  aimedSource: BeatGameBlockObservation,
+  acceptableSources: readonly BeatGameBlockObservation[],
+): Effect.Effect<BeatGameBlockObservation | undefined, BeatGameDriverError> {
   return Effect.gen(function* () {
     const current = yield* driver.observe;
     const eyePosition = {
       ...current.player.position,
       y: current.player.position.y + 1.62,
     };
-    const sourceCenter = blockCenter(source.position);
+    const sourceCenter = blockCenter(aimedSource.position);
     const direction = {
       x: sourceCenter.x - eyePosition.x,
       y: sourceCenter.y - eyePosition.y,
@@ -231,7 +239,7 @@ function isLiquidSourceTargetableFromCurrentPosition(
       sourceCenter,
     ));
     if (sourceDistance > LIQUID_INTERACTION_REACH) {
-      return false;
+      return undefined;
     }
     const obstruction = (yield* driver.raycast({
       direction,
@@ -241,8 +249,12 @@ function isLiquidSourceTargetableFromCurrentPosition(
       ),
       includeFluids: true,
     })).block;
-    return obstruction !== undefined
-      && sameBlockPosition(obstruction.position, source.position);
+    if (obstruction === undefined) {
+      return undefined;
+    }
+    return acceptableSources.find((source) =>
+      sameBlockPosition(obstruction.position, source.position)
+    );
   });
 }
 
