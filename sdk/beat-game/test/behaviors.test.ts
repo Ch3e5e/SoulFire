@@ -3808,13 +3808,23 @@ describe("beat-game behavior programs", () => {
         rotation: driver.currentObservation.player.rotation,
       });
     };
-    driver.raycastResolver = () =>
-      blocks.has(key(liquidSightObstruction))
-        ? {
+    driver.raycastResolver = ({ includeFluids }) => {
+      if (blocks.has(key(liquidSightObstruction))) {
+        return {
           block: blocks.get(key(liquidSightObstruction))!,
           distance: 1,
-        }
-        : { distance: 2 };
+        };
+      }
+      if (includeFluids !== true) {
+        return { distance: 2 };
+      }
+      const liquid = misplacedLavaAvailable
+        ? blocks.get(key(misplacedLava))
+        : blocks.get(key(water));
+      return liquid === undefined
+        ? { distance: 2 }
+        : { block: liquid, distance: 2 };
+    };
     driver.actionObserver = (action) => {
       if (action.type === "select-item") {
         selectedItemId = action.selector.itemIds?.[0] ?? "";
@@ -4042,16 +4052,12 @@ describe("beat-game behavior programs", () => {
     });
     expect(rejectedLavaPlacement).toBe(false);
     expect(rejectedWaterPickup).toBe(true);
-    expect(driver.paths).toContainEqual({
+    expect(driver.raycasts.some(({ includeFluids }) => includeFluids === true))
+      .toBe(true);
+    expect(driver.paths).not.toContainEqual(expect.objectContaining({
       position: water,
       radius: 1.25,
-      policy: expect.objectContaining({
-        allowMining: false,
-        allowPlacing: false,
-        avoidFluids: true,
-        maxFallDistance: 1,
-      }),
-    });
+    }));
     expect(driver.tasks).toHaveLength(0);
     expect(driver.activeControlScopes).toBe(0);
   });

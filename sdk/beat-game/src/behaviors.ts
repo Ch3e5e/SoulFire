@@ -21,7 +21,10 @@ import {
   type BeatGamePathPolicy,
   type BeatGamePosition,
 } from "./model.js";
-import { approachLavaSourceFromSide } from "./liquids.js";
+import {
+  approachLiquidSourceFromSide,
+  LIQUID_INTERACTION_REACH,
+} from "./liquids.js";
 import type {
   BeatGameBlockFace,
   BeatGameBuildBlock,
@@ -4948,13 +4951,13 @@ function collectPortalCastingLava(
         "No live lava source remained for the next portal casting step",
       ));
     }
-    const source = yield* approachLavaSourceFromSide(
+    const source = yield* approachLiquidSourceFromSide(
       driver,
       observation,
       sources,
       {
         path: mergePathPolicy(path),
-        requireExposableSource: true,
+        requireTargetableSource: true,
       },
     );
     yield* collectApproachedPortalCastingLavaSource(
@@ -5010,7 +5013,7 @@ function collectApproachedPortalCastingLavaSource(
       type: "select-item",
       selector: { itemIds: ["minecraft:bucket"] },
     });
-    yield* useBucketToward(driver, sourceCenter).pipe(
+    yield* useBucketToward(driver, source.position).pipe(
       Effect.mapError((cause) =>
         new BeatGameDriverError({
           operation: "collect-portal-casting-lava",
@@ -5126,20 +5129,30 @@ function recoverPortalCastingWaterBucket(
         continue;
       }
       lastSource = source;
-      if (attempt > 0) {
-        yield* driver.pathfind(source.position, 1.25, {
-          ...mergePathPolicy(path),
-          allowMining: false,
-          allowPlacing: false,
-          avoidFluids: true,
-          maxFallDistance: 1,
-        }).pipe(Effect.ignore);
+      const approached = yield* approachLiquidSourceFromSide(
+        driver,
+        current,
+        [source],
+        {
+          path: {
+            ...mergePathPolicy(path),
+            allowPlacing: false,
+            avoidFluids: true,
+            maxFallDistance: 1,
+          },
+          requireTargetableSource: true,
+        },
+      ).pipe(Effect.either);
+      if (approached._tag === "Left") {
+        lastFailure = approached.left;
+        yield* Effect.sleep(100);
+        continue;
       }
       const pickup = yield* driver.act({
         type: "select-item",
         selector: { itemIds: ["minecraft:bucket"] },
       }).pipe(
-        Effect.zipRight(useBucketToward(driver, blockCenter(source.position))),
+        Effect.zipRight(useBucketToward(driver, source.position)),
         Effect.either,
       );
       if (pickup._tag === "Left") {
@@ -5437,15 +5450,16 @@ function isReliablePortalCastingSupport(
 
 function useBucketToward(
   driver: BeatGameDriver,
-  target: BeatGamePosition,
+  target: BeatGameBlockPosition,
 ): Effect.Effect<void, BeatGameDriverError> {
   return Effect.gen(function* () {
     const observation = yield* driver.observe;
+    const targetCenter = blockCenter(target);
     const eyePosition = {
       ...observation.player.position,
       y: observation.player.position.y + 1.62,
     };
-    const rotation = rotationToward(eyePosition, target);
+    const rotation = rotationToward(eyePosition, targetCenter);
     yield* driver.act({
       type: "look",
       yaw: rotation.yaw,
@@ -5458,6 +5472,41 @@ function useBucketToward(
       40,
       50,
     );
+    yield* Effect.sleep(50);
+    const current = yield* driver.observe;
+    const currentEyePosition = {
+      ...current.player.position,
+      y: current.player.position.y + 1.62,
+    };
+    const direction = {
+      x: targetCenter.x - currentEyePosition.x,
+      y: targetCenter.y - currentEyePosition.y,
+      z: targetCenter.z - currentEyePosition.z,
+    };
+    const distance = Math.sqrt(distanceSquared(
+      currentEyePosition,
+      targetCenter,
+    ));
+    if (distance > LIQUID_INTERACTION_REACH) {
+      return yield* Effect.fail(behaviorError(
+        driver,
+        `The liquid source at ${positionKey(target)} is out of reach`,
+      ));
+    }
+    const targeted = (yield* driver.raycast({
+      direction,
+      maximumDistance: Math.min(
+        LIQUID_INTERACTION_REACH,
+        distance + 0.05,
+      ),
+      includeFluids: true,
+    })).block;
+    if (targeted === undefined || !samePosition(targeted.position, target)) {
+      return yield* Effect.fail(behaviorError(
+        driver,
+        `The liquid source at ${positionKey(target)} is not targeted`,
+      ));
+    }
     yield* driver.act({ type: "use-item", hand: "main" });
   });
 }

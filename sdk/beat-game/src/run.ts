@@ -66,7 +66,7 @@ import {
   type PortalFrame,
 } from "./geometry.js";
 import {
-  approachLavaSourceFromSide,
+  approachLiquidSourceFromSide,
   LIQUID_INTERACTION_REACH,
 } from "./liquids.js";
 import {
@@ -5708,12 +5708,59 @@ function escapeToOverworldSurface(
   state: RunState,
   position: BeatGamePosition,
 ): Effect.Effect<void, BeatGameDriverError> {
-  return returnToOverworldSurface(state, position).pipe(
-    Effect.catchIf(
-      (cause) => cause.operation === "pathfind",
-      () => excavateAirEscapeShaft(state),
-    ),
-  );
+  return Effect.gen(function* () {
+    let currentPosition = position;
+    let lastPathFailure: BeatGameDriverError | undefined;
+    for (
+      let attempt = 0;
+      attempt < AIR_ESCAPE_MAXIMUM_RECOVERY_ATTEMPTS;
+      attempt += 1
+    ) {
+      if (!(yield* needsOverworldSurfaceRecovery(state, currentPosition))) {
+        return;
+      }
+      const recovery = yield* returnToOverworldSurface(
+        state,
+        currentPosition,
+      ).pipe(Effect.either);
+      if (recovery._tag === "Left") {
+        if (recovery.left.operation !== "pathfind") {
+          return yield* Effect.fail(recovery.left);
+        }
+        lastPathFailure = recovery.left;
+        const observation = yield* state.driver.observe;
+        if (observation.player.dead) {
+          return;
+        }
+        if (
+          yield* isPlayerInFluid(
+            state.driver,
+            observation.player.position,
+          )
+        ) {
+          yield* excavateAirEscapeShaft(state);
+        }
+      }
+      const current = yield* state.driver.observe;
+      if (current.player.dead) {
+        return;
+      }
+      currentPosition = current.player.position;
+    }
+    if (!(yield* needsOverworldSurfaceRecovery(state, currentPosition))) {
+      return;
+    }
+    return yield* Effect.fail(new BeatGameDriverError({
+      operation: "pathfind",
+      code: "no-progress",
+      retryable: true,
+      message:
+        `The bot remained below the Overworld surface at ${
+          positionKey(currentPosition)
+        } after ${AIR_ESCAPE_MAXIMUM_RECOVERY_ATTEMPTS} recovery attempts`,
+      ...(lastPathFailure === undefined ? {} : { cause: lastPathFailure }),
+    }));
+  });
 }
 
 function excavateAirEscapeShaft(
@@ -8910,13 +8957,13 @@ function fillLiquidBucket(
         );
         return;
       }
-      const approach = yield* approachLavaSourceFromSide(
+      const approach = yield* approachLiquidSourceFromSide(
         state.driver,
         current,
         sources,
         {
           path: state.strategy.path,
-          requireExposableSource: true,
+          requireTargetableSource: true,
         },
       ).pipe(Effect.either);
       if (approach._tag === "Left") {
@@ -8925,7 +8972,7 @@ function fillLiquidBucket(
           && position.y < current.player.position.y - 4
         );
         if (
-          approach.left.operation === "approach-lava-source"
+          approach.left.operation === "approach-liquid-source"
           && visibleSourceIsBelow
           && current.player.position.dimension === "minecraft:overworld"
           && current.player.position.y > DEEP_LAVA_SEARCH_MAX_Y
@@ -9230,7 +9277,7 @@ function preparePortalCastingLavaPool(
       maximumResults: PORTAL_CASTING_ADDITIONAL_LAVA_SOURCE_COUNT,
     });
     if (sources.length >= PORTAL_CASTING_ADDITIONAL_LAVA_SOURCE_COUNT) {
-      yield* approachLavaSourceFromSide(
+      yield* approachLiquidSourceFromSide(
         state.driver,
         observation,
         sources,

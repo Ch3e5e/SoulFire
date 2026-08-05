@@ -16329,8 +16329,142 @@ describe("beat-game run lifecycle", () => {
     })));
 
     expect(driver.paths).toHaveLength(1);
-    expect(driver.paths[0]?.policy.avoidFluids).toBe(true);
+    expect(driver.paths[0]?.policy.avoidFluids).toBe(false);
     expect(driver.currentObservation.player.position.y).toBe(64);
+  }, 15_000);
+
+  it("keeps recovering after a short water column opens into a deep cave", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.surfaceColumns = [{
+      x: 0,
+      z: 0,
+      loaded: true,
+      surfaceY: 63,
+      blockId: "minecraft:grass_block",
+      biomeId: "minecraft:plains",
+      skyLight: 15,
+      blockLight: 0,
+    }];
+    driver.currentObservation = observation({
+      air: 300,
+      counts: {
+        "minecraft:oak_log": 3,
+        "minecraft:stone_pickaxe": 1,
+        "minecraft:wooden_sword": 1,
+      },
+      position: { x: 0.5, y: 28, z: 0.5 },
+    });
+    let deepSurfaceCollectionCount = 0;
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+        if (
+          task.type === "collect-blocks"
+          && driver.currentObservation.player.position.y < 60
+        ) {
+          deepSurfaceCollectionCount += 1;
+        }
+      }).pipe(Effect.zipRight(Effect.never));
+    driver.blockQueryResolver = (query) => {
+      const position = {
+        x: Math.floor(query.center.x),
+        y: Math.floor(query.center.y),
+        z: Math.floor(query.center.z),
+        dimension: query.center.dimension,
+      };
+      const submerged = driver.currentObservation.player.position.y < 29;
+      if (query.selector.blockIds?.includes("minecraft:water") === true) {
+        return submerged
+          ? [blockObservation(position, {
+            blockId: "minecraft:water",
+            diggable: false,
+            replaceable: true,
+          })]
+          : [];
+      }
+      if (query.selector.blockIds === undefined) {
+        return [blockObservation(position, {
+          blockId: submerged ? "minecraft:water" : "minecraft:air",
+          diggable: false,
+          replaceable: true,
+        })];
+      }
+      return [];
+    };
+    let resolveEscaped!: () => void;
+    const escaped = new Promise<void>((resolve) => {
+      resolveEscaped = resolve;
+    });
+    driver.pathResolver = (position, radius, policy) => {
+      driver.paths.push({ position, radius, policy });
+      if (driver.paths.length === 1) {
+        return Effect.fail(new BeatGameDriverError({
+          operation: "pathfind",
+          code: "unreachable",
+          retryable: true,
+          message: "The water blocks the first surface route",
+        }));
+      }
+      return Effect.sync(() => {
+        driver.currentObservation = {
+          ...driver.currentObservation,
+          player: {
+            ...driver.currentObservation.player,
+            position,
+          },
+        };
+        resolveEscaped();
+      });
+    };
+    driver.actionObserver = (action) => {
+      if (action.type === "look") {
+        driver.currentObservation = {
+          ...driver.currentObservation,
+          player: {
+            ...driver.currentObservation.player,
+            rotation: { yaw: action.yaw, pitch: action.pitch },
+          },
+        };
+        return;
+      }
+      if (action.type === "set-movement" && action.jump === true) {
+        driver.currentObservation = {
+          ...driver.currentObservation,
+          player: {
+            ...driver.currentObservation.player,
+            air: 300,
+            position: {
+              ...driver.currentObservation.player.position,
+              y: 29,
+            },
+          },
+        };
+      }
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      yield* Effect.promise(() => escaped).pipe(
+        Effect.timeout("10 seconds"),
+      );
+      yield* run.stop;
+    })));
+
+    expect(driver.paths).toHaveLength(2);
+    expect(driver.paths[0]?.policy.avoidFluids).toBe(false);
+    expect(driver.paths[1]).toEqual(expect.objectContaining({
+      position: {
+        x: 0.5,
+        y: 64,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+      policy: expect.objectContaining({ avoidFluids: true }),
+    }));
+    expect(driver.currentObservation.player.position.y).toBe(64);
+    expect(deepSurfaceCollectionCount).toBe(0);
   }, 15_000);
 
   it("mines iron before crafting a missing portal bucket", async () => {
@@ -16519,7 +16653,14 @@ describe("beat-game run lifecycle", () => {
         "minecraft:shield": 1,
       },
     });
-    driver.blockQueryResolver = ({ selector }) => {
+    driver.blockQueryResolver = ({ radius, selector }) => {
+      if (radius === 0.25 && Object.keys(selector).length === 0) {
+        return [blockObservation(source, {
+          blockId: "minecraft:water",
+          properties: { level: "0" },
+          replaceable: true,
+        })];
+      }
       if (
         selector.blockIds?.includes("minecraft:water") === true
         && selector.properties?.level === "0"
@@ -16592,13 +16733,24 @@ describe("beat-game run lifecycle", () => {
           });
         }
       });
-    driver.raycastResolver = () =>
-      sourceExposed
-        ? { distance: 2.4 }
-        : {
-          block: blockObservation(obstruction),
-          distance: 1.4,
-        };
+    driver.raycastResolver = ({ includeFluids }) => {
+      if (sourceExposed) {
+        return includeFluids === true
+          ? {
+            block: blockObservation(source, {
+              blockId: "minecraft:water",
+              properties: { level: "0" },
+              replaceable: true,
+            }),
+            distance: 2.4,
+          }
+          : { distance: 2.4 };
+      }
+      return {
+        block: blockObservation(obstruction),
+        distance: 1.4,
+      };
+    };
     driver.actionResolver = (action) => {
       if (action.type === "look") {
         driver.currentObservation = observation({
@@ -16705,7 +16857,7 @@ describe("beat-game run lifecycle", () => {
         "minecraft:water_bucket": 1,
       },
     });
-    driver.blockQueryResolver = ({ center, selector }) => {
+    driver.blockQueryResolver = ({ center, radius, selector }) => {
       if (
         selector.blockIds?.includes("minecraft:water") === true
         && selector.blockIds.length > 1
@@ -16740,7 +16892,7 @@ describe("beat-game run lifecycle", () => {
       ) {
         return [];
       }
-      if (Object.keys(selector).length === 0) {
+      if (radius === 4.9 && Object.keys(selector).length === 0) {
         return [
           blockObservation(safeStand, {
             blockId: "minecraft:air",
@@ -16800,7 +16952,25 @@ describe("beat-game run lifecycle", () => {
           });
         }
       });
-    let useItemInterrupted = false;
+    driver.raycastResolver = ({ includeFluids }) =>
+      includeFluids === true
+        ? {
+          block: blockObservation(source, {
+            blockId: "minecraft:lava",
+            properties: { level: "0" },
+            replaceable: true,
+          }),
+          distance: 3,
+        }
+        : { distance: 3 };
+    let resolveUseItemStarted!: () => void;
+    const useItemStarted = new Promise<void>((resolve) => {
+      resolveUseItemStarted = resolve;
+    });
+    let resolveUseItemInterrupted!: () => void;
+    const useItemInterrupted = new Promise<void>((resolve) => {
+      resolveUseItemInterrupted = resolve;
+    });
     driver.actionResolver = (action) => {
       if (action.type === "look") {
         driver.currentObservation = observation({
@@ -16810,11 +16980,10 @@ describe("beat-game run lifecycle", () => {
         });
       }
       return action.type === "use-item"
-        ? Effect.never.pipe(
+        ? Effect.sync(resolveUseItemStarted).pipe(
+          Effect.zipRight(Effect.never),
           Effect.onInterrupt(() =>
-            Effect.sync(() => {
-              useItemInterrupted = true;
-            })
+            Effect.sync(resolveUseItemInterrupted)
           ),
         )
         : Effect.succeed({});
@@ -16836,14 +17005,9 @@ describe("beat-game run lifecycle", () => {
       }).pipe(
         Effect.flatMap((run) =>
           Effect.gen(function* () {
-            for (
-              let attempt = 0;
-              attempt < 1_000
-              && !driver.actions.some((action) => action.type === "use-item");
-              attempt += 1
-            ) {
-              yield* Effect.sleep(1);
-            }
+            yield* Effect.promise(() => useItemStarted).pipe(
+              Effect.timeout("5 seconds"),
+            );
             driver.currentObservation = observation({
               position: driver.currentObservation.player.position,
               counts: {
@@ -16853,13 +17017,9 @@ describe("beat-game run lifecycle", () => {
               },
               rotation: driver.currentObservation.player.rotation,
             });
-            for (
-              let attempt = 0;
-              attempt < 1_000 && !useItemInterrupted;
-              attempt += 1
-            ) {
-              yield* Effect.sleep(1);
-            }
+            yield* Effect.promise(() => useItemInterrupted).pipe(
+              Effect.timeout("5 seconds"),
+            );
             yield* run.stop;
             yield* run.awaitCompletion.pipe(Effect.either);
           })
@@ -16918,7 +17078,10 @@ describe("beat-game run lifecycle", () => {
       },
       maximumResults: 1,
     });
-    expect(useItemInterrupted).toBe(true);
+    expect(driver.actions).toContainEqual({
+      type: "use-item",
+      hand: "main",
+    });
   });
 
   it("prefers a source-rich lava pool over a nearer lone source", async () => {
@@ -17023,7 +17186,15 @@ describe("beat-game run lifecycle", () => {
           });
         }
       });
-    driver.raycastResolver = () => ({ distance: 2 });
+    driver.raycastResolver = ({ includeFluids }) => {
+      if (includeFluids !== true) {
+        return { distance: 2 };
+      }
+      const source = driver.currentObservation.player.position.x >= 10
+        ? poolSources[0]!
+        : loneSource;
+      return { block: source, distance: 2 };
+    };
     driver.actionResolver = (action) => {
       if (action.type === "look") {
         driver.currentObservation = observation({
@@ -17213,7 +17384,17 @@ describe("beat-game run lifecycle", () => {
           });
         }
       });
-    driver.raycastResolver = () => ({ distance: 3 });
+    driver.raycastResolver = ({ includeFluids }) =>
+      includeFluids === true
+        ? {
+          block: blockObservation(source, {
+            blockId: "minecraft:lava",
+            properties: { level: "0" },
+            replaceable: true,
+          }),
+          distance: 3,
+        }
+        : { distance: 3 };
     driver.actionResolver = (action) => {
       if (action.type === "look") {
         driver.currentObservation = observation({
@@ -17361,7 +17542,7 @@ describe("beat-game run lifecycle", () => {
           });
         }
       });
-    driver.raycastResolver = ({ direction }) =>
+    driver.raycastResolver = ({ direction, includeFluids }) =>
       direction.x < 0
         ? {
           block: blockObservation({
@@ -17375,6 +17556,8 @@ describe("beat-game run lifecycle", () => {
           }),
           distance: 1,
         }
+        : includeFluids === true
+        ? { block: openSource, distance: 2 }
         : { distance: 2 };
     driver.actionResolver = (action) => {
       if (action.type === "look") {

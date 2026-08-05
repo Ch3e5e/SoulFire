@@ -15,10 +15,10 @@ export const LIQUID_INTERACTION_REACH = 4.5;
 export const LIQUID_INTERACTION_STAND_RADIUS = 0.75;
 
 const LIQUID_INTERACTION_FALLBACK_STAND_RADIUS = 1.1;
-const LAVA_SOURCE_CLUSTER_RADIUS = 8;
-const PREFERRED_LAVA_SOURCE_CLUSTER_SIZE = 9;
-const LAVA_INTERACTION_VOLUME_RADIUS = 4.9;
-const LAVA_INTERACTION_VOLUME_MAXIMUM_RESULTS = 500;
+const LIQUID_SOURCE_CLUSTER_RADIUS = 8;
+const PREFERRED_LIQUID_SOURCE_CLUSTER_SIZE = 9;
+const LIQUID_INTERACTION_VOLUME_RADIUS = 4.9;
+const LIQUID_INTERACTION_VOLUME_MAXIMUM_RESULTS = 500;
 const FLUID_BLOCK_IDS = new Set([
   "minecraft:water",
   "minecraft:bubble_column",
@@ -29,31 +29,31 @@ const FLUID_BLOCK_IDS = new Set([
   "minecraft:lava",
 ]);
 
-export interface ApproachLavaSourceOptions {
+export interface ApproachLiquidSourceOptions {
   readonly path: BeatGamePathPolicy;
-  readonly requireExposableSource?: boolean;
+  readonly requireTargetableSource?: boolean;
 }
 
 /**
- * Finds a dry, supported stand that can reach one of the supplied lava
+ * Finds a dry, supported stand that can reach one of the supplied liquid
  * sources. It first tries existing open space, then permits the pathfinder to
- * excavate a two-block-high approach without ever asking it to enter lava.
+ * excavate a two-block-high approach without asking it to enter a fluid.
  */
-export function approachLavaSourceFromSide(
+export function approachLiquidSourceFromSide(
   driver: BeatGameDriver,
   observation: BeatGameObservation,
   sources: readonly BeatGameBlockObservation[],
-  options: ApproachLavaSourceOptions,
+  options: ApproachLiquidSourceOptions,
 ): Effect.Effect<BeatGameBlockObservation, BeatGameDriverError> {
   return Effect.gen(function* () {
     const nearbySources = [...sources].sort((left, right) =>
       Math.min(
-        PREFERRED_LAVA_SOURCE_CLUSTER_SIZE,
-        lavaSourceClusterSize(right, sources),
+        PREFERRED_LIQUID_SOURCE_CLUSTER_SIZE,
+        liquidSourceClusterSize(right, sources),
       )
       - Math.min(
-        PREFERRED_LAVA_SOURCE_CLUSTER_SIZE,
-        lavaSourceClusterSize(left, sources),
+        PREFERRED_LIQUID_SOURCE_CLUSTER_SIZE,
+        liquidSourceClusterSize(left, sources),
       )
       || Math.abs(observation.player.position.y - left.position.y)
       - Math.abs(observation.player.position.y - right.position.y)
@@ -61,20 +61,20 @@ export function approachLavaSourceFromSide(
       - distanceSquared(observation.player.position, right.position)
     );
     for (const source of nearbySources) {
-      if (yield* isLavaSourceExposableFromCurrentPosition(driver, source)) {
+      if (yield* isLiquidSourceTargetableFromCurrentPosition(driver, source)) {
         return source;
       }
     }
     const preparedSources = yield* Effect.forEach(
       nearbySources,
       (source) =>
-        queryLavaInteractionVolume(driver, source.position).pipe(
+        queryLiquidInteractionVolume(driver, source.position).pipe(
           Effect.map((blocks) => {
-            const candidates = lavaInteractionStandCandidates(
+            const candidates = liquidInteractionStandCandidates(
               source.position,
             ).map((position) => ({
               position,
-              sightlineObstructions: lavaSightlineObstructions(
+              sightlineObstructions: liquidSightlineObstructions(
                 blocks,
                 position,
                 source.position,
@@ -103,21 +103,21 @@ export function approachLavaSourceFromSide(
         const key = positionKey(candidate.position);
         if (
           attemptedDryStands.has(key)
-          || options.requireExposableSource === true
+          || options.requireTargetableSource === true
             && candidate.sightlineObstructions.length > 0
         ) {
           continue;
         }
-        const liveBlocks = yield* queryLavaInteractionStandBlocks(
+        const liveBlocks = yield* queryLiquidInteractionStandBlocks(
           driver,
           candidate.position,
           prepared.blocks,
         );
-        if (!isSafeLavaInteractionStand(liveBlocks, candidate.position)) {
+        if (!isSafeLiquidInteractionStand(liveBlocks, candidate.position)) {
           continue;
         }
         attemptedDryStands.add(key);
-        const reached = yield* pathfindToLavaInteractionStand(
+        const reached = yield* pathfindToLiquidInteractionStand(
           driver,
           candidate.position,
           options.path,
@@ -126,8 +126,8 @@ export function approachLavaSourceFromSide(
         if (
           reached
           && (
-            options.requireExposableSource !== true
-            || (yield* isLavaSourceExposableFromCurrentPosition(
+            options.requireTargetableSource !== true
+            || (yield* isLiquidSourceTargetableFromCurrentPosition(
               driver,
               prepared.source,
             ))
@@ -144,7 +144,7 @@ export function approachLavaSourceFromSide(
         const key = positionKey(candidate.position);
         if (
           attemptedExcavationStands.has(key)
-          || options.requireExposableSource === true
+          || options.requireTargetableSource === true
             && !standExcavationClearsSightline(
               candidate.position,
               candidate.sightlineObstructions,
@@ -152,13 +152,13 @@ export function approachLavaSourceFromSide(
         ) {
           continue;
         }
-        const liveBlocks = yield* queryLavaInteractionStandBlocks(
+        const liveBlocks = yield* queryLiquidInteractionStandBlocks(
           driver,
           candidate.position,
           prepared.blocks,
         );
         if (
-          !isExcavatableLavaInteractionStand(
+          !isExcavatableLiquidInteractionStand(
             prepared.source.position,
             liveBlocks,
             candidate.position,
@@ -167,7 +167,7 @@ export function approachLavaSourceFromSide(
           continue;
         }
         attemptedExcavationStands.add(key);
-        const reached = yield* pathfindToLavaInteractionStand(
+        const reached = yield* pathfindToLiquidInteractionStand(
           driver,
           candidate.position,
           options.path,
@@ -176,8 +176,8 @@ export function approachLavaSourceFromSide(
         if (
           reached
           && (
-            options.requireExposableSource !== true
-            || (yield* isLavaSourceExposableFromCurrentPosition(
+            options.requireTargetableSource !== true
+            || (yield* isLiquidSourceTargetableFromCurrentPosition(
               driver,
               prepared.source,
             ))
@@ -188,29 +188,29 @@ export function approachLavaSourceFromSide(
       }
     }
     return yield* Effect.fail(new BeatGameDriverError({
-      operation: "approach-lava-source",
+      operation: "approach-liquid-source",
       code: "unreachable",
       retryable: true,
       message:
-        `Could not reach, excavate, or expose a safe side-on stand beside ${
+        `Could not reach, excavate, or target a safe side-on stand beside ${
           nearbySources.length
-        } nearby lava source${nearbySources.length === 1 ? "" : "s"}`,
+        } nearby liquid source${nearbySources.length === 1 ? "" : "s"}`,
     }));
   });
 }
 
-function lavaSourceClusterSize(
+function liquidSourceClusterSize(
   source: BeatGameBlockObservation,
   sources: readonly BeatGameBlockObservation[],
 ): number {
   return sources.filter((candidate) =>
     candidate.position.dimension === source.position.dimension
     && distanceSquared(candidate.position, source.position)
-      <= LAVA_SOURCE_CLUSTER_RADIUS ** 2
+      <= LIQUID_SOURCE_CLUSTER_RADIUS ** 2
   ).length;
 }
 
-function isLavaSourceExposableFromCurrentPosition(
+function isLiquidSourceTargetableFromCurrentPosition(
   driver: BeatGameDriver,
   source: BeatGameBlockObservation,
 ): Effect.Effect<boolean, BeatGameDriverError> {
@@ -239,14 +239,14 @@ function isLavaSourceExposableFromCurrentPosition(
         LIQUID_INTERACTION_REACH,
         sourceDistance + 0.05,
       ),
-      includeFluids: false,
+      includeFluids: true,
     })).block;
-    return obstruction === undefined
-      || sameBlockPosition(obstruction.position, source.position);
+    return obstruction !== undefined
+      && sameBlockPosition(obstruction.position, source.position);
   });
 }
 
-function queryLavaInteractionVolume(
+function queryLiquidInteractionVolume(
   driver: BeatGameDriver,
   source: BeatGameBlockPosition,
 ): Effect.Effect<
@@ -255,9 +255,9 @@ function queryLavaInteractionVolume(
 > {
   return driver.queryBlocks({
     center: blockCenter(source),
-    radius: LAVA_INTERACTION_VOLUME_RADIUS,
+    radius: LIQUID_INTERACTION_VOLUME_RADIUS,
     selector: {},
-    maximumResults: LAVA_INTERACTION_VOLUME_MAXIMUM_RESULTS,
+    maximumResults: LIQUID_INTERACTION_VOLUME_MAXIMUM_RESULTS,
   }).pipe(
     Effect.map((blocks) =>
       new Map(blocks.map((block) => [positionKey(block.position), block]))
@@ -265,7 +265,7 @@ function queryLavaInteractionVolume(
   );
 }
 
-function queryLavaInteractionStandBlocks(
+function queryLiquidInteractionStandBlocks(
   driver: BeatGameDriver,
   candidate: BeatGamePosition,
   fallback: ReadonlyMap<string, BeatGameBlockObservation>,
@@ -308,7 +308,7 @@ function queryLavaInteractionStandBlocks(
   );
 }
 
-function pathfindToLavaInteractionStand(
+function pathfindToLiquidInteractionStand(
   driver: BeatGameDriver,
   candidate: BeatGamePosition,
   path: BeatGamePathPolicy,
@@ -331,7 +331,7 @@ function pathfindToLavaInteractionStand(
   );
 }
 
-function lavaInteractionStandCandidates(
+function liquidInteractionStandCandidates(
   source: BeatGameBlockPosition,
 ): BeatGamePosition[] {
   const sourceCenter = blockCenter(source);
@@ -369,7 +369,7 @@ function lavaInteractionStandCandidates(
   return candidates;
 }
 
-function lavaSightlineObstructions(
+function liquidSightlineObstructions(
   blocks: ReadonlyMap<string, BeatGameBlockObservation>,
   candidate: BeatGamePosition,
   source: BeatGameBlockPosition,
@@ -420,7 +420,7 @@ function standExcavationClearsSightline(
   );
 }
 
-function isSafeLavaInteractionStand(
+function isSafeLiquidInteractionStand(
   blocks: ReadonlyMap<string, BeatGameBlockObservation>,
   candidate: BeatGamePosition,
 ): boolean {
@@ -436,7 +436,7 @@ function isSafeLavaInteractionStand(
     );
 }
 
-function isExcavatableLavaInteractionStand(
+function isExcavatableLiquidInteractionStand(
   source: BeatGameBlockPosition,
   blocks: ReadonlyMap<string, BeatGameBlockObservation>,
   candidate: BeatGamePosition,

@@ -2,7 +2,7 @@ import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { BeatGameDriverError } from "../src/errors.js";
-import { approachLavaSourceFromSide } from "../src/liquids.js";
+import { approachLiquidSourceFromSide } from "../src/liquids.js";
 import {
   defaultBeatGameStrategy,
   type BeatGameBlockPosition,
@@ -34,14 +34,15 @@ describe("lava interaction positioning", () => {
         dimension: "minecraft:overworld",
       },
     });
+    driver.raycastResolver = () => ({ block: source, distance: 3.6 });
 
-    const selected = await Effect.runPromise(approachLavaSourceFromSide(
+    const selected = await Effect.runPromise(approachLiquidSourceFromSide(
       driver,
       driver.currentObservation,
       [source],
       {
         path: defaultBeatGameStrategy.path,
-        requireExposableSource: true,
+        requireTargetableSource: true,
       },
     ));
 
@@ -135,14 +136,18 @@ describe("lava interaction positioning", () => {
         driver.paths.push({ position, radius, policy });
         driver.currentObservation = observation({ position });
       });
+    driver.raycastResolver = () =>
+      driver.currentObservation.player.position.x >= 6
+        ? { block: clearSource, distance: 3 }
+        : { distance: 2 };
 
-    const selected = await Effect.runPromise(approachLavaSourceFromSide(
+    const selected = await Effect.runPromise(approachLiquidSourceFromSide(
       driver,
       driver.currentObservation,
       [blockedSource, clearSource],
       {
         path: defaultBeatGameStrategy.path,
-        requireExposableSource: true,
+        requireTargetableSource: true,
       },
     ));
 
@@ -213,14 +218,18 @@ describe("lava interaction positioning", () => {
       driver.currentObservation = observation({ position });
       return Effect.void;
     };
+    driver.raycastResolver = () =>
+      driver.paths.length > 0
+        ? { block: source, distance: 2 }
+        : { distance: 2 };
 
-    const selected = await Effect.runPromise(approachLavaSourceFromSide(
+    const selected = await Effect.runPromise(approachLiquidSourceFromSide(
       driver,
       driver.currentObservation,
       [source],
       {
         path: defaultBeatGameStrategy.path,
-        requireExposableSource: true,
+        requireTargetableSource: true,
       },
     ));
 
@@ -335,14 +344,18 @@ describe("lava interaction positioning", () => {
         driver.paths.push({ position, radius, policy });
         driver.currentObservation = observation({ position });
       });
+    driver.raycastResolver = () =>
+      driver.currentObservation.player.position.x >= 6
+        ? { block: secondSource, distance: 3 }
+        : { distance: 2 };
 
-    const selected = await Effect.runPromise(approachLavaSourceFromSide(
+    const selected = await Effect.runPromise(approachLiquidSourceFromSide(
       driver,
       driver.currentObservation,
       [firstSource, secondSource],
       {
         path: defaultBeatGameStrategy.path,
-        requireExposableSource: true,
+        requireTargetableSource: true,
       },
     ));
 
@@ -418,14 +431,18 @@ describe("lava interaction positioning", () => {
       driver.currentObservation = observation({ position });
       return Effect.void;
     };
+    driver.raycastResolver = () =>
+      driver.paths.length > 0
+        ? { block: source, distance: 2 }
+        : { distance: 2 };
 
-    const selected = await Effect.runPromise(approachLavaSourceFromSide(
+    const selected = await Effect.runPromise(approachLiquidSourceFromSide(
       driver,
       driver.currentObservation,
       [source],
       {
         path: defaultBeatGameStrategy.path,
-        requireExposableSource: true,
+        requireTargetableSource: true,
       },
     ));
 
