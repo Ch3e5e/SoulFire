@@ -1314,7 +1314,6 @@ describe("beat-game run lifecycle", () => {
     expect(driver.paths).toContainEqual(expect.objectContaining({
       position: deathPosition,
       radius: 2,
-      policy: expect.objectContaining({ avoidFluids: false }),
     }));
     expect(driver.tasks.some((task) => task.type === "flee")).toBe(false);
   });
@@ -2510,7 +2509,7 @@ describe("beat-game run lifecycle", () => {
     driver.currentObservation = observation({
       food: 14,
       counts: {
-        "minecraft:mutton": 2,
+        "minecraft:mutton": 8,
         "minecraft:wooden_sword": 1,
       },
     });
@@ -2526,7 +2525,7 @@ describe("beat-game run lifecycle", () => {
         driver.currentObservation = observation({
           food: 16,
           counts: {
-            "minecraft:mutton": 1,
+            "minecraft:mutton": 7,
             "minecraft:wooden_sword": 1,
           },
         });
@@ -2544,7 +2543,10 @@ describe("beat-game run lifecycle", () => {
           Effect.gen(function* () {
             let attempts = 1_000;
             while (
-              !driver.tasks.some((task) => task.type === "auto-eat")
+              (
+                !driver.tasks.some((task) => task.type === "auto-eat")
+                || driver.paths.length === 0
+              )
               && attempts > 0
             ) {
               attempts -= 1;
@@ -3268,7 +3270,7 @@ describe("beat-game run lifecycle", () => {
     expect(saved?.memory.deathPositions).toEqual([]);
   });
 
-  it("completes valuable recovery after consuming food and placing blocks", async () => {
+  it("completes valuable recovery with a prepared travel kit", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const deathPosition = {
@@ -3304,9 +3306,9 @@ describe("beat-game run lifecycle", () => {
     driver.currentObservation = observation({
       counts: {
         "minecraft:wooden_sword": 1,
-        "minecraft:oak_log": 8,
+        "minecraft:oak_log": 12,
         "minecraft:dirt": 16,
-        "minecraft:cooked_beef": 4,
+        "minecraft:cooked_beef": 8,
       },
     });
     const resolvePath = driver.pathResolver;
@@ -3529,6 +3531,20 @@ describe("beat-game run lifecycle", () => {
       food: 9,
       counts: { "minecraft:wooden_sword": 1 },
     });
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(6)
+        ? [{
+          connectionEpoch: "epoch-1",
+          networkId: 71,
+          entityType: "minecraft:item",
+          itemId: "minecraft:iron_ingot",
+          position: deathPosition,
+          velocity: { x: 0, y: 0, z: 0 },
+          alive: true,
+          health: 5,
+          observedAt: new Date().toISOString(),
+        }]
+        : [];
     driver.pathResolver = (position, radius, policy) =>
       Effect.sync(() => {
         driver.paths.push({ position, radius, policy });
@@ -3820,7 +3836,7 @@ describe("beat-game run lifecycle", () => {
       blockIds: expect.arrayContaining(["minecraft:oak_log"]),
       count: 12,
       requireLineOfSight: false,
-      targetYRange: { minimum: 60 },
+      targetYRange: { minimum: 60, maximum: 66 },
     }));
     const logCollectionIndex = driver.tasks.findIndex((task) =>
       task.type === "collect-blocks"

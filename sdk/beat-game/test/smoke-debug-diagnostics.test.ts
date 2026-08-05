@@ -465,6 +465,85 @@ describe("smoke stuck diagnostics", () => {
     }));
   });
 
+  it("detects repeated unreachable collection targets across moving tasks", () => {
+    const taskProgress = (taskId: string, observedAt: string, x: number) => ({
+      observedAt,
+      kind: "task-progress-observed",
+      task: {
+        taskId,
+        progress: {
+          current: "0",
+          total: "2",
+          fraction: 0,
+          message: "Skipping unreachable block",
+          detailType: "soulfire.v1.CollectBlocksTaskProgressDetail",
+          detail: {
+            phase: 6,
+            activeTargets: [{
+              x: 19,
+              y: 66,
+              z: -16,
+              dimension: "minecraft:overworld",
+            }],
+            rejectedTargets: [{
+              x: 19,
+              y: 66,
+              z: -16,
+              dimension: "minecraft:overworld",
+            }],
+            failedApproaches: [{
+              target: {
+                x: 19,
+                y: 66,
+                z: -16,
+                dimension: "minecraft:overworld",
+              },
+              playerPositions: [{
+                x,
+                y: 63,
+                z: -14,
+                dimension: "minecraft:overworld",
+              }],
+            }],
+            completedBreaks: [],
+            consecutiveStalledPaths: 3,
+          },
+        },
+      },
+    });
+    const diagnostics = buildSmokeStuckDiagnostics({
+      capturedAt: "2026-08-03T10:04:00.000Z",
+      currentAction: "recover-death",
+      activePath: {
+        pathId: "exploration-3",
+        elapsedMs: 8_000,
+        displacementFromOrigin: 12,
+        distanceToGoal: 4,
+      },
+      activity: [
+        taskProgress("collect-1", "2026-08-03T10:01:00.000Z", 18),
+        taskProgress("collect-2", "2026-08-03T10:02:00.000Z", 19),
+        taskProgress("collect-3", "2026-08-03T10:03:00.000Z", 20),
+      ],
+    });
+
+    expect(diagnostics.status).toBe("stuck");
+    expect(diagnostics.latestTask?.collection).toMatchObject({
+      activeTargets: ["minecraft:overworld:19,66,-16"],
+      rejectedTargets: ["minecraft:overworld:19,66,-16"],
+      failedApproachPositions: ["minecraft:overworld:20,63,-14"],
+      completedBreaks: 0,
+      consecutiveStalledPaths: 3,
+    });
+    expect(diagnostics.findings).toContainEqual(expect.objectContaining({
+      code: "repeated-collection-target",
+      evidence: expect.objectContaining({
+        target: "minecraft:overworld:19,66,-16",
+        count: 3,
+      }),
+    }));
+  });
+
   it("reports a moving active route as progressing", () => {
     const diagnostics = buildSmokeStuckDiagnostics({
       capturedAt: "2026-08-03T10:00:08.000Z",

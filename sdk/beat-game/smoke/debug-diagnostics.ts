@@ -83,6 +83,10 @@ export interface SmokeStuckFinding {
   readonly evidence: Readonly<Record<string, unknown>>;
 }
 
+const COLLECT_BLOCKS_PROGRESS_TYPE =
+  "soulfire.v1.CollectBlocksTaskProgressDetail";
+const REPEATED_COLLECTION_WINDOW_MS = 5 * 60_000;
+
 const HOSTILE_ENTITY_TYPES = new Set([
   "minecraft:blaze",
   "minecraft:bogged",
@@ -521,6 +525,28 @@ export function buildSmokeStuckDiagnostics(
     });
   }
 
+  const collectionAttempts = summarizeCollectionTaskAttempts(
+    activity,
+    capturedAtMs,
+  );
+  const repeatedCollectionTarget = mostRepeatedCollectionTarget(
+    collectionAttempts,
+  );
+  if (repeatedCollectionTarget !== undefined) {
+    findings.push({
+      code: "repeated-collection-target",
+      severity: "error",
+      summary:
+        "Multiple collection tasks keep retrying the same block without breaking it",
+      evidence: {
+        target: repeatedCollectionTarget.target,
+        attempts: repeatedCollectionTarget.attempts,
+        count: repeatedCollectionTarget.attempts.length,
+        windowMs: REPEATED_COLLECTION_WINDOW_MS,
+      },
+    });
+  }
+
   const actionFailures = activity.filter((entry) =>
     entry.kind === "action-failed"
       && entry.action === input.currentAction
@@ -627,6 +653,26 @@ export function buildSmokeStuckDiagnostics(
         total: lastTaskProgress.taskTotal,
         fraction: lastTaskProgress.taskFraction,
         message: lastTaskProgress.message,
+        ...(lastTaskProgress.taskDetailType !== COLLECT_BLOCKS_PROGRESS_TYPE
+          ? {}
+          : {
+            collection: {
+              phase: lastTaskProgress.taskPhase,
+              activeTargets: lastTaskProgress.taskActiveTargets,
+              rejectedTargets: lastTaskProgress.taskRejectedTargets,
+              failedApproachTargets:
+                lastTaskProgress.taskFailedApproachTargets,
+              failedApproachPositions:
+                lastTaskProgress.taskFailedApproachPositions,
+              completedBreaks: lastTaskProgress.taskCompletedBreaks,
+              consecutiveStalledPaths:
+                lastTaskProgress.taskConsecutiveStalledPaths,
+              pathCurrentMovement:
+                lastTaskProgress.taskPathCurrentMovement,
+              pathTotalMovements:
+                lastTaskProgress.taskPathTotalMovements,
+            },
+          }),
       },
     lastProgressAt: lastProgress?.observedAt,
     lastProgressAgeMs,
@@ -852,6 +898,26 @@ interface SmokeProgressActivity {
   readonly taskTotal?: string;
   readonly taskFraction?: number;
   readonly message?: string;
+  readonly taskDetailType?: string;
+  readonly taskPhase?: number;
+  readonly taskActiveTargets?: readonly string[];
+  readonly taskRejectedTargets?: readonly string[];
+  readonly taskFailedApproachTargets?: readonly string[];
+  readonly taskFailedApproachPositions?: readonly string[];
+  readonly taskCompletedBreaks?: number;
+  readonly taskConsecutiveStalledPaths?: number;
+  readonly taskPathCurrentMovement?: number;
+  readonly taskPathTotalMovements?: number;
+}
+
+interface SmokeCollectionTaskAttempt {
+  readonly taskId: string;
+  readonly observedAt: string;
+  readonly targets: readonly string[];
+  readonly failedApproachPositions: readonly string[];
+  readonly completedBreaks: number;
+  readonly current: number;
+  readonly consecutiveStalledPaths: number;
 }
 
 function parseSmokeProgressActivity(
@@ -899,6 +965,10 @@ function parseSmokeProgressActivity(
   if (input.kind === "task-progress-observed" && isRecord(input.task)) {
     const task = input.task;
     const progress = isRecord(task.progress) ? task.progress : undefined;
+    const detail = isRecord(progress?.detail) ? progress.detail : undefined;
+    const failedApproaches = Array.isArray(detail?.failedApproaches)
+      ? detail.failedApproaches.filter(isRecord)
+      : [];
     return [{
       observedAt: input.observedAt,
       observedAtMs,
@@ -916,6 +986,43 @@ function parseSmokeProgressActivity(
       ...(typeof progress?.message === "string"
         ? { message: progress.message }
         : {}),
+      ...(typeof progress?.detailType === "string"
+        ? { taskDetailType: progress.detailType }
+        : {}),
+      ...(typeof detail?.phase === "number"
+        ? { taskPhase: detail.phase }
+        : {}),
+      ...(detail === undefined
+        ? {}
+        : {
+          taskActiveTargets: blockPositionKeys(detail.activeTargets),
+          taskRejectedTargets: blockPositionKeys(detail.rejectedTargets),
+          taskFailedApproachTargets: blockPositionKeys(
+            failedApproaches.map((approach) => approach.target),
+          ),
+          taskFailedApproachPositions: blockPositionKeys(
+            failedApproaches.flatMap((approach) =>
+              Array.isArray(approach.playerPositions)
+                ? approach.playerPositions
+                : []
+            ),
+          ),
+          taskCompletedBreaks: Array.isArray(detail.completedBreaks)
+            ? detail.completedBreaks.length
+            : 0,
+          ...(typeof detail.consecutiveStalledPaths === "number"
+            ? {
+              taskConsecutiveStalledPaths:
+                detail.consecutiveStalledPaths,
+            }
+            : {}),
+          ...(typeof detail.pathCurrentMovement === "number"
+            ? { taskPathCurrentMovement: detail.pathCurrentMovement }
+            : {}),
+          ...(typeof detail.pathTotalMovements === "number"
+            ? { taskPathTotalMovements: detail.pathTotalMovements }
+            : {}),
+        }),
     }];
   }
   if (
@@ -947,6 +1054,120 @@ function parseSmokeProgressActivity(
     }];
   }
   return [];
+}
+
+function blockPositionKeys(input: unknown): readonly string[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+  return input.flatMap((position) => {
+    if (
+      !isRecord(position)
+      || typeof position.x !== "number"
+      || typeof position.y !== "number"
+      || typeof position.z !== "number"
+    ) {
+      return [];
+    }
+    const dimension = typeof position.dimension === "string"
+      ? position.dimension
+      : "unknown";
+    return [`${dimension}:${position.x},${position.y},${position.z}`];
+  });
+}
+
+function summarizeCollectionTaskAttempts(
+  activity: readonly SmokeProgressActivity[],
+  capturedAtMs: number,
+): readonly SmokeCollectionTaskAttempt[] {
+  const attempts = new Map<string, {
+    latest: SmokeProgressActivity;
+    targets: Set<string>;
+    failedApproachPositions: Set<string>;
+    completedBreaks: number;
+    current: number;
+    consecutiveStalledPaths: number;
+  }>();
+  for (const entry of activity) {
+    if (
+      entry.kind !== "task-progress"
+      || entry.taskId === undefined
+      || entry.taskDetailType !== COLLECT_BLOCKS_PROGRESS_TYPE
+      || capturedAtMs - entry.observedAtMs > REPEATED_COLLECTION_WINDOW_MS
+    ) {
+      continue;
+    }
+    const attempt = attempts.get(entry.taskId) ?? {
+      latest: entry,
+      targets: new Set<string>(),
+      failedApproachPositions: new Set<string>(),
+      completedBreaks: 0,
+      current: 0,
+      consecutiveStalledPaths: 0,
+    };
+    attempt.latest = entry;
+    for (
+      const target of [
+        ...(entry.taskActiveTargets ?? []),
+        ...(entry.taskRejectedTargets ?? []),
+        ...(entry.taskFailedApproachTargets ?? []),
+      ]
+    ) {
+      attempt.targets.add(target);
+    }
+    for (const position of entry.taskFailedApproachPositions ?? []) {
+      attempt.failedApproachPositions.add(position);
+    }
+    attempt.completedBreaks = Math.max(
+      attempt.completedBreaks,
+      entry.taskCompletedBreaks ?? 0,
+    );
+    attempt.current = Math.max(
+      attempt.current,
+      Number(entry.taskCurrent ?? 0),
+    );
+    attempt.consecutiveStalledPaths = Math.max(
+      attempt.consecutiveStalledPaths,
+      entry.taskConsecutiveStalledPaths ?? 0,
+    );
+    attempts.set(entry.taskId, attempt);
+  }
+  return [...attempts].map(([taskId, attempt]) => ({
+    taskId,
+    observedAt: attempt.latest.observedAt,
+    targets: [...attempt.targets].sort(),
+    failedApproachPositions: [...attempt.failedApproachPositions].sort(),
+    completedBreaks: attempt.completedBreaks,
+    current: attempt.current,
+    consecutiveStalledPaths: attempt.consecutiveStalledPaths,
+  }));
+}
+
+function mostRepeatedCollectionTarget(
+  attempts: readonly SmokeCollectionTaskAttempt[],
+): Readonly<{
+  target: string;
+  attempts: readonly SmokeCollectionTaskAttempt[];
+}> | undefined {
+  const attemptsByTarget = new Map<string, SmokeCollectionTaskAttempt[]>();
+  for (const attempt of attempts) {
+    if (attempt.completedBreaks > 0 || attempt.current > 0) {
+      continue;
+    }
+    for (const target of attempt.targets) {
+      const matching = attemptsByTarget.get(target) ?? [];
+      matching.push(attempt);
+      attemptsByTarget.set(target, matching);
+    }
+  }
+  return [...attemptsByTarget]
+    .filter(([, matching]) => matching.length >= 3)
+    .map(([target, matching]) => ({ target, attempts: matching }))
+    .sort((left, right) =>
+      right.attempts.length - left.attempts.length
+      || left.target.localeCompare(right.target)
+    )
+    .at(0);
 }
 
 function mostRepeatedDetail(

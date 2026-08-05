@@ -1092,6 +1092,36 @@ const program = Effect.scoped(Effect.gen(function* () {
                 currentPosition,
                 capturedAt,
               );
+            const [blocks, entities, surface] = yield* Effect.all([
+              driver.queryBlocks({
+                center: observation.player.position,
+                radius: 8,
+                selector: {},
+                maximumResults: 768,
+              }),
+              driver.queryEntities({
+                origin: observation.player.position,
+                radius: 48,
+                selector: {},
+                maximumResults: 128,
+              }),
+              driver.sampleSurface(observation.player.position, 12, 2),
+            ], { concurrency: "unbounded" });
+            const nearby = summarizeSmokeSpatialDiagnostics(
+              buildSmokeSpatialDiagnostics({
+                origin: observation.player.position,
+                originVelocity: observation.player.velocity,
+                finalPosition: currentPosition,
+                localBlockRadius: 8,
+                entityRadius: 48,
+                surfaceRadius: 12,
+                startedAt: capturedAt,
+                completedAt: new Date().toISOString(),
+                blocks,
+                entities,
+                surface,
+              }),
+            );
             const activity = debugTimeline.query({
               kinds: [
                 "beat-game-event",
@@ -1130,6 +1160,7 @@ const program = Effect.scoped(Effect.gen(function* () {
               environment: summarizeSmokeEnvironment(
                 debugSession?.state.environment,
               ),
+              nearby,
               pathfinding: {
                 active: activePath,
                 lastOutcome: lastPathOutcome,

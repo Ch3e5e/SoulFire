@@ -436,6 +436,7 @@ const AIR_ESCAPE_VERTICAL_PROGRESS_ATTEMPTS = 20;
 const AIR_ESCAPE_VERTICAL_PROGRESS = 0.75;
 const OVERWORLD_LOW_GROUND_MAX_Y = 62;
 const SURFACE_RESOURCE_MINIMUM_Y_MARGIN = 4;
+const SURFACE_RESOURCE_MAXIMUM_Y_MARGIN = 2;
 const SURFACE_RESOURCE_PATH_MINIMUM_Y_MARGIN = 1;
 const SURFACE_NEIGHBOR_MAX_HEIGHT_DELTA = 1;
 const MINIMUM_STABLE_SURFACE_NEIGHBORS = 2;
@@ -8351,6 +8352,8 @@ function collectBlocksOrExplore(
             targetYRange: {
               minimum: Math.floor(current.player.position.y)
                 - SURFACE_RESOURCE_MINIMUM_Y_MARGIN,
+              maximum: Math.floor(current.player.position.y)
+                + SURFACE_RESOURCE_MAXIMUM_Y_MARGIN,
             },
           }
           : {}),
