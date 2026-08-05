@@ -1603,6 +1603,10 @@ function shelterUntilMorning(
         overhead,
       );
     }
+    yield* recoverIfLocallyEnclosed(
+      state,
+      "The morning shelter exit remained enclosed by surrounding terrain",
+    );
     return true;
   });
 }
@@ -2282,6 +2286,14 @@ function executeDecision(
                     DEATH_RECOVERY_FOOD_RESERVE_COUNT,
                 },
               );
+              respawned = yield* observeDriverFresh(state);
+            }
+            if (
+              yield* recoverIfLocallyEnclosed(
+                state,
+                "Corpse recovery resumed from an enclosed navigation pocket",
+              )
+            ) {
               respawned = yield* observeDriverFresh(state);
             }
             if (
@@ -11036,6 +11048,87 @@ function recoverLocalNavigationTrap(
       targets.map(({ y }) => y),
     );
   });
+}
+
+function recoverIfLocallyEnclosed(
+  state: RunState,
+  message: string,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  return Effect.gen(function* () {
+    const observation = yield* state.driver.observe;
+    if (
+      observation.player.dead
+      || observation.player.position.dimension !== "minecraft:overworld"
+      || (yield* isPlayerInFluid(
+        state.driver,
+        observation.player.position,
+      ))
+      || !(yield* isLocallyEnclosed(
+        state.driver,
+        observation.player.position,
+      ))
+    ) {
+      return false;
+    }
+    yield* emit(state, {
+      type: "diagnostic",
+      message,
+      data: { position: observation.player.position },
+    });
+    return yield* recoverLocalNavigationTrap(
+      state,
+      observation.player.position,
+    );
+  });
+}
+
+function isLocallyEnclosed(
+  driver: BeatGameDriver,
+  position: BeatGamePosition,
+): Effect.Effect<boolean, BeatGameDriverError> {
+  const origin = {
+    x: Math.floor(position.x),
+    y: Math.floor(position.y),
+    z: Math.floor(position.z),
+    dimension: position.dimension,
+  };
+  const directions = [
+    { x: 1, z: 0 },
+    { x: -1, z: 0 },
+    { x: 0, z: 1 },
+    { x: 0, z: -1 },
+  ] as const;
+  return Effect.forEach(
+    directions,
+    ({ x, z }) =>
+      Effect.all([
+        queryExactBlock(driver, {
+          ...origin,
+          x: origin.x + x,
+          z: origin.z + z,
+        }),
+        queryExactBlock(driver, {
+          ...origin,
+          x: origin.x + x,
+          y: origin.y + 1,
+          z: origin.z + z,
+        }),
+      ], { concurrency: 2 }).pipe(
+        Effect.map(([feet, head]) =>
+          isDryWalkingSpace(feet) && isDryWalkingSpace(head)
+        ),
+      ),
+    { concurrency: 4 },
+  ).pipe(Effect.map((exits) => exits.every((open) => !open)));
+}
+
+function isDryWalkingSpace(
+  block: BeatGameBlockObservation | undefined,
+): boolean {
+  return block !== undefined
+    && !isPlayerFluidBlock(block.blockId)
+    && block.properties.waterlogged !== "true"
+    && (block.replaceable || block.solid === false);
 }
 
 interface DryShaftRecoveryStep {

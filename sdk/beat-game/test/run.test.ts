@@ -3614,6 +3614,118 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("escapes an enclosed respawn pocket before corpse preparation", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const deathPosition = {
+      x: 700,
+      y: -38,
+      z: -200,
+      dimension: "minecraft:overworld",
+    };
+    const observedAt = new Date().toISOString();
+    const initial = checkpoint(BeatGamePhase.ENTER_NETHER, {
+      runId: "enclosed-corpse-run",
+      teamId: "enclosed-corpse-team",
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        deathPositions: [{
+          key: `death:${observedAt}`,
+          value: {
+            ...deathPosition,
+            inventoryCounts: { "minecraft:iron_ingot": 7 },
+          },
+          observedAt,
+          confidence: 1,
+        }],
+      },
+    }, undefined));
+    driver.currentObservation = observation({
+      position: { x: 0.5, y: 63, z: 0.5 },
+      counts: {
+        "minecraft:dirt": 16,
+        "minecraft:wooden_pickaxe": 1,
+        "minecraft:wooden_sword": 1,
+      },
+    });
+    driver.surfaceColumns = [{
+      x: 4,
+      z: 0,
+      loaded: true,
+      surfaceY: 64,
+      blockId: "minecraft:grass_block",
+      biomeId: "minecraft:plains",
+      skyLight: 15,
+      blockLight: 0,
+    }];
+    driver.blockQueryResolver = ({ center, selector }) => {
+      if (selector.blockIds?.includes("minecraft:water") === true) {
+        return [];
+      }
+      const position = {
+        x: Math.floor(center.x),
+        y: Math.floor(center.y),
+        z: Math.floor(center.z),
+        dimension: center.dimension,
+      };
+      const cardinalDistance = Math.abs(position.x) + Math.abs(position.z);
+      const enclosed = cardinalDistance === 1
+        && (position.y === 63 || position.y === 64);
+      return [blockObservation(position, enclosed
+        ? { blockId: "minecraft:stone" }
+        : {
+          blockId: "minecraft:air",
+          diggable: false,
+          replaceable: true,
+          solid: false,
+        })];
+    };
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        runId: "enclosed-corpse-run",
+        team: { teamId: "enclosed-corpse-team" },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (driver.paths.length === 0) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+        Effect.timeoutFail({
+          duration: "5 seconds",
+          onTimeout: () => new Error("Timed out waiting for pocket recovery"),
+        }),
+      ),
+    ));
+
+    expect(driver.paths[0]).toMatchObject({
+      position: {
+        x: 4.5,
+        y: 65,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+      policy: {
+        allowMining: true,
+        allowPlacing: true,
+        avoidFluids: true,
+      },
+    });
+  });
+
   it("falls back to nearby fish after a bounded dry corpse food search", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
