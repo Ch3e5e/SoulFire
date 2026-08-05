@@ -3663,7 +3663,10 @@ function escapeFromTarget(
       ...nearbyEscapeThreats,
     ]).some((candidate) =>
       candidate.position.dimension === latest.player.position.dimension
-      && PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(candidate.entityType)
+      && (
+        PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(candidate.entityType)
+        || isDistantDrownedThreat(latest.player.position, candidate)
+      )
     );
     if (
       directEscapeSucceeded
@@ -4366,6 +4369,7 @@ function knockBackAndSprintAway(
     );
     const rangedThreat = escapeThreats.some((candidate) =>
       PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(candidate.entityType)
+      || isDistantDrownedThreat(playerPosition, candidate)
     );
     const directAquaticEvasion = currentlyInFluid
       && (rangedThreat || threat.entityType === "minecraft:drowned");
@@ -6105,6 +6109,15 @@ function isAggressiveNeutralMob(
   return entity.target !== undefined;
 }
 
+function isDistantDrownedThreat(
+  playerPosition: BeatGamePosition,
+  target: BeatGameEntityObservation,
+): boolean {
+  return target.entityType === "minecraft:drowned"
+    && distanceSquared(playerPosition, target.position)
+      > MELEE_ENGAGEMENT_RADIUS ** 2;
+}
+
 function isOverwhelmingAmbush(
   observation: BeatGameObservation,
   nearbyThreats: readonly BeatGameEntityObservation[],
@@ -6168,6 +6181,10 @@ function findNearbyAttackThreat(
       );
       const rangedAttacker = candidates.find((candidate) =>
         PROACTIVE_RANGED_HOSTILE_ENTITY_TYPES.has(candidate.entityType)
+        || isDistantDrownedThreat(
+          observation.player.position,
+          candidate,
+        )
       );
       const closeMeleeAttacker = candidates.find((candidate) =>
         PROACTIVE_MELEE_HOSTILE_ENTITY_TYPES.has(candidate.entityType)
@@ -6206,6 +6223,10 @@ function findNearbyAttackThreat(
       );
       const shouldEscape =
         ESCAPE_ONLY_DEFENSIVE_ENTITY_TYPES.has(nearest.entityType)
+        || isDistantDrownedThreat(
+          observation.player.position,
+          nearest,
+        )
         || overwhelmingAmbush
         || shouldDisengageFromThreat(state, observation, nearest);
       return {

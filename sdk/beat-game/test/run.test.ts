@@ -12788,6 +12788,80 @@ describe("beat-game run lifecycle", () => {
     expect(driver.maximumActiveControlScopes).toBe(1);
   });
 
+  it("evades a ranged drowned before it can keep dealing damage", async () => {
+    const driver = new FakeBeatGameDriver();
+    const drowned = {
+      connectionEpoch: "epoch-1",
+      networkId: 54,
+      entityType: "minecraft:drowned",
+      position: {
+        x: 13,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      velocity: { x: 0, y: 0, z: 0 },
+      alive: true,
+      health: 20,
+      observedAt: "2026-01-01T00:00:01.000Z",
+    } as const;
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(2) === true
+          || query.selector.networkId === drowned.networkId
+        ? driver.entityResults
+        : [];
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(
+        Effect.zipRight(
+          task.type === "collect-blocks" || task.type === "flee"
+            ? Effect.never
+            : Effect.void,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (
+              !driver.tasks.some((task) => task.type === "collect-blocks")
+            ) {
+              yield* Effect.sleep(1);
+            }
+            driver.entityResults = [drowned];
+            driver.currentObservation = observation({ health: 15 });
+            while (!driver.tasks.some((task) => task.type === "flee")) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          }).pipe(Effect.timeoutFail({
+            duration: "8 seconds",
+            onTimeout: () => new Error("Timed out waiting for drowned evasion"),
+          }))
+        ),
+      ),
+    ));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "flee",
+      selector: { categories: [2], alive: true },
+      triggerRadius: 24,
+      safeDistance: 32,
+    }));
+    const fleeIndex = driver.tasks.findIndex((task) => task.type === "flee");
+    expect(driver.taskPolicies[fleeIndex]).toEqual(expect.objectContaining({
+      allowMining: false,
+      allowPlacing: false,
+      avoidFluids: false,
+      sprint: true,
+    }));
+  }, 10_000);
+
   it("stops pursuing an attacker beyond the defensive leash", async () => {
     const driver = new FakeBeatGameDriver();
     const attacker = {
