@@ -654,6 +654,7 @@ const NIGHT_SHELTER_START_TICK = 13_000n;
 const NIGHT_SHELTER_END_TICK = 1_000n;
 const NIGHT_SHELTER_DEPTH = 3;
 const NIGHT_SHELTER_MINIMUM_SURFACE_COVER = 8;
+const NIGHT_SHELTER_DEEP_SURFACE_COVER = 32;
 const NIGHT_SHELTER_POLL_MS = 1_000;
 const NIGHT_SHELTER_DESCENT_ATTEMPTS = 30;
 const NIGHT_SHELTER_DAYLIGHT_CONFIRMATIONS = 3;
@@ -1337,10 +1338,15 @@ function isSafelyBelowOverworldSurface(
         && candidate.z === playerZ
         && candidate.surfaceY !== undefined
       );
-      return column?.surfaceY !== undefined
-        && !isTreeCanopySurface(column.blockId)
-        && Math.floor(player.y) + NIGHT_SHELTER_MINIMUM_SURFACE_COVER
-          <= column.surfaceY;
+      if (column?.surfaceY === undefined) {
+        return false;
+      }
+      const surfaceCover = column.surfaceY - Math.floor(player.y);
+      return surfaceCover >= NIGHT_SHELTER_MINIMUM_SURFACE_COVER
+        && (
+          !isTreeCanopySurface(column.blockId)
+          || surfaceCover >= NIGHT_SHELTER_DEEP_SURFACE_COVER
+        );
     }),
   );
 }
