@@ -966,6 +966,8 @@ function parseSmokeProgressActivity(
     const task = input.task;
     const progress = isRecord(task.progress) ? task.progress : undefined;
     const detail = isRecord(progress?.detail) ? progress.detail : undefined;
+    const current = progressCount(progress?.current);
+    const total = progressCount(progress?.total);
     const failedApproaches = Array.isArray(detail?.failedApproaches)
       ? detail.failedApproaches.filter(isRecord)
       : [];
@@ -974,12 +976,8 @@ function parseSmokeProgressActivity(
       observedAtMs,
       kind: "task-progress",
       ...(typeof task.taskId === "string" ? { taskId: task.taskId } : {}),
-      ...(typeof progress?.current === "string"
-        ? { taskCurrent: progress.current }
-        : {}),
-      ...(typeof progress?.total === "string"
-        ? { taskTotal: progress.total }
-        : {}),
+      ...(current === undefined ? {} : { taskCurrent: current }),
+      ...(total === undefined ? {} : { taskTotal: total }),
       ...(typeof progress?.fraction === "number"
         ? { taskFraction: progress.fraction }
         : {}),
@@ -1054,6 +1052,16 @@ function parseSmokeProgressActivity(
     }];
   }
   return [];
+}
+
+function progressCount(value: unknown): string | undefined {
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.max(0, Math.trunc(value)).toString();
+  }
+  return typeof value === "string" ? value : undefined;
 }
 
 function blockPositionKeys(input: unknown): readonly string[] {

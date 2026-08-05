@@ -433,8 +433,8 @@ describe("smoke stuck diagnostics", () => {
       task: {
         taskId: "task-1",
         progress: {
-          current: "4",
-          total: "20",
+          current: 4n,
+          total: 20n,
           fraction: 0.2,
           message: "Following route",
         },
