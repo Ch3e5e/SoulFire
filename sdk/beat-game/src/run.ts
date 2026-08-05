@@ -8818,6 +8818,7 @@ function fillLiquidBucket(
           canCraftIronPickaxe
             ? DURABLE_MINING_PICKAXE_ITEM_IDS
             : MINING_PICKAXE_ITEM_IDS,
+          RESOURCE_SEARCH_PICKAXE_DURABILITY_RESERVE,
         );
         current = yield* state.driver.observe;
         if (
@@ -8825,6 +8826,20 @@ function fillLiquidBucket(
           && current.player.position.y > DEEP_LAVA_SEARCH_MAX_Y
         ) {
           while (current.player.position.y > DEEP_LAVA_SEARCH_MAX_Y) {
+            const canCraftReplacementIronPickaxe =
+              (current.inventory.counts["minecraft:iron_ingot"] ?? 0) >= 3;
+            yield* ensureMiningPickaxe(
+              state,
+              current,
+              canCraftReplacementIronPickaxe
+                ? "minecraft:iron_pickaxe"
+                : "minecraft:stone_pickaxe",
+              canCraftReplacementIronPickaxe
+                ? DURABLE_MINING_PICKAXE_ITEM_IDS
+                : MINING_PICKAXE_ITEM_IDS,
+              RESOURCE_SEARCH_PICKAXE_DURABILITY_RESERVE,
+            );
+            current = yield* state.driver.observe;
             const beforeDescent = current.player.position;
             const targetY = Math.max(
               DEEP_LAVA_SEARCH_Y,
@@ -8880,6 +8895,7 @@ function fillLiquidBucket(
             canCraftReplacementIronPickaxe
               ? DURABLE_MINING_PICKAXE_ITEM_IDS
               : MINING_PICKAXE_ITEM_IDS,
+            RESOURCE_SEARCH_PICKAXE_DURABILITY_RESERVE,
           );
           current = yield* state.driver.observe;
           return yield* advanceExplorationFrontier(
