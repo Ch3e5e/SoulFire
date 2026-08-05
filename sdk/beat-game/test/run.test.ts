@@ -805,6 +805,135 @@ describe("beat-game run lifecycle", () => {
     ]));
   }, 10_000);
 
+  it("eats available food before building a night shelter", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentEnvironment = { gameTime: 14_000n };
+    driver.currentObservation = observation({
+      counts: {
+        "minecraft:salmon": 8,
+        "minecraft:wooden_sword": 1,
+      },
+      food: 13,
+    });
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some(({ type }) => type === "auto-eat")) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "auto-eat",
+      foodItemIds: ["minecraft:salmon"],
+      foodLevel: 20,
+      maximumMeals: 1,
+      completeWhenNoFood: true,
+    }));
+    expect(driver.paths).toHaveLength(0);
+  }, 10_000);
+
+  it("accepts any dry landing while swimming toward a night shelter", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentEnvironment = { gameTime: 14_000n };
+    driver.currentObservation = observation({
+      counts: {
+        "minecraft:dirt": 1,
+        "minecraft:wooden_sword": 1,
+      },
+      onGround: false,
+      position: { x: 0.5, y: 62, z: 0.5 },
+    });
+    driver.surfaceColumns = [4, -4].flatMap((centerX) =>
+      [-1, 0, 1].flatMap((deltaX) =>
+        [-1, 0, 1].map((deltaZ) => ({
+          x: centerX + deltaX,
+          z: deltaZ,
+          loaded: true,
+          surfaceY: 63,
+          blockId: "minecraft:grass_block",
+          biomeId: "minecraft:plains",
+          skyLight: 15,
+          blockLight: 0,
+        }))
+      )
+    );
+    driver.blockQueryResolver = ({ center, selector }) => {
+      const position = {
+        x: Math.floor(center.x),
+        y: Math.floor(center.y),
+        z: Math.floor(center.z),
+        dimension: center.dimension,
+      };
+      if (selector.blockIds?.includes("minecraft:water") === true) {
+        return position.x === 0
+          ? [blockObservation(position, {
+            blockId: "minecraft:water",
+            diggable: false,
+            replaceable: true,
+            solid: false,
+          })]
+          : [];
+      }
+      if (
+        position.y === 63
+        && (
+          position.x >= 3 && position.x <= 5
+          || position.x >= -5 && position.x <= -3
+        )
+        && position.z >= -1
+        && position.z <= 1
+      ) {
+        return [blockObservation(position, {
+          blockId: "minecraft:grass_block",
+        })];
+      }
+      return [blockObservation(position, {
+        blockId: "minecraft:air",
+        diggable: false,
+        replaceable: true,
+        solid: false,
+      })];
+    };
+    driver.actionObserver = (action) => {
+      if (action.type === "set-movement") {
+        driver.currentObservation = observation({
+          counts: driver.currentObservation.inventory.counts,
+          position: { x: 8.5, y: 64, z: 0.5 },
+        });
+      }
+    };
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.actions.some(({ type }) => type === "reset-movement")) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    const shorePaths = driver.paths.filter(({ policy }) =>
+      policy.avoidFluids === false
+    );
+    expect(shorePaths).toHaveLength(1);
+    expect(driver.currentObservation.player.position).toMatchObject({
+      x: 8.5,
+      y: 64,
+      z: 0.5,
+    });
+  }, 10_000);
+
   it("routes from water to dry ground before digging a night shelter", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentEnvironment = { gameTime: 14_000n };

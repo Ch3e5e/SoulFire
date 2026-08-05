@@ -1354,6 +1354,22 @@ function shelterUntilMorning(
 ): Effect.Effect<boolean, BeatGameDriverError> {
   return Effect.gen(function* () {
     let shelterObservation = observation;
+    if (
+      shelterObservation.player.food <= state.strategy.eatBelowFood
+      && hasUsableFood(shelterObservation)
+    ) {
+      yield* eatWhenNeeded(state.driver, {
+        foodItemIds: preferredUsableFoodItemIds(shelterObservation),
+        foodLevel: 20,
+        maximumMeals: 1,
+        completeWhenNoFood: true,
+        path: state.strategy.path,
+      });
+      shelterObservation = yield* state.driver.observe;
+      if (shelterObservation.player.dead) {
+        return false;
+      }
+    }
     const nearbyThreats = yield* state.driver.queryEntities({
       origin: {
         ...shelterObservation.player.position,
@@ -1437,6 +1453,7 @@ function shelterUntilMorning(
     ) {
       const reachedDrySurface = yield* swimToNearbyDrySurface(state);
       if (!reachedDrySurface) {
+        shelterObservation = yield* state.driver.observe;
         yield* emit(state, {
           type: "diagnostic",
           message:
@@ -5496,6 +5513,9 @@ function swimToNearbyDrySurface(
         return true;
       }
       const latest = yield* state.driver.observe;
+      if (!(yield* isPlayerInFluid(state.driver, latest.player.position))) {
+        return true;
+      }
       if (hasCriticalAir(latest)) {
         return false;
       }
@@ -6016,91 +6036,85 @@ function waitForDrySurfaceApproach(
   previousDistanceSquared?: number,
   stagnantObservations = 0,
 ): Effect.Effect<boolean, BeatGameDriverError> {
-  return Effect.sleep(100).pipe(
-    Effect.zipRight(state.driver.observe),
-    Effect.flatMap((observation) => {
-      const position = observation.player.position;
-      const distanceToTarget = horizontalDistanceSquared(position, target);
-      const reachedSurface = distanceToTarget <= 1.5 * 1.5
-        && position.y >= target.y - 0.25
-        && observation.player.onGround;
-      if (observation.player.dead) {
-        return Effect.succeed(true);
-      }
-      if (reachedSurface) {
-        return isPlayerInFluid(state.driver, position).pipe(
-          Effect.flatMap((inFluid) =>
-            !inFluid
-              ? Effect.succeed(true)
-              : attemptsRemaining <= 1
-              ? Effect.succeed(false)
-              : waitForDrySurfaceApproach(
-                state,
-                target,
-                attemptsRemaining - 1,
-                targetYaw,
-                recoveringAir,
-                distanceToTarget,
-                0,
-              )
-          ),
-        );
-      }
-      const hasRecoveredAir = observation.player.maxAir <= 0
-        || observation.player.air >= observation.player.maxAir;
-      if (recoveringAir && hasRecoveredAir) {
-        return state.driver.act({
-          type: "look",
-          yaw: targetYaw,
-          pitch: -20,
-        }).pipe(
-          Effect.zipRight(waitForDrySurfaceApproach(
-            state,
-            target,
-            attemptsRemaining - 1,
-            targetYaw,
-            false,
-            distanceToTarget,
-            0,
-          )),
-        );
-      }
-      if (!recoveringAir && hasUnsafeAir(observation)) {
-        return state.driver.act({
-          type: "look",
-          yaw: observation.player.rotation.yaw,
-          pitch: -90,
-        }).pipe(
-          Effect.zipRight(waitForDrySurfaceApproach(
-            state,
-            target,
-            attemptsRemaining - 1,
-            targetYaw,
-            true,
-            distanceToTarget,
-            0,
-          )),
-        );
-      }
-      const madeProgress = previousDistanceSquared === undefined
-        || distanceToTarget < previousDistanceSquared - 0.05;
-      const nextStagnantObservations = madeProgress
-        ? 0
-        : stagnantObservations + 1;
+  return Effect.gen(function* () {
+    yield* Effect.sleep(100);
+    const observation = yield* state.driver.observe;
+    const position = observation.player.position;
+    const distanceToTarget = horizontalDistanceSquared(position, target);
+    const reachedSurface = distanceToTarget <= 1.5 * 1.5
+      && position.y >= target.y - 0.25
+      && observation.player.onGround;
+    if (observation.player.dead) {
+      return true;
+    }
+    if (!(yield* isPlayerInFluid(state.driver, position))) {
+      return true;
+    }
+    if (reachedSurface) {
       return attemptsRemaining <= 1
-          || nextStagnantObservations >= AIR_ESCAPE_STAGNANT_OBSERVATIONS
-        ? Effect.succeed(false)
-        : waitForDrySurfaceApproach(
+        ? false
+        : yield* waitForDrySurfaceApproach(
           state,
           target,
           attemptsRemaining - 1,
           targetYaw,
           recoveringAir,
           distanceToTarget,
-          nextStagnantObservations,
+          0,
         );
-    }),
-  );
+    }
+    const hasRecoveredAir = observation.player.maxAir <= 0
+      || observation.player.air >= observation.player.maxAir;
+    if (recoveringAir && hasRecoveredAir) {
+      yield* state.driver.act({
+        type: "look",
+        yaw: targetYaw,
+        pitch: -20,
+      });
+      return yield* waitForDrySurfaceApproach(
+        state,
+        target,
+        attemptsRemaining - 1,
+        targetYaw,
+        false,
+        distanceToTarget,
+        0,
+      );
+    }
+    if (!recoveringAir && hasUnsafeAir(observation)) {
+      yield* state.driver.act({
+        type: "look",
+        yaw: observation.player.rotation.yaw,
+        pitch: -90,
+      });
+      return yield* waitForDrySurfaceApproach(
+        state,
+        target,
+        attemptsRemaining - 1,
+        targetYaw,
+        true,
+        distanceToTarget,
+        0,
+      );
+    }
+    const madeProgress = previousDistanceSquared === undefined
+      || distanceToTarget < previousDistanceSquared - 0.05;
+    const nextStagnantObservations = madeProgress
+      ? 0
+      : stagnantObservations + 1;
+    return attemptsRemaining <= 1
+        || nextStagnantObservations >= AIR_ESCAPE_STAGNANT_OBSERVATIONS
+      ? false
+      : yield* waitForDrySurfaceApproach(
+        state,
+        target,
+        attemptsRemaining - 1,
+        targetYaw,
+        recoveringAir,
+        distanceToTarget,
+        nextStagnantObservations,
+      );
+  });
 }
 
 function isAggressiveNeutralMob(
