@@ -4241,6 +4241,98 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("accepts a viable food reserve after reaching corpse staging range", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const deathPosition = {
+      x: 700,
+      y: 24,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    const observedAt = new Date(Date.now() - 10 * 60_000).toISOString();
+    const initial = checkpoint(BeatGamePhase.ENTER_NETHER, {
+      runId: "staged-corpse-food-run",
+      teamId: "staged-corpse-food-team",
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        deathPositions: [{
+          key: `death:${observedAt}`,
+          value: {
+            ...deathPosition,
+            inventoryCounts: { "minecraft:iron_ingot": 7 },
+          },
+          observedAt,
+          confidence: 1,
+        }],
+      },
+    }, undefined));
+    driver.currentObservation = observation({
+      health: 20,
+      food: 16,
+      position: {
+        x: 444,
+        y: 64,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+      counts: {
+        "minecraft:stone_sword": 1,
+        "minecraft:stone_pickaxe": 1,
+        "minecraft:dirt": 16,
+        "minecraft:oak_log": 12,
+        "minecraft:salmon": 5,
+      },
+      remainingDurability: { "minecraft:stone_pickaxe": 131 },
+    });
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+      }).pipe(
+        Effect.zipRight(
+          position.x === deathPosition.x
+              && position.y === deathPosition.y
+              && position.z === deathPosition.z
+            ? Effect.never
+            : Effect.void,
+        ),
+      );
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        runId: "staged-corpse-food-run",
+        team: { teamId: "staged-corpse-food-team" },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (!driver.paths.some(({ position }) =>
+              position.x === deathPosition.x
+              && position.y === deathPosition.y
+              && position.z === deathPosition.z
+            )) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.tasks).not.toContainEqual(expect.objectContaining({
+      type: "attack-entity",
+    }));
+    expect(driver.paths).toContainEqual(expect.objectContaining({
+      position: deathPosition,
+      radius: 2,
+    }));
+  });
+
   it("bootstraps equipment from surface logs outside the current line of sight", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();

@@ -180,6 +180,7 @@ const EMERGENCY_ARMAMENT_LOG_COUNT = 2;
 const DEATH_RECOVERY_BOOTSTRAP_LOG_COUNT = 12;
 const DEATH_RECOVERY_BOOTSTRAP_BLOCK_COUNT = 16;
 const DEATH_RECOVERY_FOOD_RESERVE_COUNT = 8;
+const DEATH_RECOVERY_MINIMUM_STAGING_FOOD_COUNT = 4;
 const DEATH_RECOVERY_AQUATIC_FALLBACK_EXPLORATION_LEGS = 2;
 const DEATH_RECOVERY_FOOD_SEARCH_TIMEOUT_MS = 60_000;
 const DEATH_RECOVERY_FOOD_SEARCH_PENDING =
@@ -14199,11 +14200,18 @@ function prepareForDistantDeathRecovery(
         STONE_OR_BETTER_MINING_PICKAXE_ITEM_IDS,
         requiredPickaxeDurability,
       );
+    const hasViableStagingFood =
+      horizontalRecoveryDistanceSquared
+          <= DEATH_RECOVERY_PREPARATION_STAGING_DISTANCE ** 2
+      && current.player.food > CRITICAL_HUNGER_FOOD_LEVEL
+      && deathRecoveryTravelFoodCount(current)
+          >= DEATH_RECOVERY_MINIMUM_STAGING_FOOD_COUNT;
     const canRaceActiveCorpse =
       current.player.health >= state.strategy.minimumHealth
       && (
         deathRecoveryTravelFoodCount(current)
             >= DEATH_RECOVERY_FOOD_RESERVE_COUNT
+        || hasViableStagingFood
         || isRecentActiveCorpse(pendingDeath)
       )
       && (
