@@ -5606,7 +5606,7 @@ describe("beat-game run lifecycle", () => {
     }));
   }, 15_000);
 
-  it("resumes bounded low-health food searches for a nearby valuable corpse", async () => {
+  it("keeps preparing instead of risking a low-health valuable recovery", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const deathPosition = {
@@ -5661,18 +5661,20 @@ describe("beat-game run lifecycle", () => {
         checkpointStore: store,
         strategy: { observationPollMs: 1 },
       });
-      while (!driver.paths.some(({ position }) =>
-        position.x === deathPosition.x
-        && position.y === deathPosition.y
-        && position.z === deathPosition.z
-      )) {
-        yield* Effect.sleep(1);
-      }
+      yield* run.events.pipe(
+        Stream.filter((event) =>
+          event.type === "diagnostic"
+          && event.message
+            === "Continuing preparation for a valuable distant corpse"
+          && event.data?.preparationFailures === 8
+        ),
+        Stream.runHead,
+      );
       yield* run.stop;
       yield* run.awaitCompletion.pipe(Effect.either);
     }).pipe(Effect.timeout("10 seconds"))));
 
-    expect(driver.paths).toContainEqual(expect.objectContaining({
+    expect(driver.paths).not.toContainEqual(expect.objectContaining({
       position: deathPosition,
     }));
     expect(driver.xzPaths.length).toBeLessThan(8);
@@ -5864,7 +5866,7 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks).toHaveLength(0);
   });
 
-  it("attempts a valuable distant corpse after bounded preparation without forgetting it", async () => {
+  it("keeps a valuable distant corpse pending until its recovery kit is ready", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
     const deathPosition = {
@@ -5933,8 +5935,8 @@ describe("beat-game run lifecycle", () => {
           Stream.filter((event) =>
             event.type === "diagnostic"
             && event.message
-              === "Keeping a valuable corpse pending after failed recovery attempts"
-            && event.data?.recoveryFailures === 3
+              === "Continuing preparation for a valuable distant corpse"
+            && event.data?.preparationFailures === 10
           ),
           Stream.runHead,
           Effect.timeout("10 seconds"),
@@ -5960,7 +5962,7 @@ describe("beat-game run lifecycle", () => {
 
     expect(recoveryActivity.earlySearches).toBe(4);
     expect(recoveryActivity.boundedSearches).toBeGreaterThanOrEqual(10);
-    expect(recoveryActivity.directRecoveryAttempts).toBeGreaterThanOrEqual(6);
+    expect(recoveryActivity.directRecoveryAttempts).toBe(0);
     const saved = await Effect.runPromise(
       store.load("bounded-corpse-equipment-run"),
     );

@@ -161,7 +161,6 @@ const DRY_SHAFT_RECOVERY_STEP_TIMEOUT_MS = 10_000;
 const EXPLORATION_MAXIMUM_LEG_DISTANCE = 32;
 const EXPLORATION_MAXIMUM_SURFACE_ELEVATION_CHANGE = 12;
 const MAX_SAFE_DEATH_RECOVERY_FAILURES = 3;
-const MAX_VALUABLE_DEATH_RECOVERY_PREPARATION_FAILURES = 8;
 const DEATH_RECOVERY_PREPARATION_PROGRESS_DISTANCE = 8;
 const DISTANT_DEATH_RECOVERY_BOOTSTRAP_DISTANCE = 128;
 const ACTIVE_CORPSE_RECOVERY_DISTANCE = 512;
@@ -175,7 +174,6 @@ const DISTANT_CORPSE_EXCAVATION_MINIMUM_HORIZONTAL_DISTANCE = 64;
 const CORPSE_DROP_INSPECTION_DISTANCE = 32;
 const CORPSE_DROP_MATCH_RADIUS = 16;
 const DEATH_RECOVERY_PREPARATION_STAGING_DISTANCE = 256;
-const BOUNDED_VALUABLE_DEATH_RECOVERY_MAX_DESCENT = 8;
 const EMERGENCY_ARMAMENT_LOG_COUNT = 2;
 const DEATH_RECOVERY_BOOTSTRAP_LOG_COUNT = 12;
 const DEATH_RECOVERY_BOOTSTRAP_BLOCK_COUNT = 16;
@@ -2279,21 +2277,6 @@ function executeDecision(
                 const recoveryClass = classifyDeathRecoveryInventory(
                   pendingDeath.inventoryCounts,
                 );
-                const boundedValuableRecoveryReady =
-                  recoveryClass === "valuable"
-                  && preparationFailures
-                    >= MAX_VALUABLE_DEATH_RECOVERY_PREPARATION_FAILURES
-                  && distanceSquared(
-                      current.player.position,
-                      pendingDeath.position,
-                    ) <= ACTIVE_CORPSE_RECOVERY_DISTANCE ** 2
-                  && current.player.food > CRITICAL_HUNGER_FOOD_LEVEL
-                  && (
-                    pendingDeath.position.y
-                        >= current.player.position.y
-                          - BOUNDED_VALUABLE_DEATH_RECOVERY_MAX_DESCENT
-                    || hasMiningPickaxe(current)
-                  );
                 if (
                   preparationFailures
                     >= MAX_SAFE_DEATH_RECOVERY_FAILURES
@@ -2309,51 +2292,21 @@ function executeDecision(
                 if (
                   recoveryClass === "valuable"
                 ) {
-                  if (
-                    preparationFailures
-                      >= MAX_VALUABLE_DEATH_RECOVERY_PREPARATION_FAILURES
-                    && (
-                      !foodReserveStillMissing
-                      || boundedValuableRecoveryReady
-                    )
-                  ) {
-                    yield* emit(state, {
-                      type: "diagnostic",
-                      message:
-                        "Attempting valuable corpse recovery after bounded preparation",
-                      data: {
-                        preparationFailures,
-                        reason: preparationPending,
-                        boundedFallback: boundedValuableRecoveryReady,
-                      },
-                    });
-                  } else {
-                    yield* emit(state, {
-                      type: "diagnostic",
-                      message:
-                        "Continuing preparation for a valuable distant corpse",
-                      data: {
-                        preparationFailures,
-                        reason: preparationPending,
-                        foodReserveStillMissing,
-                        madeMeaningfulApproach,
-                      },
-                    });
-                  }
+                  yield* emit(state, {
+                    type: "diagnostic",
+                    message:
+                      "Continuing preparation for a valuable distant corpse",
+                    data: {
+                      preparationFailures,
+                      reason: preparationPending,
+                      foodReserveStillMissing,
+                      madeMeaningfulApproach,
+                    },
+                  });
                 }
-                if (
-                  recoveryClass !== "valuable"
-                  || preparationFailures
-                    < MAX_VALUABLE_DEATH_RECOVERY_PREPARATION_FAILURES
-                  || (
-                    foodReserveStillMissing
-                    && !boundedValuableRecoveryReady
-                  )
-                ) {
-                  return {
-                    replanReason: preparationPending,
-                  } satisfies ActionResult;
-                }
+                return {
+                  replanReason: preparationPending,
+                } satisfies ActionResult;
               }
               respawned = yield* observeDriverFresh(state);
               yield* retreatAndRecover(
