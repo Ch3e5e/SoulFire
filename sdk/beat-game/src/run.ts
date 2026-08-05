@@ -654,6 +654,7 @@ const NIGHT_SHELTER_MINIMUM_SURFACE_COVER = 8;
 const NIGHT_SHELTER_POLL_MS = 1_000;
 const NIGHT_SHELTER_DESCENT_ATTEMPTS = 30;
 const NIGHT_SHELTER_DAYLIGHT_CONFIRMATIONS = 3;
+const NIGHT_SHELTER_RECOVERY_MAXIMUM_MEALS = 4;
 const NIGHT_SHELTER_ACTION = "survive:night-shelter";
 const NIGHT_SHELTER_BLOCK_ITEM_IDS = [
   "minecraft:dirt",
@@ -1354,14 +1355,22 @@ function shelterUntilMorning(
 ): Effect.Effect<boolean, BeatGameDriverError> {
   return Effect.gen(function* () {
     let shelterObservation = observation;
+    const needsRecoveryMeal =
+      shelterObservation.player.health < state.strategy.minimumHealth
+      && shelterObservation.player.food < 18;
     if (
-      shelterObservation.player.food <= state.strategy.eatBelowFood
+      (
+        shelterObservation.player.food <= state.strategy.eatBelowFood
+        || needsRecoveryMeal
+      )
       && hasUsableFood(shelterObservation)
     ) {
       yield* eatWhenNeeded(state.driver, {
         foodItemIds: preferredUsableFoodItemIds(shelterObservation),
         foodLevel: 20,
-        maximumMeals: 1,
+        maximumMeals: needsRecoveryMeal
+          ? NIGHT_SHELTER_RECOVERY_MAXIMUM_MEALS
+          : 1,
         completeWhenNoFood: true,
         path: state.strategy.path,
       });

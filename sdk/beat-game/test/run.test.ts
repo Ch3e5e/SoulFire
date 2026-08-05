@@ -967,6 +967,43 @@ describe("beat-game run lifecycle", () => {
     expect(driver.paths).toHaveLength(0);
   }, 10_000);
 
+  it("eats toward regeneration before sheltering while wounded", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentEnvironment = { gameTime: 14_000n };
+    driver.currentObservation = observation({
+      counts: {
+        "minecraft:salmon": 7,
+        "minecraft:wooden_sword": 1,
+      },
+      food: 16,
+      health: 10,
+    });
+    driver.taskResolver = (task) =>
+      Effect.sync(() => {
+        driver.tasks.push(task);
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (!driver.tasks.some(({ type }) => type === "auto-eat")) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    expect(driver.tasks).toContainEqual(expect.objectContaining({
+      type: "auto-eat",
+      foodItemIds: ["minecraft:salmon"],
+      foodLevel: 20,
+      maximumMeals: 4,
+      completeWhenNoFood: true,
+    }));
+    expect(driver.paths).toHaveLength(0);
+  }, 10_000);
+
   it("accepts any dry landing while swimming toward a night shelter", async () => {
     const driver = new FakeBeatGameDriver();
     driver.currentEnvironment = { gameTime: 14_000n };
