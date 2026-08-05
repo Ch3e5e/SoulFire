@@ -181,6 +181,7 @@ const DEATH_RECOVERY_BOOTSTRAP_LOG_COUNT = 12;
 const DEATH_RECOVERY_BOOTSTRAP_BLOCK_COUNT = 16;
 const DEATH_RECOVERY_FOOD_RESERVE_COUNT = 8;
 const DEATH_RECOVERY_MINIMUM_STAGING_FOOD_COUNT = 4;
+const DEATH_RECOVERY_PICKUP_RESERVED_SLOTS = 8;
 const DEATH_RECOVERY_AQUATIC_FALLBACK_EXPLORATION_LEGS = 2;
 const DEATH_RECOVERY_FOOD_SEARCH_TIMEOUT_MS = 60_000;
 const DEATH_RECOVERY_FOOD_SEARCH_PENDING =
@@ -2484,6 +2485,12 @@ function executeDecision(
                   preserveFoodBelowCount:
                     DEATH_RECOVERY_FOOD_RESERVE_COUNT,
                 },
+              );
+              respawned = yield* state.driver.observe;
+              respawned = yield* prepareDeathRecoveryInventorySpace(
+                state,
+                respawned,
+                pendingDeath.inventoryCounts,
               );
               yield* respawnAndRecover(state.driver, {
                 deathPosition: pendingDeath.position,
@@ -13789,7 +13796,12 @@ function sweepRemainingDeathDrops(
     return Effect.void;
   }
   return Effect.gen(function* () {
-    const observation = yield* state.driver.observe;
+    let observation = yield* state.driver.observe;
+    observation = yield* prepareDeathRecoveryInventorySpace(
+      state,
+      observation,
+      expectedCounts,
+    );
     const missingItemIds = Object.entries(expectedCounts)
       .filter(([itemId, count]) =>
         count > 0 && (observation.inventory.counts[itemId] ?? 0) < count
@@ -13811,6 +13823,39 @@ function sweepRemainingDeathDrops(
       },
     });
   });
+}
+
+function prepareDeathRecoveryInventorySpace(
+  state: RunState,
+  observation: BeatGameObservation,
+  expectedCounts: Readonly<Record<string, number>> | undefined,
+): Effect.Effect<BeatGameObservation, BeatGameDriverError> {
+  if (
+    expectedCounts === undefined
+    || observation.inventory.emptyPlayerSlots === undefined
+  ) {
+    return Effect.succeed(observation);
+  }
+  const missingItemTypeCount = Object.entries(expectedCounts)
+    .filter(([itemId, count]) =>
+      count > 0 && (observation.inventory.counts[itemId] ?? 0) < count
+    )
+    .length;
+  const requiredSlots = Math.min(
+    DEATH_RECOVERY_PICKUP_RESERVED_SLOTS,
+    missingItemTypeCount,
+  );
+  if (
+    requiredSlots === 0
+    || observation.inventory.emptyPlayerSlots >= requiredSlots
+  ) {
+    return Effect.succeed(observation);
+  }
+  return ensureInventorySpace(
+    state,
+    observation,
+    requiredSlots,
+  ).pipe(Effect.zipRight(state.driver.observe));
 }
 
 function chainedDeathRespawnCooldown(pendingDeathCount: number): number {

@@ -4333,6 +4333,168 @@ describe("beat-game run lifecycle", () => {
     }));
   });
 
+  it("clears inventory slots before collecting nearby corpse drops", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const deathPosition = {
+      x: 4,
+      y: 64,
+      z: 0,
+      dimension: "minecraft:overworld",
+    };
+    const observedAt = new Date().toISOString();
+    const initial = checkpoint(BeatGamePhase.ENTER_NETHER, {
+      runId: "full-inventory-corpse-run",
+      teamId: "full-inventory-corpse-team",
+    });
+    await Effect.runPromise(store.save({
+      ...initial,
+      memory: {
+        ...initial.memory,
+        deathPositions: [{
+          key: `death:${observedAt}`,
+          value: {
+            ...deathPosition,
+            inventoryCounts: {
+              "minecraft:diamond": 1,
+              "minecraft:furnace": 2,
+            },
+          },
+          observedAt,
+          confidence: 1,
+        }],
+      },
+    }, undefined));
+    driver.currentObservation = observation({
+      counts: {
+        "minecraft:stone_sword": 1,
+        "minecraft:leaf_litter": 64,
+      },
+      emptyPlayerSlots: 0,
+    });
+    driver.entityQueryResolver = (query) =>
+      query.selector.categories?.includes(6)
+        ? [
+          {
+            connectionEpoch: "epoch-1",
+            networkId: 91,
+            entityType: "minecraft:item",
+            itemId: "minecraft:diamond",
+            position: deathPosition,
+            velocity: { x: 0, y: 0, z: 0 },
+            alive: true,
+            health: 5,
+            observedAt,
+          },
+          {
+            connectionEpoch: "epoch-1",
+            networkId: 92,
+            entityType: "minecraft:item",
+            itemId: "minecraft:furnace",
+            position: deathPosition,
+            velocity: { x: 0, y: 0, z: 0 },
+            alive: true,
+            health: 5,
+            observedAt,
+          },
+        ]
+        : [];
+    driver.blockQueryResolver = ({ center, selector }) =>
+      selector.diggable === true
+        ? [blockObservation({
+          x: Math.floor(center.x),
+          y: Math.floor(center.y),
+          z: Math.floor(center.z),
+          dimension: center.dimension,
+        })]
+        : [];
+    const timeline: string[] = [];
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+        const isCorpsePath = position.x === deathPosition.x
+          && position.y === deathPosition.y
+          && position.z === deathPosition.z
+          && radius === 2;
+        timeline.push(isCorpsePath ? "corpse-path" : "inventory-path");
+        if (isCorpsePath) {
+          return;
+        }
+        const current = driver.currentObservation;
+        driver.currentObservation = observation({
+          counts: current.inventory.counts,
+          ...(current.inventory.emptyPlayerSlots === undefined
+            ? {}
+            : {
+              emptyPlayerSlots: current.inventory.emptyPlayerSlots,
+            }),
+          position,
+          rotation: current.player.rotation,
+        });
+      }).pipe(
+        Effect.zipRight(
+          position.x === deathPosition.x
+              && position.y === deathPosition.y
+              && position.z === deathPosition.z
+              && radius === 2
+            ? Effect.never
+            : Effect.void,
+        ),
+      );
+    driver.actionResolver = (action) =>
+      Effect.sync(() => {
+        const current = driver.currentObservation;
+        if (action.type === "look") {
+          driver.currentObservation = observation({
+            counts: current.inventory.counts,
+            ...(current.inventory.emptyPlayerSlots === undefined
+              ? {}
+              : {
+                emptyPlayerSlots: current.inventory.emptyPlayerSlots,
+              }),
+            position: current.player.position,
+            rotation: { yaw: action.yaw, pitch: action.pitch },
+          });
+        }
+        if (action.type === "toss-items") {
+          timeline.push("toss");
+          const counts = { ...current.inventory.counts };
+          delete counts["minecraft:leaf_litter"];
+          driver.currentObservation = observation({
+            counts,
+            emptyPlayerSlots: 4,
+            position: current.player.position,
+            rotation: current.player.rotation,
+          });
+        }
+        return {};
+      });
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        runId: "full-inventory-corpse-run",
+        team: { teamId: "full-inventory-corpse-team" },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (!timeline.includes("corpse-path")) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(timeline).toContain("toss");
+    expect(timeline.indexOf("toss")).toBeLessThan(
+      timeline.indexOf("corpse-path"),
+    );
+  });
+
   it("bootstraps equipment from surface logs outside the current line of sight", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
