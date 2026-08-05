@@ -323,8 +323,6 @@ function portalRequirements(
   inventory: BeatGameInventory,
   strategy: BeatGameStrategy,
 ): readonly BeatGameRequirementDefinition[] {
-  // Iron-gated portal equipment satisfies its own requirement. Replenishing
-  // an optional ingot reserve must not block portal construction.
   const survivalRequirements = REQUIREMENTS[
     BeatGamePhase.PREPARE_OVERWORLD
   ]
@@ -358,6 +356,22 @@ function portalRequirements(
       strategy.portalStrategy === PortalStrategy.AUTO
       && hasCompleteObsidianFrame
     );
+  const missingLiquidBuckets = Number(
+    (inventory.counts["minecraft:water_bucket"] ?? 0) === 0,
+  ) + Number(
+    !useObsidian
+      && (inventory.counts["minecraft:lava_bucket"] ?? 0) === 0,
+  );
+  const missingBucketIron = Math.max(
+    0,
+    missingLiquidBuckets - (inventory.counts["minecraft:bucket"] ?? 0),
+  );
+  const portalEquipmentIronTarget = missingBucketIron
+    + Number((inventory.counts["minecraft:shield"] ?? 0) === 0)
+    + Number(
+      (inventory.counts["minecraft:flint_and_steel"] ?? 0) === 0
+        && (inventory.counts["minecraft:fire_charge"] ?? 0) === 0,
+    );
   return [
     ...survivalRequirements,
     ...(
@@ -369,6 +383,16 @@ function portalRequirements(
           ["minecraft:diamond_pickaxe"],
           () => 1,
           110,
+        )]
+        : []
+    ),
+    ...(
+      portalEquipmentIronTarget > 0
+        ? [itemRequirement(
+          "iron",
+          ["minecraft:iron_ingot"],
+          () => portalEquipmentIronTarget,
+          103,
         )]
         : []
     ),

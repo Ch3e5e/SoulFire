@@ -186,6 +186,7 @@ describe("beat-game requirements", () => {
       "diamond-pickaxe",
       "melee-weapon",
       "food",
+      "iron",
       "shield",
       "obsidian",
       "water-bucket",
@@ -243,6 +244,32 @@ describe("beat-game requirements", () => {
     expect(
       requirements.filter(({ key }) => key === "ignition"),
     ).toHaveLength(1);
-    expect(requirements.map(({ key }) => key)).not.toContain("iron");
+    expect(requirements.find(({ key }) => key === "iron")).toMatchObject({
+      currentCount: 7,
+      targetCount: 1,
+      satisfied: true,
+    });
+  });
+
+  it("replenishes only the iron needed for missing portal equipment", () => {
+    const requirements = requirementsForPhase(
+      BeatGamePhase.ENTER_NETHER,
+      observation({
+        counts: {
+          "minecraft:bucket": 1,
+          "minecraft:shield": 1,
+        },
+      }).inventory,
+      {
+        ...defaultBeatGameStrategy,
+        portalStrategy: PortalStrategy.CAST,
+      },
+    );
+
+    expect(requirements.find(({ key }) => key === "iron")).toMatchObject({
+      currentCount: 0,
+      targetCount: 2,
+      satisfied: false,
+    });
   });
 });
