@@ -17769,6 +17769,163 @@ describe("beat-game run lifecycle", () => {
     expect(pathStartedBeforeReplacement).toBe(false);
   });
 
+  it("clears a safe upper-rim obstruction after approaching lava", async () => {
+    const driver = new FakeBeatGameDriver();
+    const store = new InMemoryBeatGameCheckpointStore();
+    const source = blockObservation({
+      x: 0,
+      y: -52,
+      z: 0,
+      dimension: "minecraft:overworld",
+    }, {
+      blockId: "minecraft:lava",
+      properties: { level: "0" },
+      replaceable: true,
+    });
+    const stand = {
+      x: 2,
+      y: -50,
+      z: 0,
+      dimension: source.position.dimension,
+    } as const;
+    const obstruction = blockObservation({
+      x: 1,
+      y: -51,
+      z: 0,
+      dimension: source.position.dimension,
+    }, {
+      blockId: "minecraft:deepslate",
+      diggable: true,
+    });
+    const standVolume = [
+      blockObservation(stand, {
+        blockId: "minecraft:air",
+        replaceable: true,
+      }),
+      blockObservation({ ...stand, y: stand.y + 1 }, {
+        blockId: "minecraft:air",
+        replaceable: true,
+      }),
+      blockObservation({ ...stand, y: stand.y - 1 }),
+    ];
+    driver.currentObservation = observation({
+      position: {
+        x: 8.5,
+        y: -50,
+        z: 0.5,
+        dimension: source.position.dimension,
+      },
+      counts: {
+        "minecraft:bucket": 1,
+        "minecraft:cobblestone": 20,
+        "minecraft:cooked_beef": 8,
+        "minecraft:flint_and_steel": 1,
+        "minecraft:iron_ingot": 7,
+        "minecraft:iron_pickaxe": 1,
+        "minecraft:oak_log": 8,
+        "minecraft:shield": 1,
+        "minecraft:stone_sword": 1,
+        "minecraft:water_bucket": 1,
+      },
+      remainingDurability: { "minecraft:iron_pickaxe": 250 },
+    });
+    driver.blockQueryResolver = ({ center, radius, selector }) => {
+      if (
+        selector.blockIds?.includes("minecraft:lava") === true
+        && selector.properties?.level === "0"
+      ) {
+        return [source];
+      }
+      if (radius === 4.9 && Object.keys(selector).length === 0) {
+        return standVolume;
+      }
+      const position = {
+        x: Math.floor(center.x),
+        y: Math.floor(center.y),
+        z: Math.floor(center.z),
+      };
+      return standVolume.filter((block) =>
+        block.position.x === position.x
+        && block.position.y === position.y
+        && block.position.z === position.z
+      );
+    };
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+        if (radius === 0.75) {
+          driver.currentObservation = observation({
+            position,
+            counts: driver.currentObservation.inventory.counts,
+            remainingDurability: { "minecraft:iron_pickaxe": 250 },
+          });
+        }
+      });
+    let obstructionCleared = false;
+    driver.raycastResolver = ({ includeFluids }) =>
+      includeFluids === true
+        ? { block: source, distance: 2 }
+        : obstructionCleared
+        ? { distance: 2 }
+        : { block: obstruction, distance: 1 };
+    driver.actionResolver = (action) => {
+      if (action.type === "look") {
+        driver.currentObservation = observation({
+          position: driver.currentObservation.player.position,
+          counts: driver.currentObservation.inventory.counts,
+          remainingDurability: { "minecraft:iron_pickaxe": 250 },
+          rotation: { yaw: action.yaw, pitch: action.pitch },
+        });
+      }
+      if (
+        action.type === "dig-block"
+        && action.position.x === obstruction.position.x
+        && action.position.y === obstruction.position.y
+        && action.position.z === obstruction.position.z
+      ) {
+        obstructionCleared = true;
+      }
+      return action.type === "use-item"
+        ? Effect.never
+        : Effect.succeed({});
+    };
+    await Effect.runPromise(store.save(checkpoint(
+      BeatGamePhase.ENTER_NETHER,
+      {
+        runId: "upper-rim-lava-source-run",
+        teamId: "upper-rim-lava-source-team",
+      },
+    ), undefined));
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        runId: "upper-rim-lava-source-run",
+        team: { teamId: "upper-rim-lava-source-team" },
+        checkpointStore: store,
+        strategy: { observationPollMs: 1 },
+      });
+      for (
+        let poll = 0;
+        poll < 1_000
+          && !driver.actions.some((action) => action.type === "use-item");
+        poll += 1
+      ) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    expect(driver.actions).toContainEqual({
+      type: "dig-block",
+      position: obstruction.position,
+    });
+    expect(driver.actions).toContainEqual({
+      type: "use-item",
+      hand: "main",
+    });
+  });
+
   it("skips lava sources that require unsafe sightline mining", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();
@@ -17864,7 +18021,7 @@ describe("beat-game run lifecycle", () => {
         ? {
           block: blockObservation({
             x: 1,
-            y: -51,
+            y: -52,
             z: 0,
             dimension: "minecraft:overworld",
           }, {

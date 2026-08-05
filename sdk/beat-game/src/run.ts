@@ -9144,22 +9144,22 @@ function fillLiquidBucket(
           );
           return;
         }
+        const playerStabilityBlock = isPlayerStabilityBlock(
+          current.player.position,
+          obstruction.position,
+        );
+        const safeLavaSightlineBlock = liquid !== "lava"
+          || isSafeLavaSightlineBlock(source.position, obstruction);
         if (
-          liquid === "lava"
-          || !obstruction.diggable
-          || isPlayerStabilityBlock(
-            current.player.position,
-            obstruction.position,
-          )
+          !obstruction.diggable
+          || playerStabilityBlock
+          || !safeLavaSightlineBlock
           || clearedBlocks === MAXIMUM_LIQUID_SIGHT_CLEARING_BLOCKS
         ) {
           return yield* Effect.fail(new BeatGameDriverError({
             operation: `expose-${liquid}-source`,
             retryable: true,
-            message: isPlayerStabilityBlock(
-                current.player.position,
-                obstruction.position,
-              )
+            message: playerStabilityBlock
               ? `Refused to expose the ${liquid} source by mining the player's footing at ${
                 positionKey(obstruction.position)
               }`
@@ -9674,6 +9674,20 @@ function isPlayerStabilityBlock(
     && block.z === playerZ
     && block.y >= playerY - 1
     && block.y <= playerY + 1;
+}
+
+function isSafeLavaSightlineBlock(
+  source: BeatGameBlockPosition,
+  obstruction: BeatGameBlockObservation,
+): boolean {
+  return obstruction.position.dimension === source.dimension
+    && obstruction.position.y > source.y
+    && Math.abs(obstruction.position.x - source.x) <= 1
+    && Math.abs(obstruction.position.z - source.z) <= 1
+    && !isGravityAffectedBlockId(obstruction.blockId)
+    && obstruction.blockId !== "minecraft:obsidian"
+    && obstruction.blockId !== "minecraft:crying_obsidian"
+    && obstruction.blockId !== "minecraft:bedrock";
 }
 
 function retreatAfterLavaCollection(
