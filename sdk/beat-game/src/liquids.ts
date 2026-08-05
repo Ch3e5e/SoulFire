@@ -145,6 +145,7 @@ export function approachLiquidSourceFromSide(
           false,
         );
         if (reached) {
+          yield* driver.act({ type: "reset-movement" });
           if (options.requireTargetableSource !== true) {
             return prepared.source;
           }
@@ -204,6 +205,7 @@ export function approachLiquidSourceFromSide(
           true,
         );
         if (reached) {
+          yield* driver.act({ type: "reset-movement" });
           if (options.requireTargetableSource !== true) {
             return prepared.source;
           }

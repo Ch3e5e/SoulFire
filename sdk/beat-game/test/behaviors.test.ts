@@ -4396,6 +4396,13 @@ describe("beat-game behavior programs", () => {
     expect(lavaQueryCount).toBeGreaterThanOrEqual(5);
     expect(sourceVerificationCount).toBe(2);
     expect(sourceCollected).toBe(true);
+    const firstBucketUseIndex = driver.actions.findIndex((action) =>
+      action.type === "use-item"
+    );
+    expect(firstBucketUseIndex).toBeGreaterThan(0);
+    expect(driver.actions.slice(0, firstBucketUseIndex)).toContainEqual({
+      type: "reset-movement",
+    });
     expect(driver.paths).toContainEqual({
       position: {
         x: safeStand.x + 0.5,

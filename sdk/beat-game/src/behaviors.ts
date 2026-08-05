@@ -5476,6 +5476,7 @@ function useBucketToward(
   target: BeatGameBlockPosition,
 ): Effect.Effect<void, BeatGameDriverError> {
   return Effect.gen(function* () {
+    yield* driver.act({ type: "reset-movement" });
     const observation = yield* driver.observe;
     const targetCenter = blockCenter(target);
     const eyePosition = {
@@ -5495,7 +5496,6 @@ function useBucketToward(
       40,
       50,
     );
-    yield* Effect.sleep(50);
     const current = yield* driver.observe;
     const currentEyePosition = {
       ...current.player.position,
