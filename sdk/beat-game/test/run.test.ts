@@ -21999,6 +21999,86 @@ describe("beat-game run lifecycle", () => {
     expect(driver.tasks.some((task) => task.type === "explore")).toBe(false);
   });
 
+  it("climbs out of a shallow cave before exploring for animals", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.surfaceColumns = [
+      {
+        x: 0,
+        z: 0,
+        loaded: true,
+        surfaceY: 57,
+        blockId: "minecraft:grass_block",
+        biomeId: "minecraft:forest",
+        skyLight: 0,
+        blockLight: 0,
+      },
+      ...[-1, 0, 1].flatMap((deltaX) =>
+        [-1, 0, 1].map((deltaZ) => ({
+          x: 12 + deltaX,
+          z: deltaZ,
+          loaded: true as const,
+          surfaceY: 70,
+          blockId: "minecraft:grass_block",
+          biomeId: "minecraft:forest",
+          skyLight: 0,
+          blockLight: 0,
+        }))
+      ),
+    ];
+    driver.currentObservation = observation({
+      position: {
+        x: 0.5,
+        y: 58,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+      counts: {
+        "minecraft:cobblestone": 20,
+        "minecraft:stone_sword": 1,
+        "minecraft:iron_ingot": 7,
+        "minecraft:iron_pickaxe": 1,
+        "minecraft:water_bucket": 1,
+        "minecraft:flint_and_steel": 1,
+        "minecraft:shield": 1,
+      },
+    });
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(
+      beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      }).pipe(
+        Effect.flatMap((run) =>
+          Effect.gen(function* () {
+            while (driver.paths.length === 0) {
+              yield* Effect.sleep(1);
+            }
+            yield* run.stop;
+            yield* run.awaitCompletion.pipe(Effect.either);
+          })
+        ),
+      ),
+    ));
+
+    expect(driver.paths[0]).toEqual({
+      position: {
+        x: 11.5,
+        y: 71,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+      radius: 1.5,
+      policy: expect.objectContaining({
+        allowMining: true,
+        allowPlacing: true,
+      }),
+    });
+    expect(driver.xzPaths).toHaveLength(0);
+  });
+
   it("crafts a durable pickaxe before mining a long route to the surface", async () => {
     const driver = new FakeBeatGameDriver();
     const store = new InMemoryBeatGameCheckpointStore();

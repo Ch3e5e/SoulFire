@@ -10198,6 +10198,13 @@ function huntOrExplore(
             state,
             current.player.position,
           );
+        } else if (
+          yield* climbToHigherOverworldGround(
+            state,
+            current.player.position,
+          )
+        ) {
+          continue;
         } else {
           const frontierScanRadius =
             current.player.health < state.strategy.minimumHealth
