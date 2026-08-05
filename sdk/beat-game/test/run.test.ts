@@ -558,6 +558,23 @@ describe("beat-game run lifecycle", () => {
         allowPlacing: true,
       },
     });
+    expect(driver.actions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "select-item",
+        selector: { itemIds: expect.arrayContaining([
+          "minecraft:stone_pickaxe",
+        ]) },
+      }),
+      expect.objectContaining({
+        type: "dig-block",
+        position: {
+          x: 0,
+          y: 62,
+          z: 0,
+          dimension: "minecraft:overworld",
+        },
+      }),
+    ]));
   }, 10_000);
 
   it("moves away from a night shelter shaft that would flood", async () => {
@@ -24039,6 +24056,91 @@ describe("beat-game run lifecycle", () => {
       && task.blockIds.includes("minecraft:oak_log")
     )).toBe(false);
   });
+
+  it("opens a shallow vertical shaft before resuming exploration", async () => {
+    const driver = new FakeBeatGameDriver();
+    driver.currentObservation = observation({
+      position: {
+        x: 0.5,
+        y: 60,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+      counts: {
+        "minecraft:oak_log": 3,
+        "minecraft:stone_pickaxe": 1,
+        "minecraft:wooden_sword": 1,
+      },
+    });
+    driver.surfaceColumns = [{
+      x: 0,
+      z: 0,
+      loaded: true,
+      surfaceY: 62,
+      blockId: "minecraft:grass_block",
+      biomeId: "minecraft:plains",
+      skyLight: 15,
+      blockLight: 0,
+    }];
+    driver.blockQueryResolver = ({ center, selector }) => {
+      if (selector.blockIds?.includes("minecraft:water") === true) {
+        return [];
+      }
+      const position = {
+        x: Math.floor(center.x),
+        y: Math.floor(center.y),
+        z: Math.floor(center.z),
+        dimension: center.dimension,
+      };
+      return [blockObservation(position, position.y === 62
+        ? { blockId: "minecraft:grass_block" }
+        : {
+          blockId: "minecraft:air",
+          diggable: false,
+          replaceable: true,
+          solid: false,
+        })];
+    };
+    driver.pathResolver = (position, radius, policy) =>
+      Effect.sync(() => {
+        driver.paths.push({ position, radius, policy });
+      }).pipe(Effect.zipRight(Effect.never));
+
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const run = yield* beatGameWithDriver(driver, {
+        strategy: { observationPollMs: 1 },
+      });
+      while (driver.paths.length === 0) {
+        yield* Effect.sleep(1);
+      }
+      yield* run.stop;
+      yield* run.awaitCompletion.pipe(Effect.either);
+    })));
+
+    expect(driver.actions).toContainEqual(expect.objectContaining({
+      type: "dig-block",
+      position: {
+        x: 0,
+        y: 62,
+        z: 0,
+        dimension: "minecraft:overworld",
+      },
+    }));
+    expect(driver.paths[0]).toMatchObject({
+      position: {
+        x: 0.5,
+        y: 63,
+        z: 0.5,
+        dimension: "minecraft:overworld",
+      },
+      radius: 1,
+      policy: {
+        allowMining: true,
+        allowPlacing: true,
+        avoidFluids: true,
+      },
+    });
+  }, 10_000);
 
   it("climbs a two-block-deep sealed pocket by a bounded staircase", async () => {
     const driver = new FakeBeatGameDriver();

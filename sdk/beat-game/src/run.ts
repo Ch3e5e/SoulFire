@@ -1597,13 +1597,67 @@ function shelterUntilMorning(
         message: "Leaving a resumed night shelter after morning",
         data: { position: current.player.position },
       });
-      yield* returnToOverworldSurface(
+      yield* leaveCoveredVerticalShaft(
         state,
-        current.player.position,
+        current,
+        overhead,
       );
     }
     return true;
   });
+}
+
+function leaveCoveredVerticalShaft(
+  state: RunState,
+  observation: BeatGameObservation,
+  overhead: BeatGameBlockObservation | undefined,
+): Effect.Effect<void, BeatGameDriverError> {
+  if (overhead === undefined || overhead.replaceable) {
+    return returnToOverworldSurface(state, observation.player.position);
+  }
+  if (!overhead.diggable) {
+    return Effect.fail(new BeatGameDriverError({
+      operation: "leave-covered-shaft",
+      code: "unreachable",
+      retryable: true,
+      message: `The covered shaft exit is blocked by ${overhead.blockId} at ${
+        positionKey(overhead.position)
+      }`,
+    }));
+  }
+  return state.driver.withControl(Effect.gen(function* () {
+    if (hasMiningPickaxe(observation)) {
+      yield* state.driver.act({
+        type: "select-item",
+        selector: { itemIds: MINING_PICKAXE_ITEM_IDS },
+      });
+    }
+    yield* state.driver.act({
+      type: "dig-block",
+      position: overhead.position,
+    });
+    yield* state.driver.pathfind(
+      {
+        x: overhead.position.x + 0.5,
+        y: overhead.position.y + 1,
+        z: overhead.position.z + 0.5,
+        dimension: overhead.position.dimension,
+      },
+      1,
+      {
+        ...state.strategy.path,
+        allowMining: true,
+        allowPlacing: true,
+        avoidFluids: true,
+        minimumY: Math.floor(observation.player.position.y) - 1,
+        maximumY: overhead.position.y + 2,
+        maxSearchTimeMs: Math.min(
+          state.strategy.path.maxSearchTimeMs,
+          30_000,
+        ),
+      },
+    );
+  }));
 }
 
 function prepareStableNightShelterSite(
@@ -10709,6 +10763,29 @@ function returnToOverworldSurface(
       state.driver,
       position,
     );
+    const directSurface = targets.find((target) =>
+      Math.floor(target.x) === Math.floor(position.x)
+      && Math.floor(target.z) === Math.floor(position.z)
+      && target.y - position.y >= 2
+      && target.y - position.y <= NIGHT_SHELTER_DEPTH + 2
+    );
+    if (!startingInFluid && directSurface !== undefined) {
+      const observation = yield* state.driver.observe;
+      const overhead = yield* queryExactBlock(state.driver, {
+        x: Math.floor(position.x),
+        y: Math.floor(position.y) + 2,
+        z: Math.floor(position.z),
+        dimension: position.dimension,
+      });
+      if (
+        overhead !== undefined
+        && !overhead.replaceable
+        && overhead.diggable
+      ) {
+        yield* leaveCoveredVerticalShaft(state, observation, overhead);
+        return;
+      }
+    }
     if (
       !startingInFluid
       && (yield* excavateDryShaftRecoveryStaircase(
